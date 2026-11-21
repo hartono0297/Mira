@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mira: hasil brainstorming</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap">
+<style>
+:root{--text-primary:#2A1F1A;--text-secondary:#6E5F57;--border:#F0DDD2;--border-strong:#A88A7C;--border-stronger:#8f8d86;--surface-1:#FFF9F6;--surface-2:#FFFFFF;--bg-neutral:#FFF4EE;--bg-accent:#FBE3D8;--text-accent:#A8401F;--border-accent:#B4472A;--bg-danger:#FBE3D8;--text-danger:#A8401F;--text-warning:#8A5A00;--text-success:#3B7A4F;--fill-primary:#B4472A;--on-primary:#FFFFFF;--radius:12px;--doc-line:#e3ddd6}
+@page{size:A4;margin:16mm 15mm 18mm;@bottom-right{content:"Halaman " counter(page);font:11px "Segoe UI",sans-serif;color:#6E5F57}}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html,body{background:#ffffff;margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:#1f1e1c}
+.doc{max-width:712px;margin:0 auto;padding:32px 16px}
+h1{font-size:28px;line-height:1.25;font-weight:600;margin:0 0 6px}
+h2{font-size:20px;font-weight:600;margin:0 0 10px}
+h3{font-size:15px;font-weight:600;margin:22px 0 8px}
+h2,h3{break-after:avoid}
+p{margin:0 0 10px}
+.meta{font-size:13px;color:#5F5E5A;margin:0 0 20px}
+.lead{font-size:16px;line-height:1.6;margin:0 0 14px}
+.note{font-size:13px;color:#5F5E5A;border:1px solid var(--doc-line);border-radius:8px;padding:10px 12px;margin:0 0 22px}
+.section{break-before:page}
+.keep{break-inside:avoid}
+ul,ol{margin:0 0 12px;padding-left:20px}
+li{margin:0 0 5px}
+table.doc{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 16px}
+table.doc tr{break-inside:avoid}
+table.doc th{text-align:left;font-weight:600;padding:7px 10px 7px 0;border-bottom:1px solid #8f8d86}
+table.doc td{padding:7px 10px 7px 0;border-bottom:1px solid var(--doc-line);vertical-align:top}
+table.doc td:first-child{font-weight:600;white-space:nowrap}
+figure{margin:14px 0 18px;break-inside:avoid}
+figcaption{font-size:12px;color:#5F5E5A;margin-top:6px}
+.frame,.dlg{font-family:Nunito,"Segoe UI",sans-serif;color:var(--text-primary)}
+button{font:inherit;font-size:13px;font-weight:700;padding:6px 12px;border:1px solid var(--border-strong);border-radius:var(--radius);background:transparent;color:var(--text-primary)}
+.ip{height:34px;border:1px solid var(--border-strong);border-radius:var(--radius);padding:0 12px;font-size:13px;background:var(--surface-1);color:var(--text-secondary);display:flex;align-items:center}
+svg .th{font:600 14px "Segoe UI",sans-serif;fill:#2C2C2A}
+svg .ts{font:400 12px "Segoe UI",sans-serif;fill:#5F5E5A}
+svg .box{fill:#F7F6F2;stroke:#B4B2A9}
+svg .arr{stroke:#73726c;stroke-width:1.5;fill:none}
+svg .c-teal>rect{fill:#E1F5EE;stroke:#0F6E56}
+svg .c-teal>.th{fill:#085041}svg .c-teal>.ts{fill:#0F6E56}
+svg .c-gray>rect{fill:#F1EFE8;stroke:#888780}
+svg .c-gray>.th{fill:#444441}svg .c-gray>.ts{fill:#5F5E5A}
+svg .c-coral>rect{fill:#FAECE7;stroke:#993C1D}
+svg .c-coral>.th{fill:#712B13}svg .c-coral>.ts{fill:#993C1D}
+.frame{background:var(--bg-neutral);border-radius:12px;padding:12px}
+.win{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.side{background:var(--bg-neutral);padding:12px 8px;border-right:1px solid var(--border)}
+.app{font-size:15px;font-weight:700;margin:0 10px 12px;display:flex;align-items:center;gap:8px}
+.nav{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--radius);font-size:13px;color:var(--text-secondary)}
+.nav.on{background:var(--bg-accent);color:var(--text-accent);font-weight:700}
+.lbl{font-size:12px;color:var(--text-secondary);margin:14px 10px 4px}
+.row{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 10px}
+.av{width:30px;height:30px;border-radius:50%;background:var(--bg-accent);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text-accent);flex:none}
+.av.sm{width:22px;height:22px;font-size:10px;display:inline-flex}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.hd{padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:10px}
+.ttl{font-size:16px;font-weight:700}
+.sec{font-size:12px;color:var(--text-secondary)}
+.card{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;margin-top:8px;display:flex;align-items:center;gap:10px;background:var(--surface-1)}
+.cbtn{font-size:12px;padding:5px 10px;margin-left:auto;white-space:nowrap}
+.pbtn{background:var(--fill-primary);color:var(--on-primary);border-color:var(--fill-primary)}
+.msg{display:flex;gap:10px}
+.nm{margin:0;font-size:13px}
+.nm b{font-weight:700}
+.nm span{color:var(--text-secondary);font-size:12px}
+.bdy{margin:2px 0 0;font-size:14px;line-height:1.5}
+.cst{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);margin-top:4px}
+.qt{border-left:2px solid var(--border-strong);padding:2px 0 2px 8px;margin:4px 0;font-size:12px;color:var(--text-secondary)}
+.me{color:var(--text-accent);font-weight:700}
+.col{background:var(--bg-neutral);border-radius:var(--radius);padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.colh{display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding:2px 4px 4px}
+.colh span{color:var(--text-secondary);font-weight:400}
+.tk{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
+.tkt{margin:0 0 8px;font-size:13px;font-weight:700;line-height:1.4}
+.tkm{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)}
+.tkl{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.dk{font-size:12px;color:var(--text-secondary);margin:0 0 3px}
+.dv{font-size:13px;margin:0 0 12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pill{font-size:12px;font-weight:700;padding:2px 8px;border-radius:var(--radius);background:var(--bg-neutral);color:var(--text-secondary)}
+.seg{font-size:12px;padding:4px 10px}
+.seg.on{background:var(--bg-accent);color:var(--text-accent);border-color:var(--border-accent)}
+.sub{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0}
+.sub.done span{color:var(--text-secondary);text-decoration:line-through}
+.log{font-size:12px;color:var(--text-secondary);margin:0 0 6px;line-height:1.5;display:flex;gap:6px;align-items:center}
+.sh{font-size:13px;font-weight:700;margin:16px 0 6px}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border-strong);border-radius:var(--radius)}
+.opt.on{border:2px solid var(--border-accent);padding:9px 11px;background:var(--bg-accent)}
+.ot{margin:0;font-size:13px;font-weight:700}
+.od{margin:2px 0 0;font-size:12px;color:var(--text-secondary)}
+.il{font-size:12px;color:var(--text-secondary);margin:14px 0 6px}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0}
+.drow{display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid var(--border)}
+.drow.sel{background:var(--surface-1)}
+.fi{font-size:22px;color:var(--text-secondary)}
+.fn{margin:0;font-size:13px;font-weight:700}
+.fm{margin:2px 0 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px}
+.fm.act{color:var(--text-accent)}
+.vr{display:flex;gap:10px;align-items:flex-start;font-size:12px;padding:6px 0}
+.vr p{margin:0}
+.vn{font-weight:700;min-width:22px}
+.pg{background:#FFFFFF;width:100%;max-width:300px;border:1px solid var(--border);padding:20px 22px;font-size:11px;color:var(--text-secondary)}
+.ln{height:6px;background:var(--border);border-radius:3px;margin:0 0 7px}
+.sigs{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px}
+.sb{border-top:1px solid var(--border-strong);padding-top:4px;font-size:11px}
+.sb .im{height:38px;display:flex;align-items:flex-end;justify-content:center;font-size:11px;color:var(--text-success)}
+.sb.mine .im{border:1.5px dashed var(--border-accent);border-radius:8px;color:var(--text-accent);align-items:center;margin-bottom:4px;background:var(--surface-1)}
+.st{display:flex;gap:9px;align-items:flex-start;padding:6px 0;font-size:12px}
+.st p{margin:0}
+.nb{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none;border:1px solid var(--border-strong);color:var(--text-secondary)}
+.nb.ok{background:var(--text-success);border-color:var(--text-success);color:#FFFFFF}
+.nb.now{background:var(--fill-primary);border-color:var(--fill-primary);color:#FFFFFF}
+.tbtn{display:flex;align-items:center;gap:7px;font-size:12px;text-align:left;width:100%;margin-bottom:6px}
+.sw{display:inline-flex;align-items:center;gap:8px;font-family:Consolas,monospace;font-size:12px;color:#5F5E5A}
+.sw i{width:20px;height:20px;border-radius:5px;border:1px solid rgba(0,0,0,.2);display:inline-block}
+</style>
+</head>
+<body>
+<div class="doc">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs></svg>
+
+<h1>Mira: hasil brainstorming</h1>
+<p class="meta">Diperbarui 22 November 2026 · Proyek ChatCompany · Tahap brainstorming selesai, belum ada kode</p>
+<p class="lead">Mira adalah aplikasi desktop untuk rekan kerja di kantor: chat, board task ala Jira, edit file, dan tanda tangan PDF. Semuanya berjalan antar laptop di jaringan yang sama, tanpa server, tanpa internet, dan tanpa login.</p>
+<p class="note">Mockup di dokumen ini memakai tema Bata (arah C) mode terang. Logo masih sementara, dan nama orang serta tanggal masih placeholder seperti Rekan A dan [tanggal].</p>
+
+<h2>Keputusan yang sudah diambil</h2>
+<table class="doc">
+<tr><th>Bagian</th><th>Keputusan</th></tr>
+<tr><td>Nama</td><td>Mira. Logo final menyusul, sementara memakai monogram M.</td></tr>
+<tr><td>Platform</td><td>Aplikasi desktop dengan Tauri: inti Rust, tampilan web. Versi laptop dulu.</td></tr>
+<tr><td>Jaringan</td><td>LAN murni. Hanya laptop di jaringan yang sama yang bisa tersambung. Tanpa server, relay, Tailscale, maupun internet.</td></tr>
+<tr><td>Dari luar kantor</td><td>Laptop memakai VPN milik kantor, misalnya WireGuard di router kantor, supaya masuk ke jaringan kantor.</td></tr>
+<tr><td>Akun</td><td>Tanpa login. Setiap laptop punya kunci unik dan nama tampilan. Orang baru bergabung lewat kode undangan.</td></tr>
+<tr><td>Penyimpanan</td><td>Data disimpan di laptop masing-masing (SQLite). Board disinkronkan dengan CRDT supaya edit bersamaan tidak bentrok.</td></tr>
+<tr><td>Keamanan</td><td>Setiap perubahan ditandatangani digital oleh laptop pengirim dan dicek oleh laptop penerima. Perubahan yang ditolak dicatat di halaman Keamanan khusus admin.</td></tr>
+<tr><td>Struktur</td><td>Satu organisasi Mira untuk seluruh kantor, dibagi per tim. Ada channel #umum untuk semua orang.</td></tr>
+<tr><td>Peran</td><td>Superadmin (minimal dua), Admin tim, Anggota, dan Tamu. Tamu dibatasi per proyek.</td></tr>
+<tr><td>Chat</td><td>Pesan untuk rekan yang offline dititipkan tersegel ke rekan yang online. Ada tiga status pesan, dan pesan yang dihapus menyisakan tanda.</td></tr>
+<tr><td>Board</td><td>Model lengkap ala Jira, dibangun bertahap. Satu board per proyek, ditambah halaman "Task saya" yang mengumpulkan task milik Anda dari semua proyek.</td></tr>
+<tr><td>Pengingat</td><td>Notifikasi Windows sehari sebelum dan di hari tenggat. Kalau laptop mati, muncul saat dinyalakan. Bisa diatur per orang.</td></tr>
+<tr><td>Edit file</td><td>Word dan Excel diedit di Microsoft Office, dengan tanda "Sedang diedit" dan riwayat versi. PDF bisa diberi catatan di aplikasi. Edit yang bentrok menyimpan kedua versi.</td></tr>
+<tr><td>Tanda tangan</td><td>Visual di PDF. Urutan penanda tangan ditentukan pengirim, tanda tangan tersimpan dilindungi PIN, dan file dikunci setelah ditandatangani. Tamu boleh menandatangani kalau diminta.</td></tr>
+<tr><td>Tampilan</td><td>Tema Bata: hangat dan lapang, dengan mode terang, gelap, dan ikuti Windows. Tema lain bisa ditambah nanti.</td></tr>
+<tr><td>Aplikasi HP</td><td>Ditunda. Kalau dibuat nanti, tersambung lewat VPN kantor.</td></tr>
+</table>
+
+<h2>Masih terbuka</h2>
+<ul>
+<li>Logo final. Sampai ada, Mira memakai logo sementara di halaman Tampilan.</li>
+</ul>
+
+<!-- ============ ARSITEKTUR ============ -->
+<div class="section">
+<h2>Cara kerja tanpa server</h2>
+<p>Setiap laptop menyimpan datanya sendiri. Laptop yang sedang online di jaringan yang sama saling menemukan secara otomatis dan bertukar pesan serta perubahan task secara langsung. Pesan untuk laptop yang offline menunggu sampai laptop itu tersambung lagi.</p>
+<figure>
+<svg width="100%" viewBox="0 0 680 380" role="img"><title>Cara kerja peer-to-peer di jaringan kantor</title><desc>Empat laptop di satu jaringan kantor. Tiga yang online saling tersambung langsung. Satu offline, dan pesan untuknya menunggu.</desc>
+<rect x="40" y="40" width="600" height="280" rx="16" fill="none" stroke="#B4B2A9" stroke-dasharray="4 4" stroke-width="0.75"/>
+<text class="th" x="60" y="66">Jaringan kantor (Wi-Fi, LAN, atau VPN kantor)</text>
+<line x1="250" y1="120" x2="430" y2="120" stroke="#1D9E75" stroke-width="1.5"/>
+<line x1="165" y1="150" x2="165" y2="230" stroke="#1D9E75" stroke-width="1.5"/>
+<line x1="430" y1="150" x2="250" y2="230" stroke="#1D9E75" stroke-width="1.5"/>
+<line x1="515" y1="150" x2="515" y2="230" stroke="#888780" stroke-width="1.5" stroke-dasharray="5 4"/>
+<line x1="250" y1="260" x2="430" y2="260" stroke="#888780" stroke-width="1.5" stroke-dasharray="5 4"/>
+<g class="c-teal"><rect x="80" y="90" width="170" height="60" rx="8" stroke-width="0.75"/><text class="th" x="165" y="112" text-anchor="middle" dominant-baseline="central">Laptop Anda</text><text class="ts" x="165" y="132" text-anchor="middle" dominant-baseline="central">Data lokal di SQLite</text></g>
+<g class="c-teal"><rect x="430" y="90" width="170" height="60" rx="8" stroke-width="0.75"/><text class="th" x="515" y="112" text-anchor="middle" dominant-baseline="central">Laptop rekan 1</text><text class="ts" x="515" y="132" text-anchor="middle" dominant-baseline="central">Data lokal di SQLite</text></g>
+<g class="c-teal"><rect x="80" y="230" width="170" height="60" rx="8" stroke-width="0.75"/><text class="th" x="165" y="252" text-anchor="middle" dominant-baseline="central">Laptop rekan 2</text><text class="ts" x="165" y="272" text-anchor="middle" dominant-baseline="central">Lewat VPN dari rumah</text></g>
+<g class="c-gray"><rect x="430" y="230" width="170" height="60" rx="8" stroke-width="0.75"/><text class="th" x="515" y="252" text-anchor="middle" dominant-baseline="central">Laptop rekan 3</text><text class="ts" x="515" y="272" text-anchor="middle" dominant-baseline="central">Offline, pesan antre</text></g>
+<line x1="60" y1="350" x2="100" y2="350" stroke="#1D9E75" stroke-width="1.5"/>
+<text class="ts" x="110" y="350" dominant-baseline="central">Tersambung, sinkron langsung</text>
+<line x1="370" y1="350" x2="410" y2="350" stroke="#888780" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text class="ts" x="420" y="350" dominant-baseline="central">Antre sampai online lagi</text>
+</svg>
+</figure>
+
+<h3>Hal teknis di jaringan kantor</h3>
+<ol>
+<li><b>Wi-Fi tamu sering mengisolasi perangkat.</b> Laptop di jaringan tamu biasanya tidak bisa saling melihat. Tamu harus masuk ke jaringan yang sama dengan anggota, atau isolasinya dimatikan.</li>
+<li><b>Penemuan otomatis bisa diblokir router.</b> Aplikasi menemukan rekan lewat mDNS. Kalau diblokir, cadangannya memasukkan alamat IP rekan secara manual atau memindai QR code dari layar laptop rekan.</li>
+<li><b>Windows Firewall bertanya saat aplikasi pertama dibuka.</b> Pengguna harus mengizinkan akses jaringan. Layar pertama aplikasi perlu menjelaskan ini.</li>
+<li><b>Jaringan yang dipisah.</b> Kalau jaringannya dipisah (beda subnet atau VLAN), penemuan otomatis biasanya tidak menembus dan perlu input IP manual.</li>
+</ol>
+
+<h3>Bekerja dari luar kantor</h3>
+<ol>
+<li><b>Admin IT memasang VPN di router kantor</b> dan membuat profil untuk setiap laptop. Laptop lewat VPN harus bisa terhubung ke laptop di kantor dan ke sesama laptop yang memakai VPN.</li>
+<li><b>Cukup lalu lintas ke jaringan kantor yang lewat VPN</b> (split tunnel), supaya browsing tidak membebani internet kantor.</li>
+<li><b>Aplikasi mengingat alamat terakhir setiap rekan,</b> karena penemuan otomatis tidak menembus VPN. Alamat juga bisa dimasukkan manual.</li>
+<li><b>Status koneksi terlihat jelas:</b> "Tersambung lewat LAN kantor", "Tersambung lewat VPN", atau "Tidak tersambung ke jaringan kantor. Nyalakan VPN untuk sinkron."</li>
+<li><b>Windows sering menganggap jaringan VPN sebagai Public,</b> jadi layar pertama aplikasi memandu pengguna mengizinkannya di firewall.</li>
+</ol>
+</div>
+
+<!-- ============ CHAT ============ -->
+<div class="section">
+<h2>Chat</h2>
+<p>Konsep utamanya: semua berawal dari percakapan. File yang perlu ditandatangani dan task yang dibuat muncul langsung di chat, jadi orang tidak perlu pindah-pindah menu.</p>
+<figure>
+<div class="frame"><div class="win" style="display:grid;grid-template-columns:172px minmax(0,1fr);min-height:420px">
+<div class="side">
+<p class="app"><img src="logo-sementara.svg" alt="" width="22" height="22">Mira</p>
+<div class="nav on"><i class="ti ti-message" aria-hidden="true"></i>Chat</div>
+<div class="nav"><i class="ti ti-layout-kanban" aria-hidden="true"></i>Board</div>
+<div class="nav"><i class="ti ti-file-text" aria-hidden="true"></i>Dokumen</div>
+<p class="lbl">Channel</p>
+<div class="row" style="color:var(--text-secondary)"># umum</div>
+<div class="row" style="font-weight:700"># proyek-a</div>
+<p class="lbl">Di jaringan</p>
+<div class="row"><span class="dot" style="background:var(--text-success)"></span>Rekan A</div>
+<div class="row"><span class="dot" style="background:var(--text-success)"></span>Rekan B</div>
+<div class="row" style="color:var(--text-secondary)"><span class="dot" style="border:1.5px solid var(--text-secondary)"></span>Rekan C, offline</div>
+</div>
+<div style="display:flex;flex-direction:column;min-width:0">
+<div class="hd"><span class="ttl"># proyek-a</span><span class="sec">Tersambung lewat LAN kantor</span></div>
+<div style="padding:16px 18px;display:flex;flex-direction:column;gap:16px;flex:1">
+<div class="msg"><div class="av">RA</div><div style="min-width:0;flex:1">
+<p class="nm"><b>Rekan A</b> <span>09.12</span></p>
+<p class="bdy">Draft kontraknya sudah saya kirim, tolong ditandatangani.</p>
+<div class="card"><i class="ti ti-file-type-pdf" style="font-size:20px;color:var(--text-secondary)" aria-hidden="true"></i><div style="min-width:0"><p style="margin:0;font-size:13px;font-weight:700">kontrak-draft.pdf</p><p style="margin:0;font-size:12px;color:var(--text-accent)">Menunggu tanda tangan Anda</p></div><button class="cbtn pbtn">Tanda tangani</button></div>
+</div></div>
+<div class="msg"><div class="av">RB</div><div style="min-width:0;flex:1">
+<p class="nm"><b>Rekan B</b> <span>09.20</span></p>
+<p class="bdy">Saya buatkan task-nya supaya tidak lupa.</p>
+<div class="card"><i class="ti ti-checkbox" style="font-size:20px;color:var(--text-secondary)" aria-hidden="true"></i><div style="min-width:0"><p style="margin:0;font-size:13px;font-weight:700">Review kontrak proyek A</p><p style="margin:0;font-size:12px;color:var(--text-secondary)">To do · untuk Rekan B</p></div><button class="cbtn">Buka di board</button></div>
+</div></div>
+<p style="margin:0;font-size:12px;color:var(--text-secondary);text-align:center">Rekan C sedang offline. Pesan dititipkan dan terkirim saat laptopnya tersambung.</p>
+</div>
+<div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px"><span class="ip" style="flex:1">Tulis pesan ke #proyek-a</span><button aria-label="Lampirkan file"><i class="ti ti-paperclip" aria-hidden="true"></i></button><button class="pbtn">Kirim</button></div>
+</div>
+</div></div>
+<figcaption>Layar utama: channel dan rekan yang online di kiri, percakapan di kanan dengan kartu file dan task di dalam chat.</figcaption>
+</figure>
+
+<div class="keep">
+<h3>Titipan: pesan untuk rekan yang offline</h3>
+<p>Tanpa server, tidak ada tempat penampungan pusat. Jadi pesan untuk rekan yang offline dikunci dengan kunci milik penerima, lalu dititipkan ke laptop rekan lain yang sedang online. Begitu penerima online, titipan diserahkan dan salinannya dihapus. Rekan yang dititipi tidak bisa membaca isinya, dan tidak melihat apa-apa di layarnya.</p>
+<figure>
+<svg width="100%" viewBox="0 0 680 330" role="img"><title>Cara pesan sampai ke rekan yang offline</title><desc>Anda mengirim pesan ke Rekan C yang offline, dititipkan ke Rekan B. Laptop Anda mati, Rekan B masih memegang titipan. Rekan C online dan menerima titipan dari Rekan B.</desc>
+<text class="th" x="125" y="56" text-anchor="middle">Anda kirim pesan</text>
+<text class="th" x="340" y="56" text-anchor="middle">Anda pulang</text>
+<text class="th" x="555" y="56" text-anchor="middle">Rekan C datang</text>
+<g class="c-teal"><rect x="40" y="76" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="125" y="93" text-anchor="middle" dominant-baseline="central">Anda</text><text class="ts" x="125" y="111" text-anchor="middle" dominant-baseline="central">Kirim pesan</text></g>
+<line x1="125" y1="126" x2="125" y2="144" class="arr" marker-end="url(#arrow)"/>
+<g class="c-teal"><rect x="40" y="146" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="125" y="163" text-anchor="middle" dominant-baseline="central">Rekan B</text><text class="ts" x="125" y="181" text-anchor="middle" dominant-baseline="central">Simpan titipan</text></g>
+<g class="c-gray"><rect x="40" y="216" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="125" y="233" text-anchor="middle" dominant-baseline="central">Rekan C</text><text class="ts" x="125" y="251" text-anchor="middle" dominant-baseline="central">Offline</text></g>
+<g class="c-gray"><rect x="255" y="76" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="340" y="93" text-anchor="middle" dominant-baseline="central">Anda</text><text class="ts" x="340" y="111" text-anchor="middle" dominant-baseline="central">Laptop mati</text></g>
+<g class="c-teal"><rect x="255" y="146" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="340" y="163" text-anchor="middle" dominant-baseline="central">Rekan B</text><text class="ts" x="340" y="181" text-anchor="middle" dominant-baseline="central">Masih pegang titipan</text></g>
+<g class="c-gray"><rect x="255" y="216" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="340" y="233" text-anchor="middle" dominant-baseline="central">Rekan C</text><text class="ts" x="340" y="251" text-anchor="middle" dominant-baseline="central">Offline</text></g>
+<g class="c-gray"><rect x="470" y="76" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="555" y="93" text-anchor="middle" dominant-baseline="central">Anda</text><text class="ts" x="555" y="111" text-anchor="middle" dominant-baseline="central">Laptop mati</text></g>
+<g class="c-teal"><rect x="470" y="146" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="555" y="163" text-anchor="middle" dominant-baseline="central">Rekan B</text><text class="ts" x="555" y="181" text-anchor="middle" dominant-baseline="central">Serahkan titipan</text></g>
+<line x1="555" y1="196" x2="555" y2="214" class="arr" marker-end="url(#arrow)"/>
+<g class="c-teal"><rect x="470" y="216" width="170" height="50" rx="8" stroke-width="0.75"/><text class="th" x="555" y="233" text-anchor="middle" dominant-baseline="central">Rekan C</text><text class="ts" x="555" y="251" text-anchor="middle" dominant-baseline="central">Pesan diterima</text></g>
+<text class="ts" x="340" y="300" text-anchor="middle" dominant-baseline="central">Titipan terenkripsi untuk Rekan C, jadi Rekan B tidak bisa membaca isinya</text>
+</svg>
+</figure>
+<p>Contohnya, Anda mengirim pesan jam 5 sore lalu pulang, Rekan C datang jam 8 pagi, dan Anda baru datang jam 9. Dengan titipan, pesan sampai jam 8. Tanpa titipan, pesan baru sampai jam 9, dan tidak sampai sama sekali kalau hari itu Anda cuti.</p>
+</div>
+
+<div class="keep">
+<h3>Status pesan</h3>
+<figure>
+<div class="frame"><div class="win">
+<div class="hd" style="align-items:center"><div class="av">RC</div><div><p style="margin:0;font-size:15px;font-weight:700">Rekan C</p><p style="margin:0;font-size:12px;color:var(--text-secondary)">Offline sejak [jam]</p></div></div>
+<div style="padding:14px 18px;display:flex;flex-direction:column;gap:16px">
+<div class="msg"><div class="av">AN</div><div style="min-width:0"><p class="nm"><b>Anda</b> <span>08.40</span></p><p class="bdy">Pagi, file presentasinya sudah saya kirim ke #proyek-a.</p><div class="cst"><i class="ti ti-checks" aria-hidden="true"></i>Dibaca</div></div></div>
+<div class="msg"><div class="av">RC</div><div style="min-width:0"><p class="nm"><b>Rekan C</b> <span>08.52</span></p><p class="bdy">Siap, nanti saya cek. <span class="me">@Anda</span> rapatnya jadi jam berapa?</p><span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 8px;margin-top:6px;border:1px solid var(--border-strong);border-radius:var(--radius)"><i class="ti ti-thumb-up" aria-hidden="true"></i>1</span></div></div>
+<div class="msg"><div class="av">AN</div><div style="min-width:0"><p class="nm"><b>Anda</b> <span>09.05</span></p><div class="qt">Rekan C: rapatnya jadi jam berapa?</div><p class="bdy">Jam 2 siang di ruang rapat.</p><div class="cst"><i class="ti ti-check" aria-hidden="true"></i>Diterima laptopnya, belum dibaca</div></div></div>
+<div class="msg"><div class="av">AN</div><div style="min-width:0"><p class="nm"><b>Anda</b> <span>11.30</span></p><p class="bdy">Jangan lupa bawa draft kontraknya ya.</p><div class="cst" style="color:var(--text-warning)"><i class="ti ti-clock" aria-hidden="true"></i>Dititipkan ke Rekan B, terkirim saat Rekan C online</div></div></div>
+</div>
+</div></div>
+<figcaption>Chat pribadi dengan rekan yang offline: tiga status pesan, balasan, mention, dan reaksi.</figcaption>
+</figure>
+</div>
+<ul>
+<li><b>Dibaca:</b> penerima sudah membuka chat-nya. Status ini bisa dimatikan per orang. Yang mematikannya juga tidak bisa melihat status "Dibaca" orang lain.</li>
+<li><b>Diterima laptopnya:</b> pesan sudah tersimpan di laptop penerima, tapi belum dibuka.</li>
+<li><b>Dititipkan:</b> penerima offline, dan pesan dipegang rekan lain dalam keadaan tersegel. Kalau tidak ada rekan lain yang online, pesan menunggu di laptop pengirim.</li>
+</ul>
+
+<h3>Keputusan chat</h3>
+<table class="doc">
+<tr><th>Bagian</th><th>Keputusan</th></tr>
+<tr><td>Hapus pesan</td><td>Isinya dihapus di semua laptop, tersisa tanda "Pesan dihapus". Laptop yang offline menghapus saat tersambung lagi.</td></tr>
+<tr><td>File</td><td>File di bawah sekitar 20 MB disalin otomatis ke semua anggota. File yang lebih besar diunduh saat diklik, dari laptop mana pun yang punya salinannya.</td></tr>
+<tr><td>Tamu</td><td>Hanya bisa bicara di channel proyek yang diizinkan. Tidak ada chat pribadi dengan Tamu.</td></tr>
+<tr><td>Channel</td><td>Semua anggota boleh membuat channel. Admin bisa mengarsipkan atau menghapusnya.</td></tr>
+</table>
+
+<h3>Fitur chat per tahap</h3>
+<table class="doc">
+<tr><th>Tahap</th><th>Fitur</th></tr>
+<tr><td>Dasar</td><td>Chat pribadi, channel per proyek, kirim file, status pesan, balas pesan, mention, notifikasi di laptop.</td></tr>
+<tr><td>Lengkap</td><td>Reaksi, edit dan hapus pesan, pencarian, ubah pesan jadi task, pin pesan penting.</td></tr>
+<tr><td>Lanjutan</td><td>Thread diskusi, indikator "sedang mengetik", panggilan suara di LAN.</td></tr>
+</table>
+</div>
+
+<!-- ============ BOARD ============ -->
+<div class="section">
+<h2>Board task</h2>
+<p>Model lengkap ala Jira, dengan satu perbedaan penting: setiap task tetap tersambung ke percakapan dan dokumen asalnya.</p>
+<figure>
+<div class="frame"><div class="win" style="padding:14px">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><span class="ttl"># proyek-a</span><span class="sec">Board</span><button style="margin-left:auto"><i class="ti ti-plus" aria-hidden="true"></i> Task baru</button></div>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+<div class="col"><div class="colh">To do <span>2</span></div>
+<div class="tk"><p class="tkt">Review kontrak proyek A</p><div class="tkm"><span class="av sm">RB</span>Tenggat [tanggal]</div><div class="tkl"><i class="ti ti-message" aria-hidden="true"></i>Dari chat #proyek-a</div></div>
+<div class="tk"><p class="tkt">Tanda tangan kontrak-draft.pdf</p><div class="tkm"><span class="av sm">RA</span>Tenggat [tanggal]</div><div class="tkl" style="color:var(--text-accent)"><i class="ti ti-signature" aria-hidden="true"></i>Menunggu tanda tangan</div></div></div>
+<div class="col"><div class="colh">Dikerjakan <span>1</span></div>
+<div class="tk"><p class="tkt">Siapkan laporan bulanan</p><div class="tkm"><span class="av sm">RC</span>Tenggat [tanggal]</div><div class="tkl" style="color:var(--text-warning)"><i class="ti ti-git-merge" aria-hidden="true"></i>Diubah Rekan C saat offline, sudah digabung</div></div></div>
+<div class="col"><div class="colh">Selesai <span>1</span></div>
+<div class="tk"><p class="tkt" style="color:var(--text-secondary)">Kirim jadwal rapat ke tim</p><div class="tkm"><span class="av sm">RA</span>Selesai [tanggal]</div></div></div>
+</div>
+</div></div>
+<figcaption>Board per proyek. Kartu menunjukkan asal task dan menandai perubahan yang dibuat saat offline.</figcaption>
+</figure>
+<ul>
+<li><b>Task lahir dari chat.</b> Pesan seperti "tolong cek kontrak" bisa langsung jadi task, dan kartunya menautkan balik ke percakapan asalnya.</li>
+<li><b>Task tersambung ke dokumen.</b> Kartu tanda tangan otomatis pindah ke Selesai begitu PDF-nya ditandatangani.</li>
+<li><b>Jejak sinkronisasi terlihat.</b> Perubahan yang dibuat saat offline diberi tanda sudah digabung, jadi tidak ada yang bingung kenapa isinya berubah.</li>
+<li><b>Satu board per proyek, plus "Task saya".</b> Setiap proyek punya board dan kode task sendiri. Halaman "Task saya" mengumpulkan semua task milik Anda dari semua proyek.</li>
+<li><b>Pengingat tenggat lewat notifikasi Windows,</b> sehari sebelum dan di hari tenggat. Kalau laptop mati saat itu, pengingat muncul begitu laptop dinyalakan.</li>
+</ul>
+
+<div class="keep">
+<h3>Detail task</h3>
+<figure>
+<div class="frame"><div class="win" style="padding:14px 16px">
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"><span style="font-size:12px;color:var(--text-secondary)"># proyek-a / PA-12</span><div style="margin-left:auto;display:flex;gap:4px"><button class="seg on">Board</button><button class="seg">Daftar</button><button class="seg">Kalender</button></div></div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:20px">
+<div style="min-width:0">
+<p style="font-size:17px;font-weight:700;margin:0 0 8px">Review kontrak proyek A</p>
+<p style="font-size:13px;line-height:1.6;margin:0">[Deskripsi task ditulis di sini: apa yang perlu dicek dan hasil yang diharapkan.]</p>
+<p class="sh">Sub-task <span style="font-weight:400;color:var(--text-secondary)">1 dari 3</span></p>
+<div class="sub done"><i class="ti ti-square-check" aria-hidden="true"></i><span>Cek pasal pembayaran</span></div>
+<div class="sub"><i class="ti ti-square" aria-hidden="true"></i><span>Cek lampiran teknis</span></div>
+<div class="sub"><i class="ti ti-square" aria-hidden="true"></i><span>Kirim catatan ke Rekan A</span></div>
+<p class="sh">Aktivitas</p>
+<p class="log"><span class="av sm">RB</span>Rekan B membuat task ini dari chat #proyek-a</p>
+<p class="log"><span class="av sm">RC</span>Rekan C mengubah prioritas menjadi Tinggi saat offline. Perubahan sudah digabung.</p>
+<div style="display:flex;gap:8px;margin-top:10px"><span class="ip" style="flex:1">Tulis komentar</span><button>Kirim</button></div>
+</div>
+<div style="border-left:1px solid var(--border);padding-left:16px">
+<p class="dk">Status</p><p class="dv">To do</p>
+<p class="dk">Penanggung jawab</p><p class="dv"><span class="av sm">RB</span>Rekan B</p>
+<p class="dk">Prioritas</p><p class="dv"><span class="pill" style="background:var(--bg-danger);color:var(--text-danger)">Tinggi</span></p>
+<p class="dk">Label</p><p class="dv"><span class="pill">kontrak</span><span class="pill">legal</span></p>
+<p class="dk">Tenggat</p><p class="dv">[tanggal]</p>
+<p class="dk">Estimasi</p><p class="dv">[jam]</p>
+<p class="dk">Terhubung ke</p>
+<p class="dv" style="flex-direction:column;align-items:flex-start;gap:4px;color:var(--text-secondary)"><span><i class="ti ti-message" aria-hidden="true"></i> Chat #proyek-a</span><span><i class="ti ti-file-type-pdf" aria-hidden="true"></i> kontrak-draft.pdf</span></p>
+</div>
+</div>
+</div></div>
+<figcaption>Detail task model lengkap, dengan pilihan tampilan Board, Daftar, dan Kalender.</figcaption>
+</figure>
+</div>
+
+<h3>Fitur board per tahap</h3>
+<table class="doc">
+<tr><th>Tahap</th><th>Fitur</th></tr>
+<tr><td>Dasar</td><td>Kode task (PA-12), status, penanggung jawab, tenggat, deskripsi, komentar, riwayat aktivitas.</td></tr>
+<tr><td>Lengkap</td><td>Prioritas, label, sub-task, estimasi, kolom yang bisa ditambah sendiri, tampilan Daftar dan Kalender.</td></tr>
+<tr><td>Lanjutan</td><td>Sprint, filter tersimpan, laporan (misalnya jumlah task selesai per minggu).</td></tr>
+</table>
+</div>
+
+<!-- ============ DOKUMEN ============ -->
+<div class="section">
+<h2>Edit dan tanda tangan file</h2>
+<p>Layar Dokumen mengumpulkan semua file proyek beserta versinya, siapa yang sedang mengedit, dan file mana yang menunggu tanda tangan.</p>
+<figure>
+<div class="frame"><div class="win" style="display:grid;grid-template-columns:150px minmax(0,1fr)">
+<div class="side"><p class="app"><img src="logo-sementara.svg" alt="" width="22" height="22">Mira</p><div class="nav"><i class="ti ti-message" aria-hidden="true"></i>Chat</div><div class="nav"><i class="ti ti-layout-kanban" aria-hidden="true"></i>Board</div><div class="nav on"><i class="ti ti-file-text" aria-hidden="true"></i>Dokumen</div></div>
+<div style="min-width:0">
+<div class="hd"><span class="ttl"># proyek-a</span><span class="sec">Dokumen</span></div>
+<div class="drow"><i class="ti ti-file-type-pdf fi" aria-hidden="true"></i><div style="min-width:0"><p class="fn">kontrak-draft.pdf</p><p class="fm act"><i class="ti ti-signature" aria-hidden="true"></i>Versi 3 · Rekan B sudah tanda tangan, giliran Anda</p></div><button class="cbtn pbtn">Tanda tangani</button></div>
+<div class="drow"><i class="ti ti-file-spreadsheet fi" aria-hidden="true"></i><div style="min-width:0"><p class="fn">RAB-proyek-a.xlsx</p><p class="fm"><i class="ti ti-lock" aria-hidden="true"></i>Sedang diedit Rekan C sejak 10.15</p></div><button class="cbtn">Buka hanya baca</button></div>
+<div class="drow sel"><i class="ti ti-file-word fi" aria-hidden="true"></i><div style="min-width:0"><p class="fn">laporan-bulanan.docx</p><p class="fm">Versi 2 · Diubah Anda kemarin</p></div><button class="cbtn">Edit di Word</button></div>
+<div style="padding:12px 18px 16px">
+<p style="font-size:12px;font-weight:700;margin:0 0 8px">Riwayat versi laporan-bulanan.docx</p>
+<div class="vr"><span class="vn">v2</span><span class="av sm">AN</span><div><p>Revisi bab 3</p><p style="color:var(--text-secondary)">Anda · kemarin</p></div></div>
+<div class="vr"><span class="vn">v1</span><span class="av sm">RA</span><div><p>Draft pertama</p><p style="color:var(--text-secondary)">Rekan A · [tanggal]</p></div><button class="cbtn">Pulihkan</button></div>
+</div>
+</div>
+</div></div>
+<figcaption>Layar Dokumen: status setiap file dan riwayat versi file yang dipilih.</figcaption>
+</figure>
+
+<h3>Alur edit Word dan Excel</h3>
+<ol>
+<li>Pengguna klik "Edit di Word" atau "Edit di Excel", dan file terbuka di Microsoft Office.</li>
+<li>Rekan lain langsung melihat tanda "Sedang diedit" beserta namanya, dan bisa membuka file dalam mode hanya baca.</li>
+<li>Setiap kali file disimpan, aplikasi membuat versi baru dan mengirimkannya ke tim beserta catatan siapa dan kapan.</li>
+<li>Versi lama tetap tersimpan dan bisa dipulihkan.</li>
+<li>Kalau dua orang mengedit saat salah satunya offline, kedua versi disimpan dan ditandai "bentrok". Salah satu orang lalu memilih atau menggabungkan secara manual, jadi tidak ada pekerjaan yang hilang.</li>
+</ol>
+<p>PDF tidak dibuka di aplikasi lain. Komentar, stabilo, dan kotak teks ditambahkan langsung di aplikasi ini.</p>
+
+<div class="keep">
+<h3>Tanda tangan PDF berurutan</h3>
+<figure>
+<div class="frame"><div class="win">
+<div class="hd" style="align-items:center"><i class="ti ti-file-type-pdf" style="font-size:20px;color:var(--text-secondary)" aria-hidden="true"></i><span class="ttl" style="font-size:15px">kontrak-draft.pdf</span><span class="sec">Versi 3 · halaman 4 dari 4</span></div>
+<div style="display:grid;grid-template-columns:minmax(0,1fr) 220px">
+<div style="background:var(--bg-neutral);padding:18px;display:flex;justify-content:center"><div class="pg">
+<div class="ln" style="width:60%"></div><div class="ln"></div><div class="ln"></div><div class="ln" style="width:85%"></div><div class="ln"></div><div class="ln" style="width:40%"></div>
+<div class="sigs">
+<div class="sb"><div class="im"><i class="ti ti-circle-check" aria-hidden="true"></i>&nbsp;Sudah ditandatangani</div>Rekan B</div>
+<div class="sb mine"><div class="im">[Tanda tangan Anda]</div>Anda · [tanggal]</div>
+</div>
+</div></div>
+<div style="padding:14px 16px;border-left:1px solid var(--border)">
+<p style="font-size:12px;font-weight:700;margin:0 0 8px">Urutan tanda tangan</p>
+<div class="st"><span class="nb ok"><i class="ti ti-check" aria-hidden="true"></i></span><div><p>Rekan B</p><p style="color:var(--text-secondary);font-size:11px">Sudah, [tanggal]</p></div></div>
+<div class="st"><span class="nb now">2</span><div><p>Anda</p><p style="color:var(--text-accent);font-size:11px;font-weight:700">Giliran Anda</p></div></div>
+<div class="st"><span class="nb">3</span><div><p>Rekan A</p><p style="color:var(--text-secondary);font-size:11px">Menunggu Anda</p></div></div>
+<div style="margin:14px 0">
+<button class="tbtn"><i class="ti ti-signature" aria-hidden="true"></i>Gambar tanda tangan</button>
+<button class="tbtn"><i class="ti ti-history" aria-hidden="true"></i>Pakai yang tersimpan (PIN)</button>
+</div>
+<button class="pbtn" style="width:100%">Selesai dan kirim</button>
+<p style="font-size:11px;color:var(--text-secondary);margin:8px 0 0;line-height:1.5">Setelah ditandatangani, isi file dikunci. Kalau ada yang mengubahnya, aplikasi memberi peringatan.</p>
+</div>
+</div>
+</div></div>
+<figcaption>Layar tanda tangan: kotak tanda tangan Anda di halaman PDF, dan urutan penanda tangan di panel kanan.</figcaption>
+</figure>
+</div>
+
+<h3>Keputusan edit dan tanda tangan</h3>
+<table class="doc">
+<tr><th>Bagian</th><th>Keputusan</th></tr>
+<tr><td>Word dan Excel</td><td>Diedit di Microsoft Office, dengan tanda "Sedang diedit" dan riwayat versi yang bisa dipulihkan.</td></tr>
+<tr><td>PDF</td><td>Komentar, stabilo, dan kotak teks langsung di aplikasi.</td></tr>
+<tr><td>Edit bentrok</td><td>Kedua versi disimpan dan ditandai "bentrok", lalu dipilih atau digabung manual.</td></tr>
+<tr><td>Urutan tanda tangan</td><td>Ditentukan pengirim saat meminta tanda tangan: berurutan atau bebas.</td></tr>
+<tr><td>Tanda tangan tersimpan</td><td>Dilindungi PIN setiap kali dipakai.</td></tr>
+<tr><td>Tamu</td><td>Boleh menandatangani kalau namanya dimasukkan ke daftar penanda tangan, dan hanya untuk dokumen di proyek yang diizinkan. Tamu tidak bisa meminta tanda tangan.</td></tr>
+<tr><td>Setelah ditandatangani</td><td>Isi file dikunci, dan aplikasi memberi peringatan kalau ada yang mengubahnya.</td></tr>
+</table>
+
+<h3>Yang perlu disadari</h3>
+<ol>
+<li><b>Setiap laptop perlu Microsoft Office</b> untuk mengedit Word dan Excel. Tanpa Office, file tetap bisa dibuka hanya baca di aplikasi.</li>
+<li><b>Tanda "Sedang diedit" hanya pengingat, bukan kunci mutlak.</b> Laptop yang offline tidak tahu ada orang lain yang sedang mengedit. Karena itu aturan "simpan keduanya" penting.</li>
+<li><b>Kekuatan hukum tanda tangan.</b> Tanda tangan di aplikasi ini termasuk tanda tangan elektronik yang tidak tersertifikasi. Cocok untuk persetujuan internal. Untuk kontrak bernilai besar dengan pihak luar, sebaiknya tanyakan ke bagian legal.</li>
+</ol>
+</div>
+
+<!-- ============ PERAN ============ -->
+<div class="section">
+<h2>Peran dan hak akses</h2>
+<p>Tanpa server, tidak ada penjaga pusat yang menolak aksi tanpa izin. Jadi daftar anggota beserta perannya disimpan di setiap laptop, hanya admin yang boleh mengubahnya, dan setiap perubahan yang masuk diperiksa dulu oleh laptop penerima. Perubahan yang ditolak dicatat di halaman Keamanan khusus admin, dan admin melihat tanda kecil kalau ada catatan baru.</p>
+<figure>
+<svg width="100%" viewBox="0 0 680 436" role="img"><title>Alur pemeriksaan izin saat perubahan masuk</title><desc>Perubahan dari laptop rekan dicek keasliannya, lalu dicek izinnya. Jika lolos, diterima dan board diperbarui. Jika tidak asli atau tidak punya izin, ditolak dan hanya dicatat.</desc>
+<rect class="box" x="230" y="40" width="220" height="56" rx="8" stroke-width="0.75"/>
+<text class="th" x="340" y="58" text-anchor="middle" dominant-baseline="central">Perubahan masuk</text>
+<text class="ts" x="340" y="78" text-anchor="middle" dominant-baseline="central">Dari laptop rekan</text>
+<line x1="340" y1="96" x2="340" y2="134" class="arr" marker-end="url(#arrow)"/>
+<rect class="box" x="230" y="136" width="220" height="56" rx="8" stroke-width="0.75"/>
+<text class="th" x="340" y="154" text-anchor="middle" dominant-baseline="central">Cek keaslian</text>
+<text class="ts" x="340" y="174" text-anchor="middle" dominant-baseline="central">Benar dikirim oleh dia?</text>
+<line x1="340" y1="192" x2="340" y2="230" class="arr" marker-end="url(#arrow)"/>
+<rect class="box" x="230" y="232" width="220" height="56" rx="8" stroke-width="0.75"/>
+<text class="th" x="340" y="250" text-anchor="middle" dominant-baseline="central">Cek peran</text>
+<text class="ts" x="340" y="270" text-anchor="middle" dominant-baseline="central">Dia punya izin untuk ini?</text>
+<path d="M300 288 L300 314 L210 314 L210 338" class="arr" marker-end="url(#arrow)"/>
+<path d="M380 288 L380 314 L470 314 L470 338" class="arr" marker-end="url(#arrow)"/>
+<path d="M450 164 L600 164 L600 368 L572 368" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="525" y="152" text-anchor="middle" dominant-baseline="central">Tidak asli</text>
+<text class="ts" x="255" y="302" text-anchor="middle" dominant-baseline="central">Ya</text>
+<text class="ts" x="425" y="302" text-anchor="middle" dominant-baseline="central">Tidak</text>
+<g class="c-teal"><rect x="110" y="340" width="200" height="56" rx="8" stroke-width="0.75"/><text class="th" x="210" y="358" text-anchor="middle" dominant-baseline="central">Diterima</text><text class="ts" x="210" y="378" text-anchor="middle" dominant-baseline="central">Board diperbarui</text></g>
+<g class="c-coral"><rect x="370" y="340" width="200" height="56" rx="8" stroke-width="0.75"/><text class="th" x="470" y="358" text-anchor="middle" dominant-baseline="central">Ditolak</text><text class="ts" x="470" y="378" text-anchor="middle" dominant-baseline="central">Dicatat, tidak dipakai</text></g>
+</svg>
+</figure>
+
+<h3>Struktur organisasi</h3>
+<p>Seluruh kantor memakai satu organisasi Mira yang dibagi per tim. Superadmin membuat tim dan mengangkat admin tim. Setiap proyek milik satu tim, anggota bisa ikut beberapa tim, dan bisa diundang ke proyek tim lain. Superadmin tidak otomatis membaca isi semua tim: kalau perlu, ia menambahkan dirinya ke tim dan tindakan itu tercatat.</p>
+
+<h3>Pembagian izin</h3>
+<table class="doc">
+<tr><th>Aksi</th><th>Superadmin</th><th>Admin tim</th><th>Anggota</th><th>Tamu</th></tr>
+<tr><td>Buat dan hapus tim</td><td>Ya</td><td>Tidak</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td>Angkat atau lepas admin tim dan superadmin</td><td>Ya</td><td>Tidak</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td>Undang dan keluarkan anggota</td><td>Semua tim</td><td>Timnya</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td>Undang Tamu ke proyek</td><td>Semua tim</td><td>Proyek timnya</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td>Buat proyek, atur kolom dan label</td><td>Semua tim</td><td>Timnya</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td>Buat, edit, dan pindahkan task</td><td>Tim yang ia ikuti</td><td>Timnya</td><td>Tim dan proyek yang ia ikuti</td><td>Tidak</td></tr>
+<tr><td>Lihat board dan komentar</td><td>Tim yang ia ikuti</td><td>Timnya</td><td>Tim dan proyek yang ia ikuti</td><td>Proyek yang diizinkan</td></tr>
+<tr><td>Hapus task</td><td>Tim yang ia ikuti</td><td>Semua task di timnya</td><td>Task buatannya sendiri</td><td>Tidak</td></tr>
+<tr><td>Tanda tangan dokumen</td><td>Ya</td><td>Ya</td><td>Ya</td><td>Kalau diminta</td></tr>
+<tr><td>Minta tanda tangan</td><td>Ya</td><td>Ya</td><td>Ya</td><td>Tidak</td></tr>
+<tr><td>Halaman Keamanan</td><td>Seluruh organisasi</td><td>Timnya</td><td>Tidak</td><td>Tidak</td></tr>
+</table>
+
+<div class="keep">
+<h3>Mengundang orang</h3>
+<figure>
+<div style="background:rgba(42,31,26,0.5);border-radius:12px;display:flex;align-items:center;justify-content:center;padding:22px">
+<div class="dlg" style="background:var(--surface-2);border-radius:12px;border:1px solid var(--border);width:100%;max-width:420px;padding:18px 20px">
+<p style="font-size:16px;font-weight:700;margin:0 0 14px">Undang ke tim</p>
+<div style="display:flex;flex-direction:column;gap:8px">
+<div class="opt"><i class="ti ti-circle" aria-hidden="true" style="margin-top:2px"></i><span><p class="ot">Anggota</p><p class="od">Chat, buat dan kerjakan task di semua proyek</p></span></div>
+<div class="opt on"><i class="ti ti-circle-dot" aria-hidden="true" style="margin-top:2px;color:var(--text-accent)"></i><span><p class="ot">Tamu</p><p class="od">Lihat dan komentar di proyek yang dipilih</p></span></div>
+<div class="opt"><i class="ti ti-circle" aria-hidden="true" style="margin-top:2px"></i><span><p class="ot">Admin tim</p><p class="od">Semua izin di tim ini, termasuk mengatur anggota</p></span></div>
+</div>
+<p class="il">Proyek yang boleh dilihat</p>
+<div class="chk"><i class="ti ti-square-check" aria-hidden="true"></i> # proyek-a</div>
+<div class="chk"><i class="ti ti-square" aria-hidden="true"></i> # proyek-b</div>
+<p class="il">Kode berlaku selama</p>
+<div class="ip" style="justify-content:space-between;color:var(--text-primary)">24 jam <i class="ti ti-chevron-down" aria-hidden="true"></i></div>
+<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px"><button>Batal</button><button class="pbtn">Buat kode undangan</button></div>
+</div>
+</div>
+<figcaption>Admin tim memilih peran. Untuk Tamu, admin tim juga memilih proyek yang boleh dilihat. Kode undangan punya masa berlaku.</figcaption>
+</figure>
+</div>
+
+<h3>Yang perlu disadari</h3>
+<ol>
+<li><b>Minimal dua superadmin.</b> Kalau satu-satunya laptop superadmin rusak atau hilang, tidak ada lagi yang bisa membuat tim atau mengangkat admin tim. Aplikasi mengingatkan kalau superadmin baru satu, dan superadmin bisa menyimpan kunci cadangan di flashdisk. Kalau admin tim berhalangan, superadmin bisa menggantikannya.</li>
+<li><b>Mengeluarkan anggota tidak menghapus datanya.</b> Laptopnya berhenti menerima data baru dan perubahannya ditolak, tapi salinan yang sudah ada di laptopnya tetap tersimpan.</li>
+<li><b>Data Tamu dibatasi dari sumbernya.</b> Laptop anggota tidak pernah mengirim chat atau task dari proyek lain ke laptop Tamu, jadi datanya memang tidak sampai ke sana, bukan sekadar disembunyikan di layar.</li>
+<li><b>Tamu hanya tersambung saat di jaringan yang sama.</b> Klien atau freelancer baru mendapat update saat terhubung ke jaringan kantor.</li>
+</ol>
+</div>
+
+<!-- ============ TAMPILAN ============ -->
+<div class="section">
+<h2>Tampilan</h2>
+<p>Dari tiga arah yang diusulkan, yang dipakai adalah arah C dengan nama tema "Bata": hangat dan lapang, huruf Nunito, sudut membulat, dan oranye bata untuk aksi. Detail lengkapnya ada di file <b>design/tema-c.pdf</b>, dan perbandingan ketiga arah ada di <b>design/arah-tampilan.pdf</b>.</p>
+<h3>Mode dan tema</h3>
+<ol>
+<li>Ada tiga pilihan mode: Terang, Gelap, dan Ikuti Windows.</li>
+<li>Setiap warna diberi nama peran (latar, teks, aksi, dan seterusnya). Layar hanya memakai nama peran itu, jadi tema baru cukup berupa daftar nilai warna baru.</li>
+<li>Arah A dan B disimpan sebagai calon tema berikutnya: "Kertas" dan "Panel".</li>
+<li>Pilihan tema dan mode disimpan di laptop masing-masing dan tidak dikirim ke rekan.</li>
+</ol>
+<h3>Warna utama tema Bata</h3>
+<table class="doc">
+<tr><th>Peran</th><th>Terang</th><th>Gelap</th></tr>
+<tr><td>Latar utama</td><td><span class="sw"><i style="background:#FFFFFF"></i>#FFFFFF</span></td><td><span class="sw"><i style="background:#1E1714"></i>#1E1714</span></td></tr>
+<tr><td>Sidebar</td><td><span class="sw"><i style="background:#FFF4EE"></i>#FFF4EE</span></td><td><span class="sw"><i style="background:#261D19"></i>#261D19</span></td></tr>
+<tr><td>Teks utama</td><td><span class="sw"><i style="background:#2A1F1A"></i>#2A1F1A</span></td><td><span class="sw"><i style="background:#F5EAE4"></i>#F5EAE4</span></td></tr>
+<tr><td>Teks pendukung</td><td><span class="sw"><i style="background:#6E5F57"></i>#6E5F57</span></td><td><span class="sw"><i style="background:#C2B0A6"></i>#C2B0A6</span></td></tr>
+<tr><td>Tombol aksi</td><td><span class="sw"><i style="background:#B4472A"></i>#B4472A, teks putih</span></td><td><span class="sw"><i style="background:#F08A64"></i>#F08A64, teks gelap</span></td></tr>
+<tr><td>Status online</td><td><span class="sw"><i style="background:#3B7A4F"></i>#3B7A4F</span></td><td><span class="sw"><i style="background:#6CC48A"></i>#6CC48A</span></td></tr>
+</table>
+<p style="font-size:13px;color:#5F5E5A">Semua pasangan teks lolos standar kontras WCAG AA di kedua mode.</p>
+<h3>Logo sementara</h3>
+<div style="display:flex;gap:28px;align-items:center;margin:4px 0 10px">
+<div style="display:flex;align-items:center;gap:12px"><img src="logo-sementara.svg" alt="Logo sementara Mira untuk mode terang" width="56" height="56"><span style="font-family:Nunito,sans-serif;font-size:24px;font-weight:700;color:#2A1F1A">Mira</span></div>
+<div style="display:flex;align-items:center;gap:12px;background:#1E1714;padding:10px 16px;border-radius:12px"><img src="logo-sementara-gelap.svg" alt="Logo sementara Mira untuk mode gelap" width="56" height="56"><span style="font-family:Nunito,sans-serif;font-size:24px;font-weight:700;color:#F5EAE4">Mira</span></div>
+</div>
+<p style="font-size:13px;color:#5F5E5A">Monogram M di kotak membulat, memakai warna aksi tema Bata. Ini hanya penanda sementara sampai logo final dibuat.</p>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD Mira</title>
+<style>
+@page{size:A4;margin:16mm 15mm 18mm;@bottom-right{content:"Halaman " counter(page);font:11px "Segoe UI",sans-serif;color:#6E5F57}}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html,body{background:#ffffff;margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:#1f1e1c}
+.doc{max-width:712px;margin:0 auto;padding:32px 16px}
+h1{font-size:28px;line-height:1.25;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:12px}
+h2{font-size:20px;font-weight:600;margin:26px 0 10px}
+h3{font-size:15px;font-weight:600;margin:18px 0 8px}
+h2,h3{break-after:avoid}
+p{margin:0 0 10px}
+.meta{font-size:13px;color:#5F5E5A;margin:0 0 18px}
+.lead{font-size:16px;margin:0 0 14px}
+.note{font-size:13px;color:#5F5E5A;border:1px solid #e3ddd6;border-radius:8px;padding:10px 12px;margin:0 0 18px}
+.section{break-before:page}
+.section>h2:first-child{margin-top:0}
+ul,ol{margin:0 0 12px;padding-left:20px}
+li{margin:0 0 5px}
+table.doc{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 16px}
+table.doc tr{break-inside:avoid}
+table.doc tr:first-child,table.doc tr:nth-child(2){break-after:avoid;page-break-after:avoid}
+table.doc th{text-align:left;font-weight:600;padding:7px 10px 7px 0;border-bottom:1px solid #8f8d86;vertical-align:bottom}
+table.doc td{padding:7px 10px 7px 0;border-bottom:1px solid #e3ddd6;vertical-align:top}
+table.doc td.id{font-family:Consolas,monospace;font-size:12px;white-space:nowrap;color:#5F5E5A}
+table.doc td.b{font-weight:600}
+.r{font-size:11px;font-weight:600;padding:1px 7px;border-radius:12px;white-space:nowrap;display:inline-block}
+.r1{background:#FBE3D8;color:#A8401F}
+.r2{background:#F1EFE8;color:#444441}
+.r3{background:#ffffff;color:#5F5E5A;border:1px solid #A88A7C}
+.meta-t{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 18px}
+.meta-t td{padding:4px 12px 4px 0;vertical-align:top}
+.meta-t td:first-child{color:#5F5E5A;white-space:nowrap;width:140px}
+figure{margin:14px 0 18px;break-inside:avoid}
+figcaption{font-size:12px;color:#5F5E5A;margin-top:6px}
+.flow{border:1px solid #e3ddd6;border-radius:12px;padding:12px 14px;margin:0 0 12px;break-inside:avoid}
+.flow p.t{font-weight:600;margin:0 0 6px}
+.flow ol{margin:0}
+svg .th{font:600 14px "Segoe UI",sans-serif;fill:#2C2C2A}
+svg .ts{font:400 12px "Segoe UI",sans-serif;fill:#5F5E5A}
+svg .arr{stroke:#73726c;stroke-width:1.5;fill:none}
+svg .c-teal>rect{fill:#E1F5EE;stroke:#0F6E56}
+svg .c-teal>.th{fill:#085041}svg .c-teal>.ts{fill:#0F6E56}
+svg .c-gray>rect{fill:#F1EFE8;stroke:#888780}
+svg .c-gray>.th{fill:#444441}
+svg .c-coral>rect{fill:#FAECE7;stroke:#993C1D}
+svg .c-coral>.th{fill:#712B13}svg .c-coral>.ts{fill:#993C1D}
+</style>
+</head>
+<body>
+<div class="doc">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs></svg>
+
+<h1><img src="logo-sementara.svg" alt="" width="36" height="36">PRD Mira</h1>
+<p class="meta">Product Requirements Document · Draft 1.2</p>
+<table class="meta-t">
+<tr><td>Produk</td><td>Mira, aplikasi kerja tim untuk desktop</td></tr>
+<tr><td>Proyek</td><td>ChatCompany</td></tr>
+<tr><td>Tanggal</td><td>22 November 2026</td></tr>
+<tr><td>Status</td><td>Draft untuk ditinjau. Belum ada kode.</td></tr>
+<tr><td>Dokumen terkait</td><td>brainstorming-chatcompany.pdf, design/rencana-pembangunan.pdf, design/tema-c.pdf</td></tr>
+</table>
+
+<h2>1. Ringkasan</h2>
+<p class="lead">Mira adalah aplikasi desktop tempat rekan kerja di satu kantor mengobrol, mengatur task, mengedit file, dan menandatangani PDF. Mira bekerja langsung antar laptop di jaringan kantor, tanpa server, tanpa internet, dan tanpa login.</p>
+
+<h2>2. Masalah yang diselesaikan</h2>
+<ul>
+<li>Percakapan kerja, daftar task, dan dokumen tersebar di aplikasi berbeda, sehingga konteks sering hilang. Contohnya, task yang lahir dari obrolan tidak tercatat di mana pun.</li>
+<li>Kebanyakan aplikasi kolaborasi menyimpan data kantor di server pihak lain dan butuh internet.</li>
+<li>Proses minta tanda tangan dokumen masih manual: file dikirim bolak-balik, dan sulit tahu siapa yang sudah menandatangani.</li>
+<li>File Word dan Excel sering tertimpa atau punya banyak salinan dengan nama berbeda, sehingga sulit tahu mana versi terbaru.</li>
+</ul>
+
+<h2>3. Tujuan dan bukan tujuan</h2>
+<h3>Tujuan</h3>
+<ol>
+<li>Satu tempat untuk chat, task, dan dokumen, dengan task dan dokumen yang tetap tersambung ke percakapan asalnya.</li>
+<li>Data kerja tidak pernah keluar dari jaringan kantor.</li>
+<li>Tetap bisa dipakai saat internet kantor mati, dan tetap sinkron setelah laptop offline lalu tersambung lagi.</li>
+<li>Alur tanda tangan dan versi dokumen yang jelas: siapa, kapan, dan versi yang mana.</li>
+</ol>
+<h3>Bukan tujuan (untuk saat ini)</h3>
+<ul>
+<li>Server, akun cloud, atau login dengan email dan kata sandi.</li>
+<li>Tanda tangan elektronik tersertifikasi (PSrE).</li>
+<li>Edit dokumen bersamaan secara langsung seperti Google Docs.</li>
+<li>Aplikasi HP, macOS, dan Linux.</li>
+<li>Notifikasi push ke perangkat yang aplikasinya tertutup.</li>
+</ul>
+
+<h2>4. Pengguna</h2>
+<table class="doc">
+<tr><th>Peran</th><th>Siapa</th><th>Yang dibutuhkan</th></tr>
+<tr><td class="b">Superadmin</td><td>Pimpinan atau admin IT kantor. Minimal dua orang.</td><td>Membuat dan menghapus tim, mengangkat dan melepas admin tim, melihat catatan keamanan seluruh organisasi.</td></tr>
+<tr><td class="b">Admin tim</td><td>Kepala tim atau koordinator</td><td>Mengundang dan mengeluarkan anggota tim, membuat proyek, mengatur kolom dan label board, mengundang Tamu ke proyek timnya.</td></tr>
+<tr><td class="b">Anggota</td><td>Staf kantor. Bisa ikut lebih dari satu tim.</td><td>Chat, mengerjakan task, mengedit file, meminta dan memberi tanda tangan.</td></tr>
+<tr><td class="b">Tamu</td><td>Klien atau freelancer</td><td>Melihat progres dan berdiskusi di proyek tertentu saja, dan menandatangani dokumen kalau diminta.</td></tr>
+</table>
+
+<h2>5. Prinsip produk</h2>
+<ol>
+<li><b>LAN murni.</b> Hanya laptop di jaringan kantor yang sama yang bisa tersambung. Dari luar kantor, laptop memakai VPN milik kantor.</li>
+<li><b>Tanpa login.</b> Identitas adalah kunci unik setiap laptop ditambah nama tampilan.</li>
+<li><b>Semua berawal dari percakapan.</b> Task dan dokumen muncul di chat dan menautkan balik ke chat.</li>
+<li><b>Offline itu normal.</b> Setiap fitur harus tetap benar saat laptop offline lalu tersambung lagi, tanpa data hilang.</li>
+<li><b>Data dibatasi dari sumbernya.</b> Laptop hanya menerima data yang memang boleh ia lihat.</li>
+<li><b>Satu kantor, dibagi per tim.</b> Seluruh kantor memakai satu organisasi Mira. Setiap tim punya proyek dan channel sendiri, dan ada channel #umum untuk semua orang.</li>
+</ol>
+
+<!-- ============ RILIS & KEBUTUHAN ============ -->
+<div class="section">
+<h2>6. Rilis</h2>
+<table class="doc">
+<tr><th>Rilis</th><th>Isi</th><th>Tahap di rencana</th></tr>
+<tr><td><span class="r r1">R1</span></td><td>Versi pertama yang bisa dipakai sehari-hari: identitas, tim, chat dasar, board dasar</td><td>Tahap 0 sampai 3</td></tr>
+<tr><td><span class="r r2">R2</span></td><td>Dokumen, edit Word dan Excel, tanda tangan PDF</td><td>Tahap 4 dan 5</td></tr>
+<tr><td><span class="r r3">R3</span></td><td>Board dan chat lengkap, halaman Keamanan admin, siap pilot</td><td>Tahap 6 dan 7</td></tr>
+</table>
+
+<h2>7. Kebutuhan fungsional</h2>
+
+<h3>7.1 Pertama kali buka dan identitas</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-ID-01</td><td>Saat pertama dibuka, aplikasi membuat kunci unik laptop dan meminta nama tampilan.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ID-02</td><td>Pengguna memilih: buat organisasi baru (otomatis jadi superadmin) atau gabung dengan kode undangan.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ID-03</td><td>Layar pertama memandu pengguna mengizinkan akses jaringan di Windows Firewall, termasuk untuk jaringan VPN.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ID-04</td><td>Kunci laptop disimpan aman di penyimpanan kredensial Windows, bukan file biasa.</td><td><span class="r r1">R1</span></td></tr>
+</table>
+
+<h3>7.2 Jaringan dan tim</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-NET-01</td><td>Menemukan laptop anggota tim otomatis di jaringan yang sama.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-NET-02</td><td>Cadangan kalau penemuan otomatis gagal: input alamat manual dan pindai QR code dari layar laptop rekan.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-NET-03</td><td>Mengingat alamat terakhir setiap rekan dan mencoba menghubunginya langsung, supaya tetap tersambung lewat VPN.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-NET-04</td><td>Semua koneksi antar laptop terenkripsi, dan hanya anggota organisasi yang diterima.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-NET-05</td><td>Status koneksi selalu terlihat: "Tersambung lewat LAN kantor", "Tersambung lewat VPN", atau "Tidak tersambung ke jaringan kantor".</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-NET-06</td><td>Daftar "Di jaringan" menampilkan rekan yang online dan offline.</td><td><span class="r r1">R1</span></td></tr>
+</table>
+
+<h3>7.3 Organisasi, tim, peran, dan izin</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-ROLE-01</td><td>Empat peran: Superadmin, Admin tim, Anggota, Tamu, dengan pembagian izin seperti tabel di bawah.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-08</td><td>Satu organisasi Mira untuk seluruh kantor, dibagi per tim. Setiap proyek milik satu tim. Ada channel #umum untuk semua anggota organisasi.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-09</td><td>Orang yang membuat organisasi otomatis jadi superadmin. Superadmin membuat tim dan mengangkat admin tim. Superadmin harus minimal dua orang.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-10</td><td>Anggota bisa ikut lebih dari satu tim, dan bisa diundang ke proyek tim lain tanpa menjadi anggota tim itu.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-11</td><td>Superadmin tidak otomatis membaca isi chat dan proyek semua tim. Kalau perlu, superadmin menambahkan dirinya ke tim, dan tindakan itu tercatat di halaman Keamanan.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-02</td><td>Kode undangan dengan peran dan masa berlaku (24 jam, 7 hari, atau sekali pakai). Admin tim membuat undangan untuk timnya, superadmin untuk tim mana pun. Untuk Tamu, pengundang memilih proyek yang boleh dilihat.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-03</td><td>Setiap perubahan ditandatangani digital oleh laptop pengirim dan diperiksa keaslian serta izinnya oleh laptop penerima.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-04</td><td>Laptop anggota tidak pernah mengirim data proyek yang tidak diizinkan ke laptop Tamu.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-05</td><td>Admin tim bisa mengeluarkan anggota dari timnya, dan superadmin bisa mengeluarkan orang dari organisasi. Laptopnya berhenti menerima data baru dan perubahannya ditolak.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-12</td><td>Rantai kepercayaan: kunci superadmin menandatangani pengangkatan admin tim, dan kunci admin tim menandatangani undangan anggota. Setiap laptop bisa memeriksa rantai ini tanpa server.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-ROLE-06</td><td>Aplikasi mengingatkan kalau superadmin baru satu, dan superadmin bisa menyimpan kunci cadangan ke flashdisk.</td><td><span class="r r3">R3</span></td></tr>
+<tr><td class="id">F-ROLE-07</td><td>Halaman Keamanan berisi perubahan yang ditolak dan tindakan penting seperti pengangkatan admin, dengan tanda kecil kalau ada catatan baru. Superadmin melihat seluruh organisasi, admin tim melihat timnya.</td><td><span class="r r3">R3</span></td></tr>
+</table>
+<p style="font-size:13px;font-weight:600;margin:4px 0 6px">Pembagian izin</p>
+<table class="doc">
+<tr><th>Aksi</th><th>Superadmin</th><th>Admin tim</th><th>Anggota</th><th>Tamu</th></tr>
+<tr><td class="b">Buat dan hapus tim</td><td>Ya</td><td>Tidak</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td class="b">Angkat atau lepas admin tim dan superadmin</td><td>Ya</td><td>Tidak</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td class="b">Undang dan keluarkan anggota</td><td>Semua tim</td><td>Timnya</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td class="b">Undang Tamu ke proyek</td><td>Semua tim</td><td>Proyek timnya</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td class="b">Buat proyek, atur kolom dan label</td><td>Semua tim</td><td>Timnya</td><td>Tidak</td><td>Tidak</td></tr>
+<tr><td class="b">Buat channel</td><td>Ya</td><td>Ya</td><td>Ya, di timnya</td><td>Tidak</td></tr>
+<tr><td class="b">Buat, edit, dan pindahkan task</td><td>Tim yang ia ikuti</td><td>Timnya</td><td>Tim dan proyek yang ia ikuti</td><td>Tidak</td></tr>
+<tr><td class="b">Lihat board dan komentar</td><td>Tim yang ia ikuti</td><td>Timnya</td><td>Tim dan proyek yang ia ikuti</td><td>Proyek yang diizinkan</td></tr>
+<tr><td class="b">Hapus task</td><td>Tim yang ia ikuti</td><td>Semua task di timnya</td><td>Task buatannya sendiri</td><td>Tidak</td></tr>
+<tr><td class="b">Tanda tangan dokumen</td><td>Ya</td><td>Ya</td><td>Ya</td><td>Kalau diminta</td></tr>
+<tr><td class="b">Minta tanda tangan</td><td>Ya</td><td>Ya</td><td>Ya</td><td>Tidak</td></tr>
+<tr><td class="b">Halaman Keamanan</td><td>Seluruh organisasi</td><td>Timnya</td><td>Tidak</td><td>Tidak</td></tr>
+</table>
+
+<h3>7.4 Chat</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-CHAT-01</td><td>Channel #umum untuk seluruh organisasi, channel tim, channel proyek, dan chat pribadi. Anggota boleh membuat channel di timnya, dan admin tim bisa mengarsipkan atau menghapusnya.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-CHAT-02</td><td>Balas pesan dan mention.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-CHAT-03</td><td>Tiga status pesan: Dibaca, Diterima laptopnya, Dititipkan.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-CHAT-04</td><td>Titipan: pesan untuk rekan offline dienkripsi untuk penerima, dititipkan ke rekan yang online, diserahkan saat penerima online, lalu salinannya dihapus.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-CHAT-05</td><td>Kirim file. File di bawah sekitar 20 MB disalin otomatis ke semua anggota. File yang lebih besar diunduh saat diklik dari laptop mana pun yang punya salinannya.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-CHAT-06</td><td>Tamu hanya bisa bicara di channel proyek yang diizinkan. Tidak ada chat pribadi dengan Tamu.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-CHAT-07</td><td>Notifikasi Windows untuk pesan baru dan mention.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-CHAT-08</td><td>Reaksi, edit pesan, dan hapus pesan yang menyisakan tanda "Pesan dihapus".</td><td><span class="r r3">R3</span></td></tr>
+<tr><td class="id">F-CHAT-09</td><td>Pencarian pesan, pin pesan, dan ubah pesan jadi task.</td><td><span class="r r3">R3</span></td></tr>
+<tr><td class="id">F-CHAT-10</td><td>Status "Dibaca" bisa dimatikan per orang. Yang mematikannya juga tidak melihat status "Dibaca" orang lain.</td><td><span class="r r3">R3</span></td></tr>
+</table>
+
+<h3>7.5 Board task</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-TASK-01</td><td>Satu board per proyek dengan kolom To do, Dikerjakan, Selesai, dan kode task per proyek (misalnya PA-12).</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-TASK-02</td><td>Task berisi judul, deskripsi, penanggung jawab, tenggat, komentar, dan riwayat aktivitas.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-TASK-03</td><td>Task bisa dibuat dari pesan chat dan menautkan balik ke percakapan asalnya.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-TASK-04</td><td>Edit bersamaan saat offline digabung otomatis tanpa data hilang, dengan tanda "sudah digabung" di kartu.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-TASK-05</td><td>Halaman "Task saya" berisi semua task milik pengguna dari semua proyek.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-TASK-06</td><td>Pengingat tenggat lewat notifikasi Windows sehari sebelum dan di hari tenggat. Kalau laptop mati, muncul saat dinyalakan. Bisa diatur per orang.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-TASK-07</td><td>Prioritas, label, sub-task, estimasi, dan kolom tambahan yang diatur admin.</td><td><span class="r r3">R3</span></td></tr>
+<tr><td class="id">F-TASK-08</td><td>Tampilan Daftar dan Kalender.</td><td><span class="r r3">R3</span></td></tr>
+</table>
+
+<h3>7.6 Dokumen dan edit file</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-DOC-01</td><td>Layar Dokumen per proyek yang menampilkan versi, siapa yang sedang mengedit, dan file yang menunggu tanda tangan.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-DOC-02</td><td>Edit Word dan Excel di Microsoft Office. Rekan melihat tanda "Sedang diedit" dan bisa membuka hanya baca.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-DOC-03</td><td>Versi baru dibuat setelah file disimpan dan ditutup, lalu dikirim ke tim dengan catatan siapa dan kapan. File sementara Office diabaikan.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-DOC-04</td><td>Riwayat versi yang bisa dipulihkan.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-DOC-05</td><td>Kalau dua orang mengedit saat salah satunya offline, kedua versi disimpan dan ditandai "bentrok" untuk dipilih atau digabung manual.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-DOC-06</td><td>PDF bisa diberi komentar, stabilo, dan kotak teks langsung di aplikasi.</td><td><span class="r r2">R2</span></td></tr>
+</table>
+
+<h3>7.7 Tanda tangan PDF</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-SIGN-01</td><td>Pengguna menggambar tanda tangan dan bisa menyimpannya. Tanda tangan tersimpan hanya bisa dipakai setelah memasukkan PIN.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-SIGN-02</td><td>Pengirim memilih penanda tangan dan urutannya (berurutan atau bebas). Tamu bisa dimasukkan kalau memang diminta. Tamu tidak bisa meminta tanda tangan.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-SIGN-03</td><td>Penanda tangan menempatkan tanda tangan di halaman PDF, lalu dokumen diteruskan ke orang berikutnya.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-SIGN-04</td><td>Setelah ditandatangani, isi file dikunci. Kalau isinya berubah, aplikasi memberi peringatan.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-SIGN-05</td><td>Dokumen final dilengkapi halaman catatan: siapa menandatangani dan kapan.</td><td><span class="r r2">R2</span></td></tr>
+<tr><td class="id">F-SIGN-06</td><td>Task tanda tangan terkait pindah ke Selesai otomatis setelah semua penanda tangan selesai.</td><td><span class="r r2">R2</span></td></tr>
+</table>
+
+<h3>7.8 Tampilan dan pengaturan</h3>
+<table class="doc">
+<tr><th>ID</th><th>Kebutuhan</th><th>Rilis</th></tr>
+<tr><td class="id">F-UI-01</td><td>Tema Bata dengan mode Terang, Gelap, dan Ikuti Windows.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-UI-02</td><td>Semua warna lewat token peran, sehingga tema baru bisa ditambah tanpa mengubah layar.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-UI-03</td><td>Pilihan tema dan mode disimpan per laptop dan tidak disinkronkan ke rekan.</td><td><span class="r r1">R1</span></td></tr>
+<tr><td class="id">F-UI-04</td><td>Bahasa antarmuka Indonesia.</td><td><span class="r r1">R1</span></td></tr>
+</table>
+</div>
+
+<!-- ============ ALUR ============ -->
+<div class="section">
+<h2>8. Alur utama</h2>
+
+<div class="flow"><p class="t">Menyiapkan organisasi</p><ol>
+<li>Orang pertama memasang Mira dan memilih "Buat organisasi baru". Ia otomatis jadi superadmin.</li>
+<li>Superadmin mengangkat satu superadmin lagi sebagai cadangan, lalu menyimpan kunci cadangan ke flashdisk.</li>
+<li>Superadmin membuat tim, misalnya Tim A, Tim B, dan Tim C, lalu mengangkat admin untuk setiap tim.</li>
+</ol></div>
+
+<div class="flow"><p class="t">Bergabung ke tim</p><ol>
+<li>Admin tim membuat kode undangan untuk peran Anggota di timnya.</li>
+<li>Orang baru memasang Mira, mengisi nama, lalu memilih "Gabung dengan kode".</li>
+<li>Aplikasi memandu izin firewall, lalu mencari laptop organisasi di jaringan.</li>
+<li>Laptop mana pun yang online memeriksa kode dan rantai tanda tangannya, lalu orang itu masuk ke tim dan ke channel #umum.</li>
+<li>Kalau orang itu nanti diundang ke tim lain, ia cukup menerima undangan di aplikasi tanpa memasang ulang.</li>
+</ol></div>
+
+<div class="flow"><p class="t">Mengirim pesan ke rekan yang offline</p><ol>
+<li>Pengirim menulis pesan ke Rekan C yang laptopnya mati. Status pesan: "Dititipkan".</li>
+<li>Pesan dienkripsi untuk Rekan C dan dititipkan ke laptop rekan lain yang online.</li>
+<li>Laptop Rekan C menyala. Laptop yang dititipi menyerahkan pesan dan menghapus salinannya.</li>
+<li>Status di laptop pengirim berubah jadi "Diterima laptopnya", lalu "Dibaca".</li>
+</ol></div>
+
+<div class="flow"><p class="t">Dari chat jadi task</p><ol>
+<li>Rekan A menulis "tolong cek kontrak" di channel proyek.</li>
+<li>Rekan B memilih "Jadikan task" pada pesan itu, mengisi penanggung jawab dan tenggat.</li>
+<li>Kartu task muncul di chat dan di board proyek, dengan tautan ke pesan asalnya.</li>
+<li>Sehari sebelum tenggat, penanggung jawab mendapat notifikasi Windows.</li>
+</ol></div>
+
+<div class="flow"><p class="t">Mengedit file Excel</p><ol>
+<li>Pengguna memilih "Edit di Excel" di layar Dokumen. Rekan lain melihat "Sedang diedit".</li>
+<li>Setelah disimpan dan ditutup, Mira membuat versi baru dan mengirimkannya ke tim.</li>
+<li>Kalau ternyata ada rekan offline yang mengedit file yang sama, kedua versi disimpan dan ditandai "bentrok".</li>
+</ol></div>
+
+<div class="flow"><p class="t">Meminta tanda tangan berurutan</p><ol>
+<li>Pengirim memilih PDF, memilih penanda tangan (misalnya staf, lalu atasan, lalu klien sebagai Tamu), dan mengirim permintaan.</li>
+<li>Penanda tangan pertama mendapat kartu "Menunggu tanda tangan Anda" di chat, menempatkan tanda tangan, memasukkan PIN, lalu klik "Selesai dan kirim".</li>
+<li>Dokumen berpindah ke penanda tangan berikutnya. Setelah semua selesai, file dikunci dan halaman catatan ditambahkan.</li>
+</ol></div>
+
+<h2>9. Kebutuhan non-fungsional</h2>
+<table class="doc">
+<tr><th>Aspek</th><th>Kebutuhan</th></tr>
+<tr><td class="b">Platform</td><td>Windows 10 dan 11, 64-bit. Membutuhkan WebView2, yang bisa dipasang otomatis oleh installer.</td></tr>
+<tr><td class="b">Keandalan</td><td>Tidak ada data yang hilang di skenario offline mana pun: laptop mati di tengah pengiriman, edit bersamaan, atau jaringan putus saat transfer file.</td></tr>
+<tr><td class="b">Keamanan</td><td>Semua lalu lintas antar laptop terenkripsi. Kunci laptop disimpan di penyimpanan kredensial Windows. PIN tanda tangan disimpan sebagai hash. Hanya memakai pustaka kriptografi yang sudah teruji luas.</td></tr>
+<tr><td class="b">Kinerja</td><td>Target: pesan ke rekan yang online di LAN tampil dalam waktu sekitar satu detik, dan aplikasi siap dipakai dalam beberapa detik setelah dibuka. Angka pasti diukur saat pilot.</td></tr>
+<tr><td class="b">Skala</td><td>Sekitar 10 sampai 30 orang dari beberapa tim. Desain sinkronisasi diuji untuk minimal 30 laptop.</td></tr>
+<tr><td class="b">Penyimpanan</td><td>Batas salin otomatis file sekitar 20 MB, dan pengaturan untuk membersihkan salinan file lama.</td></tr>
+<tr><td class="b">Aksesibilitas</td><td>Kontras teks memenuhi WCAG AA di mode terang dan gelap. Semua fungsi bisa dipakai dengan keyboard, dengan penanda fokus yang terlihat.</td></tr>
+<tr><td class="b">Data UI</td><td>Setiap layar data punya tampilan kosong, memuat, dan error yang menjelaskan penyebab dan langkah berikutnya.</td></tr>
+<tr><td class="b">Offline penuh</td><td>Huruf, ikon, dan semua aset dibundel di aplikasi. Tidak ada yang diambil dari internet saat aplikasi berjalan.</td></tr>
+</table>
+
+<h2>10. Ukuran keberhasilan pilot</h2>
+<p>Angka di bawah adalah usulan target dan perlu disepakati sebelum pilot dimulai.</p>
+<table class="doc">
+<tr><th>Ukuran</th><th>Usulan target</th></tr>
+<tr><td class="b">Data hilang</td><td>Nol kasus selama pilot</td></tr>
+<tr><td class="b">Pemakaian harian</td><td>Sebagian besar peserta pilot membuka Mira di setiap hari kerja</td></tr>
+<tr><td class="b">Pesan sampai</td><td>Semua pesan titipan sampai begitu penerimanya online</td></tr>
+<tr><td class="b">Tanda tangan</td><td>Minimal satu dokumen nyata selesai ditandatangani berurutan lewat Mira</td></tr>
+<tr><td class="b">Masukan</td><td>Peserta pilot mengisi survei singkat di akhir pilot</td></tr>
+</table>
+</div>
+
+<!-- ============ STACK ============ -->
+<div class="section">
+<h2>11. Stack teknis</h2>
+<p>Versi pasti setiap pustaka dikunci di Tahap 0. Tauri yang dipakai adalah versi 2.</p>
+<figure>
+<svg width="100%" viewBox="0 0 680 380" role="img"><title>Arsitektur aplikasi Mira di satu laptop</title><desc>Lapisan tampilan React di atas inti Rust. Inti Rust berisi modul identitas, jaringan, sinkron, izin, database, file, notifikasi, dan Office. Modul jaringan tersambung ke laptop rekan lewat LAN atau VPN.</desc>
+<rect x="40" y="40" width="470" height="314" rx="18" fill="none" stroke="#B4B2A9" stroke-dasharray="4 4" stroke-width="0.75"/>
+<text class="th" x="60" y="66">Aplikasi Mira di satu laptop</text>
+<g class="c-coral"><rect x="64" y="82" width="422" height="56" rx="8" stroke-width="0.75"/><text class="th" x="275" y="100" text-anchor="middle" dominant-baseline="central">Tampilan</text><text class="ts" x="275" y="120" text-anchor="middle" dominant-baseline="central">React, TypeScript, tema Bata</text></g>
+<line x1="275" y1="138" x2="275" y2="164" class="arr" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+<text class="ts" x="287" y="152" dominant-baseline="central">Perintah dan event Tauri</text>
+<rect x="64" y="168" width="422" height="166" rx="12" fill="none" stroke="#888780" stroke-width="0.75"/>
+<text class="th" x="80" y="190">Inti Rust</text>
+<g class="c-gray"><rect x="76" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="123" y="232" text-anchor="middle" dominant-baseline="central">Identitas</text></g>
+<g class="c-gray"><rect x="180" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="227" y="232" text-anchor="middle" dominant-baseline="central">Jaringan</text></g>
+<g class="c-gray"><rect x="284" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="331" y="232" text-anchor="middle" dominant-baseline="central">Sinkron</text></g>
+<g class="c-gray"><rect x="388" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="435" y="232" text-anchor="middle" dominant-baseline="central">Izin</text></g>
+<g class="c-gray"><rect x="76" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="123" y="292" text-anchor="middle" dominant-baseline="central">Database</text></g>
+<g class="c-gray"><rect x="180" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="227" y="292" text-anchor="middle" dominant-baseline="central">File</text></g>
+<g class="c-gray"><rect x="284" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="331" y="292" text-anchor="middle" dominant-baseline="central">Notifikasi</text></g>
+<g class="c-gray"><rect x="388" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="435" y="292" text-anchor="middle" dominant-baseline="central">Office</text></g>
+<path d="M227 210 L227 200 L520 200 L520 232 L526 232" class="arr" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+<g class="c-teal"><rect x="530" y="204" width="110" height="56" rx="8" stroke-width="0.75"/><text class="th" x="585" y="222" text-anchor="middle" dominant-baseline="central">Laptop rekan</text><text class="ts" x="585" y="242" text-anchor="middle" dominant-baseline="central">LAN atau VPN</text></g>
+</svg>
+</figure>
+
+<h3>Aplikasi desktop</h3>
+<table class="doc">
+<tr><th>Bagian</th><th>Teknologi</th><th>Alasan</th></tr>
+<tr><td class="b">Kerangka aplikasi</td><td>Tauri 2</td><td>Installer kecil dan hemat memori karena memakai WebView2 bawaan Windows. Inti aplikasi ditulis di Rust.</td></tr>
+<tr><td class="b">Plugin Tauri resmi</td><td>notification, opener, dialog, window-state, log</td><td>Notifikasi Windows, membuka file di Word atau Excel, dialog pilih file, mengingat ukuran jendela, dan catatan log untuk mencari masalah.</td></tr>
+<tr><td class="b">Penginstal</td><td>Tauri bundler (NSIS atau MSI)</td><td>Menghasilkan installer Windows sekaligus memasang WebView2 kalau belum ada.</td></tr>
+</table>
+
+<h3>Tampilan</h3>
+<table class="doc">
+<tr><th>Bagian</th><th>Teknologi</th><th>Alasan</th></tr>
+<tr><td class="b">Bahasa dan kerangka</td><td>TypeScript, React, Vite</td><td>Ekosistem paling luas, banyak contoh, dan didukung langsung oleh Tauri.</td></tr>
+<tr><td class="b">Komponen dasar</td><td>Radix UI</td><td>Dialog, menu, dan pilihan yang sudah mendukung keyboard dan pembaca layar, tanpa gaya bawaan sehingga tema Bata tetap utuh.</td></tr>
+<tr><td class="b">Gaya dan tema</td><td>CSS variables dan CSS Modules</td><td>Token warna tema Bata di satu tempat. Ganti tema cukup menukar nilai variabel.</td></tr>
+<tr><td class="b">State</td><td>Zustand</td><td>Ringan dan mudah menerima event dari inti Rust.</td></tr>
+<tr><td class="b">Ikon dan huruf</td><td>Tabler Icons, Nunito</td><td>Sama dengan mockup. Keduanya dibundel di aplikasi supaya jalan tanpa internet.</td></tr>
+<tr><td class="b">PDF</td><td>pdf.js dan pdf-lib</td><td>pdf.js untuk menampilkan halaman, pdf-lib untuk menulis catatan dan tanda tangan ke file.</td></tr>
+</table>
+
+<h3>Inti Rust</h3>
+<table class="doc">
+<tr><th>Bagian</th><th>Teknologi</th><th>Alasan</th></tr>
+<tr><td class="b">Runtime</td><td>tokio</td><td>Menangani banyak koneksi dan transfer file bersamaan.</td></tr>
+<tr><td class="b">Penemuan rekan</td><td>mdns-sd</td><td>Menemukan laptop tim di jaringan lokal tanpa server.</td></tr>
+<tr><td class="b">Koneksi</td><td>QUIC (quinn) dengan rustls</td><td>Koneksi terenkripsi, banyak aliran data dalam satu koneksi, dan cepat pulih setelah jaringan putus.</td></tr>
+<tr><td class="b">Identitas dan tanda tangan</td><td>Ed25519 (ed25519-dalek)</td><td>Kunci kecil dan cepat untuk menandatangani setiap perubahan.</td></tr>
+<tr><td class="b">Segel titipan</td><td>crypto_box</td><td>Mengenkripsi titipan untuk penerima tertentu, sehingga rekan yang dititipi tidak bisa membacanya.</td></tr>
+<tr><td class="b">PIN</td><td>Argon2</td><td>Menyimpan PIN tanda tangan sebagai hash yang sulit ditebak.</td></tr>
+<tr><td class="b">Penyimpanan kunci</td><td>keyring (Windows Credential Manager)</td><td>Kunci laptop tidak tersimpan sebagai file biasa.</td></tr>
+<tr><td class="b">Penggabungan board</td><td>Automerge</td><td>Menggabungkan edit bersamaan secara otomatis dan konsisten di semua laptop.</td></tr>
+<tr><td class="b">Database</td><td>SQLite (rusqlite)</td><td>Satu file database per laptop, andal, tanpa server.</td></tr>
+<tr><td class="b">File</td><td>BLAKE3</td><td>Sidik jari file untuk penyimpanan, deteksi perubahan setelah tanda tangan, dan transfer per potongan.</td></tr>
+<tr><td class="b">Pemantau file</td><td>notify</td><td>Mendeteksi saat file Word atau Excel selesai disimpan.</td></tr>
+<tr><td class="b">QR code</td><td>qrcode</td><td>Menampilkan alamat laptop sebagai QR untuk cadangan penemuan rekan.</td></tr>
+<tr><td class="b">Format data</td><td>serde</td><td>Mengubah pesan dan perubahan ke format yang dikirim antar laptop.</td></tr>
+</table>
+
+<h3>Pengujian dan alat kerja</h3>
+<table class="doc">
+<tr><th>Bagian</th><th>Teknologi</th><th>Alasan</th></tr>
+<tr><td class="b">Tes inti Rust</td><td>cargo test dan proptest</td><td>proptest membuat banyak skenario acak untuk menguji penggabungan dan titipan.</td></tr>
+<tr><td class="b">Tes tampilan</td><td>Vitest dan Testing Library</td><td>Tes cepat untuk komponen dan layar.</td></tr>
+<tr><td class="b">Tes ujung ke ujung</td><td>WebdriverIO dengan tauri-driver</td><td>Cara resmi Tauri untuk menjalankan aplikasi sungguhan dan mengklik layarnya. Di Windows memakai Microsoft Edge Driver yang versinya sama dengan Edge.</td></tr>
+<tr><td class="b">Kualitas kode</td><td>ESLint, Prettier, clippy, rustfmt</td><td>Gaya kode konsisten dan kesalahan umum tertangkap otomatis.</td></tr>
+<tr><td class="b">Versi kode</td><td>Git</td><td>Riwayat perubahan dan cabang untuk setiap tahap.</td></tr>
+</table>
+<p>Lingkungan pengembangan di PC ini sudah punya Node.js 22, Rust 1.99, dan Git.</p>
+</div>
+
+<!-- ============ ASUMSI & PERTANYAAN ============ -->
+<div class="section">
+<h2>12. Asumsi dan batasan</h2>
+<ul>
+<li>Semua pengguna memakai laptop Windows 10 atau 11.</li>
+<li>Laptop penguji dan pengguna punya Microsoft Office untuk mengedit Word dan Excel.</li>
+<li>Kantor bisa memasang VPN sendiri, misalnya WireGuard di router, untuk kerja dari luar kantor.</li>
+<li>Router kantor tidak mengisolasi perangkat di jaringan yang dipakai tim.</li>
+<li>Tanpa server, notifikasi hanya muncul di laptop yang sedang menyala.</li>
+<li>Data yang sudah ada di laptop anggota yang dikeluarkan tidak bisa dihapus dari jauh.</li>
+<li>Tanda tangan di Mira adalah tanda tangan elektronik tidak tersertifikasi. Untuk kontrak bernilai besar dengan pihak luar, perlu konfirmasi ke bagian legal.</li>
+</ul>
+
+<h2>13. Pertanyaan terbuka</h2>
+<table class="doc">
+<tr><th>Pertanyaan</th><th>Dibutuhkan sebelum</th></tr>
+<tr><td>Kondisi jaringan kantor: mDNS, isolasi perangkat, VLAN, dan VPN. Ditanyakan ke tim jaringan memakai daftar di lampiran.</td><td>Tahap 1</td></tr>
+<tr><td>Cara menandatangani installer: tanpa sertifikat, sertifikat internal kantor, atau sertifikat berbayar</td><td>Tahap 7</td></tr>
+<tr><td>Logo final</td><td>Tahap 7</td></tr>
+</table>
+
+<h2>14. Riwayat dokumen</h2>
+<table class="doc">
+<tr><th>Versi</th><th>Tanggal</th><th>Perubahan</th></tr>
+<tr><td>Draft 1</td><td>22 November 2026</td><td>Dibuat dari hasil brainstorming dan rencana pembangunan</td></tr>
+<tr><td>Draft 1.1</td><td>22 November 2026</td><td>Jumlah pengguna 10 sampai 30 orang, Windows 10 dan 11 64-bit dikonfirmasi, lampiran pertanyaan untuk tim jaringan</td></tr>
+<tr><td>Draft 1.2</td><td>22 November 2026</td><td>Struktur satu organisasi dibagi per tim, peran Superadmin dan Admin tim, tabel izin baru</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h2>Lampiran A. Pertanyaan untuk tim jaringan</h2>
+<p>Daftar ini bisa diteruskan langsung ke tim jaringan kantor. Jawabannya menentukan apakah laptop bisa saling menemukan otomatis, atau perlu cara cadangan.</p>
+<table class="doc">
+<tr><th>No</th><th>Pertanyaan</th><th>Kenapa penting</th></tr>
+<tr><td>1</td><td>Apakah lalu lintas multicast mDNS (UDP port 5353) diizinkan antar laptop di Wi-Fi dan LAN kantor?</td><td>Mira memakai mDNS untuk menemukan laptop rekan secara otomatis.</td></tr>
+<tr><td>2</td><td>Apakah Wi-Fi kantor mengaktifkan client isolation, yaitu perangkat di jaringan yang sama tidak bisa saling terhubung?</td><td>Kalau aktif, laptop tidak bisa saling terhubung sama sekali.</td></tr>
+<tr><td>3</td><td>Apakah Wi-Fi dan LAN kabel berada di jaringan yang sama, atau dipisah (beda subnet atau VLAN)? Apakah tiap lantai atau tiap tim dipisah?</td><td>Penemuan otomatis biasanya tidak menembus jaringan yang dipisah, jadi perlu alamat manual.</td></tr>
+<tr><td>4</td><td>Apakah laptop di jaringan berbeda tetap bisa saling terhubung langsung lewat UDP, misalnya untuk satu port tetap yang dipakai Mira?</td><td>Koneksi Mira memakai QUIC di atas UDP.</td></tr>
+<tr><td>5</td><td>Apakah kantor sudah punya VPN, atau bisa memasang VPN sendiri seperti WireGuard di router?</td><td>VPN dipakai untuk kerja dari luar kantor.</td></tr>
+<tr><td>6</td><td>Kalau ada VPN: apakah laptop yang tersambung VPN bisa terhubung ke laptop di kantor, dan ke sesama laptop yang memakai VPN?</td><td>Dua orang yang sama-sama kerja dari rumah tetap harus bisa sinkron.</td></tr>
+<tr><td>7</td><td>Apakah VPN bisa diatur split tunnel, yaitu hanya lalu lintas ke jaringan kantor yang lewat VPN?</td><td>Supaya internet kantor tidak terbebani browsing dari rumah.</td></tr>
+<tr><td>8</td><td>Apakah laptop dikelola terpusat oleh IT (misalnya Active Directory, Intune, atau Group Policy)?</td><td>Menentukan apakah aturan firewall dan sertifikat installer bisa dipasang otomatis ke semua laptop.</td></tr>
+<tr><td>9</td><td>Apakah ada kebijakan yang memblokir aplikasi tanpa tanda tangan digital atau aplikasi di luar daftar yang diizinkan?</td><td>Menentukan apakah installer Mira perlu ditandatangani sebelum bisa dipasang.</td></tr>
+</table>
+</div>
+
+</div>
+</body>
+</html>

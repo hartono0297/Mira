@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tema Bata Mira</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap">
+<style>
+:root{--doc-text:#1f1e1c;--doc-sec:#5F5E5A;--doc-line:#d6d3cb}
+@page{size:A4;margin:14mm 15mm 16mm;@bottom-right{content:"Halaman " counter(page);font:11px "Segoe UI",sans-serif;color:#5F5E5A}}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html,body{background:#ffffff;margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:var(--doc-text)}
+.page{max-width:712px;margin:0 auto;padding:32px 16px}
+h1{font-size:28px;line-height:1.25;font-weight:600;margin:0 0 6px}
+h2{font-size:22px;font-weight:600;margin:0 0 6px}
+h3{font-size:15px;font-weight:600;margin:18px 0 8px}
+p{margin:0 0 10px}
+ol{margin:0 0 12px;padding-left:20px}li{margin:0 0 5px}
+.meta{font-size:13px;color:var(--doc-sec);margin:0 0 18px}
+.lead{font-size:16px;margin:0 0 16px}
+.sect{break-before:page;padding-top:8px}
+.sub{font-size:14px;color:var(--doc-sec);margin:0 0 12px}
+.cap{font-size:12px;color:var(--doc-sec);margin:6px 0 14px}
+table.tk{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 14px}
+table.tk th{text-align:left;font-weight:600;padding:7px 10px 7px 0;border-bottom:1px solid #8f8d86}
+table.tk td{padding:6px 10px 6px 0;border-bottom:1px solid var(--doc-line);vertical-align:middle}
+.sw{display:inline-flex;align-items:center;gap:8px;font-family:Consolas,monospace;font-size:12px;color:var(--doc-sec)}
+.sw i{width:22px;height:22px;border-radius:5px;border:1px solid rgba(0,0,0,.2);display:inline-block}
+.scroll{overflow-x:auto}
+.win{min-width:640px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);color:var(--text);font-family:Nunito,"Segoe UI",sans-serif}
+.chat,.setwin{display:grid;grid-template-columns:172px minmax(0,1fr)}
+.side{background:var(--side);color:var(--side-text);padding:14px 10px}
+.app{font-size:15px;font-weight:700;margin:0 8px 12px;display:flex;align-items:center;gap:8px}
+.logo{width:22px;height:22px;flex:none;background:url(logo-sementara.svg) center/contain no-repeat}
+.c-dark .logo{background-image:url(logo-sementara-gelap.svg)}
+.nav{display:flex;align-items:center;gap:8px;font-size:13px;padding:8px 11px;border-radius:12px;color:var(--side-sec)}
+.nav.on{background:var(--navon-bg);color:var(--navon-text);font-weight:600}
+.lbl{font-size:11px;color:var(--side-sec);margin:14px 8px 4px}
+.ch{font-size:13px;padding:3px 8px;color:var(--side-sec)}
+.ch.on{color:var(--side-text);font-weight:600}
+.peer{display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 8px;color:var(--side-text)}
+.peer.off{color:var(--side-sec)}
+.pd{width:8px;height:8px;border-radius:50%;background:var(--online);flex:none}
+.peer.off .pd{background:transparent;border:1.5px solid var(--side-sec)}
+.main{display:flex;flex-direction:column;min-width:0}
+.hd{padding:15px 20px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:10px}
+.ttl{font-size:17px;font-weight:600}
+.sec{font-size:12px;color:var(--sec)}
+.msgs{flex:1;padding:18px 20px;display:flex;flex-direction:column;gap:18px}
+.msg{display:flex;gap:10px}
+.av{width:30px;height:30px;border-radius:50%;background:var(--av-bg);color:var(--av-text);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none}
+.nm{margin:0;font-size:13px;font-weight:600}
+.nm span{font-weight:400;color:var(--sec);font-size:12px}
+.tx{margin:2px 0 0;font-size:14px;line-height:1.5}
+.card{display:flex;align-items:center;gap:10px;margin-top:8px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card-bg)}
+.card .ic{font-size:20px;color:var(--sec)}
+.cn{margin:0;font-size:13px;font-weight:600}
+.cs{margin:2px 0 0;font-size:12px;display:flex;align-items:center;gap:6px;color:var(--sec)}
+.cs.act{color:var(--state)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--dot);flex:none}
+.btn{margin-left:auto;font-size:12px;font-weight:700;padding:7px 12px;border-radius:12px;background:var(--btn-bg);color:var(--btn-text);white-space:nowrap;border:1px solid var(--btn-bg)}
+.btn.ghost{background:transparent;color:var(--text);border-color:var(--border-strong)}
+.sys{font-size:12px;color:var(--sec);text-align:center;margin:0}
+.comp{padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px}
+.inp{flex:1;font-size:13px;color:var(--sec);border:1px solid var(--border-strong);border-radius:12px;padding:8px 12px;background:var(--card-bg)}
+.board{padding:15px 20px}
+.bhd{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+.cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.col{background:var(--col-bg);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.colh{display:flex;justify-content:space-between;font-size:13px;font-weight:600;padding:2px 4px}
+.colh span{color:var(--sec);font-weight:400}
+.tc{background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.tct{margin:0 0 8px;font-size:13px;font-weight:600;line-height:1.4}
+.tcm{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sec)}
+.tcm .av{width:22px;height:22px;font-size:10px}
+.tcl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sec);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.tcl.act{color:var(--state)}
+.pri{font-size:11px;font-weight:700;padding:1px 7px;border-radius:12px;background:var(--pri-bg);color:var(--pri-text);margin-left:auto}
+.setbody{padding:18px 20px}
+fieldset{border:0;margin:0 0 18px;padding:0}
+legend,.grp{font-size:13px;font-weight:700;margin:0 0 8px;padding:0}
+.modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.mode{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--border-strong);border-radius:12px;cursor:pointer;font-size:13px;font-weight:600}
+.mode:has(input:checked){border:2px solid var(--dot);padding:9px;background:var(--navon-bg);color:var(--navon-text)}
+.mode:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}
+.mode .row{display:flex;align-items:center;gap:8px}
+.mode input{margin:0;accent-color:var(--dot)}
+.thumb{height:46px;border-radius:8px;display:flex;overflow:hidden;border:1px solid rgba(0,0,0,.15)}
+.thumb b{display:block;height:100%;flex:none;width:30%}
+.thumb b+b{width:70%}
+.thumb.split b{width:15%}
+.thumb.split b:nth-child(even){width:35%}
+.trow{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;margin:0 0 8px;font-size:13px}
+.trow .chips{display:flex;gap:4px}
+.trow .chips i{width:14px;height:14px;border-radius:50%;display:inline-block;border:1px solid rgba(0,0,0,.2)}
+.trow .tag{margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:var(--pri-bg);color:var(--pri-text)}
+.trow .tag.soon{background:transparent;color:var(--sec);border:1px solid var(--border-strong)}
+.hint{font-size:12px;color:var(--sec);margin:4px 0 0}
+
+.c-light{--bg:#FFFFFF;--side:#FFF4EE;--side-text:#2A1F1A;--side-sec:#6E5F57;--text:#2A1F1A;--sec:#6E5F57;--border:#F0DDD2;--border-strong:#A88A7C;--navon-bg:#FBE3D8;--navon-text:#A8401F;--av-bg:#FBE3D8;--av-text:#A8401F;--card-bg:#FFF9F6;--col-bg:#FFF4EE;--state:#A8401F;--dot:#B4472A;--online:#3B7A4F;--btn-bg:#B4472A;--btn-text:#FFFFFF;--pri-bg:#FBE3D8;--pri-text:#A8401F;--focus:#B4472A}
+.c-dark{--bg:#1E1714;--side:#261D19;--side-text:#F5EAE4;--side-sec:#C2B0A6;--text:#F5EAE4;--sec:#C2B0A6;--border:#3E302A;--border-strong:#8F766A;--navon-bg:#4A2A1E;--navon-text:#FFB59A;--av-bg:#4A2A1E;--av-text:#FFB59A;--card-bg:#2A201C;--col-bg:#261D19;--state:#FF9E7A;--dot:#F08A64;--online:#6CC48A;--btn-bg:#F08A64;--btn-text:#2A1F1A;--pri-bg:#4A2A1E;--pri-text:#FFB59A;--focus:#F08A64}
+@media print{.page{max-width:none;padding:0}.scroll{overflow:visible;zoom:.86}.win{min-width:0}.cap{margin:4px 0 10px}}
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Tema Bata: terang dan gelap</h1>
+<p class="meta">22 November 2026 · Arah C, hangat dan lapang · Draft untuk ditinjau</p>
+<p class="lead">Arah C kini punya nama tema "Bata" dan dua mode: terang dan gelap. Aplikasi disiapkan supaya tema bisa ditambah atau diganti nanti tanpa mengubah desain layar.</p>
+
+<h3>Cara kerja tema</h3>
+<ol>
+<li>Setiap warna di aplikasi diberi nama peran, misalnya "latar", "teks", atau "aksi". Layar hanya memakai nama peran itu, tidak pernah kode warna langsung.</li>
+<li>Satu tema adalah satu daftar nilai warna untuk semua peran, dengan versi terang dan versi gelap.</li>
+<li>Mengganti tema berarti menukar daftar nilainya. Semua layar ikut berubah tanpa disentuh, jadi tema baru seperti Kertas (arah A) atau Panel (arah B) tinggal ditambahkan sebagai daftar nilai baru.</li>
+<li>Pilihan tema dan mode disimpan di laptop masing-masing dan tidak dikirim ke rekan. Mode "Ikuti Windows" mengikuti pengaturan terang atau gelap di Windows.</li>
+</ol>
+
+<h3>Daftar warna tema Bata</h3>
+<table class="tk">
+<tr><th>Peran</th><th>Terang</th><th>Gelap</th></tr>
+<tr><td>Latar utama</td><td><span class="sw"><i style="background:#FFFFFF"></i>#FFFFFF</span></td><td><span class="sw"><i style="background:#1E1714"></i>#1E1714</span></td></tr>
+<tr><td>Sidebar dan kolom board</td><td><span class="sw"><i style="background:#FFF4EE"></i>#FFF4EE</span></td><td><span class="sw"><i style="background:#261D19"></i>#261D19</span></td></tr>
+<tr><td>Kartu</td><td><span class="sw"><i style="background:#FFF9F6"></i>#FFF9F6</span></td><td><span class="sw"><i style="background:#2A201C"></i>#2A201C</span></td></tr>
+<tr><td>Teks utama</td><td><span class="sw"><i style="background:#2A1F1A"></i>#2A1F1A</span></td><td><span class="sw"><i style="background:#F5EAE4"></i>#F5EAE4</span></td></tr>
+<tr><td>Teks pendukung</td><td><span class="sw"><i style="background:#6E5F57"></i>#6E5F57</span></td><td><span class="sw"><i style="background:#C2B0A6"></i>#C2B0A6</span></td></tr>
+<tr><td>Garis pemisah</td><td><span class="sw"><i style="background:#F0DDD2"></i>#F0DDD2</span></td><td><span class="sw"><i style="background:#3E302A"></i>#3E302A</span></td></tr>
+<tr><td>Garis kolom isian dan tombol</td><td><span class="sw"><i style="background:#A88A7C"></i>#A88A7C</span></td><td><span class="sw"><i style="background:#8F766A"></i>#8F766A</span></td></tr>
+<tr><td>Tombol aksi</td><td><span class="sw"><i style="background:#B4472A"></i>#B4472A, teks putih</span></td><td><span class="sw"><i style="background:#F08A64"></i>#F08A64, teks gelap</span></td></tr>
+<tr><td>Sorotan aksi</td><td><span class="sw"><i style="background:#FBE3D8"></i>#FBE3D8</span></td><td><span class="sw"><i style="background:#4A2A1E"></i>#4A2A1E</span></td></tr>
+<tr><td>Teks status "menunggu Anda"</td><td><span class="sw"><i style="background:#A8401F"></i>#A8401F</span></td><td><span class="sw"><i style="background:#FF9E7A"></i>#FF9E7A</span></td></tr>
+<tr><td>Status online</td><td><span class="sw"><i style="background:#3B7A4F"></i>#3B7A4F</span></td><td><span class="sw"><i style="background:#6CC48A"></i>#6CC48A</span></td></tr>
+</table>
+<p class="sub">Di mode gelap, tombol aksi berubah jadi oranye muda dengan teks gelap. Oranye bata tua dengan teks putih terlalu redup di atas latar gelap. Semua pasangan teks lolos standar kontras WCAG AA, dan garis kolom isian lolos batas 3:1.</p>
+
+<section class="sect">
+<h2>Mode terang</h2>
+<div class="scroll"><div class="win chat c-light" data-tpl="chat"></div></div>
+<p class="cap">Layar chat</p>
+<div class="scroll"><div class="win board c-light" data-tpl="board"></div></div>
+<p class="cap">Layar board</p>
+</section>
+
+<section class="sect">
+<h2>Mode gelap</h2>
+<div class="scroll"><div class="win chat c-dark" data-tpl="chat"></div></div>
+<p class="cap">Layar chat</p>
+<div class="scroll"><div class="win board c-dark" data-tpl="board"></div></div>
+<p class="cap">Layar board</p>
+</section>
+
+<section class="sect">
+<h2>Pengaturan tampilan</h2>
+<p class="sub">Di file HTML, pilihan mode di bawah bisa dicoba dan jendelanya ikut berubah. Tema Kertas dan Panel belum dibuat, jadi ditandai "Nanti".</p>
+<div class="scroll"><div class="win setwin c-light" id="set-win">
+<aside class="side"><p class="app"><span class="logo" aria-hidden="true"></span>Mira</p><div class="nav"><i class="ti ti-message" aria-hidden="true"></i>Chat</div><div class="nav"><i class="ti ti-layout-kanban" aria-hidden="true"></i>Board</div><div class="nav"><i class="ti ti-file-text" aria-hidden="true"></i>Dokumen</div><div class="nav on"><i class="ti ti-settings" aria-hidden="true"></i>Pengaturan</div></aside>
+<div class="main"><div class="hd"><span class="ttl">Pengaturan</span><span class="sec">Tampilan</span></div>
+<div class="setbody">
+<fieldset><legend>Mode</legend>
+<div class="modes">
+<label class="mode"><span class="thumb"><b style="background:#FFF4EE"></b><b style="background:#FFFFFF"></b></span><span class="row"><input type="radio" name="mode" value="light" checked>Terang</span></label>
+<label class="mode"><span class="thumb"><b style="background:#261D19"></b><b style="background:#1E1714"></b></span><span class="row"><input type="radio" name="mode" value="dark">Gelap</span></label>
+<label class="mode"><span class="thumb split"><b style="background:#FFF4EE"></b><b style="background:#FFFFFF"></b><b style="background:#261D19"></b><b style="background:#1E1714"></b></span><span class="row"><input type="radio" name="mode" value="system">Ikuti Windows</span></label>
+</div>
+</fieldset>
+<p class="grp">Tema warna</p>
+<div class="trow"><span class="chips"><i style="background:#B4472A"></i><i style="background:#FFF4EE"></i><i style="background:#2A1F1A"></i></span><span><b>Bata</b> · hangat dan lapang</span><span class="tag">Dipakai</span></div>
+<div class="trow"><span class="chips"><i style="background:#1F6B52"></i><i style="background:#F1EDE4"></i><i style="background:#23211C"></i></span><span><b>Kertas</b> · tenang, seperti dokumen</span><span class="tag soon">Nanti</span></div>
+<div class="trow"><span class="chips"><i style="background:#D9A23A"></i><i style="background:#1C2321"></i><i style="background:#FFFFFF"></i></span><span><b>Panel</b> · padat, untuk kerja cepat</span><span class="tag soon">Nanti</span></div>
+<p class="hint">Pengaturan ini hanya berlaku di laptop ini dan tidak dikirim ke rekan.</p>
+</div></div>
+</div></div>
+<p class="cap">Layar pengaturan tampilan</p>
+</section>
+
+</div>
+
+<template id="tpl-chat">
+<aside class="side"><p class="app"><span class="logo" aria-hidden="true"></span>Mira</p><div class="nav on"><i class="ti ti-message" aria-hidden="true"></i>Chat</div><div class="nav"><i class="ti ti-layout-kanban" aria-hidden="true"></i>Board</div><div class="nav"><i class="ti ti-file-text" aria-hidden="true"></i>Dokumen</div><p class="lbl">Channel</p><div class="ch"># umum</div><div class="ch on"># proyek-a</div><p class="lbl">Di jaringan</p><div class="peer"><span class="pd"></span>Rekan A</div><div class="peer"><span class="pd"></span>Rekan B</div><div class="peer off"><span class="pd"></span>Rekan C, offline</div></aside>
+<div class="main"><div class="hd"><span class="ttl"># proyek-a</span><span class="sec">Tersambung lewat LAN kantor</span></div>
+<div class="msgs">
+<div class="msg"><span class="av">RA</span><div style="min-width:0;flex:1"><p class="nm">Rekan A <span>09.12</span></p><p class="tx">Draft kontraknya sudah saya kirim, tolong ditandatangani.</p><div class="card"><i class="ti ti-file-type-pdf ic" aria-hidden="true"></i><div><p class="cn">kontrak-draft.pdf</p><p class="cs act"><span class="dot"></span>Menunggu tanda tangan Anda</p></div><span class="btn">Tanda tangani</span></div></div></div>
+<div class="msg"><span class="av">RB</span><div style="min-width:0;flex:1"><p class="nm">Rekan B <span>09.20</span></p><p class="tx">Saya buatkan task-nya supaya tidak lupa.</p><div class="card"><i class="ti ti-checkbox ic" aria-hidden="true"></i><div><p class="cn">Review kontrak proyek A</p><p class="cs">To do · untuk Rekan B</p></div><span class="btn ghost">Buka di board</span></div></div></div>
+<p class="sys">Rekan C sedang offline. Pesan dititipkan dan terkirim saat laptopnya tersambung.</p>
+</div>
+<div class="comp"><span class="inp">Tulis pesan ke #proyek-a</span><span class="btn">Kirim</span></div></div>
+</template>
+
+<template id="tpl-board">
+<div class="bhd"><span class="ttl"># proyek-a</span><span class="sec">Board</span><span class="btn ghost" style="margin-left:auto"><i class="ti ti-plus" aria-hidden="true"></i> Task baru</span></div>
+<div class="cols">
+<div class="col"><div class="colh">To do <span>2</span></div>
+<div class="tc"><p class="tct">Review kontrak proyek A</p><div class="tcm"><span class="av">RB</span>Tenggat [tanggal]<span class="pri">Tinggi</span></div><div class="tcl"><i class="ti ti-message" aria-hidden="true"></i>Dari chat #proyek-a</div></div>
+<div class="tc"><p class="tct">Tanda tangan kontrak-draft.pdf</p><div class="tcm"><span class="av">RA</span>Tenggat [tanggal]</div><div class="tcl act"><i class="ti ti-signature" aria-hidden="true"></i>Menunggu tanda tangan</div></div></div>
+<div class="col"><div class="colh">Dikerjakan <span>1</span></div>
+<div class="tc"><p class="tct">Siapkan laporan bulanan</p><div class="tcm"><span class="av">RC</span>Tenggat [tanggal]</div><div class="tcl"><i class="ti ti-git-merge" aria-hidden="true"></i>Diubah saat offline, sudah digabung</div></div></div>
+<div class="col"><div class="colh">Selesai <span>1</span></div>
+<div class="tc"><p class="tct" style="color:var(--sec)">Kirim jadwal rapat ke tim</p><div class="tcm"><span class="av">RA</span>Selesai [tanggal]</div></div></div>
+</div>
+</template>
+
+<script>
+document.querySelectorAll('[data-tpl]').forEach(function (el) {
+  el.appendChild(document.getElementById('tpl-' + el.dataset.tpl).content.cloneNode(true));
+});
+var setWin = document.getElementById('set-win');
+var sysDark = window.matchMedia('(prefers-color-scheme: dark)');
+function applyMode() {
+  var v = document.querySelector('input[name=mode]:checked').value;
+  var dark = v === 'dark' || (v === 'system' && sysDark.matches);
+  setWin.classList.toggle('c-dark', dark);
+  setWin.classList.toggle('c-light', !dark);
+}
+document.querySelectorAll('input[name=mode]').forEach(function (r) { r.addEventListener('change', applyMode); });
+sysDark.addEventListener('change', applyMode);
+</script>
+</body>
+</html>

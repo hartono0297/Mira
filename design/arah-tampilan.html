@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arah tampilan ChatCompany</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap">
+<style>
+:root{--doc-text:#1f1e1c;--doc-sec:#5F5E5A;--doc-line:#d6d3cb;--doc-bg:#ffffff}
+@page{size:A4;margin:14mm 15mm 16mm;@bottom-right{content:"Halaman " counter(page);font:11px "Segoe UI",sans-serif;color:#5F5E5A}}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html,body{background:var(--doc-bg);margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:var(--doc-text)}
+.page{max-width:712px;margin:0 auto;padding:32px 16px}
+h1{font-size:28px;line-height:1.25;font-weight:600;margin:0 0 6px}
+h2{font-size:22px;font-weight:600;margin:0 0 4px}
+p{margin:0 0 10px}
+.meta{font-size:13px;color:var(--doc-sec);margin:0 0 18px}
+.lead{font-size:16px;margin:0 0 16px}
+.note{font-size:13px;color:var(--doc-sec);border:1px solid var(--doc-line);border-radius:8px;padding:10px 12px;margin:0 0 20px}
+table.cmp{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 16px}
+table.cmp th{text-align:left;font-weight:600;padding:8px 10px 8px 0;border-bottom:1px solid #8f8d86;vertical-align:bottom}
+table.cmp td{padding:8px 10px 8px 0;border-bottom:1px solid var(--doc-line);vertical-align:top}
+table.cmp td:first-child{font-weight:600;white-space:nowrap}
+.dir{break-before:page;padding-top:8px}
+.dir-sub{font-size:14px;color:var(--doc-sec);margin:0 0 12px}
+.facts{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:13px;margin:0 0 12px}
+.facts b{font-weight:600}
+.sw{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 16px}
+.chip{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--doc-sec)}
+.chip i{width:26px;height:26px;border-radius:6px;border:1px solid rgba(0,0,0,.18);display:inline-block}
+.chip b{display:block;color:var(--doc-text);font-weight:600;font-size:12px;line-height:1.2}
+.cap{font-size:12px;color:var(--doc-sec);margin:6px 0 14px}
+.scroll{overflow-x:auto}
+.win{min-width:640px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font)}
+.chat{display:grid;grid-template-columns:172px minmax(0,1fr)}
+.side{background:var(--side);color:var(--side-text);padding:14px 10px}
+.app{font-size:14px;font-weight:700;margin:0 8px 12px}
+.nav{display:flex;align-items:center;gap:8px;font-size:13px;padding:var(--navpad);border-radius:var(--radius);color:var(--side-sec)}
+.nav.on{background:var(--navon-bg);color:var(--navon-text);font-weight:600}
+.lbl{font-size:11px;color:var(--side-sec);margin:14px 8px 4px}
+.ch{font-size:13px;padding:3px 8px;color:var(--side-sec)}
+.ch.on{color:var(--side-text);font-weight:600}
+.peer{display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 8px;color:var(--side-text)}
+.peer.off{color:var(--side-sec)}
+.pd{width:8px;height:8px;border-radius:50%;background:var(--online);flex:none}
+.peer.off .pd{background:transparent;border:1.5px solid var(--side-sec)}
+.main{display:flex;flex-direction:column;min-width:0}
+.hd{padding:var(--hdpad);border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:10px}
+.ttl{font-family:var(--head);font-size:var(--ttl);font-weight:600}
+.sec{font-size:12px;color:var(--sec)}
+.msgs{flex:1;padding:var(--msgpad);display:flex;flex-direction:column;gap:var(--gap)}
+.msg{display:flex;gap:10px}
+.av{width:30px;height:30px;border-radius:var(--av-r);background:var(--av-bg);color:var(--av-text);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none}
+.nm{margin:0;font-size:13px;font-weight:600}
+.nm span{font-weight:400;color:var(--sec);font-size:12px}
+.tx{margin:2px 0 0;font-size:14px;line-height:1.5}
+.card{display:flex;align-items:center;gap:10px;margin-top:8px;padding:var(--cardpad);border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg)}
+.card .ic{font-size:20px;color:var(--sec)}
+.cn{margin:0;font-size:13px;font-weight:600}
+.cs{margin:2px 0 0;font-size:12px;display:flex;align-items:center;gap:6px;color:var(--sec)}
+.cs.act{color:var(--state)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--dot);flex:none}
+.btn{margin-left:auto;font-size:12px;font-weight:600;padding:7px 12px;border-radius:var(--radius);background:var(--btn-bg);color:var(--btn-text);white-space:nowrap;border:1px solid var(--btn-bg)}
+.btn.ghost{background:transparent;color:var(--text);border-color:var(--border-strong)}
+.sys{font-size:12px;color:var(--sec);text-align:center;margin:0}
+.comp{padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px}
+.inp{flex:1;font-size:13px;color:var(--sec);border:1px solid var(--border-strong);border-radius:var(--radius);padding:8px 12px;background:var(--card-bg)}
+.board{padding:var(--hdpad)}
+.bhd{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+.cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.col{background:var(--col-bg);border-radius:var(--radius);padding:10px;display:flex;flex-direction:column;gap:8px}
+.colh{display:flex;justify-content:space-between;font-size:13px;font-weight:600;padding:2px 4px}
+.colh span{color:var(--sec);font-weight:400}
+.tk{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:var(--cardpad)}
+.tkt{margin:0 0 8px;font-size:13px;font-weight:600;line-height:1.4}
+.tkm{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sec)}
+.tkm .av{width:22px;height:22px;font-size:10px}
+.tkl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sec);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.tkl.act{color:var(--state)}
+.pri{font-size:11px;font-weight:600;padding:1px 7px;border-radius:var(--radius);background:var(--pri-bg);color:var(--pri-text);margin-left:auto}
+
+.theme-a{--bg:#FAF8F3;--side:#F1EDE4;--side-text:#23211C;--side-sec:#6B665C;--text:#23211C;--sec:#6B665C;--border:#DDD7CA;--border-strong:#BDB6A6;--radius:6px;--font:"Segoe UI",system-ui,sans-serif;--head:Georgia,"Times New Roman",serif;--ttl:17px;--navpad:7px 9px;--navon-bg:#DDEEE6;--navon-text:#1F6B52;--hdpad:13px 18px;--msgpad:16px 18px;--gap:16px;--av-r:50%;--av-bg:#E6E0D3;--av-text:#4A463E;--cardpad:10px 12px;--card-bg:#FFFFFF;--col-bg:#F1EDE4;--state:#1F6B52;--dot:#1F6B52;--online:#1F6B52;--btn-bg:#1F6B52;--btn-text:#FFFFFF;--pri-bg:#F6E3DC;--pri-text:#8A3418}
+.theme-b{--bg:#FFFFFF;--side:#1C2321;--side-text:#E6EAE8;--side-sec:#9AA5A0;--text:#161A19;--sec:#5E6663;--border:#DADFDD;--border-strong:#B7BFBC;--radius:4px;--font:"Segoe UI",system-ui,sans-serif;--head:"Segoe UI",system-ui,sans-serif;--ttl:15px;--navpad:5px 8px;--navon-bg:#2C3633;--navon-text:#FFFFFF;--hdpad:10px 14px;--msgpad:12px 14px;--gap:12px;--av-r:4px;--av-bg:#E3E7E5;--av-text:#3B4441;--cardpad:8px 10px;--card-bg:#F6F8F7;--col-bg:#EEF1F0;--state:#8A5A00;--dot:#D9A23A;--online:#5CC08A;--btn-bg:#1C2321;--btn-text:#FFFFFF;--pri-bg:#FBEBC8;--pri-text:#6E4700}
+.theme-c{--bg:#FFFFFF;--side:#FFF4EE;--side-text:#2A1F1A;--side-sec:#6E5F57;--text:#2A1F1A;--sec:#6E5F57;--border:#F0DDD2;--border-strong:#DDBFAF;--radius:12px;--font:Nunito,"Segoe UI",sans-serif;--head:Nunito,"Segoe UI",sans-serif;--ttl:17px;--navpad:8px 11px;--navon-bg:#FBE3D8;--navon-text:#A8401F;--hdpad:15px 20px;--msgpad:18px 20px;--gap:18px;--av-r:50%;--av-bg:#FBE3D8;--av-text:#A8401F;--cardpad:12px 14px;--card-bg:#FFF9F6;--col-bg:#FFF4EE;--state:#A8401F;--dot:#B4472A;--online:#3B7A4F;--btn-bg:#B4472A;--btn-text:#FFFFFF;--pri-bg:#FBE3D8;--pri-text:#A8401F}
+@media print{.page{max-width:none;padding:0}.scroll{overflow:visible;zoom:.86}.win{min-width:0}.cap{margin:4px 0 10px}}
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Arah tampilan ChatCompany</h1>
+<p class="meta">22 November 2026 · Tiga pilihan arah desain untuk dipilih atau digabung</p>
+<p class="lead">Ketiga arah memakai isi yang sama: layar chat dan board task. Yang berbeda hanya warna, huruf, sudut, dan kepadatan, supaya perbedaan karakternya mudah dibandingkan.</p>
+<p class="note">Arah ini disusun tanpa panduan desain dari kantor, jadi masih bisa digabung atau diganti. Nama aplikasi, logo, nama orang, dan tanggal masih placeholder. Semua pasangan warna teks sudah dicek dan lolos standar kontras WCAG AA.</p>
+
+<table class="cmp">
+<tr><th></th><th>A. Tenang</th><th>B. Padat</th><th>C. Hangat</th></tr>
+<tr><td>Cocok untuk</td><td>Kantor yang banyak mengurus dokumen, kontrak, dan tanda tangan</td><td>Tim yang memegang banyak task sekaligus</td><td>Tim kecil yang akrab dan ingin suasana santai</td></tr>
+<tr><td>Kesan</td><td>Rapi dan serius, seperti map dokumen</td><td>Efisien dan tegas, seperti panel kerja</td><td>Ramah dan lega</td></tr>
+<tr><td>Warna aksi</td><td>Hijau tua, sama dengan warna "tersambung"</td><td>Kuning untuk yang perlu ditindak, tombol hitam</td><td>Oranye bata</td></tr>
+<tr><td>Huruf</td><td>Judul serif (Georgia), isi Segoe UI</td><td>Segoe UI, ukuran lebih kecil</td><td>Nunito, huruf membulat</td></tr>
+<tr><td>Sudut</td><td>Sedikit membulat</td><td>Hampir tegak</td><td>Membulat</td></tr>
+<tr><td>Kepadatan</td><td>Sedang</td><td>Rapat, lebih banyak isi per layar</td><td>Lega, lebih sedikit isi per layar</td></tr>
+</table>
+
+<!-- ================= A ================= -->
+<section class="dir theme-a">
+<h2>A. Tenang, seperti kertas kerja</h2>
+<p class="dir-sub">Latar krem lembut dan judul serif memberi kesan dokumen resmi. Hijau dipakai untuk aksi dan status tersambung, jadi satu warna punya satu arti.</p>
+<div class="sw">
+<span class="chip"><i style="background:#FAF8F3"></i><span><b>Latar</b>#FAF8F3</span></span>
+<span class="chip"><i style="background:#F1EDE4"></i><span><b>Sidebar</b>#F1EDE4</span></span>
+<span class="chip"><i style="background:#23211C"></i><span><b>Teks</b>#23211C</span></span>
+<span class="chip"><i style="background:#1F6B52"></i><span><b>Aksi</b>#1F6B52</span></span>
+<span class="chip"><i style="background:#DDEEE6"></i><span><b>Aksi muda</b>#DDEEE6</span></span>
+</div>
+<div class="scroll"><div class="win chat">
+<aside class="side"><p class="app">[NAMA APP]</p><div class="nav on"><i class="ti ti-message" aria-hidden="true"></i>Chat</div><div class="nav"><i class="ti ti-layout-kanban" aria-hidden="true"></i>Board</div><div class="nav"><i class="ti ti-file-text" aria-hidden="true"></i>Dokumen</div><p class="lbl">Channel</p><div class="ch"># umum</div><div class="ch on"># proyek-a</div><p class="lbl">Di jaringan</p><div class="peer"><span class="pd"></span>Rekan A</div><div class="peer"><span class="pd"></span>Rekan B</div><div class="peer off"><span class="pd"></span>Rekan C, offline</div></aside>
+<div class="main"><div class="hd"><span class="ttl"># proyek-a</span><span class="sec">Tersambung lewat LAN kantor</span></div>
+<div class="msgs">
+<div class="msg"><span class="av">RA</span><div style="min-width:0;flex:1"><p class="nm">Rekan A <span>09.12</span></p><p class="tx">Draft kontraknya sudah saya kirim, tolong ditandatangani.</p><div class="card"><i class="ti ti-file-type-pdf ic" aria-hidden="true"></i><div><p class="cn">kontrak-draft.pdf</p><p class="cs act"><span class="dot"></span>Menunggu tanda tangan Anda</p></div><span class="btn">Tanda tangani</span></div></div></div>
+<div class="msg"><span class="av">RB</span><div style="min-width:0;flex:1"><p class="nm">Rekan B <span>09.20</span></p><p class="tx">Saya buatkan task-nya supaya tidak lupa.</p><div class="card"><i class="ti ti-checkbox ic" aria-hidden="true"></i><div><p class="cn">Review kontrak proyek A</p><p class="cs">To do · untuk Rekan B</p></div><span class="btn ghost">Buka di board</span></div></div></div>
+<p class="sys">Rekan C sedang offline. Pesan dititipkan dan terkirim saat laptopnya tersambung.</p>
+</div>
+<div class="comp"><span class="inp">Tulis pesan ke #proyek-a</span><span class="btn">Kirim</span></div></div>
+</div></div>
+<p class="cap">Layar chat</p>
+<div class="scroll"><div class="win board">
+<div class="bhd"><span class="ttl"># proyek-a</span><span class="sec">Board</span><span class="btn ghost" style="margin-left:auto"><i class="ti ti-plus" aria-hidden="true"></i> Task baru</span></div>
+<div class="cols">
+<div class="col"><div class="colh">To do <span>2</span></div>
+<div class="tk"><p class="tkt">Review kontrak proyek A</p><div class="tkm"><span class="av">RB</span>Tenggat [tanggal]<span class="pri">Tinggi</span></div><div class="tkl"><i class="ti ti-message" aria-hidden="true"></i>Dari chat #proyek-a</div></div>
+<div class="tk"><p class="tkt">Tanda tangan kontrak-draft.pdf</p><div class="tkm"><span class="av">RA</span>Tenggat [tanggal]</div><div class="tkl act"><i class="ti ti-signature" aria-hidden="true"></i>Menunggu tanda tangan</div></div></div>
+<div class="col"><div class="colh">Dikerjakan <span>1</span></div>
+<div class="tk"><p class="tkt">Siapkan laporan bulanan</p><div class="tkm"><span class="av">RC</span>Tenggat [tanggal]</div><div class="tkl"><i class="ti ti-git-merge" aria-hidden="true"></i>Diubah saat offline, sudah digabung</div></div></div>
+<div class="col"><div class="colh">Selesai <span>1</span></div>
+<div class="tk"><p class="tkt" style="color:var(--sec)">Kirim jadwal rapat ke tim</p><div class="tkm"><span class="av">RA</span>Selesai [tanggal]</div></div></div>
+</div></div></div>
+<p class="cap">Layar board</p>
+</section>
+
+<!-- ================= B ================= -->
+<section class="dir theme-b">
+<h2>B. Padat, untuk kerja cepat</h2>
+<p class="dir-sub">Sidebar gelap memisahkan navigasi dari isi. Jarak lebih rapat sehingga lebih banyak pesan dan task muat di satu layar. Kuning hanya muncul untuk hal yang perlu ditindak.</p>
+<div class="sw">
+<span class="chip"><i style="background:#FFFFFF"></i><span><b>Latar</b>#FFFFFF</span></span>
+<span class="chip"><i style="background:#1C2321"></i><span><b>Sidebar</b>#1C2321</span></span>
+<span class="chip"><i style="background:#161A19"></i><span><b>Teks</b>#161A19</span></span>
+<span class="chip"><i style="background:#D9A23A"></i><span><b>Perlu ditindak</b>#D9A23A</span></span>
+<span class="chip"><i style="background:#8A5A00"></i><span><b>Teks status</b>#8A5A00</span></span>
+</div>
+<div class="scroll"><div class="win chat">
+<aside class="side"><p class="app">[NAMA APP]</p><div class="nav on"><i class="ti ti-message" aria-hidden="true"></i>Chat</div><div class="nav"><i class="ti ti-layout-kanban" aria-hidden="true"></i>Board</div><div class="nav"><i class="ti ti-file-text" aria-hidden="true"></i>Dokumen</div><p class="lbl">Channel</p><div class="ch"># umum</div><div class="ch on"># proyek-a</div><p class="lbl">Di jaringan</p><div class="peer"><span class="pd"></span>Rekan A</div><div class="peer"><span class="pd"></span>Rekan B</div><div class="peer off"><span class="pd"></span>Rekan C, offline</div></aside>
+<div class="main"><div class="hd"><span class="ttl"># proyek-a</span><span class="sec">Tersambung lewat LAN kantor</span></div>
+<div class="msgs">
+<div class="msg"><span class="av">RA</span><div style="min-width:0;flex:1"><p class="nm">Rekan A <span>09.12</span></p><p class="tx">Draft kontraknya sudah saya kirim, tolong ditandatangani.</p><div class="card"><i class="ti ti-file-type-pdf ic" aria-hidden="true"></i><div><p class="cn">kontrak-draft.pdf</p><p class="cs act"><span class="dot"></span>Menunggu tanda tangan Anda</p></div><span class="btn">Tanda tangani</span></div></div></div>
+<div class="msg"><span class="av">RB</span><div style="min-width:0;flex:1"><p class="nm">Rekan B <span>09.20</span></p><p class="tx">Saya buatkan task-nya supaya tidak lupa.</p><div class="card"><i class="ti ti-checkbox ic" aria-hidden="true"></i><div><p class="cn">Review kontrak proyek A</p><p class="cs">To do · untuk Rekan B</p></div><span class="btn ghost">Buka di board</span></div></div></div>
+<p class="sys">Rekan C sedang offline. Pesan dititipkan dan terkirim saat laptopnya tersambung.</p>
+</div>
+<div class="comp"><span class="inp">Tulis pesan ke #proyek-a</span><span class="btn">Kirim</span></div></div>
+</div></div>
+<p class="cap">Layar chat</p>
+<div class="scroll"><div class="win board">
+<div class="bhd"><span class="ttl"># proyek-a</span><span class="sec">Board</span><span class="btn ghost" style="margin-left:auto"><i class="ti ti-plus" aria-hidden="true"></i> Task baru</span></div>
+<div class="cols">
+<div class="col"><div class="colh">To do <span>2</span></div>
+<div class="tk"><p class="tkt">Review kontrak proyek A</p><div class="tkm"><span class="av">RB</span>Tenggat [tanggal]<span class="pri">Tinggi</span></div><div class="tkl"><i class="ti ti-message" aria-hidden="true"></i>Dari chat #proyek-a</div></div>
+<div class="tk"><p class="tkt">Tanda tangan kontrak-draft.pdf</p><div class="tkm"><span class="av">RA</span>Tenggat [tanggal]</div><div class="tkl act"><i class="ti ti-signature" aria-hidden="true"></i>Menunggu tanda tangan</div></div></div>
+<div class="col"><div class="colh">Dikerjakan <span>1</span></div>
+<div class="tk"><p class="tkt">Siapkan laporan bulanan</p><div class="tkm"><span class="av">RC</span>Tenggat [tanggal]</div><div class="tkl"><i class="ti ti-git-merge" aria-hidden="true"></i>Diubah saat offline, sudah digabung</div></div></div>
+<div class="col"><div class="colh">Selesai <span>1</span></div>
+<div class="tk"><p class="tkt" style="color:var(--sec)">Kirim jadwal rapat ke tim</p><div class="tkm"><span class="av">RA</span>Selesai [tanggal]</div></div></div>
+</div></div></div>
+<p class="cap">Layar board</p>
+</section>
+
+<!-- ================= C ================= -->
+<section class="dir theme-c">
+<h2>C. Hangat dan lapang</h2>
+<p class="dir-sub">Sudut membulat, huruf Nunito, dan ruang yang lega membuat aplikasi terasa santai. Oranye bata dipakai untuk aksi dan hal yang menunggu Anda.</p>
+<div class="sw">
+<span class="chip"><i style="background:#FFFFFF"></i><span><b>Latar</b>#FFFFFF</span></span>
+<span class="chip"><i style="background:#FFF4EE"></i><span><b>Sidebar</b>#FFF4EE</span></span>
+<span class="chip"><i style="background:#2A1F1A"></i><span><b>Teks</b>#2A1F1A</span></span>
+<span class="chip"><i style="background:#B4472A"></i><span><b>Aksi</b>#B4472A</span></span>
+<span class="chip"><i style="background:#FBE3D8"></i><span><b>Aksi muda</b>#FBE3D8</span></span>
+</div>
+<div class="scroll"><div class="win chat">
+<aside class="side"><p class="app">[NAMA APP]</p><div class="nav on"><i class="ti ti-message" aria-hidden="true"></i>Chat</div><div class="nav"><i class="ti ti-layout-kanban" aria-hidden="true"></i>Board</div><div class="nav"><i class="ti ti-file-text" aria-hidden="true"></i>Dokumen</div><p class="lbl">Channel</p><div class="ch"># umum</div><div class="ch on"># proyek-a</div><p class="lbl">Di jaringan</p><div class="peer"><span class="pd"></span>Rekan A</div><div class="peer"><span class="pd"></span>Rekan B</div><div class="peer off"><span class="pd"></span>Rekan C, offline</div></aside>
+<div class="main"><div class="hd"><span class="ttl"># proyek-a</span><span class="sec">Tersambung lewat LAN kantor</span></div>
+<div class="msgs">
+<div class="msg"><span class="av">RA</span><div style="min-width:0;flex:1"><p class="nm">Rekan A <span>09.12</span></p><p class="tx">Draft kontraknya sudah saya kirim, tolong ditandatangani.</p><div class="card"><i class="ti ti-file-type-pdf ic" aria-hidden="true"></i><div><p class="cn">kontrak-draft.pdf</p><p class="cs act"><span class="dot"></span>Menunggu tanda tangan Anda</p></div><span class="btn">Tanda tangani</span></div></div></div>
+<div class="msg"><span class="av">RB</span><div style="min-width:0;flex:1"><p class="nm">Rekan B <span>09.20</span></p><p class="tx">Saya buatkan task-nya supaya tidak lupa.</p><div class="card"><i class="ti ti-checkbox ic" aria-hidden="true"></i><div><p class="cn">Review kontrak proyek A</p><p class="cs">To do · untuk Rekan B</p></div><span class="btn ghost">Buka di board</span></div></div></div>
+<p class="sys">Rekan C sedang offline. Pesan dititipkan dan terkirim saat laptopnya tersambung.</p>
+</div>
+<div class="comp"><span class="inp">Tulis pesan ke #proyek-a</span><span class="btn">Kirim</span></div></div>
+</div></div>
+<p class="cap">Layar chat</p>
+<div class="scroll"><div class="win board">
+<div class="bhd"><span class="ttl"># proyek-a</span><span class="sec">Board</span><span class="btn ghost" style="margin-left:auto"><i class="ti ti-plus" aria-hidden="true"></i> Task baru</span></div>
+<div class="cols">
+<div class="col"><div class="colh">To do <span>2</span></div>
+<div class="tk"><p class="tkt">Review kontrak proyek A</p><div class="tkm"><span class="av">RB</span>Tenggat [tanggal]<span class="pri">Tinggi</span></div><div class="tkl"><i class="ti ti-message" aria-hidden="true"></i>Dari chat #proyek-a</div></div>
+<div class="tk"><p class="tkt">Tanda tangan kontrak-draft.pdf</p><div class="tkm"><span class="av">RA</span>Tenggat [tanggal]</div><div class="tkl act"><i class="ti ti-signature" aria-hidden="true"></i>Menunggu tanda tangan</div></div></div>
+<div class="col"><div class="colh">Dikerjakan <span>1</span></div>
+<div class="tk"><p class="tkt">Siapkan laporan bulanan</p><div class="tkm"><span class="av">RC</span>Tenggat [tanggal]</div><div class="tkl"><i class="ti ti-git-merge" aria-hidden="true"></i>Diubah saat offline, sudah digabung</div></div></div>
+<div class="col"><div class="colh">Selesai <span>1</span></div>
+<div class="tk"><p class="tkt" style="color:var(--sec)">Kirim jadwal rapat ke tim</p><div class="tkm"><span class="av">RA</span>Selesai [tanggal]</div></div></div>
+</div></div></div>
+<p class="cap">Layar board</p>
+</section>
+
+</div>
+</body>
+</html>

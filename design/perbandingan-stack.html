@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Perbandingan stack Mira</title>
+<style>
+@page{size:A4;margin:16mm 15mm 18mm;@bottom-right{content:"Halaman " counter(page);font:11px "Segoe UI",sans-serif;color:#6E5F57}}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html,body{background:#ffffff;margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:#1f1e1c}
+.doc{max-width:712px;margin:0 auto;padding:32px 16px}
+h1{font-size:28px;line-height:1.25;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:12px}
+h2{font-size:20px;font-weight:600;margin:26px 0 10px}
+h3{font-size:15px;font-weight:600;margin:16px 0 8px}
+h2,h3{break-after:avoid}
+p{margin:0 0 10px}
+.meta{font-size:13px;color:#5F5E5A;margin:0 0 18px}
+.lead{font-size:16px;margin:0 0 14px}
+.note{font-size:13px;color:#5F5E5A;border:1px solid #e3ddd6;border-radius:8px;padding:10px 12px;margin:0 0 18px}
+.decision{border:2px solid #B4472A;border-radius:12px;padding:12px 14px;margin:0 0 18px}
+.decision p{margin:0}
+ul,ol{margin:0 0 12px;padding-left:20px}
+li{margin:0 0 5px}
+table.doc{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 8px}
+table.doc tr{break-inside:avoid}
+table.doc tr:first-child{break-after:avoid}
+table.doc th{text-align:left;font-weight:600;padding:7px 10px 7px 0;border-bottom:1px solid #8f8d86;vertical-align:bottom}
+table.doc td{padding:7px 10px 7px 0;border-bottom:1px solid #e3ddd6;vertical-align:top}
+table.doc td:first-child{font-weight:600}
+td.n,th.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.src{font-size:12px;color:#5F5E5A;margin:0 0 16px}
+.bar{display:flex;align-items:center;gap:8px}
+.bar i{display:inline-block;height:10px;border-radius:3px;background:#B4472A}
+.bar.alt i{background:#A88A7C}
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1><img src="logo-sementara.svg" alt="" width="36" height="36">Perbandingan stack Mira</h1>
+<p class="meta">22 November 2026 · Diukur langsung di PC pengembangan proyek ini</p>
+<p class="lead">Semua angka di dokumen ini hasil pengukuran sungguhan dengan aplikasi contoh kosong, bukan perkiraan atau angka dari internet. Aplikasi Mira yang lengkap akan lebih besar dan memakai lebih banyak memori, tapi perbandingan antar pilihan tetap berlaku.</p>
+
+<div class="decision"><p><b>Keputusan untuk sekarang:</b> pembangunan memakai stack di rencana pembangunan, yaitu Tauri dengan React dan TypeScript, sesuai instruksi 22 November 2026. Dokumen ini menjadi bahan kalau stack ingin ditinjau ulang.</p></div>
+
+<h2>Ringkasan</h2>
+<table class="doc">
+<tr><th>Pilihan</th><th class="n">Ukuran program</th><th class="n">Memori kosong</th><th class="n">Memori 5.000 baris</th><th class="n">Render 5.000 baris</th></tr>
+<tr><td>Tauri + React</td><td class="n">4,26 MB</td><td class="n">sekitar 157 MB</td><td class="n">266 MB</td><td class="n">150 ms</td></tr>
+<tr><td>Tauri + Svelte</td><td class="n">4,21 MB</td><td class="n">sekitar 157 MB</td><td class="n">257 MB</td><td class="n">118 ms</td></tr>
+<tr><td>Tauri + Solid</td><td class="n">4,20 MB</td><td class="n">sekitar 157 MB</td><td class="n">258 MB</td><td class="n">117 ms</td></tr>
+<tr><td>Tauri tanpa kerangka</td><td class="n">4,20 MB</td><td class="n">157 MB</td><td class="n">241 MB</td><td class="n">98 ms</td></tr>
+<tr><td>Slint, renderer GPU</td><td class="n">11,70 MB</td><td class="n">169 MB</td><td class="n">tidak diukur</td><td class="n">tidak diukur</td></tr>
+<tr><td>Slint, renderer software</td><td class="n">11,70 MB</td><td class="n">5 MB</td><td class="n">tidak diukur</td><td class="n">tidak diukur</td></tr>
+</table>
+<p class="src">Memori = private bytes, dijumlah dari semua proses aplikasi. Render diukur di dalam WebView2 aplikasi Tauri, rata-rata 3 kali. "Memori kosong" untuk React, Svelte, dan Solid memakai angka Tauri tanpa kerangka, karena tampilan kosong ketiganya praktis sama kecilnya.</p>
+
+<h3>Artinya</h3>
+<ol>
+<li><b>Di dalam Tauri, beda React, Svelte, dan Solid kecil.</b> Saat menampilkan 5.000 baris, React memakai sekitar 8 sampai 9 MB memori lebih banyak dan sekitar 30 ms lebih lambat. Untuk mengubah sebagian baris, ketiganya hampir sama cepat.</li>
+<li><b>Sebagian besar memori dipakai WebView2.</b> Aplikasi Tauri kosong saja sudah memakai sekitar 157 MB yang tersebar di 7 proses. Pilihan kerangka tampilan hanya menggeser angka ini sedikit.</li>
+<li><b>Rust native jauh lebih ringan hanya kalau memakai renderer software.</b> Slint dengan renderer software cuma memakai sekitar 5 MB dan jendelanya muncul dalam 130 ms. Dengan renderer GPU bawaannya, memorinya justru setara Tauri karena driver grafis ikut memesan memori.</li>
+<li><b>Ukuran installer Tauri sangat kecil:</b> 1,34 MB untuk installer NSIS. Program Slint lebih besar (11,70 MB) karena mesin gambarnya ikut di dalam program.</li>
+</ol>
+
+<h2>1. Ukuran kode tampilan</h2>
+<p>Template bawaan masing-masing kerangka setelah di-build untuk produksi.</p>
+<table class="doc">
+<tr><th>Kerangka</th><th class="n">JavaScript</th><th class="n">Setelah gzip</th><th>Perbandingan</th></tr>
+<tr><td>Tanpa kerangka</td><td class="n">4,4 KB</td><td class="n">2,0 KB</td><td><span class="bar"><i style="width:2px"></i></span></td></tr>
+<tr><td>Solid</td><td class="n">15,2 KB</td><td class="n">5,7 KB</td><td><span class="bar"><i style="width:14px"></i></span></td></tr>
+<tr><td>Svelte</td><td class="n">40,0 KB</td><td class="n">15,6 KB</td><td><span class="bar"><i style="width:37px"></i></span></td></tr>
+<tr><td>React</td><td class="n">217,2 KB</td><td class="n">66,8 KB</td><td><span class="bar"><i style="width:200px"></i></span></td></tr>
+</table>
+<p class="src">Dibuat dengan create-vite (template react-ts, svelte-ts, solid-ts, vanilla-ts), React 19 dan Solid 1.9. Karena aplikasi dimuat dari disk laptop dan bukan dari internet, selisih ukuran ini hampir tidak terasa oleh pengguna.</p>
+
+<h2>2. Kecepatan menampilkan daftar panjang</h2>
+<p>Setiap tampilan merender 5.000 baris pesan (seperti chat panjang), lalu mengubah 500 di antaranya. Waktu sudah termasuk tata letak halaman. Svelte memakai $state.raw, cara yang disarankan untuk daftar besar.</p>
+<h3>Di Chrome, median dari 9 kali</h3>
+<table class="doc">
+<tr><th>Kerangka</th><th class="n">Buat 5.000 baris</th><th class="n">Ubah 500 baris</th><th class="n">Memori JavaScript</th></tr>
+<tr><td>Tanpa kerangka</td><td class="n">82,0 ms</td><td class="n">6,6 ms</td><td class="n">1,3 MB</td></tr>
+<tr><td>Solid</td><td class="n">94,5 ms</td><td class="n">18,4 ms</td><td class="n">4,1 MB</td></tr>
+<tr><td>Svelte</td><td class="n">96,9 ms</td><td class="n">17,3 ms</td><td class="n">6,3 MB</td></tr>
+<tr><td>React</td><td class="n">134,8 ms</td><td class="n">17,9 ms</td><td class="n">8,1 MB</td></tr>
+</table>
+<h3>Di dalam aplikasi Tauri (WebView2), rata-rata 3 kali</h3>
+<table class="doc">
+<tr><th>Kerangka</th><th class="n">Buat 5.000 baris</th><th class="n">Memori seluruh aplikasi</th></tr>
+<tr><td>Tanpa kerangka</td><td class="n">98,1 ms</td><td class="n">241 MB</td></tr>
+<tr><td>Solid</td><td class="n">116,6 ms</td><td class="n">258 MB</td></tr>
+<tr><td>Svelte</td><td class="n">117,5 ms</td><td class="n">257 MB</td></tr>
+<tr><td>React</td><td class="n">149,5 ms</td><td class="n">266 MB</td></tr>
+</table>
+<p class="src">Di setiap pengukuran, jumlah baris yang tampil dicek lewat mode debug WebView2 dan selalu 5.000. Aplikasi Mira sungguhan tidak akan merender 5.000 pesan sekaligus, karena daftar chat panjang hanya menampilkan bagian yang terlihat di layar.</p>
+
+<h2>3. Aplikasi utuh</h2>
+<table class="doc">
+<tr><th>Ukuran</th><th class="n">Tauri</th><th class="n">Slint</th></tr>
+<tr><td>Program (exe)</td><td class="n">4,20 MB</td><td class="n">11,70 MB</td></tr>
+<tr><td>Installer NSIS</td><td class="n">1,34 MB</td><td class="n">tidak dibuat</td></tr>
+<tr><td>Installer MSI</td><td class="n">1,99 MB</td><td class="n">tidak dibuat</td></tr>
+<tr><td>Jumlah proses saat berjalan</td><td class="n">7</td><td class="n">1</td></tr>
+<tr><td>Memori saat kosong</td><td class="n">157 MB</td><td class="n">169 MB (GPU), 5 MB (software)</td></tr>
+<tr><td>Jendela muncul</td><td class="n">sekitar 300 ms</td><td class="n">352 ms (GPU), 130 ms (software)</td></tr>
+<tr><td>Kompilasi pertama</td><td class="n">sekitar 5 menit, termasuk installer</td><td class="n">sekitar 2 menit</td></tr>
+</table>
+<p class="src">Installer Tauri belum termasuk WebView2. Windows 11 sudah membawa WebView2, dan untuk Windows 10 installer bisa memasangnya otomatis. Jendela muncul diukur sampai jendela tampil, bukan sampai isi halaman selesai dimuat.</p>
+
+<h2>4. Yang tidak terlihat dari angka</h2>
+<table class="doc">
+<tr><th>Aspek</th><th>Tauri + React</th><th>Tauri + Svelte</th><th>Slint (Rust native)</th></tr>
+<tr><td>Komponen yang ramah keyboard</td><td>Radix UI, sangat lengkap</td><td>Bits UI, cukup lengkap</td><td>Bawaan Slint, terbatas</td></tr>
+<tr><td>Penampil dan penulis PDF</td><td>pdf.js dan pdf-lib</td><td>pdf.js dan pdf-lib</td><td>Harus memakai pustaka C seperti pdfium, jauh lebih rumit</td></tr>
+<tr><td>Mencari developer dan contoh</td><td>Paling mudah</td><td>Sedang</td><td>Sulit</td></tr>
+<tr><td>Risiko waktu pembangunan</td><td>Paling rendah</td><td>Rendah</td><td>Tinggi, terutama untuk tanda tangan PDF</td></tr>
+</table>
+
+<h2>Cara pengukuran</h2>
+<ul>
+<li>PC: Windows 11 Home, Node.js 22, Rust 1.99, Chrome terpasang, WebView2 bawaan Windows.</li>
+<li>Tampilan dibuat dengan create-vite dan di-build oleh Vite untuk produksi.</li>
+<li>Aplikasi Tauri dibuat dengan create-tauri-app (Tauri 2), dibangun dalam mode release. Setiap varian tampilan dimasukkan ke aplikasi yang sama lalu dibangun ulang.</li>
+<li>Aplikasi Slint memakai Slint 1 dalam mode release, dengan satu jendela, dua teks, dan satu tombol.</li>
+<li>Memori diukur sebagai private bytes dari semua proses milik aplikasi, 8 detik setelah dibuka. Working set tidak dipakai, karena menjumlahkannya antar proses menghitung memori bersama berkali-kali.</li>
+<li>Kecepatan di Chrome diukur dengan puppeteer-core, Chrome headless, dan garbage collection dipaksa sebelum membaca memori.</li>
+<li>Semua aplikasi contoh disimpan di folder sementara dan bukan bagian dari kode Mira.</li>
+</ul>
+<div class="note">Angka bisa berbeda di laptop lain, tergantung prosesor, driver grafis, dan versi WebView2. Yang paling bisa dipegang adalah perbandingan antar pilihan, bukan angka mutlaknya.</div>
+
+</div>
+</body>
+</html>

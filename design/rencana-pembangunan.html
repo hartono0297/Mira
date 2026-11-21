@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rencana pembangunan Mira</title>
+<style>
+@page{size:A4;margin:16mm 15mm 18mm;@bottom-right{content:"Halaman " counter(page);font:11px "Segoe UI",sans-serif;color:#6E5F57}}
+*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html,body{background:#ffffff;margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:#1f1e1c}
+.doc{max-width:712px;margin:0 auto;padding:32px 16px}
+h1{font-size:28px;line-height:1.25;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:12px}
+h2{font-size:20px;font-weight:600;margin:0 0 10px}
+h3{font-size:15px;font-weight:600;margin:20px 0 8px}
+h2,h3{break-after:avoid}
+p{margin:0 0 10px}
+.meta{font-size:13px;color:#5F5E5A;margin:0 0 20px}
+.lead{font-size:16px;margin:0 0 14px}
+.note{font-size:13px;color:#5F5E5A;border:1px solid #e3ddd6;border-radius:8px;padding:10px 12px;margin:0 0 20px}
+.section{break-before:page}
+ul,ol{margin:0 0 12px;padding-left:20px}
+li{margin:0 0 5px}
+table.doc{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 16px}
+table.doc tr{break-inside:avoid}
+table.doc th{text-align:left;font-weight:600;padding:7px 10px 7px 0;border-bottom:1px solid #8f8d86;vertical-align:bottom}
+table.doc td{padding:7px 10px 7px 0;border-bottom:1px solid #e3ddd6;vertical-align:top}
+table.doc td:first-child{font-weight:600}
+.nw{white-space:nowrap}
+figure{margin:14px 0 18px;break-inside:avoid}
+figcaption{font-size:12px;color:#5F5E5A;margin-top:6px}
+.stage{border:1px solid #e3ddd6;border-radius:12px;padding:12px 14px;margin:0 0 12px;break-inside:avoid}
+.stage.mvp{border:2px solid #B4472A;padding:11px 13px}
+.sh{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:0 0 6px}
+.sn{font-size:15px;font-weight:600;margin:0}
+.est{margin-left:auto;font-size:12px;color:#6E5F57}
+.tag{font-size:11px;font-weight:600;padding:1px 8px;border-radius:12px;background:#FBE3D8;color:#A8401F}
+.stage ul{margin:0 0 8px}
+.done{font-size:13px;margin:0;color:#3d3a36}
+.done b{font-weight:600}
+svg .th{font:600 14px "Segoe UI",sans-serif;fill:#2C2C2A}
+svg .ts{font:400 12px "Segoe UI",sans-serif;fill:#5F5E5A}
+svg .arr{stroke:#73726c;stroke-width:1.5;fill:none}
+svg .c-teal>rect{fill:#E1F5EE;stroke:#0F6E56}
+svg .c-teal>.th{fill:#085041}svg .c-teal>.ts{fill:#0F6E56}
+svg .c-gray>rect{fill:#F1EFE8;stroke:#888780}
+svg .c-gray>.th{fill:#444441}svg .c-gray>.ts{fill:#5F5E5A}
+svg .c-coral>rect{fill:#FAECE7;stroke:#993C1D}
+svg .c-coral>.th{fill:#712B13}svg .c-coral>.ts{fill:#993C1D}
+</style>
+</head>
+<body>
+<div class="doc">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs></svg>
+
+<h1><img src="logo-sementara.svg" alt="" width="36" height="36">Rencana pembangunan Mira</h1>
+<p class="meta">22 November 2026 · Proyek ChatCompany · Berdasarkan hasil brainstorming (brainstorming-chatcompany.pdf)</p>
+<p class="lead">Mira dibangun bertahap. Setiap tahap menghasilkan aplikasi yang bisa dijalankan dan dicoba, jadi masalah ketahuan lebih awal dan urutan prioritas masih bisa diubah di tengah jalan.</p>
+<p class="note">Perkiraan waktu di dokumen ini kasar, dengan asumsi satu developer bekerja penuh waktu dan dibantu AI. Angka sebenarnya bisa bergeser setelah tahap 1 selesai, karena di situ bagian paling sulit (jaringan dan sinkronisasi) mulai terlihat.</p>
+
+<h2>Ringkasan</h2>
+<table class="doc">
+<tr><th>Tahap</th><th>Isi</th><th class="nw">Perkiraan</th></tr>
+<tr><td>0. Fondasi</td><td>Proyek Tauri, tema Bata terang dan gelap, identitas laptop, layar pertama kali buka</td><td class="nw">1 sampai 2 minggu</td></tr>
+<tr><td>1. Jaringan dan tim</td><td>Menemukan rekan, koneksi terenkripsi, kode undangan, peran, status LAN atau VPN</td><td class="nw">2 sampai 3 minggu</td></tr>
+<tr><td>2. Chat dasar</td><td>Channel, chat pribadi, status pesan, titipan, kirim file kecil, notifikasi</td><td class="nw">2 sampai 3 minggu</td></tr>
+<tr><td>3. Board dasar</td><td>Board per proyek, task, komentar, "Task saya", pengingat tenggat</td><td class="nw">2 sampai 3 minggu</td></tr>
+<tr><td>4. Dokumen dan edit file</td><td>Layar Dokumen, versi, edit Word dan Excel, bentrok, file besar</td><td class="nw">2 sampai 3 minggu</td></tr>
+<tr><td>5. Tanda tangan PDF</td><td>Penampil PDF, catatan, tanda tangan dengan PIN, urutan, kunci file</td><td class="nw">2 sampai 3 minggu</td></tr>
+<tr><td>6. Fitur lengkap</td><td>Board dan chat versi lengkap, halaman Keamanan admin</td><td class="nw">3 sampai 4 minggu</td></tr>
+<tr><td>7. Uji coba kantor</td><td>Pilot dengan tim kecil, installer, kunci cadangan admin, perbaikan</td><td class="nw">1 sampai 2 minggu</td></tr>
+</table>
+<p>Totalnya sekitar <b>15 sampai 23 minggu</b> sampai Mira siap dipakai satu kantor. <b>Versi pertama yang sudah bisa dipakai sehari-hari</b> (chat dan board dasar) selesai di akhir tahap 3, sekitar 7 sampai 11 minggu.</p>
+
+<!-- ============ ARSITEKTUR ============ -->
+<div class="section">
+<h2>Arsitektur teknis</h2>
+<p>Setiap laptop menjalankan aplikasi Mira yang sama. Tampilan dibuat dengan teknologi web, sedangkan semua urusan data, jaringan, dan keamanan ada di inti Rust.</p>
+<figure>
+<svg width="100%" viewBox="0 0 680 380" role="img"><title>Arsitektur aplikasi Mira di satu laptop</title><desc>Lapisan tampilan React di atas inti Rust. Inti Rust berisi modul identitas, jaringan, sinkron, izin, database, file, notifikasi, dan Office. Modul jaringan tersambung ke laptop rekan lewat LAN atau VPN.</desc>
+<rect x="40" y="40" width="470" height="314" rx="18" fill="none" stroke="#B4B2A9" stroke-dasharray="4 4" stroke-width="0.75"/>
+<text class="th" x="60" y="66">Aplikasi Mira di satu laptop</text>
+<g class="c-coral"><rect x="64" y="82" width="422" height="56" rx="8" stroke-width="0.75"/><text class="th" x="275" y="100" text-anchor="middle" dominant-baseline="central">Tampilan</text><text class="ts" x="275" y="120" text-anchor="middle" dominant-baseline="central">React, TypeScript, tema Bata</text></g>
+<line x1="275" y1="138" x2="275" y2="164" class="arr" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+<text class="ts" x="287" y="152" dominant-baseline="central">Perintah dan event Tauri</text>
+<rect x="64" y="168" width="422" height="166" rx="12" fill="none" stroke="#888780" stroke-width="0.75"/>
+<text class="th" x="80" y="190">Inti Rust</text>
+<g class="c-gray"><rect x="76" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="123" y="232" text-anchor="middle" dominant-baseline="central">Identitas</text></g>
+<g class="c-gray"><rect x="180" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="227" y="232" text-anchor="middle" dominant-baseline="central">Jaringan</text></g>
+<g class="c-gray"><rect x="284" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="331" y="232" text-anchor="middle" dominant-baseline="central">Sinkron</text></g>
+<g class="c-gray"><rect x="388" y="210" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="435" y="232" text-anchor="middle" dominant-baseline="central">Izin</text></g>
+<g class="c-gray"><rect x="76" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="123" y="292" text-anchor="middle" dominant-baseline="central">Database</text></g>
+<g class="c-gray"><rect x="180" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="227" y="292" text-anchor="middle" dominant-baseline="central">File</text></g>
+<g class="c-gray"><rect x="284" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="331" y="292" text-anchor="middle" dominant-baseline="central">Notifikasi</text></g>
+<g class="c-gray"><rect x="388" y="270" width="94" height="44" rx="8" stroke-width="0.75"/><text class="th" x="435" y="292" text-anchor="middle" dominant-baseline="central">Office</text></g>
+<path d="M227 210 L227 200 L520 200 L520 232 L526 232" class="arr" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+<g class="c-teal"><rect x="530" y="204" width="110" height="56" rx="8" stroke-width="0.75"/><text class="th" x="585" y="222" text-anchor="middle" dominant-baseline="central">Laptop rekan</text><text class="ts" x="585" y="242" text-anchor="middle" dominant-baseline="central">LAN atau VPN</text></g>
+</svg>
+<figcaption>Tampilan hanya bicara dengan inti Rust. Hanya modul Jaringan yang bicara dengan laptop rekan.</figcaption>
+</figure>
+
+<h3>Isi setiap modul</h3>
+<table class="doc">
+<tr><th>Modul</th><th>Tugas</th><th>Teknologi yang direncanakan</th></tr>
+<tr><td>Tampilan</td><td>Semua layar, tema terang dan gelap lewat token warna, mode "Ikuti Windows"</td><td>React, TypeScript, Vite</td></tr>
+<tr><td>Identitas</td><td>Membuat dan menyimpan kunci unik laptop, nama tampilan, PIN tanda tangan</td><td>Ed25519, penyimpanan kunci Windows</td></tr>
+<tr><td>Jaringan</td><td>Menemukan rekan, koneksi terenkripsi antar laptop, alamat yang diingat, input alamat manual dan QR</td><td>mDNS, QUIC dengan enkripsi</td></tr>
+<tr><td>Sinkron</td><td>Menukar perubahan, menggabungkan edit bersamaan, mengelola titipan pesan</td><td>Log perubahan bertanda tangan, Automerge untuk board</td></tr>
+<tr><td>Izin</td><td>Daftar anggota dan peran, memeriksa setiap perubahan yang masuk, mencatat yang ditolak</td><td>Rust</td></tr>
+<tr><td>Database</td><td>Menyimpan chat, task, versi dokumen, dan pengaturan di laptop</td><td>SQLite</td></tr>
+<tr><td>File</td><td>Menyimpan file berdasarkan sidik jarinya, mengirim file per potongan, mengunduh file besar saat diklik</td><td>Rust</td></tr>
+<tr><td>Notifikasi</td><td>Notifikasi pesan dan pengingat tenggat di Windows</td><td>Plugin notifikasi Tauri</td></tr>
+<tr><td>Office</td><td>Membuka file di Word atau Excel, mendeteksi saat disimpan, membuat versi baru</td><td>Pemantau perubahan file</td></tr>
+<tr><td>PDF</td><td>Menampilkan PDF, catatan, menempel tanda tangan, mengunci file</td><td>pdf.js untuk tampilan, pdf-lib untuk menulis</td></tr>
+</table>
+<p>Prinsip keamanan: semua enkripsi dan tanda tangan digital memakai pustaka yang sudah teruji luas, bukan buatan sendiri.</p>
+</div>
+
+<!-- ============ TAHAPAN ============ -->
+<div class="section">
+<h2>Tahapan pembangunan</h2>
+
+<div class="stage">
+<div class="sh"><p class="sn">Tahap 0. Fondasi</p><span class="est">1 sampai 2 minggu</span></div>
+<ul>
+<li>Repository Git dan proyek Tauri dengan React dan TypeScript.</li>
+<li>Sistem token warna dengan tema Bata terang dan gelap, plus mode "Ikuti Windows".</li>
+<li>Kerangka layar: sidebar, Chat, Board, Dokumen, dan Pengaturan, masih berisi data contoh.</li>
+<li>Pembuatan kunci laptop dan layar pertama kali buka: isi nama, lalu buat tim baru atau gabung dengan kode.</li>
+<li>Build otomatis yang menghasilkan installer Windows.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> installer bisa dipasang di laptop kantor, aplikasi terbuka, nama tersimpan, dan mode terang serta gelap bekerja.</p>
+</div>
+
+<div class="stage">
+<div class="sh"><p class="sn">Tahap 1. Jaringan dan tim</p><span class="est">2 sampai 3 minggu</span></div>
+<ul>
+<li>Menemukan laptop rekan otomatis lewat mDNS, dengan cadangan input alamat manual dan QR code.</li>
+<li>Koneksi terenkripsi antar laptop yang hanya menerima anggota tim.</li>
+<li>Organisasi yang dibagi per tim, kode undangan dengan masa berlaku, serta peran Superadmin, Admin tim, Anggota, dan Tamu.</li>
+<li>Alamat terakhir setiap rekan diingat, supaya tetap tersambung lewat VPN kantor.</li>
+<li>Status koneksi: LAN kantor, VPN, atau tidak tersambung.</li>
+<li>Panduan izin Windows Firewall di layar pertama.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> tiga laptop di kantor saling melihat dalam daftar "Di jaringan", satu laptop lewat VPN ikut tersambung, dan laptop tanpa kode undangan ditolak.</p>
+</div>
+
+<div class="stage">
+<div class="sh"><p class="sn">Tahap 2. Chat dasar</p><span class="est">2 sampai 3 minggu</span></div>
+<ul>
+<li>Channel per proyek dan chat pribadi, dengan balas pesan dan mention.</li>
+<li>Status pesan: Dibaca, Diterima laptopnya, Dititipkan.</li>
+<li>Titipan pesan tersegel untuk rekan yang offline.</li>
+<li>Kirim file kecil (di bawah sekitar 20 MB) yang disalin ke semua anggota.</li>
+<li>Notifikasi Windows untuk pesan baru.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> pesan ke rekan yang laptopnya mati sampai lewat titipan begitu laptopnya menyala, walaupun laptop pengirim sudah dimatikan.</p>
+</div>
+
+<div class="stage mvp">
+<div class="sh"><p class="sn">Tahap 3. Board dasar</p><span class="tag">Versi pertama siap dipakai</span><span class="est">2 sampai 3 minggu</span></div>
+<ul>
+<li>Board per proyek dengan kolom To do, Dikerjakan, Selesai, dan kode task (PA-12).</li>
+<li>Task dengan penanggung jawab, tenggat, deskripsi, komentar, dan riwayat aktivitas.</li>
+<li>Edit bersamaan saat offline digabung otomatis, dengan tanda "sudah digabung".</li>
+<li>Halaman "Task saya" dari semua proyek.</li>
+<li>Pengingat tenggat lewat notifikasi Windows.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> dua orang mengubah task yang sama saat salah satunya offline, dan setelah tersambung keduanya melihat hasil gabungan yang sama tanpa data hilang.</p>
+</div>
+
+<div class="stage">
+<div class="sh"><p class="sn">Tahap 4. Dokumen dan edit file</p><span class="est">2 sampai 3 minggu</span></div>
+<ul>
+<li>Layar Dokumen per proyek dengan status setiap file.</li>
+<li>Edit di Word atau Excel, tanda "Sedang diedit", dan versi baru otomatis setelah disimpan.</li>
+<li>Riwayat versi yang bisa dipulihkan, dan penanganan bentrok dengan menyimpan kedua versi.</li>
+<li>File besar diunduh saat diklik dari laptop mana pun yang punya salinannya.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> file Excel yang diedit dan disimpan di satu laptop muncul sebagai versi baru di laptop rekan, dan versi lama bisa dipulihkan.</p>
+</div>
+
+<div class="stage">
+<div class="sh"><p class="sn">Tahap 5. Tanda tangan PDF</p><span class="est">2 sampai 3 minggu</span></div>
+<ul>
+<li>Penampil PDF di aplikasi, dengan komentar, stabilo, dan kotak teks.</li>
+<li>Menggambar dan menyimpan tanda tangan, dilindungi PIN.</li>
+<li>Permintaan tanda tangan dengan urutan yang ditentukan pengirim, termasuk Tamu kalau diminta.</li>
+<li>File dikunci setelah ditandatangani, peringatan kalau isinya berubah, dan halaman catatan siapa serta kapan menandatangani.</li>
+<li>Kartu task tanda tangan pindah ke Selesai otomatis.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> kontrak ditandatangani berurutan oleh tiga orang, dan mengubah satu karakter di file hasilnya langsung memunculkan peringatan.</p>
+</div>
+
+<div class="stage">
+<div class="sh"><p class="sn">Tahap 6. Fitur lengkap</p><span class="est">3 sampai 4 minggu</span></div>
+<ul>
+<li>Board lengkap: prioritas, label, sub-task, estimasi, kolom tambahan, tampilan Daftar dan Kalender.</li>
+<li>Chat lengkap: reaksi, edit dan hapus pesan, pencarian, ubah pesan jadi task, pin pesan.</li>
+<li>Halaman Keamanan admin untuk perubahan yang ditolak.</li>
+<li>Pengaturan status "Dibaca" per orang.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> semua keputusan di dokumen brainstorming sudah ada di aplikasi, kecuali yang ditandai "Lanjutan".</p>
+</div>
+
+<div class="stage">
+<div class="sh"><p class="sn">Tahap 7. Uji coba kantor</p><span class="est">1 sampai 2 minggu</span></div>
+<ul>
+<li>Pilot dengan 3 sampai 5 orang selama sekitar satu minggu kerja.</li>
+<li>Kunci cadangan superadmin di flashdisk, dan pengingat kalau superadmin baru satu.</li>
+<li>Installer final dan panduan singkat untuk pengguna serta admin IT (VPN dan firewall).</li>
+<li>Perbaikan dari masukan pilot.</li>
+</ul>
+<p class="done"><b>Selesai kalau:</b> tim pilot memakai Mira untuk pekerjaan nyata selama seminggu tanpa kehilangan data.</p>
+</div>
+
+<h3>Setelah tahap 7</h3>
+<ul>
+<li>Fitur "Lanjutan": sprint, laporan, thread diskusi, indikator mengetik, panggilan suara di LAN.</li>
+<li>Tema Kertas dan Panel.</li>
+<li>Logo final.</li>
+<li>Aplikasi HP lewat VPN kantor.</li>
+</ul>
+</div>
+
+<!-- ============ PENGUJIAN & RISIKO ============ -->
+<div class="section">
+<h2>Cara menguji</h2>
+<ol>
+<li><b>Tes otomatis untuk inti Rust,</b> terutama penggabungan perubahan, titipan pesan, dan pemeriksaan izin, karena di sinilah kesalahan paling sulit dilihat.</li>
+<li><b>Beberapa "laptop" di satu komputer.</b> Aplikasi bisa dijalankan beberapa kali dengan folder data berbeda, jadi skenario tiga orang bisa dites tanpa tiga laptop.</li>
+<li><b>Daftar skenario offline</b> yang dijalankan di setiap tahap: laptop mati di tengah pengiriman, dua orang mengedit bersamaan, pengirim offline sebelum pesan sampai, jaringan putus saat file besar diunduh.</li>
+<li><b>Tes di jaringan kantor sungguhan</b> dengan minimal tiga laptop, termasuk satu lewat VPN dari luar kantor.</li>
+</ol>
+
+<h2>Risiko dan cara mengatasinya</h2>
+<table class="doc">
+<tr><th>Risiko</th><th>Cara mengatasi</th></tr>
+<tr><td>Router kantor memblokir penemuan otomatis</td><td>Input alamat manual, QR code, dan alamat terakhir yang diingat sudah dibangun sejak tahap 1.</td></tr>
+<tr><td>Penggabungan edit bersamaan lebih rumit dari perkiraan</td><td>Memakai Automerge yang sudah matang, dan menguji dengan banyak skenario offline sejak tahap 3.</td></tr>
+<tr><td>Word mengunci file saat dibuka dan membuat file sementara</td><td>Mira hanya mengambil versi baru setelah file benar-benar disimpan dan ditutup, dan mengabaikan file sementara Office.</td></tr>
+<tr><td>Disk laptop penuh karena file</td><td>Batas sekitar 20 MB untuk salinan otomatis, dan pengaturan untuk membersihkan salinan file lama.</td></tr>
+<tr><td>Laptop admin hilang</td><td>Minimal dua admin dan kunci cadangan di flashdisk.</td></tr>
+<tr><td>Windows memperingatkan saat installer dijalankan</td><td>Installer tanpa sertifikat penandatanganan kode akan diperingatkan Windows SmartScreen. Bisa diterima untuk pilot, tapi untuk dipakai luas sebaiknya membeli sertifikat.</td></tr>
+<tr><td>Update aplikasi tanpa server</td><td>Installer baru dibagikan lewat folder bersama atau flashdisk. Opsi lanjutan: update dibagikan antar laptop dan ditandatangani kunci admin.</td></tr>
+</table>
+
+<h2>Yang dibutuhkan dari Anda</h2>
+<ol>
+<li><b>Minimal tiga laptop Windows</b> untuk tes di jaringan kantor, mulai tahap 1.</li>
+<li><b>Bantuan admin IT</b> untuk memasang VPN di router kantor dan memeriksa apakah mDNS diblokir.</li>
+<li><b>Microsoft Office</b> di laptop penguji untuk tahap 4.</li>
+<li><b>Keputusan soal sertifikat penandatanganan kode</b> sebelum tahap 7.</li>
+<li><b>3 sampai 5 orang untuk pilot</b> di tahap 7.</li>
+<li><b>Logo final</b>, kapan pun siap.</li>
+</ol>
+</div>
+
+</div>
+</body>
+</html>
