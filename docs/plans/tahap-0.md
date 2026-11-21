@@ -69,7 +69,7 @@ Aturan validasi (dicek di Rust, juga di tampilan untuk pesan cepat):
 - Nama tampilan: dipangkas, 1 sampai 50 karakter.
 - Nama organisasi: dipangkas, 2 sampai 80 karakter.
 - `create_organization` gagal dengan kode `name_required` kalau nama tampilan belum diisi, dan `org_exists` kalau organisasi sudah ada.
-- Kode error lain: `invalid_name`, `keystore`, `key_mismatch`, `database`, `internal`.
+- Kode error lain: `invalid_name`, `keystore`, `key_mismatch`, `database`, `internal`, `invalid_setting` (kunci atau nilai pengaturan tidak valid).
 
 Pengaturan yang dipakai Tahap 0: `theme.mode` (`light`, `dark`, `system`, bawaan `system`) dan `theme.name` (`bata`).
 

@@ -1,0 +1,140 @@
+.shell {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 10px 12px;
+  background: var(--side);
+  color: var(--side-text);
+  border-right: 1px solid var(--border);
+}
+
+.side-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 8px 16px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.side-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.side-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--side-sec);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.side-link:hover {
+  background: var(--hover);
+  color: var(--side-text);
+}
+
+.side-link[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.side-me {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 8px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.side-me-text {
+  min-width: 0;
+}
+
+.side-me-name {
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-me-org {
+  font-size: 12px;
+  color: var(--side-sec);
+  overflow-wrap: anywhere;
+}
+
+.content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* Kepala layar, sama dengan .hd di mockup tema-c */
+
+.page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 15px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.page-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.page-title:focus {
+  outline: none;
+}
+
+.page-body {
+  padding: 24px;
+}

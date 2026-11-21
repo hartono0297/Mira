@@ -1,0 +1,39 @@
+.notyet-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.notyet {
+  max-width: 480px;
+  margin: 72px 40px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notyet-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  margin-bottom: 6px;
+}
+
+.notyet-heading {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.notyet-body {
+  font-size: 15px;
+}
+
+.notyet-stage {
+  font-size: 13px;
+  color: var(--text-sec);
+}

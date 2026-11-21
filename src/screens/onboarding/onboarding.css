@@ -1,0 +1,127 @@
+.onb {
+  min-height: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 48px 24px;
+  background: var(--side);
+}
+
+.onb-col {
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.onb-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--side-text);
+}
+
+.onb-card {
+  padding: 28px 32px 32px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.onb-step {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-text);
+  margin-bottom: 6px;
+}
+
+.onb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.onb-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+/* Judul menerima fokus lewat kode (tabIndex -1) saat langkah berganti, supaya
+   pembaca layar membacakannya. Judul bukan kontrol, jadi tanpa cincin fokus. */
+.onb-title:focus {
+  outline: none;
+}
+
+.onb-lead {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.onb-key {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.onb-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.onb-inline-btn {
+  margin-top: 10px;
+  min-height: 36px;
+  background: var(--bg);
+}
+
+.onb-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.onb-choice {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 16px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.onb-choice svg {
+  flex: none;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.onb-choice:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.onb-choice-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.onb-choice-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.onb-choice:hover .onb-choice-desc {
+  color: var(--text);
+}

@@ -1,0 +1,73 @@
+.status-screen {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px 24px;
+  background: var(--side);
+  color: var(--side-text);
+}
+
+.status-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.status-text {
+  color: var(--side-sec);
+}
+
+.status-card {
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.status-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.status-card h1 {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* Judul difokus lewat kode supaya pembaca layar membacakannya; bukan kontrol. */
+.status-card h1:focus {
+  outline: none;
+}
+
+.status-cause {
+  font-size: 15px;
+}
+
+.status-next {
+  color: var(--text);
+}
+
+.status-label {
+  font-weight: 700;
+}
+
+.status-code {
+  font-size: 12px;
+  color: var(--text-sec);
+}
