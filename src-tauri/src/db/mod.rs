@@ -33,7 +33,8 @@ fn configure(conn: &Connection) -> AppResult<()> {
         )));
     }
     conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // FULL: a power cut must not lose a committed identity or organization.
+    conn.pragma_update(None, "synchronous", "FULL")?;
     Ok(())
 }
 

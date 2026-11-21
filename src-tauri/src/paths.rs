@@ -2,7 +2,9 @@
 //!
 //! `MIRA_DATA_DIR` overrides the default so several instances can run side by
 //! side on one laptop (needed to test LAN features in Tahap 1). Without it the
-//! Tauri app data folder is used (`%APPDATA%\id.mira.desktop` on Windows).
+//! Tauri local app data folder is used (`%LOCALAPPDATA%\id.mira.desktop` on
+//! Windows). Local, not roaming: a roaming profile must never carry one
+//! laptop's identity or a live SQLite file to another laptop.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -46,7 +48,7 @@ pub fn choose_data_dir(
 pub fn resolve_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<DataDir> {
     use tauri::Manager;
     choose_data_dir(std::env::var_os(DATA_DIR_ENV), || {
-        app.path().app_data_dir().map_err(|e| {
+        app.path().app_local_data_dir().map_err(|e| {
             AppError::Internal(format!(
                 "Folder data aplikasi Windows tidak ditemukan. Detail: {e}"
             ))

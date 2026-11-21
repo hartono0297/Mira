@@ -16,7 +16,6 @@ pub mod state;
 use tauri::{App, Manager, WebviewWindowBuilder};
 
 use crate::identity::KeyringStore;
-use crate::paths::DataDir;
 use crate::state::MiraState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,7 +37,15 @@ pub fn run() {
                 eprintln!("Mira: inisialisasi gagal [{}]: {err}", err.code());
             }
             app.manage(state);
-            create_main_window(app, data_dir.ok().as_ref())?;
+            // Keep instances apart even when the env folder could not be prepared.
+            let instance_dir = match &data_dir {
+                Ok(d) => d.from_env.then(|| d.path.clone()),
+                Err(_) => std::env::var_os(paths::DATA_DIR_ENV)
+                    .filter(|v| !v.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .and_then(|p| std::path::absolute(p).ok()),
+            };
+            create_main_window(app, instance_dir.as_deref())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -55,7 +62,7 @@ pub fn run() {
 /// Builds the main window from `tauri.conf.json` (which has `create: false`).
 /// With `MIRA_DATA_DIR` set, WebView2 data goes to `<data_dir>/webview` and the
 /// title names the folder, so several instances on one laptop stay apart.
-fn create_main_window(app: &App, data_dir: Option<&DataDir>) -> tauri::Result<()> {
+fn create_main_window(app: &App, instance_dir: Option<&std::path::Path>) -> tauri::Result<()> {
     let config = app
         .config()
         .app
@@ -64,10 +71,14 @@ fn create_main_window(app: &App, data_dir: Option<&DataDir>) -> tauri::Result<()
         .cloned()
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
     let mut builder = WebviewWindowBuilder::from_config(app.handle(), &config)?;
-    if let Some(dir) = data_dir.filter(|d| d.from_env) {
+    if let Some(dir) = instance_dir {
+        let folder = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| dir.display().to_string());
         builder = builder
-            .data_directory(dir.path.join("webview"))
-            .title(format!("{} ({})", config.title, dir.folder_name()));
+            .data_directory(dir.join("webview"))
+            .title(format!("{} ({folder})", config.title));
     }
     builder.build()?;
     Ok(())

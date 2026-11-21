@@ -212,11 +212,24 @@ pub fn validate_display_name(name: &str) -> AppResult<String> {
     Ok(name.to_owned())
 }
 
-/// Control characters plus bidirectional overrides, which can make a name
-/// look like someone else's when shown to other laptops.
+/// Control characters, line separators, and invisible format characters
+/// (bidi overrides and marks, zero-width characters, BOM). These can make a
+/// name look empty or look like someone else's on other laptops.
 pub(crate) fn has_forbidden_chars(s: &str) -> bool {
-    s.chars()
-        .any(|c| c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'))
+    s.chars().any(|c| {
+        c.is_control()
+            || matches!(
+                c,
+                '\u{00AD}'
+                    | '\u{061C}'
+                    | '\u{180E}'
+                    | '\u{200B}'..='\u{200F}'
+                    | '\u{2028}'..='\u{202E}'
+                    | '\u{2060}'..='\u{206F}'
+                    | '\u{FEFF}'
+                    | '\u{FFF9}'..='\u{FFFB}'
+            )
+    })
 }
 
 /// Verifies an Ed25519 signature given as hex against a hex public key.
@@ -369,6 +382,10 @@ mod tests {
             "Bu\ndi",
             "Bu\u{0}di",
             "a\u{202E}b",
+            "\u{200B}",
+            "Bu\u{200D}di",
+            "\u{FEFF}Budi",
+            "Bu\u{2028}di",
         ] {
             let err = validate_display_name(bad).unwrap_err();
             assert_eq!(err.code(), "invalid_name", "{bad:?}");
