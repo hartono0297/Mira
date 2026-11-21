@@ -1,4 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { api, isTauri, toAppError, type AppError } from "../api";
 import {
   MODE_SETTING_KEY,
@@ -37,10 +47,15 @@ type ThemeContextValue = {
   mode: ThemeMode;
   resolved: ResolvedTheme;
   themeName: ThemeName;
-  // Menyimpan ke inti Rust. Kalau gagal, pilihan dikembalikan dan error dilempar.
+  // Menyimpan ke inti Rust secara berurutan. Kalau penyimpanan terakhir gagal,
+  // pilihan dikembalikan ke mode terakhir yang sudah tersimpan dan saveError diisi.
   setMode: (mode: ThemeMode) => Promise<void>;
+  saving: boolean;
+  saveError: SaveError | null;
   loadError: AppError | null;
 };
+
+export type SaveError = { error: AppError; kept: ThemeMode };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
@@ -49,8 +64,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [systemDark, setSystemDark] = useState(() => systemPrefersDark());
   const [themeName, setThemeName] = useState<ThemeName>(DEFAULT_THEME);
   const [loadError, setLoadError] = useState<AppError | null>(null);
+  const [pending, setPending] = useState(0);
+  const [saveError, setSaveError] = useState<SaveError | null>(null);
   const userChanged = useRef(false);
   const requestId = useRef(0);
+  // Mode terakhir yang dikonfirmasi tersimpan di Rust; dipakai untuk rollback.
+  const confirmed = useRef<ThemeMode>(mode);
+  // Antrean supaya set_setting sampai ke Rust sesuai urutan pilihan pengguna.
+  const queue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -61,6 +82,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         setThemeName(parseThemeName(storedTheme));
         if (userChanged.current) return;
         const parsed = parseMode(storedMode);
+        confirmed.current = parsed;
         setModeState(parsed);
         writeCachedMode(parsed);
       })
@@ -80,31 +102,44 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     installThemeCss(themeName);
   }, [themeName]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyTheme(resolved);
   }, [resolved]);
 
-  const setMode = useCallback(
-    async (next: ThemeMode) => {
-      userChanged.current = true;
-      const previous = mode;
-      const id = ++requestId.current;
-      setModeState(next);
+  const setMode = useCallback((next: ThemeMode) => {
+    userChanged.current = true;
+    const id = ++requestId.current;
+    setModeState(next);
+    setSaveError(null);
+    setPending((n) => n + 1);
+
+    const run = async () => {
       try {
         await api.setSetting(MODE_SETTING_KEY, next);
+        confirmed.current = next;
         writeCachedMode(next);
         setLoadError(null);
       } catch (err) {
-        if (id === requestId.current) setModeState(previous);
-        throw toAppError(err);
+        // Hasil panggilan lama diabaikan; hanya pilihan terakhir yang menentukan layar.
+        if (id === requestId.current) {
+          setModeState(confirmed.current);
+          setSaveError({ error: toAppError(err), kept: confirmed.current });
+        }
+      } finally {
+        setPending((n) => n - 1);
       }
-    },
-    [mode],
-  );
+    };
+
+    const done = queue.current.then(run);
+    queue.current = done;
+    return done;
+  }, []);
+
+  const saving = pending > 0;
 
   const value = useMemo(
-    () => ({ mode, resolved, themeName, setMode, loadError }),
-    [mode, resolved, themeName, setMode, loadError],
+    () => ({ mode, resolved, themeName, setMode, saving, saveError, loadError }),
+    [mode, resolved, themeName, setMode, saving, saveError, loadError],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

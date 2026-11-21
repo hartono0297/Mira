@@ -1,5 +1,3 @@
-import { useState } from "react";
-import type { AppError } from "../../api";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import type { ThemeMode } from "../../theme/mode";
 import { useTheme } from "../../theme/ThemeProvider";
@@ -31,23 +29,11 @@ function Thumb({ mode, light, dark }: { mode: ThemeMode; light: TokenSet; dark: 
 }
 
 export function AppearanceSection() {
-  const { mode, setMode, themeName, loadError } = useTheme();
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<{ error: AppError; kept: ThemeMode } | null>(null);
+  const { mode, setMode, themeName, loadError, saving, saveError: error } = useTheme();
   const theme = themes[themeName];
 
-  async function choose(next: ThemeMode) {
-    if (next === mode) return;
-    const previous = mode;
-    setError(null);
-    setSaving(true);
-    try {
-      await setMode(next);
-    } catch (err) {
-      setError({ error: err as AppError, kept: previous });
-    } finally {
-      setSaving(false);
-    }
+  function choose(next: ThemeMode) {
+    if (next !== mode) void setMode(next);
   }
 
   return (
@@ -56,44 +42,46 @@ export function AppearanceSection() {
         Tampilan
       </h2>
 
-      <fieldset className="modes-fieldset">
-        <legend className="set-label">Mode</legend>
-        <div className="modes">
-          {MODES.map((m) => (
-            <label key={m} className="mode">
-              <Thumb mode={m} light={theme.light} dark={theme.dark} />
-              <span className="mode-row">
-                <input
-                  type="radio"
-                  name="theme-mode"
-                  value={m}
-                  checked={mode === m}
-                  onChange={() => choose(m)}
-                />
-                {MODE_LABELS[m]}
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <div>
+        <fieldset className="modes-fieldset">
+          <legend className="set-label">Mode</legend>
+          <div className="modes">
+            {MODES.map((m) => (
+              <label key={m} className="mode">
+                <Thumb mode={m} light={theme.light} dark={theme.dark} />
+                <span className="mode-row">
+                  <input
+                    type="radio"
+                    name="theme-mode"
+                    value={m}
+                    checked={mode === m}
+                    onChange={() => choose(m)}
+                  />
+                  {MODE_LABELS[m]}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-      <div aria-live="polite" className="set-live">
-        {saving && <p className="hint">Menyimpan pilihan mode...</p>}
-        {error && (
-          <ErrorAlert title="Mode belum tersimpan">
-            <p>
-              {error.error.message} Pilihan dikembalikan ke {MODE_LABELS[error.kept]}. Coba pilih lagi.
-            </p>
-          </ErrorAlert>
-        )}
-        {!error && loadError && (
-          <ErrorAlert title="Pilihan mode tersimpan belum bisa dibaca">
-            <p>
-              {loadError.message} Untuk sementara Mira memakai pilihan terakhir yang diingat jendela ini. Memilih mode
-              lagi akan mencoba menyimpannya.
-            </p>
-          </ErrorAlert>
-        )}
+        <div aria-live="polite" className="set-live">
+          {saving && <p className="hint">Menyimpan pilihan mode...</p>}
+          {error && (
+            <ErrorAlert title="Mode belum tersimpan">
+              <p>
+                {error.error.message} Pilihan dikembalikan ke {MODE_LABELS[error.kept]}. Coba pilih lagi.
+              </p>
+            </ErrorAlert>
+          )}
+          {!error && loadError && (
+            <ErrorAlert title="Pilihan mode tersimpan belum bisa dibaca">
+              <p>
+                {loadError.message} Untuk sementara Mira memakai pilihan terakhir yang diingat jendela ini. Memilih mode
+                lagi akan mencoba menyimpannya.
+              </p>
+            </ErrorAlert>
+          )}
+        </div>
       </div>
 
       <h3 className="set-label">Tema warna</h3>

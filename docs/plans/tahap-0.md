@@ -84,7 +84,7 @@ Kelompok A (tampilan), B (inti Rust), dan C (ikon dan installer) tidak menyentuh
 - 0.2 Scaffold `create-tauri-app` (react-ts, npm), salin ke root, set `tauri.conf.json` (nama Mira, identifier `id.mira.desktop`, jendela `create: false`, CSP ketat tanpa sumber luar, target NSIS). Verifikasi: `npm run build`, `cargo check`.
 - 0.3 Rencana ini. Commit.
 
-### A. Tampilan (subagent A) — file: `src/**`, `index.html`, `package.json` (hanya dependensi frontend dan skrip test), `vite.config.ts`, `vitest` config
+### A. Tampilan (subagent A). File: `src/**`, `index.html`, `package.json` (hanya dependensi frontend dan skrip test), `vite.config.ts`, `vitest` config
 - A.1 Dependensi: `@fontsource/nunito` (400, 600, 700), `@tabler/icons-react`, `vitest`, `@testing-library/react`, `jsdom`. Semua dibundel lokal, tidak ada CDN. Verifikasi: `npm run build`, cek `dist/` tidak berisi URL `http` ke luar.
 - A.2 Token warna tema Bata (terang dan gelap) sebagai CSS variables per peran di `src/theme/`, nilai persis dari `design/tema-c.html`. Tema = satu objek nilai token, siap ditambah tema lain. Verifikasi: cek kontras pasangan teks dengan `check_contrast`.
 - A.3 Logika mode (TDD): `resolveTheme(mode, systemDark)`, validasi nilai tersimpan, pemantau `prefers-color-scheme`. Pilihan disimpan lewat `set_setting` dan disalin ke `localStorage` hanya untuk mencegah kedip saat start. Verifikasi: `npm test`.
@@ -95,7 +95,7 @@ Kelompok A (tampilan), B (inti Rust), dan C (ikon dan installer) tidak menyentuh
 - A.8 Pengaturan > Tampilan: pilihan mode dengan thumbnail seperti mockup, daftar tema (Bata dipakai, Kertas dan Panel "Nanti"), keterangan "hanya di laptop ini". Plus Pengaturan > Laptop ini: nama, sidik jari kunci, folder data (hanya baca).
 - A.9 Aksesibilitas: fokus keyboard terlihat, navigasi keyboard, label form, `aria-live` untuk pesan error. Verifikasi: tes Vitest untuk komponen kunci, `npm run build`.
 
-### B. Inti Rust (subagent B) — file: `src-tauri/src/**`, `src-tauri/Cargo.toml`, `src-tauri/capabilities/**`
+### B. Inti Rust (subagent B). File: `src-tauri/src/**`, `src-tauri/Cargo.toml`, `src-tauri/capabilities/**`
 - B.1 Dependensi: `ed25519-dalek` (fitur `rand_core`), `rand`, `keyring` v3 (fitur `windows-native`), `rusqlite` (fitur `bundled`), `thiserror`, `hex`, `time` atau `chrono`, `tempfile` (dev). Verifikasi: `cargo check`.
 - B.2 `paths.rs`: folder data dari `MIRA_DATA_DIR` kalau ada, kalau tidak folder data aplikasi Tauri. Tes: env dipakai saat diset.
 - B.3 `db/`: buka SQLite, `PRAGMA journal_mode=WAL`, `foreign_keys=ON`, migrasi bernomor lewat `user_version`. Tabel: `identity`, `organizations`, `members`, `settings`. Tes: migrasi idempoten.
@@ -104,7 +104,7 @@ Kelompok A (tampilan), B (inti Rust), dan C (ikon dan installer) tidak menyentuh
 - B.6 `settings.rs` dan `commands.rs`: command sesuai kontrak, state `Mutex<Connection>`. Jendela dibuat di `setup` dari config; kalau `MIRA_DATA_DIR` diset, data WebView2 juga dipisah ke `<MIRA_DATA_DIR>/webview` dan judul jendela diberi akhiran nama folder supaya beberapa instance bisa dibedakan.
 - B.7 Plugin `tauri-plugin-single-instance` tidak dipakai (beberapa instance dibutuhkan untuk tes). Verifikasi: `cargo test`, `cargo clippy`.
 
-### C. Ikon dan installer (subagent C) — file: `src-tauri/icons/**`, kunci `bundle` di `tauri.conf.json`
+### C. Ikon dan installer (subagent C). File: `src-tauri/icons/**`, kunci `bundle` di `tauri.conf.json`
 - C.1 Konversi `design/logo-sementara.svg` ke PNG 1024 px (tanpa mengubah folder `design/`), jalankan `npx tauri icon`. Verifikasi: `icon.ico` berisi logo M.
 - C.2 Konfigurasi NSIS: `installMode` per pengguna, bahasa installer, nama penerbit, `shortDescription`. Verifikasi: `tauri.conf.json` lolos skema.
 

@@ -29,7 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,14 +46,19 @@
     "longDescription": "Mira adalah aplikasi kerja tim untuk jaringan kantor (LAN) tanpa server dan tanpa internet. Anggota tim bisa mengobrol, mengatur board tugas per proyek, serta berbagi dan menandatangani dokumen PDF langsung antar komputer.",
     "windows": {
       "webviewInstallMode": {
-        "type": "offlineInstaller",
+        "type": "downloadBootstrapper",
         "silent": true
       },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["English"],
+        "languages": [
+          "Indonesian"
+        ],
         "displayLanguageSelector": false,
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "icons/icon.ico",
+        "customLanguageFiles": {
+          "Indonesian": "nsis/Indonesian.nsh"
+        }
       }
     }
   }

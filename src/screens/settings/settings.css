@@ -155,8 +155,13 @@
   width: 35%;
 }
 
-.set-live:empty {
-  display: none;
+/* Wilayah live selalu ada di DOM supaya pembaca layar membacakan isinya.
+   Jarak hanya muncul saat ada pesan. */
+.set-live:not(:empty) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .theme-list {
