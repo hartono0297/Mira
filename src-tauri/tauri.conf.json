@@ -36,6 +36,23 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "Mira",
+    "copyright": "Hak cipta (c) 2026 Mira",
+    "category": "Productivity",
+    "shortDescription": "Chat, board, dan dokumen tim di jaringan kantor",
+    "longDescription": "Mira adalah aplikasi kerja tim untuk jaringan kantor (LAN) tanpa server dan tanpa internet. Anggota tim bisa mengobrol, mengatur board tugas per proyek, serta berbagi dan menandatangani dokumen PDF langsung antar komputer.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   }
 }
