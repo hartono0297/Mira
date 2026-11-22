@@ -102,8 +102,9 @@ mod tests {
     /// `db::migrations` is private, so the old database is made by opening a
     /// new one, filling it, then dropping the documents tables and setting
     /// `user_version` back to the version before this migration. After the
-    /// stage merge the documents migration is v4 and Tahap 5's signing
-    /// migration (v5) follows it, so the signing tables are dropped too.
+    /// stage merge the documents migration is v4, followed by Tahap 5's
+    /// signing migration (v5) and Tahap 2's chat migration (v6), so their
+    /// tables are dropped too.
     /// Tables of the migrations that come after documents (Tahap 5, v5),
     /// children before parents.
     const SIGNING_TABLES_AFTER_DOCUMENTS: [&str; 6] = [
@@ -115,12 +116,26 @@ mod tests {
         "sign_saved_signature",
     ];
 
+    /// Tables of the chat migration (Tahap 2, v6), children before parents.
+    const CHAT_TABLES_AFTER_DOCUMENTS: [&str; 9] = [
+        "chat_files",
+        "chat_messages",
+        "chat_records",
+        "chat_channels",
+        "chat_receipts",
+        "chat_envelopes",
+        "chat_fetch_queue",
+        "chat_conv_settings",
+        "chat_blobs",
+    ];
+
     #[test]
     fn database_before_documents_upgrades_and_keeps_data() {
         let tmp = tempfile::tempdir().unwrap();
-        // v1 foundation, v2 membership log, v3 board, v4 documents, v5 signing.
+        // v1 foundation, v2 membership log, v3 board, v4 documents, v5 signing,
+        // v6 chat.
         let before = 3;
-        assert_eq!(db::latest_version(), 5, "update this test when a migration is added");
+        assert_eq!(db::latest_version(), 6, "update this test when a migration is added");
         let (pk, org_id) = {
             let mut conn = db::open(tmp.path()).unwrap();
             let mut me = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
@@ -131,6 +146,9 @@ mod tests {
                 [],
             )
             .unwrap();
+            for t in CHAT_TABLES_AFTER_DOCUMENTS {
+                conn.execute_batch(&format!("DROP TABLE {t};")).unwrap();
+            }
             for t in SIGNING_TABLES_AFTER_DOCUMENTS {
                 conn.execute_batch(&format!("DROP TABLE {t};")).unwrap();
             }
