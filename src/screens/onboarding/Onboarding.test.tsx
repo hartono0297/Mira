@@ -18,6 +18,7 @@ function baseState(overrides: Partial<AppState["identity"]> = {}): AppState {
       ...overrides,
     },
     organization: null,
+    membership: "none",
     dataDir: "C:\\Users\\Contoh\\AppData\\Local\\id.mira.desktop",
   };
 }
@@ -87,14 +88,14 @@ describe("Onboarding langkah organisasi", () => {
     expect(screen.queryByLabelText("Nama tampilan")).not.toBeInTheDocument();
   });
 
-  it("gabung dengan kode menjelaskan fitur belum tersedia dan bisa kembali", async () => {
+  it("gabung dengan kode membuka langkah firewall dan bisa kembali ke pilihan", async () => {
     const user = userEvent.setup();
     setup(baseState({ displayName: "Rina" }));
 
     await user.click(screen.getByRole("button", { name: /Gabung dengan kode/ }));
-    expect(screen.getByText(/Tahap 1/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Kembali ke pilihan" }));
+    await user.click(screen.getByRole("button", { name: "Kembali" }));
     expect(screen.getByRole("button", { name: /Buat organisasi baru/ })).toBeInTheDocument();
   });
 

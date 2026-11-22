@@ -16,6 +16,7 @@ const ready: AppState = {
     createdAt: "2026-11-22T01:00:00Z",
   },
   organization: { id: "c".repeat(32), name: "Kantor Contoh", role: "superadmin", createdAt: "2026-11-22T01:05:00Z" },
+  membership: "active",
   dataDir: "C:\\data\\mira",
 };
 
@@ -74,5 +75,58 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Laptop ini" }));
     expect(screen.getByText("A1B2 C3D4 E5F6 0718")).toBeInTheDocument();
     expect(screen.getByText("C:\\data\\mira")).toBeInTheDocument();
+  });
+
+  it("menu Organisasi ada di kerangka utama", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation(async (cmd: string) => (cmd === "get_app_state" ? ready : null));
+    renderApp();
+    await user.click(await screen.findByRole("button", { name: "Organisasi" }));
+    expect(screen.getByRole("heading", { name: "Organisasi", level: 1 })).toBeInTheDocument();
+  });
+
+  it("laptop yang dikeluarkan melihat layar penuh dengan langkah berikutnya", async () => {
+    const user = userEvent.setup();
+    let state: AppState = { ...ready, membership: "removed" };
+    invoke.mockImplementation(async (cmd: string) => (cmd === "get_app_state" ? state : null));
+    renderApp();
+
+    expect(
+      await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari organisasi Kantor Contoh" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/tetap tersimpan di sini/)).toBeInTheDocument();
+    expect(screen.getByText(/minta admin organisasi membuat kode undangan baru/)).toBeInTheDocument();
+    expect(screen.getByText("A1B2 C3D4 E5F6 0718")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Menu utama" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Sudah punya kode undangan baru?" }));
+    expect(screen.getByLabelText("Kode undangan baru")).toBeInTheDocument();
+
+    state = { ...ready, membership: "active" };
+    await user.click(screen.getByRole("button", { name: "Periksa lagi" }));
+    expect(await screen.findByRole("navigation", { name: "Menu utama" })).toBeInTheDocument();
+  });
+
+  it("status jaringan removed memuat ulang data lalu menampilkan layar dikeluarkan", async () => {
+    let state: AppState = ready;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_app_state") return state;
+      if (cmd === "get_network_status") {
+        state = { ...ready, membership: "removed" };
+        return {
+          state: "removed",
+          listenPort: null,
+          localAddresses: [],
+          shareLink: "",
+          qrSvg: "",
+          mdns: { ok: true, error: null },
+          peers: [],
+          manualAddresses: [],
+        };
+      }
+      return null;
+    });
+    renderApp();
+    expect(await screen.findByRole("heading", { name: /sudah dikeluarkan dari organisasi/ })).toBeInTheDocument();
   });
 });

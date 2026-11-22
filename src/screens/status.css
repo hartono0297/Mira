@@ -71,3 +71,47 @@
   font-size: 12px;
   color: var(--text-sec);
 }
+
+.status-icon-plain {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.removed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.removed-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.removed-toggle:hover {
+  background: var(--hover);
+}
+
+.removed-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.removed-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}

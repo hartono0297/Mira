@@ -18,3 +18,11 @@ export function validateOrgName(raw: string): string | null {
   if (length(name) > 80) return "Nama organisasi paling banyak 80 karakter.";
   return null;
 }
+
+export function validateTeamName(raw: string): string | null {
+  const name = raw.trim();
+  if (length(name) === 0) return "Isi nama tim dulu.";
+  if (length(name) < 2) return "Nama tim minimal 2 karakter.";
+  if (length(name) > 60) return "Nama tim paling banyak 60 karakter.";
+  return null;
+}

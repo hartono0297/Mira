@@ -1,0 +1,322 @@
+/* Halaman Organisasi. Kerangka (sub-menu kiri, judul bagian) memakai kelas
+   dari settings.css supaya dua halaman ini terasa satu keluarga. */
+
+.org-pad {
+  padding: 20px 24px 0;
+}
+
+.org-narrow {
+  max-width: 820px;
+}
+
+.org-notice-btn {
+  background: var(--bg);
+}
+
+.org-body {
+  max-width: 760px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.org-live:empty {
+  display: none;
+}
+
+.org-ok {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.org-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.org-head .set-title {
+  margin-bottom: 2px;
+}
+
+.org-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.org-empty {
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+/* Daftar tim: satu baris = satu tombol yang membuka detail tim. */
+
+.team-list,
+.row-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.team-list li + li,
+.row-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.team-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-row:hover {
+  background: var(--hover);
+}
+
+.team-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.team-name {
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.team-meta {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.team-chevron {
+  flex: none;
+  color: var(--text-sec);
+}
+
+/* Baris anggota dan undangan */
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 14px;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.row-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.row-you {
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.row-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.row-sub.mono {
+  color: var(--text-sec);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.member-avatar {
+  align-self: flex-start;
+}
+
+.member-off .row-name {
+  color: var(--text-sec);
+}
+
+.add-member select {
+  flex: 1;
+  min-width: 220px;
+}
+
+.redeem {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* Dialog undangan */
+
+.dlg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.role-set {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.role-opt {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.role-opt:hover {
+  background: var(--hover);
+}
+
+.role-opt:has(input:checked) {
+  border: 2px solid var(--accent);
+  padding: 9px 11px;
+  background: var(--accent-soft);
+}
+
+.role-opt:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.role-opt input {
+  margin: 3px 0 0;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.role-opt input:focus-visible {
+  outline: none;
+}
+
+/* Tamu: belum bisa dipilih. Teks tetap terbaca penuh, hanya kursor dan garis yang berubah. */
+.role-opt-off {
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+.role-opt-off:hover {
+  background: transparent;
+}
+
+.role-title {
+  display: block;
+  font-weight: 700;
+}
+
+.role-desc {
+  display: block;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.role-opt:has(input:checked) .role-desc {
+  color: var(--text);
+}
+
+.role-note {
+  display: block;
+  margin-top: 2px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.invite-done {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+/* Kode undangan: besar dan rata lebar supaya mudah dibacakan atau diketik ulang. */
+.invite-code {
+  align-self: stretch;
+  padding: 14px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.invite-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 14px;
+  font-size: 14px;
+}
+
+.invite-facts > div {
+  display: contents;
+}
+
+.invite-facts dt {
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.invite-facts dd {
+  margin: 0;
+}
+
+.notice-plain {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--text);
+}

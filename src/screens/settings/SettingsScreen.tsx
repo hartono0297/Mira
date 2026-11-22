@@ -1,19 +1,25 @@
-import { useState } from "react";
 import type { AppState, OrgInfo } from "../../api";
 import { AppearanceSection } from "./AppearanceSection";
 import { DeviceSection } from "./DeviceSection";
+import { NetworkSection } from "./NetworkSection";
 import "./settings.css";
 
-type Part = "appearance" | "device";
+export type SettingsPart = "appearance" | "network" | "device";
 
-const PARTS: { id: Part; label: string }[] = [
+const PARTS: { id: SettingsPart; label: string }[] = [
   { id: "appearance", label: "Tampilan" },
+  { id: "network", label: "Jaringan" },
   { id: "device", label: "Laptop ini" },
 ];
 
-export function SettingsScreen({ state }: { state: AppState & { organization: OrgInfo } }) {
-  const [part, setPart] = useState<Part>("appearance");
-  const current = PARTS.find((p) => p.id === part)!;
+type Props = {
+  state: AppState & { organization: OrgInfo };
+  part: SettingsPart;
+  onPart: (part: SettingsPart) => void;
+};
+
+export function SettingsScreen({ state, part, onPart }: Props) {
+  const current = PARTS.find((p) => p.id === part) ?? PARTS[0];
 
   return (
     <main className="settings" aria-labelledby="page-title">
@@ -32,7 +38,7 @@ export function SettingsScreen({ state }: { state: AppState & { organization: Or
                   type="button"
                   className="settings-link"
                   aria-current={part === p.id ? "true" : undefined}
-                  onClick={() => setPart(p.id)}
+                  onClick={() => onPart(p.id)}
                 >
                   {p.label}
                 </button>
@@ -41,7 +47,9 @@ export function SettingsScreen({ state }: { state: AppState & { organization: Or
           </ul>
         </nav>
         <div className="settings-body">
-          {part === "appearance" ? <AppearanceSection /> : <DeviceSection state={state} />}
+          {current.id === "appearance" && <AppearanceSection />}
+          {current.id === "network" && <NetworkSection />}
+          {current.id === "device" && <DeviceSection state={state} />}
         </div>
       </div>
     </main>

@@ -1,80 +1,98 @@
-import { IconFileText, IconLayoutKanban, IconMessage, IconSettings, type Icon } from "@tabler/icons-react";
-import { useState } from "react";
-import { ROLE_LABELS, type AppState, type OrgInfo } from "../../api";
+import {
+  IconBuildingCommunity,
+  IconFileText,
+  IconLayoutKanban,
+  IconMessage,
+  IconSettings,
+  type Icon,
+} from "@tabler/icons-react";
+import { useEffect, useState } from "react";
+import { ROLE_LABELS, subscribe, type AppState, type OrgInfo } from "../../api";
+import { initials } from "../../components/initials";
 import { Logo } from "../../components/Logo";
 import { BoardScreen } from "../board/BoardScreen";
 import { ChatScreen } from "../chat/ChatScreen";
 import { DocsScreen } from "../docs/DocsScreen";
-import { SettingsScreen } from "../settings/SettingsScreen";
+import { OrgScreen } from "../org/OrgScreen";
+import { SettingsScreen, type SettingsPart } from "../settings/SettingsScreen";
+import { NetworkPanel } from "./NetworkPanel";
+import { NetworkProvider } from "./NetworkContext";
 import "./shell.css";
 
-export type Section = "chat" | "board" | "docs" | "settings";
+export type Section = "chat" | "board" | "docs" | "org" | "settings";
 
 const NAV: { id: Section; label: string; icon: Icon }[] = [
   { id: "chat", label: "Chat", icon: IconMessage },
   { id: "board", label: "Board", icon: IconLayoutKanban },
   { id: "docs", label: "Dokumen", icon: IconFileText },
+  { id: "org", label: "Organisasi", icon: IconBuildingCommunity },
   { id: "settings", label: "Pengaturan", icon: IconSettings },
 ];
 
-export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  const letters = parts.slice(0, 2).map((p) => [...p][0] ?? "");
-  return letters.join("").toUpperCase() || "?";
-}
+type Props = {
+  state: AppState & { organization: OrgInfo };
+  // Memuat ulang AppState tanpa layar memuat (peran berubah, laptop dikeluarkan).
+  onRefresh: () => void;
+};
 
-type Props = { state: AppState & { organization: OrgInfo } };
-
-export function Shell({ state }: Props) {
+export function Shell({ state, onRefresh }: Props) {
   const [section, setSection] = useState<Section>("chat");
+  const [settingsPart, setSettingsPart] = useState<SettingsPart>("appearance");
   const name = state.identity.displayName ?? "";
   const org = state.organization;
 
+  // Perubahan direktori bisa mengubah peran laptop ini atau mengeluarkannya.
+  useEffect(() => subscribe("mira://directory", onRefresh), [onRefresh]);
+
   return (
-    <div className="shell">
-      <aside className="side">
-        <p className="side-brand">
-          <Logo size={24} />
-          <span>Mira</span>
-        </p>
-        <nav aria-label="Menu utama">
-          <ul className="side-nav">
-            {NAV.map(({ id, label, icon: NavIcon }) => (
-              <li key={id}>
-                <button
-                  type="button"
-                  className="side-link"
-                  aria-current={section === id ? "page" : undefined}
-                  onClick={() => setSection(id)}
-                >
-                  <NavIcon size={18} aria-hidden="true" />
-                  {label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="side-me">
-          <span className="avatar" aria-hidden="true">
-            {initials(name)}
-          </span>
-          <div className="side-me-text">
-            <p className="side-me-name">{name}</p>
-            <p className="side-me-org">
-              {org.name}
-              <span className="sr-only">, peran </span>
-              <span aria-hidden="true"> · </span>
-              {ROLE_LABELS[org.role]}
-            </p>
+    <NetworkProvider onRemoved={onRefresh}>
+      <div className="shell">
+        <aside className="side">
+          <p className="side-brand">
+            <Logo size={24} />
+            <span>Mira</span>
+          </p>
+          <nav aria-label="Menu utama">
+            <ul className="side-nav">
+              {NAV.map(({ id, label, icon: NavIcon }) => (
+                <li key={id}>
+                  <button
+                    type="button"
+                    className="side-link"
+                    aria-current={section === id ? "page" : undefined}
+                    onClick={() => setSection(id)}
+                  >
+                    <NavIcon size={18} aria-hidden="true" />
+                    {label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <NetworkPanel onOpenOrg={() => setSection("org")} />
+          <div className="side-me">
+            <span className="avatar" aria-hidden="true">
+              {initials(name)}
+            </span>
+            <div className="side-me-text">
+              <p className="side-me-name">{name}</p>
+              <p className="side-me-org">
+                {org.name}
+                <span className="sr-only">, peran </span>
+                <span aria-hidden="true"> · </span>
+                {ROLE_LABELS[org.role]}
+              </p>
+            </div>
           </div>
+        </aside>
+        <div className="content">
+          {section === "chat" && <ChatScreen />}
+          {section === "board" && <BoardScreen />}
+          {section === "docs" && <DocsScreen />}
+          {section === "org" && <OrgScreen state={state} onRefresh={onRefresh} />}
+          {section === "settings" && <SettingsScreen state={state} part={settingsPart} onPart={setSettingsPart} />}
         </div>
-      </aside>
-      <div className="content">
-        {section === "chat" && <ChatScreen />}
-        {section === "board" && <BoardScreen />}
-        {section === "docs" && <DocsScreen />}
-        {section === "settings" && <SettingsScreen state={state} />}
       </div>
-    </div>
+    </NetworkProvider>
   );
 }

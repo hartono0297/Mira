@@ -1,0 +1,81 @@
+.fw {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fw-live:empty {
+  display: none;
+}
+
+.fw-rule {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fw-rule svg {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.fw-rule-ok svg {
+  color: var(--online);
+}
+
+.fw-rule-bad svg {
+  color: var(--danger);
+}
+
+.fw-label {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.fw-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.fw-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 9px 12px;
+}
+
+.fw-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.fw-net {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.fw-list .chip {
+  margin-left: auto;
+}
+
+.fw-allow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fw-admin {
+  margin-top: 6px;
+}
+
+.fw-admin-text {
+  margin-bottom: 8px;
+}

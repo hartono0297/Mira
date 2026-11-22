@@ -180,6 +180,197 @@ select {
   color: var(--danger);
 }
 
+/* Tombol kecil untuk aksi per baris, dan tombol untuk tindakan yang tidak bisa dibatalkan */
+
+.btn-sm {
+  min-height: 34px;
+  padding: 5px 12px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  /* Latar halaman dipakai sebagai warna teks: putih di mode terang, gelap di mode gelap. */
+  color: var(--bg);
+}
+
+.btn:disabled[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* Tombol teks: aksi sekunder di dalam kalimat atau sidebar */
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Select dan isian di dalam .field memakai gaya yang sama */
+
+.field select {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 15px;
+}
+
+.field select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+/* Label status (Aktif, Terpakai, Dikeluarkan). Selalu berupa teks, warna hanya pendukung. */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 1px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.chip-on {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* Pemberitahuan yang perlu tindakan, bukan error */
+
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.notice > svg {
+  flex: none;
+  color: var(--accent-text);
+  margin-top: 1px;
+}
+
+.notice strong {
+  display: block;
+  font-size: 14px;
+}
+
+.notice p + p,
+.alert p + p {
+  margin-top: 4px;
+}
+
+.ok-line {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ok-line svg {
+  flex: none;
+  color: var(--online);
+  margin-top: 1px;
+}
+
+/* Blok perintah atau tautan yang bisa disalin */
+
+.copy-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.copy-block pre,
+.copy-block code {
+  margin: 0;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.copy-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Dialog (Radix). Fokus terkunci di dalam dialog dan Escape menutupnya. */
+
+.dlg-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 50;
+}
+
+.dlg {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 51;
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 12px 32px var(--scrim);
+}
+
+.dlg-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.dlg-desc {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

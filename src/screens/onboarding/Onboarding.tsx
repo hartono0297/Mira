@@ -1,9 +1,13 @@
-import { IconAlertCircle, IconArrowLeft, IconBuildingCommunity, IconTicket } from "@tabler/icons-react";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { IconArrowLeft, IconBuildingCommunity, IconTicket } from "@tabler/icons-react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { api, toAppError, type AppError, type AppState, type IdentityInfo, type OrgInfo } from "../../api";
 import { validateDisplayName, validateOrgName } from "../../api/validation";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { FieldError } from "../../components/FieldError";
+import { FirewallGuide } from "../../components/FirewallGuide";
 import { Logo } from "../../components/Logo";
+import { JoinStep } from "./JoinStep";
+import { StepHeading } from "./StepHeading";
 import "./onboarding.css";
 
 type Props = {
@@ -13,11 +17,22 @@ type Props = {
   onReload: () => void;
 };
 
-type OrgView = "choice" | "create" | "join";
+// Membuat: nama, organisasi, firewall. Bergabung: nama, firewall, kode.
+type OrgView =
+  | { kind: "choice" }
+  | { kind: "create" }
+  | { kind: "create-firewall"; org: OrgInfo }
+  | { kind: "join-firewall" }
+  | { kind: "join" };
+
+function stepNumber(hasName: boolean, view: OrgView): number {
+  if (!hasName) return 1;
+  return view.kind === "create-firewall" || view.kind === "join" ? 3 : 2;
+}
 
 export function Onboarding({ state, onIdentity, onOrganization, onReload }: Props) {
   const hasName = state.identity.displayName !== null;
-  const [orgView, setOrgView] = useState<OrgView>("choice");
+  const [view, setView] = useState<OrgView>({ kind: "choice" });
 
   return (
     <div className="onb">
@@ -27,32 +42,84 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
           <span>Mira</span>
         </div>
         <main className="onb-card">
-          <p className="onb-step">Langkah {hasName ? 2 : 1} dari 2</p>
+          <p className="onb-step">Langkah {stepNumber(hasName, view)} dari 3</p>
           {!hasName && <NameStep fingerprint={state.identity.fingerprint} onSaved={onIdentity} />}
-          {hasName && orgView === "choice" && (
-            <OrgChoice name={state.identity.displayName ?? ""} onPick={setOrgView} />
+          {hasName && view.kind === "choice" && (
+            <OrgChoice
+              name={state.identity.displayName ?? ""}
+              onPick={(next) => setView(next === "create" ? { kind: "create" } : { kind: "join-firewall" })}
+            />
           )}
-          {hasName && orgView === "create" && (
-            <CreateOrg onBack={() => setOrgView("choice")} onCreated={onOrganization} onReload={onReload} />
+          {hasName && view.kind === "create" && (
+            <CreateOrg
+              onBack={() => setView({ kind: "choice" })}
+              onCreated={(org) => setView({ kind: "create-firewall", org })}
+              onReload={onReload}
+            />
           )}
-          {hasName && orgView === "join" && <JoinInfo onBack={() => setOrgView("choice")} />}
+          {hasName && view.kind === "create-firewall" && (
+            <FirewallStep
+              lead={`Organisasi ${view.org.name} sudah dibuat. Supaya laptop rekan bisa menemukan dan menyambung ke laptop ini, Windows Firewall perlu mengizinkan Mira.`}
+              continueLabel="Buka Mira"
+              onContinue={() => onOrganization(view.org)}
+            />
+          )}
+          {hasName && view.kind === "join-firewall" && (
+            <FirewallStep
+              lead="Kode undangan diperiksa oleh laptop rekan lewat jaringan kantor. Sebelum memasukkan kode, pastikan Windows Firewall mengizinkan Mira."
+              continueLabel="Lanjut ke kode undangan"
+              onBack={() => setView({ kind: "choice" })}
+              onContinue={() => setView({ kind: "join" })}
+            />
+          )}
+          {hasName && view.kind === "join" && (
+            <JoinStep
+              onBack={() => setView({ kind: "choice" })}
+              onFirewall={() => setView({ kind: "join-firewall" })}
+              onJoined={onOrganization}
+              onReload={onReload}
+            />
+          )}
         </main>
       </div>
     </div>
   );
 }
 
-// Fokus pindah ke judul setiap ganti langkah, supaya pengguna keyboard dan
-// pembaca layar tahu isi layar sudah berganti.
-function StepHeading({ children }: { children: string }) {
-  const ref = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    ref.current?.focus();
-  }, []);
+function FirewallStep({
+  lead,
+  continueLabel,
+  onContinue,
+  onBack,
+}: {
+  lead: string;
+  continueLabel: string;
+  onContinue: () => void;
+  onBack?: () => void;
+}) {
   return (
-    <h1 ref={ref} tabIndex={-1} className="onb-title">
-      {children}
-    </h1>
+    <div className="onb-form">
+      <StepHeading>Izinkan Mira di jaringan kantor</StepHeading>
+      <p className="onb-lead">{lead}</p>
+      <FirewallGuide
+        footer={(status) => {
+          const ready = status !== null && (status.rule === "allowed" || !status.supported);
+          return (
+            <div className="onb-actions">
+              {onBack && (
+                <button type="button" className="btn btn-ghost" onClick={onBack}>
+                  <IconArrowLeft size={18} aria-hidden="true" />
+                  Kembali
+                </button>
+              )}
+              <button type="button" className={ready ? "btn" : "btn btn-ghost"} onClick={onContinue}>
+                {ready ? continueLabel : "Lewati, atur nanti"}
+              </button>
+            </div>
+          );
+        }}
+      />
+    </div>
   );
 }
 
@@ -143,7 +210,7 @@ function NameStep({ fingerprint, onSaved }: { fingerprint: string; onSaved: (ide
   );
 }
 
-function OrgChoice({ name, onPick }: { name: string; onPick: (view: OrgView) => void }) {
+function OrgChoice({ name, onPick }: { name: string; onPick: (view: "create" | "join") => void }) {
   return (
     <div className="onb-form">
       <StepHeading>Hubungkan ke organisasi</StepHeading>
@@ -267,35 +334,5 @@ function CreateOrg({
         </button>
       </div>
     </form>
-  );
-}
-
-function JoinInfo({ onBack }: { onBack: () => void }) {
-  return (
-    <div className="onb-form">
-      <StepHeading>Gabung dengan kode</StepHeading>
-      <p className="onb-lead">
-        Fitur ini belum ada di versi ini. Bergabung lewat kode undangan hadir di Tahap 1, bersama jaringan kantor yang
-        menghubungkan laptop-laptop Mira satu sama lain.
-      </p>
-      <p className="onb-lead">
-        Kalau organisasi kantor Anda sudah dibuat rekan, tunggu versi berikutnya lalu minta kode undangan ke admin.
-      </p>
-      <div className="onb-actions">
-        <button type="button" className="btn btn-ghost" onClick={onBack}>
-          <IconArrowLeft size={18} aria-hidden="true" />
-          Kembali ke pilihan
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function FieldError({ text }: { text: string }) {
-  return (
-    <p className="field-error">
-      <IconAlertCircle size={16} aria-hidden="true" />
-      {text}
-    </p>
   );
 }

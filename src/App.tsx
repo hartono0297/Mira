@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, toAppError, type AppError, type AppState, type OrgInfo } from "./api";
 import { Onboarding } from "./screens/onboarding/Onboarding";
+import { RemovedScreen } from "./screens/RemovedScreen";
 import { Shell } from "./screens/shell/Shell";
 import { ErrorScreen, LoadingScreen } from "./screens/StatusScreens";
 
@@ -23,6 +24,17 @@ export default function App() {
     }
   }, []);
 
+  // Muat ulang tanpa layar memuat, misalnya setelah peran berubah atau laptop
+  // ini dikeluarkan. Kalau gagal, layar yang sedang tampil dibiarkan.
+  const refresh = useCallback(async () => {
+    try {
+      const state = await api.getAppState();
+      if (state && typeof state === "object") setPhase({ kind: "ready", state });
+    } catch {
+      // Dicoba lagi pada event atau polling berikutnya.
+    }
+  }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -30,6 +42,11 @@ export default function App() {
   const update = useCallback((fn: (s: AppState) => AppState) => {
     setPhase((p) => (p.kind === "ready" ? { kind: "ready", state: fn(p.state) } : p));
   }, []);
+
+  const joined = useCallback(
+    (organization: OrgInfo) => update((s) => ({ ...s, organization, membership: "active" })),
+    [update],
+  );
 
   if (phase.kind === "loading") return <LoadingScreen />;
   if (phase.kind === "error") return <ErrorScreen error={phase.error} onRetry={load} />;
@@ -40,10 +57,13 @@ export default function App() {
       <Onboarding
         state={state}
         onIdentity={(identity) => update((s) => ({ ...s, identity }))}
-        onOrganization={(organization) => update((s) => ({ ...s, organization }))}
+        onOrganization={joined}
         onReload={load}
       />
     );
   }
-  return <Shell state={state} />;
+  if (state.membership === "removed") {
+    return <RemovedScreen state={state} onRecheck={load} onJoined={joined} />;
+  }
+  return <Shell state={state} onRefresh={refresh} />;
 }

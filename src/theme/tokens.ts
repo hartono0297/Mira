@@ -23,6 +23,7 @@ export const TOKEN_ROLES = [
   "danger", // teks dan ikon error
   "danger-soft", // latar kotak error
   "danger-border",
+  "scrim", // latar gelap di belakang dialog
 ] as const;
 
 export type TokenRole = (typeof TOKEN_ROLES)[number];
@@ -66,6 +67,7 @@ const bata: ThemeDef = {
     danger: "#A3221B",
     "danger-soft": "#FDEDEB",
     "danger-border": "#D9827A",
+    scrim: "rgba(42, 31, 26, 0.5)",
   },
   dark: {
     bg: "#1E1714",
@@ -89,6 +91,7 @@ const bata: ThemeDef = {
     danger: "#FF9A8F",
     "danger-soft": "#3A1F1B",
     "danger-border": "#A8574E",
+    scrim: "rgba(0, 0, 0, 0.6)",
   },
 };
 

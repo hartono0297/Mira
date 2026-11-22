@@ -62,7 +62,7 @@
 }
 
 .side-me {
-  margin-top: auto;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -100,6 +100,142 @@
   font-size: 12px;
   color: var(--side-sec);
   overflow-wrap: anywhere;
+}
+
+/* Status jaringan dan daftar "Di jaringan" (F-NET-05, F-NET-06). Mengisi sisa
+   tinggi sidebar dan bergulir sendiri kalau rekannya banyak. */
+
+.side-net {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 14px 0 8px;
+  padding: 12px 8px 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.net-loading {
+  font-size: 12px;
+  color: var(--side-sec);
+}
+
+.net-state {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.net-state svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--side-sec);
+}
+
+.net-ok svg {
+  color: var(--online);
+}
+
+.net-bad svg {
+  color: var(--danger);
+}
+
+.net-state-text {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.net-state-hint {
+  font-size: 12px;
+  color: var(--side-sec);
+}
+
+.side-retry {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 4px 8px;
+  /* border-strong di atas latar sidebar hanya 2,95:1; side-sec lolos 3:1 di dua mode. */
+  border: 1px solid var(--side-sec);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--side-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.side-retry:hover {
+  background: var(--hover);
+}
+
+.side-lbl {
+  margin: 10px 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--side-sec);
+}
+
+.side-empty {
+  font-size: 12px;
+  color: var(--side-sec);
+}
+
+.peer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.peer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+}
+
+.peer-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 6px;
+  border-radius: 50%;
+}
+
+.peer-on .peer-dot {
+  background: var(--online);
+}
+
+/* Offline: lingkaran kosong, jadi bedanya terlihat dari bentuk, bukan hanya warna. */
+.peer-off .peer-dot {
+  border: 1.5px solid var(--side-sec);
+}
+
+.peer-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.peer-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.peer-off .peer-name {
+  color: var(--side-sec);
+}
+
+.peer-sub {
+  font-size: 12px;
+  color: var(--side-sec);
 }
 
 .content {

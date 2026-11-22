@@ -258,3 +258,96 @@
 .path {
   overflow-wrap: anywhere;
 }
+
+/* Pengaturan > Jaringan */
+
+.set-sub {
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 14px;
+}
+
+.addr-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 14px;
+}
+
+.share {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+/* SVG QR dari Rust membawa latar terangnya sendiri, jadi tetap terbaca kamera di mode gelap. */
+.share-qr {
+  flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+}
+
+.share-text {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.manual-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.manual-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.manual-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.manual-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manual-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.manual-bad {
+  color: var(--danger);
+}
+
+.manual-form {
+  margin-top: 4px;
+}
+
+.manual-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.manual-row input {
+  flex: 1;
+  min-width: 200px;
+}
