@@ -569,3 +569,72 @@ fn renumbering_a_task_deleted_concurrently_is_judged_the_same_everywhere() {
     accept(&mut renumber_first, ren, &b).unwrap();
     accept(&mut renumber_first, del, &a).unwrap();
 }
+
+/// `doc` after A and B both edited `task` offline with the same stamp, so
+/// `updated_at` holds two concurrent values that are equal.
+fn conflicting_updated_at(doc: &mut BoardDoc, task: &str) {
+    let a = hex32(&A);
+    let b = hex32(&B);
+    let by_a = change_by(doc, &A, |d| {
+        let changes = TaskChanges {
+            due: Some(Some("2026-12-01".into())),
+            ..Default::default()
+        };
+        d.update_task(Stamp { actor: &a, at: "t3" }, task, &changes, &|_| String::new())
+            .unwrap();
+    });
+    let by_b = change_by(doc, &B, |d| {
+        d.add_comment(Stamp { actor: &b, at: "t3" }, task, "oke").unwrap();
+    });
+    accept(doc, by_a, &a).unwrap();
+    accept(doc, by_b, &b).unwrap();
+    let t = task_obj(doc, task);
+    assert_eq!(doc.raw().get_all(&t, "updated_at").unwrap().len(), 2);
+}
+
+fn has_delete_of(c: &Change, key: &str) -> bool {
+    c.decode()
+        .operations
+        .iter()
+        .any(|op| matches!(op.action, OpType::Delete) && op.key == Key::Map(key.into()))
+}
+
+#[test]
+fn putting_the_winning_value_of_a_conflict_again_is_allowed() {
+    // Automerge writes a put that repeats the winning value of a conflicted
+    // key as a delete of the losing values; deleting a task in the same
+    // second as two concurrent edits does that to `updated_at`.
+    let (mut doc, task_a, _, _) = base();
+    conflicting_updated_at(&mut doc, &task_a);
+    let a = hex32(&A);
+    let c = change_by(&mut doc, &A, |d| {
+        d.delete_task(Stamp { actor: &a, at: "t3" }, &task_a).unwrap();
+    });
+    assert!(has_delete_of(&c, "updated_at"), "{:?}", c.decode().operations);
+    let needs = accept(&mut doc, c, &a).unwrap();
+    assert_eq!(needs.delete, vec![(task_a.clone(), a)]);
+    let t = task_obj(&mut doc, &task_a);
+    let left = doc.raw().get_all(&t, "updated_at").unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].0.as_str(), Some("t3"));
+}
+
+#[test]
+fn deleting_a_task_field_is_still_refused() {
+    let (mut doc, task_a, _, _) = base();
+    // Its only value.
+    let c = change_by(&mut doc, &B, |d| {
+        let t = task_obj(d, &task_a);
+        d.raw().delete(&t, "updated_at").unwrap();
+    });
+    assert!(has_delete_of(&c, "updated_at"));
+    assert!(judge(&doc, &c).is_err(), "hapus satu-satunya nilai harus ditolak");
+    // Every value of a conflict.
+    conflicting_updated_at(&mut doc, &task_a);
+    let c = change_by(&mut doc, &B, |d| {
+        let t = task_obj(d, &task_a);
+        d.raw().delete(&t, "updated_at").unwrap();
+    });
+    assert!(has_delete_of(&c, "updated_at"));
+    assert!(judge(&doc, &c).is_err(), "hapus semua nilai konflik harus ditolak");
+}
