@@ -10,6 +10,7 @@ use tauri::State;
 use crate::error::AppResult;
 use crate::identity::{self, IdentityInfo};
 use crate::org::{self, OrgInfo};
+use crate::permissions::{self, Membership};
 use crate::settings;
 use crate::state::MiraState;
 
@@ -18,6 +19,8 @@ use crate::state::MiraState;
 pub struct AppState {
     pub identity: IdentityInfo,
     pub organization: Option<OrgInfo>,
+    /// Tahap 1: `none`, `active` or `removed`.
+    pub membership: Membership,
     pub data_dir: String,
 }
 
@@ -27,13 +30,19 @@ pub fn app_state(state: &MiraState) -> AppResult<AppState> {
         Ok(AppState {
             identity: core.identity.info(),
             organization: org::get_organization(&core.db, &core.identity)?,
+            membership: permissions::membership(&core.db, &core.identity)?,
             data_dir,
         })
     })
 }
 
 pub fn display_name(state: &MiraState, name: &str) -> AppResult<IdentityInfo> {
-    state.with_core(|core| identity::save_display_name(&mut core.db, &mut core.identity, name))
+    state.with_core(|core| {
+        let info = identity::save_display_name(&mut core.db, &mut core.identity, name)?;
+        // In an organization the name travels as a signed `profile_set` op.
+        permissions::set_display_name_op(&mut core.db, &core.identity, crate::clock::now())?;
+        Ok(info)
+    })
 }
 
 pub fn organization(state: &MiraState, name: &str) -> AppResult<OrgInfo> {
@@ -56,14 +65,25 @@ pub async fn get_app_state(state: State<'_, MiraState>) -> AppResult<AppState> {
 #[tauri::command]
 pub async fn save_display_name(
     state: State<'_, MiraState>,
+    net: State<'_, crate::net_backend::AppNet>,
+    app: tauri::AppHandle,
     name: String,
 ) -> AppResult<IdentityInfo> {
-    display_name(&state, &name)
+    let info = display_name(&state, &name)?;
+    crate::net_backend::after_change(&net, &app).await;
+    Ok(info)
 }
 
 #[tauri::command]
-pub async fn create_organization(state: State<'_, MiraState>, name: String) -> AppResult<OrgInfo> {
-    organization(&state, &name)
+pub async fn create_organization(
+    state: State<'_, MiraState>,
+    net: State<'_, crate::net_backend::AppNet>,
+    app: tauri::AppHandle,
+    name: String,
+) -> AppResult<OrgInfo> {
+    let info = organization(&state, &name)?;
+    crate::net_backend::after_change(&net, &app).await;
+    Ok(info)
 }
 
 #[tauri::command]
@@ -122,5 +142,6 @@ mod tests {
         assert_eq!(json["organization"]["role"], "superadmin");
         assert!(json["organization"]["createdAt"].is_string());
         assert!(json["dataDir"].is_string());
+        assert_eq!(json["membership"], "active");
     }
 }

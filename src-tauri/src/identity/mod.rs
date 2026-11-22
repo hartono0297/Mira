@@ -66,6 +66,12 @@ impl Identity {
         self.signing_key.sign(message)
     }
 
+    /// Copy of the secret key for the network's TLS certificate (Tahap 1).
+    /// Wiped when dropped.
+    pub fn secret_bytes(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.signing_key.to_bytes())
+    }
+
     pub fn info(&self) -> IdentityInfo {
         IdentityInfo {
             public_key: self.public_key_hex.clone(),

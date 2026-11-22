@@ -9,7 +9,9 @@ pub mod db;
 pub mod error;
 pub mod firewall;
 pub mod identity;
+pub mod net_backend;
 pub mod network;
+pub mod network_commands;
 pub mod org;
 pub mod paths;
 pub mod peers;
@@ -17,9 +19,12 @@ pub mod permissions;
 pub mod qr;
 pub mod settings;
 pub mod state;
+pub mod team_commands;
 pub mod window_theme;
 
-use tauri::{App, Manager, WebviewWindowBuilder};
+use tauri::{App, Manager, RunEvent, WebviewWindowBuilder};
+
+use crate::net_backend::AppNet;
 
 use crate::identity::KeyringStore;
 use crate::state::MiraState;
@@ -42,11 +47,34 @@ pub fn run() {
             if let Err(err) = state.with_core(|_| Ok(())) {
                 eprintln!("Mira: inisialisasi gagal [{}]: {err}", err.code());
             }
+            // Tahap 0 organizations: publish the founder's name as a signed op.
+            if let Err(err) = state.with_core(|core| {
+                permissions::ensure_profile_op(&mut core.db, &core.identity, clock::now())
+                    .map(|_| ())
+            }) {
+                eprintln!(
+                    "Mira: profil belum bisa diterbitkan [{}]: {err}",
+                    err.code()
+                );
+            }
             // Window background from the saved theme mode, so a dark start
             // does not flash white before the page loads.
             let background = state
                 .with_core(|core| Ok(window_theme::initial_background(Some(&core.db))))
                 .unwrap_or_else(|_| window_theme::initial_background(None));
+            let net = AppNet::default();
+            app.manage(net.clone());
+            // Start the network in the background; commands start it too if
+            // this fails now (for example before the key problem is fixed).
+            {
+                let state = state.clone();
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = net.get(&state, &handle).await {
+                        eprintln!("Mira: jaringan belum berjalan [{}]: {err}", err.code());
+                    }
+                });
+            }
             app.manage(state);
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
@@ -65,9 +93,35 @@ pub fn run() {
             commands::create_organization,
             commands::get_setting,
             commands::set_setting,
+            team_commands::get_directory,
+            team_commands::create_team,
+            team_commands::delete_team,
+            team_commands::add_team_member,
+            team_commands::remove_team_member,
+            team_commands::set_team_admin,
+            team_commands::add_superadmin,
+            team_commands::remove_superadmin,
+            team_commands::remove_member,
+            team_commands::create_invite,
+            team_commands::revoke_invite,
+            team_commands::redeem_invite,
+            team_commands::join_with_code,
+            team_commands::get_rejected_changes,
+            network_commands::get_network_status,
+            network_commands::add_manual_address,
+            network_commands::remove_manual_address,
+            network_commands::get_firewall_status,
+            network_commands::request_firewall_rule,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Say goodbye on mDNS and close connections cleanly.
+            if let RunEvent::Exit = event {
+                let net = app.state::<AppNet>().inner().clone();
+                tauri::async_runtime::block_on(net.shutdown());
+            }
+        });
 }
 
 /// Builds the main window from `tauri.conf.json` (which has `create: false`).
