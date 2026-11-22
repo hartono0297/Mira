@@ -63,7 +63,7 @@ export default function App() {
     );
   }
   if (state.membership === "removed") {
-    return <RemovedScreen state={state} onRecheck={load} onJoined={joined} />;
+    return <RemovedScreen state={state} onRecheck={load} />;
   }
   return <Shell state={state} onRefresh={refresh} />;
 }

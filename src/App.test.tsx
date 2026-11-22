@@ -95,12 +95,9 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari organisasi Kantor Contoh" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/tetap tersimpan di sini/)).toBeInTheDocument();
-    expect(screen.getByText(/minta admin organisasi membuat kode undangan baru/)).toBeInTheDocument();
+    expect(screen.getByText(/belum bisa bergabung lagi/)).toBeInTheDocument();
     expect(screen.getByText("A1B2 C3D4 E5F6 0718")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Menu utama" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Sudah punya kode undangan baru?" }));
-    expect(screen.getByLabelText("Kode undangan baru")).toBeInTheDocument();
 
     state = { ...ready, membership: "active" };
     await user.click(screen.getByRole("button", { name: "Periksa lagi" }));
