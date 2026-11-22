@@ -1,10 +1,10 @@
 import { IconListCheck, IconPlus } from "@tabler/icons-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { boardApi, type ProjectSummary } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { MyTasks } from "./MyTasks";
 import { NewProjectDialog } from "./NewProjectDialog";
-import { ProjectBoard } from "./ProjectBoard";
+import { ProjectBoard, type ProjectBoardHandle } from "./ProjectBoard";
 import { TaskDetail } from "./TaskDetail";
 import { useBoardLive } from "./useBoardLive";
 import "./board.css";
@@ -42,6 +42,9 @@ export function BoardScreen() {
   const [creating, setCreating] = useState(false);
   const [openTask, setOpenTask] = useState<OpenTask | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Proyek yang judul board-nya difokus begitu tampil (setelah proyek dibuat).
+  const [focusProject, setFocusProject] = useState<string | null>(null);
+  const boardRef = useRef<ProjectBoardHandle>(null);
   const { reload, setData } = live;
 
   // Pilihan yang tersimpan bisa menunjuk proyek yang sudah tidak ada.
@@ -61,6 +64,7 @@ export function BoardScreen() {
   }, [reload]);
 
   const projectsChanged = useCallback(() => void reload(), [reload]);
+  const headingFocused = useCallback(() => setFocusProject(null), []);
 
   const currentProject = projects?.find((p) => p.id === current) ?? null;
 
@@ -98,6 +102,7 @@ export function BoardScreen() {
                 <button
                   type="button"
                   className="bd-link"
+                  title={`${p.code} ${p.name}`}
                   aria-current={current === p.id ? "page" : undefined}
                   onClick={() => select(p.id)}
                 >
@@ -141,8 +146,13 @@ export function BoardScreen() {
         {projects && current === MY_TASKS && <MyTasks onOpenTask={(projectId, taskId) => setOpenTask({ projectId, taskId })} />}
         {projects && current !== MY_TASKS && currentProject && (
           <ProjectBoard
+            key={currentProject.id}
+            ref={boardRef}
             projectId={currentProject.id}
             refreshKey={refreshKey}
+            taskOpen={!!openTask}
+            focusHeading={focusProject === currentProject.id}
+            onHeadingFocused={headingFocused}
             onOpenTask={(taskId) => setOpenTask({ projectId: currentProject.id, taskId })}
             onProjectsChanged={projectsChanged}
           />
@@ -169,6 +179,7 @@ export function BoardScreen() {
           setCreating(false);
           if (projects && !projects.some((p) => p.id === project.id)) setData([...projects, project]);
           select(project.id);
+          setFocusProject(project.id);
           void reload();
         }}
       />
@@ -179,6 +190,7 @@ export function BoardScreen() {
           taskId={openTask.taskId}
           onClose={() => setOpenTask(null)}
           onChanged={changed}
+          onDeleted={(taskId, code) => boardRef.current?.taskDeleted(taskId, code)}
         />
       )}
     </main>

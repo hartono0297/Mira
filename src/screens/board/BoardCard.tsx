@@ -72,7 +72,7 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, 
           </span>
         )}
         {task.priority !== "none" && (
-          <span className={`chip tc-pri${task.priority === "high" ? " chip-on" : ""}`}>
+          <span className={`chip tc-pri${task.priority === "high" ? " tc-pri-high" : ""}`}>
             <span className="sr-only">, prioritas </span>
             {PRIORITY_LABELS[task.priority]}
           </span>

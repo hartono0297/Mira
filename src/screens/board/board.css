@@ -382,6 +382,14 @@
   font-size: 11px;
 }
 
+/* Prioritas tinggi memakai warna bahaya, sama dengan detail task dan Task saya.
+   Teks "Tinggi" tetap yang membawa artinya. */
+.tc-pri-high {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .tc-labels {
   list-style: none;
   margin: 8px 0 0;

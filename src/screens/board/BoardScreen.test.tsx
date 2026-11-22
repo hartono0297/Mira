@@ -21,14 +21,36 @@ vi.mock("../../api/board", async (importOriginal) => ({
 }));
 
 // Detail task dan Task saya dibuat terpisah dan punya tes sendiri.
+const fake = vi.hoisted(() => ({ removeTask: (_taskId: string) => {} }));
+
 vi.mock("./TaskDetail", () => ({
-  TaskDetail: ({ projectId, taskId, onClose }: { projectId: string; taskId: string; onClose: () => void }) => (
+  TaskDetail: ({
+    projectId,
+    taskId,
+    onClose,
+    onDeleted,
+  }: {
+    projectId: string;
+    taskId: string;
+    onClose: () => void;
+    onDeleted?: (taskId: string, code: string) => void;
+  }) => (
     <div role="dialog" aria-label="Detail task tiruan">
       <p>
         detail {projectId} {taskId}
       </p>
       <button type="button" onClick={onClose}>
         Tutup detail
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          fake.removeTask(taskId);
+          onDeleted?.(taskId, `PA-${Number(taskId)}`);
+          onClose();
+        }}
+      >
+        Hapus tiruan
       </button>
     </div>
   ),
@@ -120,11 +142,18 @@ function detail(card: TaskCard): TaskDetailData {
   };
 }
 
+function emptyBoard(): BoardView {
+  return view({ project: PROJECTS[1], columns: view().columns.map((c) => ({ ...c, tasks: [] })) });
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   current = view();
+  fake.removeTask = (id) => {
+    current = { ...current, columns: current.columns.map((c) => ({ ...c, tasks: c.tasks.filter((t) => t.id !== id) })) };
+  };
   board.listProjects.mockReset().mockResolvedValue(PROJECTS);
-  board.getBoard.mockReset().mockImplementation(async () => current);
+  board.getBoard.mockReset().mockImplementation(async (id: string) => (id === P2 ? emptyBoard() : current));
   board.createProject.mockReset();
   board.createTask.mockReset();
   board.moveTask.mockReset().mockImplementation(async (_p: string, id: string, columnId: ColumnId, index: number) => {
@@ -168,7 +197,7 @@ describe("Board: daftar proyek dan kolom", () => {
     expect(within(todo).getByText("PA-1")).toBeInTheDocument();
     expect(within(todo).getByText("RU")).toBeInTheDocument();
     expect(within(todo).getByText("Terlambat 2 hari")).toBeInTheDocument();
-    expect(within(todo).getByText("Tinggi")).toBeInTheDocument();
+    expect(within(todo).getByText("Tinggi").closest(".chip")).toHaveClass("tc-pri-high");
     expect(within(todo).getByText("kontrak")).toBeInTheDocument();
     expect(within(column("Dikerjakan")).getByText("Diubah saat offline, sudah digabung")).toBeInTheDocument();
     // Task yang sudah selesai tidak ditandai terlambat.
@@ -189,7 +218,6 @@ describe("Board: daftar proyek dan kolom", () => {
 
   it("membuka pilihan yang tersimpan", async () => {
     window.localStorage.setItem(BOARD_SELECTION_KEY, P2);
-    current = view({ project: PROJECTS[1], columns: view().columns.map((c) => ({ ...c, tasks: [] })) });
     render(<BoardScreen />);
     expect(await screen.findByRole("heading", { name: /Kantor Baru/ })).toBeInTheDocument();
     expect(board.getBoard).toHaveBeenCalledWith(P2);
@@ -203,6 +231,28 @@ describe("Board: daftar proyek dan kolom", () => {
     expect(dlg).toHaveTextContent(`detail ${P1} ${taskId(2)}`);
     await user.click(within(dlg).getByRole("button", { name: "Tutup detail" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("Board: hapus task dari detail", () => {
+  it("mengumumkan dan memindah fokus ke kartu sebelah di kolom yang sama", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    await user.click(screen.getByRole("button", { name: "Task nomor 1" }));
+    await user.click(screen.getByRole("button", { name: "Hapus tiruan" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(document.querySelector(".pb [role=status]")).toHaveTextContent("PA-1 dihapus.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Task nomor 2" })).toHaveFocus());
+    expect(screen.queryByRole("button", { name: "Task nomor 1" })).not.toBeInTheDocument();
+  });
+
+  it("kartu terakhir di kolom: fokus ke Tambah task kolom itu", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    await user.click(screen.getByRole("button", { name: "Task nomor 3" }));
+    await user.click(screen.getByRole("button", { name: "Hapus tiruan" }));
+    await waitFor(() => expect(within(column("Dikerjakan")).getByRole("button", { name: "Tambah task" })).toHaveFocus());
+    expect(document.querySelector(".pb [role=status]")).toHaveTextContent("PA-3 dihapus.");
   });
 });
 
@@ -241,6 +291,7 @@ describe("Board: proyek baru", () => {
     const user = userEvent.setup();
     const created = project("3".repeat(32), "LKU", "Laporan Keuangan", { openCount: 0, taskCount: 0 });
     board.createProject.mockResolvedValue(created);
+    board.getBoard.mockImplementation(async (id: string) => (id === created.id ? view({ project: created }) : current));
     await renderBoard();
     await user.click(screen.getByRole("button", { name: "Proyek baru" }));
     const dlg = screen.getByRole("dialog", { name: "Proyek baru" });
@@ -269,6 +320,7 @@ describe("Board: proyek baru", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(window.localStorage.getItem(BOARD_SELECTION_KEY)).toBe(created.id);
     expect(screen.getByRole("button", { name: /Laporan Keuangan/ })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: /Laporan Keuangan/ })).toHaveFocus());
   });
 
   it("tanpa izin: pesan jelas dari inti Rust", async () => {
@@ -318,6 +370,23 @@ describe("Board: tambah task cepat", () => {
     await user.keyboard("{Escape}");
     expect(within(doing).queryByLabelText("Judul task baru di Dikerjakan")).not.toBeInTheDocument();
     expect(within(doing).getByRole("button", { name: "Tambah task" })).toHaveFocus();
+  });
+
+  it("teks yang belum disimpan tetap ada saat isian ditutup atau kolom lain dibuka", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const todo = column("To do");
+    await user.click(within(todo).getByRole("button", { name: "Tambah task" }));
+    await user.type(within(todo).getByLabelText("Judul task baru di To do"), "Draf satu");
+    await user.click(within(todo).getByRole("button", { name: "Tutup" }));
+    await user.click(within(todo).getByRole("button", { name: "Tambah task" }));
+    expect(within(todo).getByLabelText("Judul task baru di To do")).toHaveValue("Draf satu");
+
+    await user.click(within(column("Selesai")).getByRole("button", { name: "Tambah task" }));
+    expect(within(todo).queryByLabelText("Judul task baru di To do")).not.toBeInTheDocument();
+    await user.click(within(todo).getByRole("button", { name: "Tambah task" }));
+    expect(within(todo).getByLabelText("Judul task baru di To do")).toHaveValue("Draf satu");
+    expect(board.createTask).not.toHaveBeenCalled();
   });
 
   it("tombol Task baru membuka isian di kolom To do", async () => {
@@ -407,6 +476,66 @@ describe("Board: pindah task", () => {
     expect(screen.getByText("Tamu tidak bisa memindah task.")).toBeInTheDocument();
     expect(within(column("To do")).getByRole("button", { name: "Task nomor 1" })).toBeInTheDocument();
     expect(liveText()).toBe("PA-1 belum dipindah.");
+  });
+
+  it("satu pindahan gagal: hanya pindahan itu yang dibatalkan", async () => {
+    const user = userEvent.setup();
+    let failFirst: (reason: unknown) => void = () => {};
+    let passSecond: () => void = () => {};
+    board.moveTask
+      .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
+      .mockImplementationOnce(
+        (_p: string, id: string, columnId: ColumnId, index: number) =>
+          new Promise((resolve) => {
+            passSecond = () => {
+              current = applyMove(current, id, { columnId, index });
+              resolve(current);
+            };
+          }),
+      );
+    await renderBoard();
+    screen.getByRole("button", { name: "Task nomor 1" }).focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    screen.getByRole("button", { name: "Task nomor 4" }).focus();
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    expect(board.moveTask).toHaveBeenCalledTimes(2);
+    // Dua pindahan tampil sebelum dijawab.
+    expect(within(column("Dikerjakan")).getByRole("button", { name: "Task nomor 1" })).toBeInTheDocument();
+    expect(within(column("Dikerjakan")).getByRole("button", { name: "Task nomor 4" })).toBeInTheDocument();
+
+    passSecond();
+    await waitFor(() => expect(liveText()).toBe("PA-4 dipindah ke Dikerjakan, posisi 1 dari 3."));
+    // Pindahan pertama masih menunggu, jadi tetap tampil.
+    expect(within(column("Dikerjakan")).getByRole("button", { name: "Task nomor 1" })).toBeInTheDocument();
+
+    failFirst({ code: "database", message: "Database terkunci." });
+    expect(await screen.findByText("PA-1 belum dipindah")).toBeInTheDocument();
+    await waitFor(() => expect(within(column("To do")).getByRole("button", { name: "Task nomor 1" })).toBeInTheDocument());
+    expect(within(column("Dikerjakan")).getByRole("button", { name: "Task nomor 4" })).toBeInTheDocument();
+  });
+
+  it("ganti proyek saat pindahan masih berjalan: board proyek baru tidak tertimpa", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    board.moveTask.mockImplementationOnce(
+      (_p: string, id: string, columnId: ColumnId, index: number) =>
+        new Promise((resolve) => {
+          finish = () => {
+            current = applyMove(current, id, { columnId, index });
+            resolve(current);
+          };
+        }),
+    );
+    await renderBoard();
+    screen.getByRole("button", { name: "Task nomor 1" }).focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    await user.click(screen.getByRole("button", { name: /Kantor Baru/ }));
+    expect(await screen.findByRole("heading", { level: 2, name: /Kantor Baru/ })).toBeInTheDocument();
+    finish();
+    await waitFor(() => expect(board.getBoard).toHaveBeenLastCalledWith(P2));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByRole("heading", { level: 2, name: /Kantor Baru/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Task nomor 1" })).not.toBeInTheDocument();
   });
 
   it("drag-and-drop memanggil moveTask dengan posisi tujuan", async () => {

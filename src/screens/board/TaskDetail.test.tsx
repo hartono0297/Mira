@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardView, TaskDetail as Task } from "../../api/board";
 import { activitySentence } from "./taskActivity";
@@ -77,6 +78,13 @@ function renderDetail() {
   return { onClose, onChanged };
 }
 
+// Pilih dengan mouse: tekan select, lalu pilih opsi. Langsung disimpan.
+function mousePick(select: HTMLElement, value: string) {
+  fireEvent.pointerDown(select);
+  fireEvent.mouseDown(select);
+  fireEvent.change(select, { target: { value } });
+}
+
 async function openDialog() {
   const dialog = await screen.findByRole("dialog", { name: /PA-12/ });
   await within(dialog).findByLabelText("Judul task");
@@ -131,20 +139,18 @@ describe("Detail task: memuat", () => {
 
 describe("Detail task: mengubah satu field", () => {
   it("penanggung jawab mengirim hanya field itu", async () => {
-    const user = userEvent.setup();
     const { onChanged } = renderDetail();
     await openDialog();
-    await user.selectOptions(screen.getByLabelText("Penanggung jawab"), ME);
+    mousePick(screen.getByLabelText("Penanggung jawab"), ME);
     await waitFor(() => expect(board.updateTask).toHaveBeenCalledWith(P, T, { assignee: ME }));
     expect(await screen.findByText("Penanggung jawab tersimpan.")).toBeInTheDocument();
     expect(onChanged).toHaveBeenCalledTimes(1);
   });
 
   it("Belum ada mengosongkan penanggung jawab", async () => {
-    const user = userEvent.setup();
     renderDetail();
     await openDialog();
-    await user.selectOptions(screen.getByLabelText("Penanggung jawab"), "");
+    mousePick(screen.getByLabelText("Penanggung jawab"), "");
     await waitFor(() => expect(board.updateTask).toHaveBeenCalledWith(P, T, { assignee: null }));
   });
 
@@ -162,19 +168,17 @@ describe("Detail task: mengubah satu field", () => {
   });
 
   it("prioritas mengirim hanya field itu", async () => {
-    const user = userEvent.setup();
     renderDetail();
     await openDialog();
-    await user.selectOptions(screen.getByLabelText("Prioritas"), "high");
+    mousePick(screen.getByLabelText("Prioritas"), "high");
     await waitFor(() => expect(board.updateTask).toHaveBeenCalledWith(P, T, { priority: "high" }));
     expect(board.updateTask).toHaveBeenCalledTimes(1);
   });
 
   it("status memindahkan task ke paling atas kolom tujuan", async () => {
-    const user = userEvent.setup();
     renderDetail();
     await openDialog();
-    await user.selectOptions(screen.getByLabelText("Status"), "doing");
+    mousePick(screen.getByLabelText("Status"), "doing");
     await waitFor(() => expect(board.moveTask).toHaveBeenCalledWith(P, T, "doing", 0));
     expect(board.updateTask).not.toHaveBeenCalled();
   });
@@ -219,11 +223,10 @@ describe("Detail task: mengubah satu field", () => {
   });
 
   it("gagal menyimpan menampilkan error di field itu", async () => {
-    const user = userEvent.setup();
     board.updateTask.mockRejectedValueOnce({ code: "database", message: "Disk penuh." });
     const { onChanged } = renderDetail();
     await openDialog();
-    await user.selectOptions(screen.getByLabelText("Prioritas"), "low");
+    mousePick(screen.getByLabelText("Prioritas"), "low");
     expect(await screen.findByText("Prioritas belum tersimpan")).toBeInTheDocument();
     expect(screen.getByText("Disk penuh.")).toBeInTheDocument();
     expect(onChanged).not.toHaveBeenCalled();
@@ -353,5 +356,101 @@ describe("Kalimat aktivitas", () => {
     expect(
       activitySentence({ at, actor: sari, kind: "due", detail: "2026-11-28" }, ME, [], new Date(2026, 10, 22)),
     ).toBe("Sari Uji mengubah tenggat menjadi 28 Nov");
+  });
+});
+
+describe("Detail task: select lewat keyboard", () => {
+  it("panah tidak menyimpan, Enter menyimpan sekali dengan pilihan terakhir", async () => {
+    renderDetail();
+    await openDialog();
+    const prio = screen.getByLabelText("Prioritas");
+    prio.focus();
+    fireEvent.keyDown(prio, { key: "ArrowDown" });
+    fireEvent.change(prio, { target: { value: "high" } });
+    fireEvent.keyDown(prio, { key: "ArrowUp" });
+    fireEvent.change(prio, { target: { value: "low" } });
+    expect(board.updateTask).not.toHaveBeenCalled();
+    fireEvent.keyDown(prio, { key: "Enter" });
+    await waitFor(() => expect(board.updateTask).toHaveBeenCalledWith(P, T, { priority: "low" }));
+    fireEvent.blur(prio);
+    await screen.findByText("Prioritas tersimpan.");
+    expect(board.updateTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("panah lalu pindah kolom menyimpan sekali", async () => {
+    renderDetail();
+    await openDialog();
+    const status = screen.getByLabelText("Status");
+    fireEvent.keyDown(status, { key: "ArrowDown" });
+    fireEvent.change(status, { target: { value: "doing" } });
+    fireEvent.keyDown(status, { key: "ArrowDown" });
+    fireEvent.change(status, { target: { value: "done" } });
+    expect(board.moveTask).not.toHaveBeenCalled();
+    fireEvent.blur(status);
+    await waitFor(() => expect(board.moveTask).toHaveBeenCalledWith(P, T, "done", 0));
+    expect(board.moveTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("error simpan diumumkan lewat wilayah aria-live", async () => {
+    board.updateTask.mockRejectedValueOnce({ code: "database", message: "Disk penuh." });
+    renderDetail();
+    await openDialog();
+    mousePick(screen.getByLabelText("Prioritas"), "low");
+    const title = await screen.findByText("Prioritas belum tersimpan");
+    expect(title.closest("[aria-live]")).not.toBeNull();
+  });
+});
+
+describe("Detail task: fokus setelah tutup", () => {
+  function Harness({ onDeleted }: { onDeleted?: (id: string, code: string) => void }) {
+    const [open, setOpen] = useState(false);
+    const [column, setColumn] = useState<"todo" | "doing">("todo");
+    return (
+      <>
+        {column === "todo" && (
+          <button type="button" data-open-task={T} onClick={() => setOpen(true)}>
+            Kartu di To do
+          </button>
+        )}
+        {column === "doing" && (
+          <button type="button" data-open-task={T}>
+            Kartu di Dikerjakan
+          </button>
+        )}
+        {open && (
+          <TaskDetail
+            projectId={P}
+            taskId={T}
+            onClose={() => setOpen(false)}
+            onChanged={() => setColumn("doing")}
+            onDeleted={onDeleted}
+          />
+        )}
+      </>
+    );
+  }
+
+  it("kembali ke kartu yang sama walau kartunya sudah dirender di kolom lain", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Kartu di To do" }));
+    await openDialog();
+    mousePick(screen.getByLabelText("Status"), "doing");
+    await screen.findByText("Status tersimpan: Dikerjakan.");
+    await user.click(screen.getByRole("button", { name: "Tutup detail task" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Kartu di Dikerjakan" })).toHaveFocus());
+  });
+
+  it("setelah hapus memanggil onDeleted dengan id dan kode", async () => {
+    const user = userEvent.setup();
+    const onDeleted = vi.fn();
+    render(<Harness onDeleted={onDeleted} />);
+    await user.click(screen.getByRole("button", { name: "Kartu di To do" }));
+    await openDialog();
+    await user.click(screen.getByRole("button", { name: "Hapus task" }));
+    const confirm = await screen.findByRole("dialog", { name: "Hapus task PA-12?" });
+    await user.click(within(confirm).getByRole("button", { name: "Hapus PA-12" }));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith(T, "PA-12"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });

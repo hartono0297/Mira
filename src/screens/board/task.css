@@ -222,9 +222,15 @@
   color: var(--text-sec);
 }
 
-/* Terlambat: teks "Terlambat 2 hari" sudah membawa artinya, warna hanya penegas. */
+/* Terlambat: teks "Terlambat 2 hari" sudah membawa artinya. Warnanya sama dengan
+   kartu board (token state, "menunggu Anda"); merah hanya untuk prioritas Tinggi dan error. */
 .td-late {
-  color: var(--danger);
+  color: var(--state);
+}
+
+/* Wilayah aria-live yang selalu terpasang. Saat kosong tidak menambah jarak. */
+.td-live:empty {
+  margin-top: -6px;
 }
 
 .td-merged {

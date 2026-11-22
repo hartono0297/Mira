@@ -88,7 +88,7 @@ describe("Halaman Task saya", () => {
     expect(screen.getByText("Memuat task Anda...")).toBeInTheDocument();
     await screen.findByText("Task nomor 4");
     const titles = screen
-      .getAllByRole("heading", { level: 2 })
+      .getAllByRole("heading", { level: 3 })
       .map((h) => h.textContent?.replace(/\d+$/, "").trim());
     expect(titles).toEqual([
       "Terlambat",
@@ -173,5 +173,30 @@ describe("Pengingat tenggat", () => {
     await user.click(dayBefore);
     expect(await screen.findByText('Pengingat "Sehari sebelum tenggat" belum tersimpan')).toBeInTheDocument();
     expect(dayBefore).toBeChecked();
+  });
+});
+
+describe("Pengingat tenggat: klik beruntun", () => {
+  it("jawaban lama diabaikan, gagal terakhir kembali ke nilai tersimpan terakhir", async () => {
+    const user = userEvent.setup();
+    let failFirst: (reason: unknown) => void = () => {};
+    settings.setSetting
+      .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce({ code: "database", message: "Disk penuh." });
+    render(<MyTasks onOpenTask={vi.fn()} />);
+    const box = await screen.findByRole("checkbox", { name: "Sehari sebelum tenggat" });
+
+    await user.click(box); // off, belum dijawab
+    await user.click(box); // on, tersimpan
+    await waitFor(() => expect(settings.setSetting).toHaveBeenLastCalledWith(REMINDER_DAY_BEFORE, "on"));
+    failFirst({ code: "database", message: "Terlambat." });
+    await screen.findByText('Pengingat "Sehari sebelum tenggat" dinyalakan.');
+    expect(box).toBeChecked();
+    expect(screen.queryByText("Terlambat.")).not.toBeInTheDocument();
+
+    await user.click(box); // off, gagal: kembali ke on yang tersimpan
+    expect(await screen.findByText("Disk penuh.")).toBeInTheDocument();
+    expect(box).toBeChecked();
   });
 });

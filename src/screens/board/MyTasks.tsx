@@ -129,15 +129,15 @@ export function MyTasks({ onOpenTask }: Props) {
         {open.length === 0 && <p className="mt-allclear">Semua task Anda sudah selesai.</p>}
         {open.map((g) => (
           <section key={g.id} className="mt-group" aria-labelledby={`${ids}-${g.id}`}>
-            <h2 id={`${ids}-${g.id}`} className={`mt-group-title${g.id === "late" ? " td-late" : ""}`}>
+            <h3 id={`${ids}-${g.id}`} className={`mt-group-title${g.id === "late" ? " td-late" : ""}`}>
               {GROUP_TITLES[g.id]} <span className="td-count">{g.items.length}</span>
-            </h2>
+            </h3>
             <ul className="mt-list">{g.items.map((item) => row(item, g.id))}</ul>
           </section>
         ))}
         {done && (
           <section className="mt-group" aria-labelledby={`${ids}-done`}>
-            <h2 id={`${ids}-done`} className="mt-group-title">
+            <h3 id={`${ids}-done`} className="mt-group-title">
               <button
                 type="button"
                 className="mt-disclosure"
@@ -152,7 +152,7 @@ export function MyTasks({ onOpenTask }: Props) {
                 )}
                 {GROUP_TITLES.done} <span className="td-count">{done.items.length}</span>
               </button>
-            </h2>
+            </h3>
             <ul id={`${ids}-done-list`} className="mt-list" hidden={!showDone}>
               {showDone && done.items.map((item) => row(item, "done"))}
             </ul>
@@ -165,9 +165,9 @@ export function MyTasks({ onOpenTask }: Props) {
   return (
     <section className="mt" aria-labelledby={`${ids}-page`}>
       <header className="page-head mt-head">
-        <h1 id={`${ids}-page`} className="page-title">
+        <h2 id={`${ids}-page`} className="page-title">
           Task saya
-        </h1>
+        </h2>
         <span className="page-sub">Task yang ditugaskan ke Anda, dikumpulkan dari semua proyek.</span>
       </header>
       <div className="mt-layout">

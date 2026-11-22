@@ -10,14 +10,17 @@ type Props = {
   columnId: ColumnId;
   columnName: string;
   open: boolean;
+  // Teks yang belum disimpan, disimpan pemanggil per kolom supaya tidak hilang saat ditutup.
+  draft: string;
+  onDraftChange: (text: string) => void;
   onOpenChange: (open: boolean) => void;
   onCreated: (task: TaskDetail) => void;
 };
 
 // Tambah task cepat di bawah kolom: judul saja. Enter menyimpan dan form tetap
-// terbuka untuk task berikutnya, Escape menutup.
-export function QuickAdd({ projectId, columnId, columnName, open, onOpenChange, onCreated }: Props) {
-  const [title, setTitle] = useState("");
+// terbuka untuk task berikutnya, Escape menutup tanpa membuang teks.
+export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraftChange, onOpenChange, onCreated }: Props) {
+  const title = draft;
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [server, setServer] = useState<AppError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,7 +41,6 @@ export function QuickAdd({ projectId, columnId, columnName, open, onOpenChange, 
 
   function close() {
     returnFocus.current = true;
-    setTitle("");
     setFieldError(null);
     setServer(null);
     onOpenChange(false);
@@ -58,7 +60,6 @@ export function QuickAdd({ projectId, columnId, columnName, open, onOpenChange, 
     setBusy(true);
     try {
       const task = await boardApi.createTask(projectId, { title: clean, columnId });
-      setTitle("");
       onCreated(task);
     } catch (err) {
       const error = toAppError(err);
@@ -72,7 +73,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, onOpenChange, 
 
   if (!open) {
     return (
-      <button ref={addRef} type="button" className="qa-open" onClick={() => onOpenChange(true)}>
+      <button ref={addRef} type="button" className="qa-open" data-qa-open={columnId} onClick={() => onOpenChange(true)}>
         <IconPlus size={16} aria-hidden="true" />
         Tambah task
       </button>
@@ -92,7 +93,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, onOpenChange, 
         autoComplete="off"
         placeholder="Judul task"
         value={title}
-        onChange={(e) => setTitle(e.target.value)}
+        onChange={(e) => onDraftChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
@@ -104,7 +105,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, onOpenChange, 
         readOnly={busy}
       />
       <p id={hintId} className="qa-hint">
-        Enter menyimpan, Escape menutup.
+        Enter menyimpan. Escape menutup, teksnya tetap ada saat dibuka lagi.
       </p>
       <div id={errId} aria-live="polite">
         {fieldError && <FieldError text={fieldError} />}

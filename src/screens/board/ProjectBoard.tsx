@@ -1,5 +1,17 @@
 import { IconKeyboard, IconPlus } from "@tabler/icons-react";
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type Ref,
+} from "react";
 import { toAppError, type AppError } from "../../api";
 import { boardApi, type BoardView, type ColumnId, type TaskDetail } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -10,16 +22,31 @@ import type { MoveOption } from "./MoveMenu";
 import { QuickAdd } from "./QuickAdd";
 import { useBoardLive } from "./useBoardLive";
 
+export type ProjectBoardHandle = {
+  // Dipanggil setelah task dihapus dari detail task: umumkan dan siapkan fokus.
+  taskDeleted: (taskId: string, code: string) => void;
+};
+
 type Props = {
   projectId: string;
   // Naik setiap kali detail task mengubah sesuatu; board dimuat ulang.
   refreshKey: number;
+  // Detail task sedang terbuka di atas board. Fokus yang tertunda dipasang setelah tertutup.
+  taskOpen: boolean;
+  // Fokus ke judul board setelah board pertama kali tampil (misalnya proyek baru).
+  focusHeading?: boolean;
+  onHeadingFocused?: () => void;
   onOpenTask: (taskId: string) => void;
   // Jumlah task terbuka di daftar proyek ikut berubah.
   onProjectsChanged: () => void;
+  ref?: Ref<ProjectBoardHandle>;
 };
 
 type MoveFailure = { code: string; error: AppError };
+type PendingMove = { seq: number; taskId: string; to: Place };
+type FocusTarget = { kind: "card"; id: string } | { kind: "add"; columnId: ColumnId } | { kind: "heading" };
+
+const EMPTY_DRAFTS: Record<ColumnId, string> = { todo: "", doing: "", done: "" };
 
 function isBoardView(value: unknown): value is BoardView {
   return !!value && typeof value === "object" && Array.isArray((value as BoardView).columns) && !!(value as BoardView).project;
@@ -31,36 +58,59 @@ function moveErrorTitle(error: AppError, code: string): string {
   return `${code} belum dipindah`;
 }
 
-export function ProjectBoard({ projectId, refreshKey, onOpenTask, onProjectsChanged }: Props) {
+function withoutTask(view: BoardView, taskId: string): BoardView {
+  return { ...view, columns: view.columns.map((c) => ({ ...c, tasks: c.tasks.filter((t) => t.id !== taskId) })) };
+}
+
+// BoardScreen memasang komponen ini dengan key = id proyek, jadi ganti proyek
+// selalu mulai dari keadaan bersih: pindahan proyek lama tidak ikut terbawa.
+export function ProjectBoard({
+  projectId,
+  refreshKey,
+  taskOpen,
+  focusHeading,
+  onHeadingFocused,
+  onOpenTask,
+  onProjectsChanged,
+  ref,
+}: Props) {
   const load = useCallback(() => boardApi.getBoard(projectId), [projectId]);
   const live = useBoardLive(load, projectId);
   const data = isBoardView(live.data) ? live.data : null;
-  const [optimistic, setOptimistic] = useState<BoardView | null>(null);
-  const view = optimistic ?? data;
+  // Pindahan yang belum dijawab inti Rust, diterapkan berurutan di atas data
+  // terakhir. Kalau satu gagal, hanya pindahan itu yang dibuang.
+  const [pendingMoves, setPendingMoves] = useState<PendingMove[]>([]);
+  const view = useMemo(
+    () => (data ? pendingMoves.reduce((v, m) => applyMove(v, m.taskId, m.to), data) : null),
+    [data, pendingMoves],
+  );
   const viewRef = useRef(view);
   viewRef.current = view;
 
   const [adding, setAdding] = useState<ColumnId | null>(null);
+  const [drafts, setDrafts] = useState<Record<ColumnId, string>>(EMPTY_DRAFTS);
   const [showKeys, setShowKeys] = useState(false);
   const [announce, setAnnounce] = useState({ text: "", n: 0 });
   const [failure, setFailure] = useState<MoveFailure | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const dragRef = useRef<string | null>(null);
   const [drop, setDrop] = useState<Place | null>(null);
-  const pending = useRef(0);
+  const moveSeq = useRef(0);
+  const mounted = useRef(true);
   const focusAfter = useRef<string | null>(null);
+  const afterDialog = useRef<FocusTarget | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const keysId = useId();
   const titleId = useId();
   const { reload, setData } = live;
 
-  // Proyek lain dipilih: tampilan optimis dan pesan dari proyek lama dibuang.
   useEffect(() => {
-    setOptimistic(null);
-    setFailure(null);
-    setAdding(null);
-    pending.current = 0;
-  }, [projectId]);
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const firstKey = useRef(refreshKey);
   useEffect(() => {
@@ -77,9 +127,63 @@ export function ProjectBoard({ projectId, refreshKey, onOpenTask, onProjectsChan
     }
   });
 
+  const hasView = !!view;
+  useEffect(() => {
+    if (!focusHeading || !hasView) return;
+    // Ditunda satu giliran: dialog yang baru tertutup mengembalikan fokus ke tombol pembukanya dulu.
+    const timer = window.setTimeout(() => {
+      headingRef.current?.focus();
+      onHeadingFocused?.();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusHeading, hasView, onHeadingFocused]);
+
+  function focusTarget(t: FocusTarget) {
+    const root = rootRef.current;
+    let el: HTMLElement | null = null;
+    if (t.kind === "card") el = root?.querySelector<HTMLElement>(`[data-open-task="${t.id}"]`) ?? null;
+    if (t.kind === "add")
+      el =
+        root?.querySelector<HTMLElement>(`[data-qa="${t.columnId}"]`) ??
+        root?.querySelector<HTMLElement>(`[data-qa-open="${t.columnId}"]`) ??
+        null;
+    (el ?? headingRef.current)?.focus();
+  }
+
+  // Fokus setelah hapus dipasang sesudah dialog detail tertutup; selama dialog
+  // terbuka, fokus terkunci di dalamnya.
+  useEffect(() => {
+    if (taskOpen || !afterDialog.current) return;
+    const t = afterDialog.current;
+    afterDialog.current = null;
+    focusTarget(t);
+  });
+
   function say(text: string) {
     setAnnounce((a) => ({ text, n: a.n + 1 }));
   }
+
+  useImperativeHandle(ref, () => ({
+    taskDeleted(taskId: string, code: string) {
+      const current = viewRef.current;
+      const at = current ? locate(current, taskId) : null;
+      if (current && at) {
+        const col = current.columns.find((c) => c.id === at.columnId);
+        const next = col?.tasks[at.index + 1] ?? col?.tasks[at.index - 1];
+        afterDialog.current = next
+          ? { kind: "card", id: next.id }
+          : current.canCreate
+            ? { kind: "add", columnId: at.columnId }
+            : { kind: "heading" };
+      } else {
+        afterDialog.current = { kind: "heading" };
+      }
+      if (data) setData(withoutTask(data, taskId));
+      say(`${code} dihapus.`);
+      void reload();
+      onProjectsChanged();
+    },
+  }));
 
   async function move(taskId: string, to: Place, keepFocus: boolean) {
     const current = viewRef.current;
@@ -89,28 +193,30 @@ export function ProjectBoard({ projectId, refreshKey, onOpenTask, onProjectsChan
     if (!placed) return;
     const code = placed.task.code;
     const colName = next.columns.find((c) => c.id === to.columnId)?.name ?? COLUMN_NAMES[to.columnId];
-    setOptimistic(next);
+    const seq = ++moveSeq.current;
+    const target: Place = { columnId: to.columnId, index: placed.index };
+    setPendingMoves((list) => [...list, { seq, taskId, to: target }]);
     setFailure(null);
     if (keepFocus) focusAfter.current = taskId;
-    pending.current++;
+    const settle = () => setPendingMoves((list) => list.filter((m) => m.seq !== seq));
     try {
-      const result = await boardApi.moveTask(projectId, taskId, to.columnId, placed.index);
-      pending.current = Math.max(0, pending.current - 1);
+      const result = await boardApi.moveTask(projectId, taskId, target.columnId, target.index);
+      if (!mounted.current) return;
       say(`${code} dipindah ke ${colName}, posisi ${placed.index + 1} dari ${placed.size}.`);
-      if (pending.current === 0) {
-        // Data akhir bisa memasang ulang kartu; fokus dikembalikan kalau belum pindah ke tempat lain.
-        const active = document.activeElement;
-        if (keepFocus && (!active || active === document.body || active.closest(`[data-card="${taskId}"]`)))
-          focusAfter.current = taskId;
-        if (isBoardView(result)) setData(result);
-        setOptimistic(null);
-        void reload();
-        onProjectsChanged();
-      }
+      // Data akhir bisa memasang ulang kartu; fokus dikembalikan kalau belum pindah ke tempat lain.
+      const active = document.activeElement;
+      if (keepFocus && (!active || active === document.body || active.closest(`[data-card="${taskId}"]`)))
+        focusAfter.current = taskId;
+      // Hasil inti Rust sudah memuat pindahan ini; pindahan lain yang masih
+      // berjalan tetap diterapkan di atasnya sampai dijawab.
+      if (isBoardView(result) && result.project.id === projectId) setData(result);
+      settle();
+      void reload();
+      onProjectsChanged();
     } catch (err) {
-      pending.current = Math.max(0, pending.current - 1);
+      if (!mounted.current) return;
       if (keepFocus) focusAfter.current = taskId;
-      setOptimistic(null);
+      settle();
       setFailure({ code, error: toAppError(err) });
       say(`${code} belum dipindah.`);
       void reload();
@@ -226,7 +332,7 @@ export function ProjectBoard({ projectId, refreshKey, onOpenTask, onProjectsChan
   return (
     <div className="pb" ref={rootRef}>
       <header className="pb-head">
-        <h2 id={titleId} className="pb-title">
+        <h2 id={titleId} className="pb-title" ref={headingRef} tabIndex={-1}>
           <span className="pb-code">{project.code}</span>{" "}
           {project.name}
         </h2>
@@ -247,7 +353,7 @@ export function ProjectBoard({ projectId, refreshKey, onOpenTask, onProjectsChan
           {view.canCreate && (
             <button
               type="button"
-              className="btn btn-sm"
+              className="btn btn-ghost btn-sm"
               onClick={() => {
                 if (adding === "todo") rootRef.current?.querySelector<HTMLInputElement>('[data-qa="todo"]')?.focus();
                 else setAdding("todo");
@@ -340,8 +446,13 @@ export function ProjectBoard({ projectId, refreshKey, onOpenTask, onProjectsChan
                     columnId={col.id}
                     columnName={col.name}
                     open={adding === col.id}
+                    draft={drafts[col.id]}
+                    onDraftChange={(text) => setDrafts((d) => ({ ...d, [col.id]: text }))}
                     onOpenChange={(open) => setAdding(open ? col.id : null)}
-                    onCreated={(t) => void created(t)}
+                    onCreated={(t) => {
+                      setDrafts((d) => ({ ...d, [col.id]: "" }));
+                      void created(t);
+                    }}
                   />
                 )}
               </section>

@@ -1,6 +1,6 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { IconGitMerge, IconTrash, IconX } from "@tabler/icons-react";
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { toAppError, type AppError } from "../../api";
 import {
   boardApi,
@@ -42,7 +42,11 @@ type Props = {
   taskId: string;
   onClose: () => void;
   onChanged: () => void;
+  // Dipanggil setelah task terhapus, sebelum onClose. Board memindahkan fokus dan mengumumkannya.
+  onDeleted?: (taskId: string, code: string) => void;
 };
+
+type SelectField = "status" | "assignee" | "priority";
 
 function errorTitle(field: Field, error: AppError): string {
   if (error.code === "forbidden") return "Anda tidak punya izin untuk ini";
@@ -58,7 +62,7 @@ export function PriorityChip({ priority }: { priority: Priority }) {
 // Detail task sebagai dialog modal. Selalu terbuka selama dipasang; pemanggil
 // melepasnya lewat onClose. Fokus terkunci di dalam, Escape menutup (kecuali
 // sedang membatalkan ketikan judul atau label), fokus kembali ke pembuka.
-export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
+export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }: Props) {
   const [task, setTask] = useState<Task | null>(null);
   const [board, setBoard] = useState<BoardView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -80,8 +84,13 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [allActivity, setAllActivity] = useState(false);
+  const [selDraft, setSelDraft] = useState<Partial<Record<SelectField, string>>>({});
 
   const ids = useId();
+  // Pilihan lewat mouse langsung disimpan. Lewat keyboard, panah di select yang
+  // tertutup memicu change per langkah, jadi baru disimpan saat Enter atau blur.
+  const pointerPick = useRef(false);
+  const deleted = useRef(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const dueRef = useRef<HTMLInputElement>(null);
   const labelRef = useRef<HTMLInputElement>(null);
@@ -226,7 +235,13 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
       onClose();
       return;
     }
-    const ok = (await commitTitle(true)) && (await commitDescription()) && (await commitDue());
+    const ok =
+      (await commitTitle(true)) &&
+      (await commitDescription()) &&
+      (await commitDue()) &&
+      (await commitSelect("status")) &&
+      (await commitSelect("assignee")) &&
+      (await commitSelect("priority"));
     if (!alive.current) return;
     if (!ok) {
       setUnsaved("Ada perubahan yang belum tersimpan. Lihat pesan di bawah, lalu coba simpan lagi.");
@@ -239,8 +254,67 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
     onClose();
   }
 
-  async function changeStatus(columnId: ColumnId) {
-    await run(
+  function savedSelect(t: Task, field: SelectField): string {
+    if (field === "status") return t.columnId;
+    if (field === "assignee") return t.assignee?.publicKey ?? "";
+    return t.priority;
+  }
+
+  // Menyimpan pilihan select yang belum tersimpan. Nilai tujuan tetap tampil
+  // selama menyimpan; kalau gagal, select kembali ke nilai tersimpan.
+  function commitSelect(field: SelectField, picked?: string): Promise<boolean> {
+    return once(field, async () => {
+      const value = picked ?? selDraft[field];
+      if (!task || value === undefined) return true;
+      if (value === savedSelect(task, field)) {
+        setSelDraft((d) => ({ ...d, [field]: undefined }));
+        return true;
+      }
+      setSelDraft((d) => ({ ...d, [field]: value }));
+      let ok: boolean;
+      if (field === "status") ok = await changeStatus(value as ColumnId);
+      else if (field === "assignee") ok = await update("assignee", { assignee: value || null });
+      else ok = await update("priority", { priority: value as Priority });
+      if (alive.current) setSelDraft((d) => ({ ...d, [field]: undefined }));
+      return ok;
+    });
+  }
+
+  function selectProps(field: SelectField, t: Task) {
+    return {
+      "data-field": field,
+      value: selDraft[field] ?? savedSelect(t, field),
+      onPointerDown: () => {
+        pointerPick.current = true;
+      },
+      onMouseDown: () => {
+        pointerPick.current = true;
+      },
+      onKeyDown: (e: KeyboardEvent<HTMLSelectElement>) => {
+        pointerPick.current = false;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void commitSelect(field);
+        }
+      },
+      onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+        const value = e.target.value;
+        if (pointerPick.current) {
+          pointerPick.current = false;
+          void commitSelect(field, value);
+        } else {
+          setSelDraft((d) => ({ ...d, [field]: value }));
+        }
+      },
+      onBlur: () => {
+        pointerPick.current = false;
+        void commitSelect(field);
+      },
+    };
+  }
+
+  function changeStatus(columnId: ColumnId): Promise<boolean> {
+    return run(
       "status",
       async () => {
         const view = await boardApi.moveTask(projectId, taskId, columnId, 0);
@@ -294,7 +368,9 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
     setDeleteError(null);
     try {
       await boardApi.deleteTask(projectId, taskId);
+      deleted.current = true;
       onChangedRef.current();
+      onDeleted?.(taskId, task?.code ?? "");
       onClose();
     } catch (err) {
       if (alive.current) setDeleteError(toAppError(err));
@@ -303,14 +379,28 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
     }
   }
 
+  // Wilayah aria-live selalu dipasang supaya error yang muncul belakangan ikut dibacakan.
   function fieldError(field: Field, keepsInput = false) {
     const err = errors[field];
-    if (!err) return null;
     return (
-      <ErrorAlert title={errorTitle(field, err)}>
-        <p>{err.message}</p>
-        {keepsInput && err.code !== "forbidden" && err.code !== "not_found" && <p>Isian Anda masih ada. Coba lagi.</p>}
-      </ErrorAlert>
+      <div className="td-live" aria-live="polite">
+        {err && (
+          <ErrorAlert title={errorTitle(field, err)}>
+            <p>{err.message}</p>
+            {keepsInput && err.code !== "forbidden" && err.code !== "not_found" && (
+              <p>Isian Anda masih ada. Coba lagi.</p>
+            )}
+          </ErrorAlert>
+        )}
+      </div>
+    );
+  }
+
+  function problem(id: string, text: string | null) {
+    return (
+      <div className="td-live" id={id} aria-live="polite">
+        {text && <FieldError text={text} />}
+      </div>
     );
   }
 
@@ -422,11 +512,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
                 }
               }}
             />
-            {titleProblem && (
-              <div id={`${ids}-title-err`}>
-                <FieldError text={titleProblem} />
-              </div>
-            )}
+            {problem(`${ids}-title-err`, titleProblem)}
             {fieldError("title", true)}
           </div>
 
@@ -479,12 +565,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
             <label htmlFor={`${ids}-status`} className="td-label">
               Status
             </label>
-            <select
-              id={`${ids}-status`}
-              className="td-input"
-              value={t.columnId}
-              onChange={(e) => void changeStatus(e.target.value as ColumnId)}
-            >
+            <select id={`${ids}-status`} className="td-input" {...selectProps("status", t)}>
               {(board?.columns.map((c) => ({ id: c.id, name: c.name })) ??
                 COLUMN_ORDER.map((id) => ({ id, name: COLUMN_NAMES[id] }))
               ).map((c) => (
@@ -500,12 +581,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
             <label htmlFor={`${ids}-assignee`} className="td-label">
               Penanggung jawab
             </label>
-            <select
-              id={`${ids}-assignee`}
-              className="td-input"
-              value={t.assignee?.publicKey ?? ""}
-              onChange={(e) => void update("assignee", { assignee: e.target.value || null })}
-            >
+            <select id={`${ids}-assignee`} className="td-input" {...selectProps("assignee", t)}>
               <option value="">Belum ada</option>
               {!assigneeKnown && t.assignee && <option value={t.assignee.publicKey}>{nameOf(t.assignee)}</option>}
               {people.map((p) => (
@@ -542,11 +618,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
               }}
             />
             {dueDraft === null && dueHint(t.due)}
-            {dueProblem && (
-              <div id={`${ids}-due-err`}>
-                <FieldError text={dueProblem} />
-              </div>
-            )}
+            {problem(`${ids}-due-err`, dueProblem)}
             {t.due && dueDraft === null && (
               <button type="button" className="link-btn td-link" onClick={() => void update("due", { due: null })}>
                 Hapus tenggat
@@ -559,12 +631,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
             <label htmlFor={`${ids}-prio`} className="td-label">
               Prioritas
             </label>
-            <select
-              id={`${ids}-prio`}
-              className="td-input"
-              value={t.priority}
-              onChange={(e) => void update("priority", { priority: e.target.value as Priority })}
-            >
+            <select id={`${ids}-prio`} className="td-input" {...selectProps("priority", t)}>
               {PRIORITIES.map((p) => (
                 <option key={p} value={p}>
                   {PRIORITY_LABELS[p]}
@@ -605,7 +672,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
                   value={labelDraft}
                   maxLength={MAX_LABEL_LEN}
                   aria-label="Label baru"
-                  aria-describedby={`${ids}-labels-hint`}
+                  aria-describedby={`${ids}-labels-hint ${ids}-label-err`}
                   placeholder="Label baru"
                   onChange={(e) => {
                     setLabelDraft(e.target.value);
@@ -633,7 +700,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
                 ? `Sudah ${MAX_LABELS} label, batas per task. Hapus satu untuk menambah yang baru.`
                 : `Tekan Enter untuk menambah. Paling banyak ${MAX_LABELS} label, masing-masing ${MAX_LABEL_LEN} karakter.`}
             </span>
-            {labelProblem && <FieldError text={labelProblem} />}
+            {problem(`${ids}-label-err`, labelProblem)}
             {fieldError("labels", true)}
           </div>
 
@@ -875,11 +942,25 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged }: Props) {
               e.preventDefault();
               setLabelDraft("");
               setLabelProblem(null);
+            } else if (active instanceof HTMLSelectElement && active.dataset.field) {
+              // Pilihan lewat panah yang belum disimpan: Escape membatalkannya dulu.
+              const field = active.dataset.field as SelectField;
+              if (selDraft[field] !== undefined && !inflight.current[field]) {
+                e.preventDefault();
+                setSelDraft((d) => ({ ...d, [field]: undefined }));
+              }
             }
           }}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
-            if (opener.current?.isConnected) opener.current.focus();
+            // Setelah dihapus, board yang memindahkan fokus (onDeleted).
+            if (deleted.current) return;
+            if (opener.current?.isConnected) {
+              opener.current.focus();
+              return;
+            }
+            // Kartu pembuka bisa sudah dirender ulang di kolom lain setelah status berubah.
+            document.querySelector<HTMLElement>(`[data-open-task="${CSS.escape(taskId)}"]`)?.focus();
           }}
         >
           <div className="td-head">
