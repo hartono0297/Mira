@@ -33,7 +33,8 @@ export type NotifyMode = "all" | "mentions" | "off";
 
 export type ChatOverview = {
   me: string;
-  canCreateChannel: boolean; // bukan Tamu
+  canCreateChannel: boolean; // bukan Tamu, dan punya minimal satu cakupan yang boleh
+  canCreateOrgChannel: boolean; // hanya superadmin yang boleh membuat channel "Seluruh kantor"
   canDirectMessage: boolean; // bukan Tamu
   conversations: ConversationSummary[]; // channel aktif, chat pribadi, lalu yang diarsipkan; urut terbaru
   people: Person[]; // rekan yang bisa diajak chat pribadi (anggota aktif bukan Tamu, tanpa saya)
@@ -91,6 +92,10 @@ export type ConversationView = {
 
 export type ReceiptView = { person: Person; state: DeliveryState };
 
+// File yang dipilih lewat dialog Windows milik Mira (chat_pick_files). Hanya path dari
+// dialog ini yang diterima chat_send.
+export type PickedFile = { path: string; name: string; size: number };
+
 export type NewChannelScope = { kind: ScopeKind; id: string | null };
 
 // Event yang dikirim Rust saat data chat berubah (lokal atau dari rekan).
@@ -110,6 +115,7 @@ export const chatApi = {
   overview: () => call<ChatOverview>("chat_overview"),
   messages: (conv: string, before: string | null = null, limit = 100) =>
     call<ConversationView>("chat_messages", { conv, before, limit }),
+  // files: path dari pickFiles().
   send: (conv: string, text: string, replyTo: string | null, mentions: string[], files: string[]) =>
     call<MessageView>("chat_send", { conv, text, replyTo, mentions, files }),
   deleteMessage: (conv: string, messageId: string) => call<null>("chat_delete_message", { conv, messageId }),
@@ -121,7 +127,10 @@ export const chatApi = {
   openDm: (publicKey: string) => call<ConversationSummary>("chat_open_dm", { publicKey }),
   messageReceipts: (messageId: string) => call<ReceiptView[]>("chat_message_receipts", { messageId }),
   fileOpen: (hash: string, name: string) => call<null>("chat_file_open", { hash, name }),
-  fileSave: (hash: string, dest: string) => call<null>("chat_file_save", { hash, dest }),
+  // Membuka dialog "Simpan sebagai" di sisi Rust. false kalau dibatalkan.
+  fileSave: (hash: string) => call<boolean>("chat_file_save", { hash }),
+  // Membuka dialog pilih file di sisi Rust. Daftar kosong kalau dibatalkan.
+  pickFiles: () => call<PickedFile[]>("chat_pick_files"),
   fileDownload: (hash: string) => call<FileView>("chat_file_download", { hash }),
   setNotify: (mode: NotifyMode) => call<null>("chat_set_notify", { mode }),
   setMuted: (conv: string, muted: boolean) => call<null>("chat_set_muted", { conv, muted }),

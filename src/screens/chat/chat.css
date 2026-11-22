@@ -1,0 +1,438 @@
+/* Layar Chat, sisi daftar dan kerangka. Mengikuti mockup chat di design/tema-c.html:
+   daftar channel di kiri berlatar --bg seperti sub-menu Board, percakapan mengisi sisa
+   lebar. Panel percakapan punya gaya sendiri di conversation.css (awalan conv-). */
+
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+/* Jendela sempit (sekitar 900px): daftar mengecil supaya percakapan tetap lega. */
+@media (max-width: 1040px) {
+  .chat {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+}
+
+.chat-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px 16px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.chat-list-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin: 0 0 6px 8px;
+}
+
+.chat-list-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Tombol ikon persegi, sama tinggi dengan .btn-sm di sebelahnya. */
+.chat-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chat-icon-btn:hover {
+  background: var(--hover);
+}
+
+.chat-stale {
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+  background: var(--danger-soft);
+  font-size: 12px;
+}
+
+.chat-stale p {
+  overflow-wrap: anywhere;
+}
+
+.chat-sec {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-lbl {
+  margin: 14px 8px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.chat-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Satu percakapan. Belum dibaca: nama tebal berwarna --text dan lencana jumlah;
+   artinya juga dibacakan lewat teks sr-only, tidak hanya dari tampilan. */
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-sec);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.chat-row:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.chat-row-unread {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.chat-row[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.chat-hash {
+  flex: none;
+  width: 22px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.chat-av {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* Baris terpilih sudah berlatar --accent-soft: avatar pindah ke --bg supaya tetap terlihat. */
+.chat-row[aria-current="true"] .chat-av {
+  background: var(--bg);
+}
+
+.chat-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-row-name,
+.chat-row-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-row-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.chat-row-mute {
+  flex: none;
+  color: var(--text-sec);
+}
+
+/* Lencana jumlah belum dibaca. Percakapan yang dibisukan memakai lencana bergaris
+   netral, jadi yang tidak dibisukan tetap menonjol. */
+.chat-badge {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-row-muted .chat-badge {
+  background: transparent;
+  border: 1px solid var(--text-sec);
+  color: var(--text-sec);
+  line-height: 18px;
+}
+
+/* Ada pesan yang menyebut saya: "@" bergaris aksen di depan jumlahnya. */
+.chat-at {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--accent-text);
+  border-radius: 50%;
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.chat-note {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.chat-new {
+  align-self: flex-start;
+  margin: 8px 8px 0;
+}
+
+.chat-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  margin-left: -4px;
+  padding: 2px 6px 2px 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-sec);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chat-fold:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.chat-fold-count {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Panel kanan. Isi pertamanya (panel percakapan) mengisi seluruh tinggi. */
+
+.chat-main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-main > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chat-pad {
+  padding: 20px 24px;
+}
+
+.chat-narrow {
+  max-width: 640px;
+}
+
+/* Tombol di dalam kotak error: garis --text-sec, sama alasannya dengan .bd-retry. */
+.chat-retry {
+  margin-top: 8px;
+  border-color: var(--text-sec);
+}
+
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 520px;
+  padding: 48px 32px;
+  font-size: 14px;
+}
+
+.chat-empty-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Dialog channel baru, pesan baru, dan notifikasi */
+
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.chat-preview {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.chat-people {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.chat-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-person:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.chat-person:focus-visible {
+  outline-offset: -2px;
+}
+
+.chat-person:disabled {
+  cursor: progress;
+}
+
+.chat-person-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-person-busy {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.chat-opts {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Pilihan radio berbingkai, sama dengan pilihan peran di undangan (org.css). */
+.chat-opt {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.chat-opt:hover {
+  background: var(--hover);
+}
+
+.chat-opt:has(input:checked) {
+  border: 2px solid var(--accent);
+  padding: 9px 11px;
+  background: var(--accent-soft);
+}
+
+.chat-opt:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.chat-opt input {
+  margin: 3px 0 0;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* Cincin fokus dipasang di bingkai .chat-opt lewat :has di atas. */
+.chat-opt input:focus-visible {
+  outline: none;
+}
+
+.chat-opt-title {
+  display: block;
+  font-weight: 700;
+}
+
+.chat-opt-desc {
+  display: block;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.chat-saved {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-row {
+    transition: none;
+  }
+}
