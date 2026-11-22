@@ -11,7 +11,8 @@
     "test": "vitest run",
     "build:installer": "tauri build",
     "build:installer-offline": "tauri build --config src-tauri/tauri.offline.conf.json",
-    "test:e2e": "node scripts/smoke-e2e.mjs src-tauri/target/release/mira.exe docs/progress/screenshots"
+    "test:e2e": "node scripts/smoke-e2e.mjs src-tauri/target/release/mira.exe docs/progress/screenshots",
+    "test:e2e-multi": "node scripts/e2e-multi.mjs src-tauri/target/release/mira.exe docs/progress/screenshots/tahap-1"
   },
   "dependencies": {
     "@fontsource/nunito": "^5.3.0",
