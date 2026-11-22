@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn feature_and_blob_messages_round_trip_with_snake_case_tags() {
         let rec = FeatureRecord::new("{\"x\":1}");
-        let msgs = vec![
+        let msgs = [
             Msg::FeatureHave {
                 topic: "chat".into(),
                 ids: vec![rec.id.clone()],

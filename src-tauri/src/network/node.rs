@@ -64,6 +64,11 @@ const MAX_HELLO_ADDRS: usize = 16;
 const MAX_HELLO_FRAME: usize = 64 * 1024;
 /// A `Removed` push carries one op of at most 16 KiB payload.
 const MAX_PUSH_FRAME: usize = 256 * 1024;
+/// First frame of a stream from a member: `SyncHave` (at most
+/// `SYNC_ID_CHUNK` ids, about 670 KB), `FeatureHave` (at most
+/// `MAX_IDS_PER_FRAME` ids, about 550 KB) or `BlobGet`. A smaller limit than
+/// `MAX_FRAME` keeps a junk frame from decoding into millions of strings.
+const MAX_FIRST_FRAME: usize = 1024 * 1024;
 /// Rejection log entries per remote IP per minute.
 const REJECTION_LOGS_PER_MINUTE: usize = 10;
 
@@ -804,7 +809,7 @@ impl Inner {
             self.recheck_peers();
             return;
         }
-        match wire::read_msg_timeout(&mut recv, MAX_FRAME, READ_TIMEOUT).await {
+        match wire::read_msg_timeout(&mut recv, MAX_FIRST_FRAME, READ_TIMEOUT).await {
             Ok(Some(Msg::SyncHave { ids })) => {
                 let _ = tokio::time::timeout(
                     SYNC_SESSION_TIMEOUT,
@@ -1219,5 +1224,25 @@ fn describe_close_code(c: u64) -> &'static str {
         x if x == u64::from(code::DUPLICATE) => "Sudah tersambung lewat koneksi lain.",
         x if x == u64::from(code::SHUTDOWN) => "Laptop rekan sedang menutup Mira.",
         _ => "Laptop rekan menutup koneksi.",
+    }
+}
+
+#[cfg(test)]
+mod first_frame_tests {
+    use super::*;
+    use crate::network::feature::MAX_IDS_PER_FRAME;
+
+    #[test]
+    fn largest_first_frames_fit_the_first_frame_limit() {
+        let id = "f".repeat(64);
+        let have = Msg::SyncHave {
+            ids: vec![id.clone(); SYNC_ID_CHUNK],
+        };
+        let feature = Msg::FeatureHave {
+            topic: "abcdefghijklmnop".into(),
+            ids: vec![id; MAX_IDS_PER_FRAME],
+        };
+        assert!(wire::encoded_len(&have) <= MAX_FIRST_FRAME);
+        assert!(wire::encoded_len(&feature) <= MAX_FIRST_FRAME);
     }
 }
