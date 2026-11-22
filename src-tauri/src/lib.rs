@@ -49,6 +49,7 @@ pub fn run() {
                 .with_core(|core| Ok(window_theme::initial_background(Some(&core.db))))
                 .unwrap_or_else(|_| window_theme::initial_background(None));
             app.manage(state);
+            app.manage(signing::session::SignSessions::default());
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
                 Ok(d) => d.from_env.then(|| d.path.clone()),
@@ -66,6 +67,19 @@ pub fn run() {
             commands::create_organization,
             commands::get_setting,
             commands::set_setting,
+            signing::commands::sign_overview,
+            signing::commands::sign_save_signature,
+            signing::commands::sign_delete_signature,
+            signing::commands::sign_unlock,
+            signing::commands::sign_list_candidates,
+            signing::commands::sign_import_pdf,
+            signing::commands::sign_create_request,
+            signing::commands::sign_get_request,
+            signing::commands::sign_read_file,
+            signing::commands::sign_complete,
+            signing::commands::sign_cancel,
+            signing::commands::sign_export,
+            signing::commands::sign_verify_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
