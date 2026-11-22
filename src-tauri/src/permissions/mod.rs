@@ -9,11 +9,16 @@
 //! when an earlier op arrives later. Laptops with the same ops compute the
 //! same state.
 //!
+//! Each op lists in `deps` the ops its author had seen. A revocation wins
+//! over ops made concurrently with it that used the right it takes away,
+//! whatever lamport they carry (`causal.rs`).
+//!
 //! The source of truth is `organizations` + `org_ops`. The tables `members`,
 //! `teams`, `team_members`, `invites`, `guest_access` and `channels` are
 //! rewritten from the fold in the same transaction that changes `org_ops`.
 
 mod actions;
+mod causal;
 mod fold;
 pub mod format;
 mod invite;
@@ -28,6 +33,7 @@ pub use actions::{
     redeem_as_member, remove_member, remove_superadmin, remove_team_member, revoke_invite,
     set_display_name_op, set_team_admin,
 };
+pub use causal::heads;
 pub use fold::{
     ChannelState, FoldResult, GuestAccess, InviteState, MemberKind, MemberState, MemberStatus,
     OrgState, Outcome, Reason, TeamMember, TeamRole, TeamState, UMUM_CHANNEL_NAME, fold,

@@ -6,6 +6,7 @@ use rusqlite::{Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use super::causal::heads;
 use super::fold::{MemberKind, MemberStatus, OrgState, Reason, fold};
 use super::format::{
     channel_name_for, format_time, is_canonical_display_name, is_lower_hex, validate_team_name,
@@ -17,7 +18,7 @@ use super::invite::{
 use super::op::{Body, InviteRole, OP_VERSION, Payload, Scope, SignedOp, sign_payload, verify_op};
 use super::store::{
     ingest_in, insert_op, load_ops, load_state, max_lamport, op_ids_for, ops_for, require_org,
-    write_derived,
+    store_fold,
 };
 use super::view::{InviteView, TeamView, Validity, invite_view, team_view};
 use crate::error::{AppError, AppResult};
@@ -72,7 +73,8 @@ pub(crate) fn author_in(
     now: OffsetDateTime,
 ) -> AppResult<SignedOp> {
     let org = require_org(conn)?;
-    let mut state = state_in(conn, &org)?;
+    let mut ops = load_ops(conn)?;
+    let state = fold(&org, &ops).state;
     let me = identity.public_key_hex();
     match state.member(me).map(|m| m.status) {
         Some(MemberStatus::Active) => {}
@@ -88,6 +90,7 @@ pub(crate) fn author_in(
         org: org.id.clone(),
         author: me.to_owned(),
         lamport: max_lamport(conn)? + 1,
+        deps: heads(&ops),
         at: format_time(now),
         nonce: random_hex16(),
         scope,
@@ -100,11 +103,19 @@ pub(crate) fn author_in(
             r.code, r.detail
         ))
     })?;
-    // The new op has the highest lamport, so it is applied last: applying it
-    // on the current state gives exactly the fold result.
-    state.apply(&verified).map_err(reason_error)?;
+    // The new op sorts last, but as a revocation it can still reject
+    // earlier ops it has not seen, so fold everything again.
+    let id = verified.id.clone();
+    ops.push(verified.clone());
+    let result = fold(&org, &ops);
+    let outcome = result
+        .outcomes
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map_or(Err(Reason::NotAuthorized), |(_, o)| *o);
+    outcome.map_err(reason_error)?;
     insert_op(conn, &verified, None, now)?;
-    write_derived(conn, &state)?;
+    store_fold(conn, &result)?;
     Ok(signed)
 }
 

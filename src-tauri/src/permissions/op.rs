@@ -30,6 +30,9 @@ pub const MAX_CLOCK_AHEAD: Duration = Duration::minutes(10);
 pub const MAX_INVITE_VALIDITY: Duration = Duration::days(7);
 pub const CLOCK_SLACK: Duration = Duration::minutes(5);
 pub const MAX_GUEST_PROJECTS: usize = 50;
+/// Most ops listed in `deps`. With more heads, the author keeps the latest
+/// ones in fold order; the others stay implied only through lamport.
+pub const MAX_DEPS: usize = 32;
 
 /// One op as stored and sent: the exact signed payload string and its
 /// signature (128 lowercase hex).
@@ -238,6 +241,10 @@ pub struct Payload {
     pub org: String,
     pub author: String,
     pub lamport: u64,
+    /// Ids of the ops that were heads of the author's log when this op was
+    /// made (its direct causal predecessors): sorted, unique, 64 lowercase
+    /// hex each, at most `MAX_DEPS`.
+    pub deps: Vec<String>,
     pub at: String,
     pub nonce: String,
     pub scope: Scope,
@@ -260,6 +267,10 @@ impl VerifiedOp {
 
     pub fn lamport(&self) -> u64 {
         self.payload.lamport
+    }
+
+    pub fn deps(&self) -> &[String] {
+        &self.payload.deps
     }
 
     /// Fold order: `(lamport, author, id)`.
@@ -409,6 +420,17 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
     need(
         (1..=MAX_LAMPORT).contains(&p.lamport),
         "lamport harus 1 atau lebih",
+    )?;
+    need(
+        p.deps.len() <= MAX_DEPS,
+        "deps berisi lebih dari 32 perubahan",
+    )?;
+    for dep in &p.deps {
+        key64(dep, "deps")?;
+    }
+    need(
+        p.deps.windows(2).all(|w| w[0] < w[1]),
+        "deps harus urut dan tanpa id ganda",
     )?;
     let at = parse_time(&p.at).ok_or("at bukan waktu RFC 3339")?;
     id32(&p.nonce, "nonce")?;

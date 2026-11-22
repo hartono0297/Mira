@@ -6,6 +6,7 @@ use rand_core::{OsRng, RngCore};
 use time::OffsetDateTime;
 
 use crate::org::Organization;
+use crate::permissions::causal::heads_of;
 use crate::permissions::format::{format_time, parse_time};
 use crate::permissions::invite::sign_proof;
 use crate::permissions::op::{OP_VERSION, sign_payload};
@@ -80,12 +81,32 @@ impl Sim {
         }
     }
 
+    /// Heads of the ops held so far that sort below `lamport` (what an
+    /// honest laptop holding `self.ops` would list).
+    pub fn heads_below(&self, lamport: u64) -> Vec<String> {
+        heads_of(self.ops.iter().filter(|o| o.lamport() < lamport))
+    }
+
+    /// Payload with `deps` = heads of the ops held so far.
     pub fn payload(&self, by: &Actor, lamport: u64, scope: Scope, body: Body) -> Payload {
+        let deps = self.heads_below(lamport);
+        self.payload_with_deps(by, lamport, deps, scope, body)
+    }
+
+    pub fn payload_with_deps(
+        &self,
+        by: &Actor,
+        lamport: u64,
+        deps: Vec<String>,
+        scope: Scope,
+        body: Body,
+    ) -> Payload {
         Payload {
             v: OP_VERSION,
             org: self.org.id.clone(),
             author: by.pk.clone(),
             lamport,
+            deps,
             at: format_time(self.now),
             nonce: rand_hex16(),
             scope,
@@ -97,13 +118,30 @@ impl Sim {
         sign_payload(payload, |m| by.sk.sign(m))
     }
 
-    /// Signed and verified op with an explicit lamport.
+    /// Signed and verified op with an explicit lamport; `deps` are the
+    /// heads of the ops held so far below that lamport.
     pub fn make_at(&self, by: &Actor, lamport: u64, body: Body) -> VerifiedOp {
+        let deps = self.heads_below(lamport);
+        self.make_with_deps(by, lamport, deps, body)
+    }
+
+    /// Signed and verified op with an explicit lamport and `deps` (what a
+    /// modified laptop could send).
+    pub fn make_with_deps(
+        &self,
+        by: &Actor,
+        lamport: u64,
+        mut deps: Vec<String>,
+        body: Body,
+    ) -> VerifiedOp {
         let scope = match &body {
             Body::ChannelCreate { team, .. } => Scope::Team { team: team.clone() },
             _ => Scope::Org,
         };
-        let signed = Self::sign(by, &self.payload(by, lamport, scope, body));
+        deps.sort();
+        deps.dedup();
+        let p = self.payload_with_deps(by, lamport, deps, scope, body);
+        let signed = Self::sign(by, &p);
         verify_op(&signed, &self.org.id, self.now).expect("test op must be well formed")
     }
 

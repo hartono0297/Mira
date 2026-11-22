@@ -174,6 +174,8 @@ pub enum Reason {
     BadInviteSignature,
     BadMemberSignature,
     MemberRemoved,
+    BadDeps,
+    ConcurrentWithRevocation,
 }
 
 impl Reason {
@@ -202,6 +204,8 @@ impl Reason {
             Reason::BadInviteSignature => "bad_invite_signature",
             Reason::BadMemberSignature => "bad_member_signature",
             Reason::MemberRemoved => "member_removed",
+            Reason::BadDeps => "bad_deps",
+            Reason::ConcurrentWithRevocation => "concurrent_with_revocation",
         }
     }
 
@@ -237,6 +241,10 @@ impl Reason {
             Reason::BadInviteSignature => "Bukti kode undangan tidak sah.",
             Reason::BadMemberSignature => "Tanda tangan laptop yang bergabung tidak sah.",
             Reason::MemberRemoved => "Laptop itu sudah dikeluarkan dari organisasi.",
+            Reason::BadDeps => "Rujukan perubahan ini ke perubahan sebelumnya tidak sah.",
+            Reason::ConcurrentWithRevocation => {
+                "Perubahan ini dibuat bersamaan dengan pencabutan hak yang dipakainya, jadi tidak berlaku."
+            }
         }
     }
 
@@ -245,7 +253,7 @@ impl Reason {
     }
 }
 
-const ALL_REASONS: [Reason; 23] = [
+const ALL_REASONS: [Reason; 25] = [
     Reason::AuthorNotActive,
     Reason::NotAuthorized,
     Reason::GuestNotAllowed,
@@ -269,6 +277,8 @@ const ALL_REASONS: [Reason; 23] = [
     Reason::BadInviteSignature,
     Reason::BadMemberSignature,
     Reason::MemberRemoved,
+    Reason::BadDeps,
+    Reason::ConcurrentWithRevocation,
 ];
 
 pub type Outcome = Result<(), Reason>;
@@ -288,17 +298,11 @@ pub fn umum_channel_id(org_id: &str) -> String {
 
 pub const UMUM_CHANNEL_NAME: &str = "umum";
 
-/// Sorts the ops into fold order and applies them to the genesis state.
+/// Sorts the ops into fold order and applies them to the genesis state,
+/// with the causal rules of `causal.rs`: ops with bad `deps`, and ops made
+/// concurrently with a revocation of the right they used, are rejected.
 pub fn fold(org: &Organization, ops: &[VerifiedOp]) -> FoldResult {
-    let mut sorted: Vec<&VerifiedOp> = ops.iter().collect();
-    sorted.sort_by(|a, b| a.order_key().cmp(&b.order_key()));
-    sorted.dedup_by(|a, b| a.id == b.id);
-    let mut state = OrgState::genesis(org);
-    let outcomes = sorted
-        .into_iter()
-        .map(|op| (op.id.clone(), state.apply(op)))
-        .collect();
-    FoldResult { state, outcomes }
+    super::causal::fold_ops(org, ops)
 }
 
 fn verify_sig(public_key: &str, message: &[u8], sig: &str) -> bool {

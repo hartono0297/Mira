@@ -622,7 +622,9 @@ fn ops_from_a_removed_member_are_stored_as_rejected() {
     assert_eq!(report.new_ops, 1);
     let st = f.statuses();
     let rejected: Vec<_> = st.iter().filter(|(_, s, _)| s == "rejected").collect();
-    // Both ops have the same lamport; whichever is ordered first decides.
+    // Both ops have the same lamport. Ordered after the removal, A's op is
+    // rejected because A is no longer active; ordered before it, because
+    // the removal did not see it.
     let name = f
         .state()
         .member(&a.pk())
@@ -630,12 +632,15 @@ fn ops_from_a_removed_member_are_stored_as_rejected() {
         .display_name
         .clone()
         .unwrap();
-    if rejected.is_empty() {
-        assert_eq!(name, "Ani Baru");
-    } else {
-        assert_eq!(rejected[0].2.as_deref(), Some("author_not_active"));
-        assert_eq!(name, "Ani");
-    }
+    assert_eq!(rejected.len(), 1);
+    assert!(
+        matches!(
+            rejected[0].2.as_deref(),
+            Some("author_not_active" | "concurrent_with_revocation")
+        ),
+        "{rejected:?}"
+    );
+    assert_eq!(name, "Ani");
 }
 
 #[test]
@@ -1246,6 +1251,7 @@ fn raw_op(node: &Node, org: &str, lamport: u64, body: Body) -> SignedOp {
         org: org.to_owned(),
         author: node.pk(),
         lamport,
+        deps: vec![],
         at: crate::permissions::format::format_time(now()),
         nonce: rand_hex16(),
         scope: Scope::Org,
@@ -1473,5 +1479,203 @@ fn joiner_refuses_a_look_alike_organization() {
     assert_eq!(
         p::membership(&joiner.conn, &joiner.id).unwrap(),
         Membership::None
+    );
+}
+
+/// Signs `body` as `node` with an explicit lamport and deps.
+fn raw_op_with_deps(
+    node: &Node,
+    org: &str,
+    lamport: u64,
+    mut deps: Vec<String>,
+    body: Body,
+) -> SignedOp {
+    deps.sort();
+    let payload = p::Payload {
+        v: 1,
+        org: org.to_owned(),
+        author: node.pk(),
+        lamport,
+        deps,
+        at: crate::permissions::format::format_time(now()),
+        nonce: rand_hex16(),
+        scope: Scope::Org,
+        body,
+    };
+    let json = serde_json::to_string(&payload).unwrap();
+    let sig = node.id.sign(&crate::permissions::op::signed_message(&json));
+    SignedOp {
+        payload: json,
+        sig: hex::encode(sig.to_bytes()),
+    }
+}
+
+/// Founder F, superadmin A, member C, all synced.
+fn three_with_superadmin() -> (Node, Node, Node) {
+    let mut f = Node::founder("Sari");
+    let team = f.create_team("Tim A");
+    let mut a = Node::new("Ani");
+    let mut c = Node::new("Citra");
+    {
+        let code = f.invite(&team, InviteRole::Member, Validity::Once);
+        join(&mut f, &mut a, &code, now())
+    }
+    .unwrap();
+    {
+        let code = f.invite(&team, InviteRole::Member, Validity::Once);
+        join(&mut f, &mut c, &code, now())
+    }
+    .unwrap();
+    p::add_superadmin(&mut f.conn, &f.id, &a.pk(), now()).unwrap();
+    // So that ops backdated to the current lamport sort after the promotion.
+    let name = Body::ProfileSet {
+        name: "Sari W".into(),
+    };
+    p::author_op(&mut f.conn, &f.id, Scope::Org, name, now()).unwrap();
+    sync_both(&mut f, &mut a);
+    sync_both(&mut f, &mut c);
+    sync_both(&mut a, &mut c);
+    (f, a, c)
+}
+
+fn status_of(n: &Node, id: &str) -> (String, Option<String>) {
+    let (_, s, r) = n.statuses().into_iter().find(|(i, _, _)| i == id).unwrap();
+    (s, r)
+}
+
+#[test]
+fn backdated_counter_removal_loses_on_every_laptop() {
+    let (mut f, mut a, mut c) = three_with_superadmin();
+    let org = f.state().org.id;
+    let seen = p::max_lamport(&a.conn).unwrap();
+    p::remove_member(&mut f.conn, &f.id, &a.pk(), now()).unwrap();
+    let removal = f
+        .state()
+        .member(&a.pk())
+        .unwrap()
+        .removal_op
+        .clone()
+        .unwrap();
+
+    // A signs a removal of F that sorts before F's removal of A.
+    let below: Vec<_> = p::load_ops(&a.conn)
+        .unwrap()
+        .into_iter()
+        .filter(|o| o.lamport() < seen)
+        .collect();
+    let counter = raw_op_with_deps(
+        &a,
+        &org,
+        seen,
+        p::heads(&below),
+        Body::MemberRemove { member: f.pk() },
+    );
+    let counter_id = counter.id();
+    // C hears the counter first, F last, A has both from the start.
+    p::ingest(&mut c.conn, Some(&a.pk()), vec![counter.clone()], now()).unwrap();
+    assert!(!c.state().is_active(&f.pk()), "alone, the counter applies");
+    p::ingest(&mut a.conn, None, vec![counter.clone()], now()).unwrap();
+    sync(&f, &mut c);
+    // A is no longer offered anything; it gets the removal as a last message.
+    let removal_op = p::load_op(&f.conn, &removal).unwrap().unwrap();
+    p::ingest(&mut a.conn, Some(&f.pk()), vec![removal_op], now()).unwrap();
+    p::ingest(&mut f.conn, Some(&c.pk()), vec![counter], now()).unwrap();
+
+    for n in [&f, &a, &c] {
+        let s = n.state();
+        assert!(s.is_superadmin(&f.pk()));
+        assert!(!s.is_active(&a.pk()));
+        assert_eq!(status_of(n, &removal), ("applied".into(), None));
+        assert_eq!(
+            status_of(n, &counter_id),
+            ("rejected".into(), Some("concurrent_with_revocation".into()))
+        );
+    }
+    assert_eq!(f.state(), c.state());
+    assert_eq!(f.statuses(), c.statuses());
+    assert_eq!(f.statuses(), a.statuses());
+    assert_eq!(p::membership(&a.conn, &a.id).unwrap(), Membership::Removed);
+}
+
+#[test]
+fn authored_ops_list_heads_and_flows_keep_working() {
+    let mut f = Node::founder("Sari");
+    let team = f.create_team("Tim A");
+    let mut a = Node::new("Ani");
+    {
+        let code = f.invite(&team, InviteRole::Member, Validity::Once);
+        join(&mut f, &mut a, &code, now())
+    }
+    .unwrap();
+    p::set_team_admin(&mut f.conn, &f.id, &team, &a.pk(), true, now()).unwrap();
+    sync_both(&mut f, &mut a);
+    let code = a.invite(&team, InviteRole::Member, Validity::D7);
+    let mut x = Node::new("Xena");
+    join(&mut a, &mut x, &code, now()).unwrap();
+    sync_both(&mut f, &mut a);
+    p::set_team_admin(&mut f.conn, &f.id, &team, &a.pk(), false, now()).unwrap();
+    sync_both(&mut f, &mut a);
+    p::set_team_admin(&mut f.conn, &f.id, &team, &a.pk(), true, now()).unwrap();
+    sync_both(&mut f, &mut a);
+    let code = a.invite(&team, InviteRole::Member, Validity::Once);
+    let mut y = Node::new("Yudi");
+    join(&mut a, &mut y, &code, now()).unwrap();
+    p::remove_team_member(&mut a.conn, &a.id, &team, &x.pk(), now()).unwrap();
+    sync_both(&mut f, &mut a);
+    p::remove_member(&mut f.conn, &f.id, &y.pk(), now()).unwrap();
+    sync_both(&mut f, &mut a);
+    sync(&f, &mut x);
+
+    for n in [&f, &a] {
+        let st = n.statuses();
+        assert!(st.iter().all(|(_, s, _)| s == "applied"), "{st:?}");
+    }
+    assert_eq!(f.state(), a.state());
+    let s = f.state();
+    assert_eq!(s.team_role(&team, &a.pk()), Some(TeamRole::Admin));
+    assert!(s.is_active(&x.pk()) && s.team_role(&team, &x.pk()).is_none());
+    assert!(!s.is_active(&y.pk()));
+
+    // The next op lists exactly this laptop's heads.
+    let heads = p::heads(&p::load_ops(&f.conn).unwrap());
+    let op = p::author_op(
+        &mut f.conn,
+        &f.id,
+        Scope::Org,
+        Body::ProfileSet {
+            name: "Sari W".into(),
+        },
+        now(),
+    )
+    .unwrap();
+    let v = p::verify_op(&op, &s.org.id, now()).unwrap();
+    assert_eq!(v.deps(), heads.as_slice());
+    assert_eq!(p::heads(&p::load_ops(&f.conn).unwrap()), vec![v.id.clone()]);
+}
+
+#[test]
+fn a_revocation_authored_here_updates_ops_it_had_not_seen() {
+    let (mut f, a, _c) = three_with_superadmin();
+    let org = f.state().org.id;
+    // A's op lists a withheld op, so F does not vouch for it in its deps.
+    let mut deps = p::heads(&p::load_ops(&a.conn).unwrap());
+    deps.push("ef".repeat(32));
+    let team_op = raw_op_with_deps(
+        &a,
+        &org,
+        p::max_lamport(&a.conn).unwrap() + 1,
+        deps,
+        Body::TeamCreate {
+            team: rand_hex16(),
+            name: "Tim Gelap".into(),
+        },
+    );
+    let id = team_op.id();
+    p::ingest(&mut f.conn, Some(&a.pk()), vec![team_op], now()).unwrap();
+    assert_eq!(status_of(&f, &id), ("applied".into(), None));
+    p::remove_superadmin(&mut f.conn, &f.id, &a.pk(), now()).unwrap();
+    assert_eq!(
+        status_of(&f, &id),
+        ("rejected".into(), Some("concurrent_with_revocation".into()))
     );
 }

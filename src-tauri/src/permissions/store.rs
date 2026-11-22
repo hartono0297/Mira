@@ -7,7 +7,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use super::fold::{MemberStatus, OrgState, fold};
+use super::fold::{FoldResult, MemberStatus, OrgState, fold};
 use super::format::format_time;
 use super::op::{MAX_LAMPORT_JUMP, SignedOp, VerifiedOp, parse_op, verify_op};
 use crate::error::{AppError, AppResult};
@@ -209,7 +209,6 @@ pub(crate) fn ingest_in(
 pub(crate) fn recompute_in(conn: &Connection, org: &Organization) -> AppResult<OrgState> {
     let rows = stored_rows(conn)?;
     let mut ops = Vec::with_capacity(rows.len());
-    let mut current = std::collections::HashMap::with_capacity(rows.len());
     let mut update =
         conn.prepare("UPDATE org_ops SET status = ?2, reject_reason = ?3 WHERE id = ?1")?;
     for r in rows {
@@ -218,16 +217,28 @@ pub(crate) fn recompute_in(conn: &Connection, org: &Organization) -> AppResult<O
             sig: r.sig,
         };
         match parse_op(&signed) {
-            Ok(v) => {
-                current.insert(r.id, (r.status, r.reason));
-                ops.push(v);
-            }
+            Ok(v) => ops.push(v),
             Err(_) => {
-                update.execute(params![r.id, "rejected", "bad_format"])?;
+                if r.status != "rejected" || r.reason.as_deref() != Some("bad_format") {
+                    update.execute(params![r.id, "rejected", "bad_format"])?;
+                }
             }
         }
     }
     let result = fold(org, &ops);
+    store_fold(conn, &result)?;
+    Ok(result.state)
+}
+
+/// Writes a fold result: `org_ops.status` of every folded op (only rows
+/// that change) and the derived tables.
+pub(crate) fn store_fold(conn: &Connection, result: &FoldResult) -> AppResult<()> {
+    let current: std::collections::HashMap<String, (String, Option<String>)> = conn
+        .prepare("SELECT id, status, reject_reason FROM org_ops")?
+        .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
+        .collect::<Result<_, _>>()?;
+    let mut update =
+        conn.prepare("UPDATE org_ops SET status = ?2, reject_reason = ?3 WHERE id = ?1")?;
     for (id, outcome) in &result.outcomes {
         let (status, reason) = match outcome {
             Ok(()) => ("applied", None),
@@ -240,8 +251,7 @@ pub(crate) fn recompute_in(conn: &Connection, org: &Organization) -> AppResult<O
             update.execute(params![id, status, reason])?;
         }
     }
-    write_derived(conn, &result.state)?;
-    Ok(result.state)
+    write_derived(conn, &result.state)
 }
 
 /// This laptop's public key and display name, if the identity exists.

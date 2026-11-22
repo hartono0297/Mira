@@ -191,6 +191,32 @@ try {
     check(`Daftar "Di jaringan" di layar ${id} menampilkan kedua rekan`, others.every((n) => body.includes(n)));
     await running[id].page.screenshot({ path: join(shots, `di-jaringan-${id.toLowerCase()}.png`) });
   }
+  // Screenshot layar Tahap 1 untuk laporan (tidak dihitung sebagai pemeriksaan).
+  try {
+    const pa = running.A.page;
+    await pa.getByRole("button", { name: "Organisasi", exact: true }).click();
+    await sleep(1500);
+    await pa.screenshot({ path: join(shots, "organisasi-a.png") });
+    await pa.getByRole("button", { name: "Undang ke tim" }).first().click();
+    await sleep(800);
+    await pa.screenshot({ path: join(shots, "dialog-undangan.png") });
+    await pa.keyboard.press("Escape");
+    await pa.getByRole("button", { name: "Pengaturan", exact: true }).click();
+    await pa.getByRole("button", { name: "Jaringan", exact: true }).click();
+    await sleep(1500);
+    await pa.screenshot({ path: join(shots, "pengaturan-jaringan.png") });
+    const pd = running.D.page;
+    await reload("D");
+    await pd.getByRole("button", { name: /Gabung dengan kode/ }).click();
+    await sleep(4000);
+    await pd.screenshot({ path: join(shots, "panduan-firewall.png") });
+    await pd.getByRole("button", { name: /Lewati, atur nanti|Lanjut ke kode undangan/ }).click();
+    await sleep(800);
+    await pd.screenshot({ path: join(shots, "gabung-dengan-kode.png") });
+  } catch (e) {
+    console.log(`Catatan: screenshot tambahan gagal: ${e.message}`);
+  }
+
   const statusA = await must("A", "get_network_status");
   check("Status koneksi A: tersambung lewat LAN kantor", statusA.state === "lan", statusA.state);
 

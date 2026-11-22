@@ -23,6 +23,7 @@ fn payload_with_at(sim: &Sim, by: &Actor, lamport: u64, at: &str, body: Body) ->
         org: sim.org.id.clone(),
         author: by.pk.clone(),
         lamport,
+        deps: sim.heads_below(lamport),
         at: at.into(),
         nonce: rand_hex16(),
         scope: Scope::Org,
