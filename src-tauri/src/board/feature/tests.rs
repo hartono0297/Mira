@@ -616,6 +616,22 @@ fn change_made_before_removal_is_accepted_after_it() {
         description: Some("Dibuat sebelum keluar".into()),
         ..TaskPatch::default()
     });
+    // Sari receives it while Citra is still a member and comments on top.
+    pull(o.citra.me(), o.sari.me()).unwrap();
+    o.sari.core(|c| {
+        let me = c.identity.public_key_hex().to_owned();
+        store::commit_local(&mut c.db, &c.identity, &pid, |d| {
+            d.add_comment(
+                Stamp {
+                    actor: &me,
+                    at: &clock::now_rfc3339(),
+                },
+                &task,
+                "oke",
+            )
+        })
+        .map(|_| ())
+    });
     // Sari removes Citra from the organization a little later; Budi learns
     // about it before Citra's change arrives.
     let citra_pk = o.citra.pk.clone();
@@ -623,11 +639,20 @@ fn change_made_before_removal_is_accepted_after_it() {
     o.sari.core(|c| p::remove_member(&mut c.db, &c.identity, &citra_pk, later));
     sync_ops(&[&o.sari, &o.budi]);
 
+    // Alone, the change of someone who lost the right is held: nobody who
+    // still has the right has built on it yet (as far as Budi knows).
     let got = pull(o.citra.me(), o.budi.me()).unwrap().0;
-    assert_eq!(got.accepted, 1);
+    assert!(!got.changed);
+    assert_eq!(o.budi.pending("rights"), 1);
+    assert_eq!(o.budi.tasks(&pid)[0].description, "");
+
+    // Sari's comment, built on it, arrives: both are applied and the held
+    // change is not downloaded again.
+    let got = pull(o.sari.me(), o.budi.me()).unwrap().0;
     assert!(got.changed);
+    assert_eq!(o.budi.pending("rights"), 0);
     assert_eq!(o.budi.tasks(&pid)[0].description, "Dibuat sebelum keluar");
-    assert!(o.budi.rejections().is_empty());
+    assert_eq!(o.budi.tasks(&pid)[0].comments.len(), 1);
 }
 
 #[test]

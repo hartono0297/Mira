@@ -788,10 +788,13 @@ fn other_team_gets_nothing_and_a_guest_gets_only_their_project() {
     sync_all(&five).unwrap();
     for l in o.laps() {
         assert_eq!(l.heads(&pa), heads, "the guest's change is not applied");
-        assert!(l.is_refused(&guest_id), "refused for good, not held");
+        // Not kept and not refused for good: the guest may have just become
+        // a member on a laptop we have not heard from. Asked for again later.
+        assert!(!l.is_refused(&guest_id));
         assert_eq!(l.count("SELECT count(*) FROM board_pending"), 0);
-        assert_eq!(l.rejections(), vec!["board_forbidden".to_owned()]);
-        assert!(l.f.unknown_ids(std::slice::from_ref(&guest_id)).unwrap().is_empty());
+        assert!(l.rejections().is_empty());
+        let asks_again = l.f.unknown_ids(std::slice::from_ref(&guest_id)).unwrap();
+        assert!(l.pk == tamu.pk || asks_again == vec![guest_id.clone()]);
         assert!(!l.f.record_ids_for(&o.sari.pk).unwrap().contains(&guest_id));
     }
     assert!(!tamu.has_project(&pb));

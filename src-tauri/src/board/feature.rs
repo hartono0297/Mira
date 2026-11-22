@@ -324,7 +324,7 @@ impl FeatureSync for BoardFeature {
                 });
             }
             for (project_id, items) in groups {
-                process_project(core, &policy, &project_id, items, false, &mut tally, announce)?;
+                process_project(core, &policy, &project_id, items, true, &mut tally, announce)?;
             }
             Ok(FeatureIngest {
                 accepted: tally.accepted,
