@@ -56,7 +56,8 @@ export type ActivityKind =
   | "priority"
   | "labels"
   | "deleted"
-  | "commented";
+  | "commented"
+  | "renumbered";
 
 export type Activity = { at: string; actor: Person; kind: ActivityKind | string; detail: string };
 

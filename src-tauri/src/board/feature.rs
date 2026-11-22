@@ -21,7 +21,8 @@
 //!   | missing parent, over the batch limit | `board_pending`, reason `deps` |
 //!   | project unknown | `board_pending`, reason `project` |
 //!   | author (a member) lacks the right | `board_pending`, reason `rights`, logged once |
-//!   | author never a member, or a guest | `board_rejected`, logged |
+//!   | author never seen as a member | nothing (offered and checked again later) |
+//!   | author is a guest | `board_rejected`, logged |
 //!   | refused | `board_rejected` (logged by `sync` or here) |
 //!
 //! - Held changes (`rights`) are retried when the membership log changes,
@@ -435,10 +436,17 @@ fn process_project(
                     short(&item.sc.hash)
                 );
                 let log = (!logged).then_some((code, detail.as_str()));
-                // Someone who was never a member, or a guest, cannot gain the
-                // right through an op that is merely late: refused for good,
-                // so random keys cannot fill the pending table.
-                if !ever_member(&tx, &item.sc.author)? || rights.is_guest(&item.sc.author) {
+                // Someone this laptop has never seen as a member: maybe the
+                // op that admits them is still on its way. Nothing is stored
+                // (random keys cannot fill the pending table) and nothing is
+                // logged; the record is offered and checked again next time.
+                if !ever_member(&tx, &item.sc.author)? {
+                    tx.execute(
+                        "DELETE FROM board_pending WHERE record_id = ?1",
+                        [&item.record_id],
+                    )?;
+                } else if rights.is_guest(&item.sc.author) {
+                    // A guest only reads: refused for good.
                     refuse(&tx, &item.record_id, item.from.as_deref(), log, now)?;
                     if fresh {
                         tally.rejected += 1;
@@ -699,8 +707,10 @@ fn readable_projects(conn: &Connection, peer: &str) -> AppResult<HashSet<String>
 /// The one per-project check before offering or sending a project's
 /// changes to `peer` (`record_ids_for` and `records_for` both go through
 /// it). Further conditions on the project itself belong here.
-fn offerable(_conn: &Connection, rights: &Rights, peer: &str, p: ProjectRef<'_>) -> AppResult<bool> {
-    Ok(rights.can_read(peer, p))
+fn offerable(conn: &Connection, rights: &Rights, peer: &str, p: ProjectRef<'_>) -> AppResult<bool> {
+    // Projects made before ids were bound stay on this laptop: other laptops
+    // could not tell their first change from a forged one.
+    Ok(rights.can_read(peer, p) && store::is_syncable(conn, p.id)?)
 }
 
 /// Changes whenever an op is added to the membership log.
@@ -786,3 +796,6 @@ pub fn register<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod convergence_tests;
