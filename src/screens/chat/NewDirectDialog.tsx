@@ -12,7 +12,7 @@ type Props = {
   onOpened: (summary: ConversationSummary) => void;
 };
 
-// Pesan baru: cari rekan lalu pilih. Chat pribadi yang sudah ada dibuka lagi, bukan dibuat dobel.
+// Chat pribadi baru: cari rekan lalu pilih. Chat pribadi yang sudah ada dibuka lagi, bukan dibuat dobel.
 export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props) {
   const [query, setQuery] = useState("");
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -53,7 +53,7 @@ export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props)
         if (!next) reset();
         onOpenChange(next);
       }}
-      title="Pesan baru"
+      title="Chat pribadi baru"
       description="Pilih rekan untuk chat pribadi. Hanya Anda berdua yang bisa membacanya."
     >
       {people.length === 0 ? (

@@ -70,7 +70,7 @@ describe("judul dan cakupan", () => {
     expect(scopeLabel(channel({ scope: { kind: "org", id: null, name: "Kantor" } }))).toBe("Seluruh kantor");
     expect(scopeLabel(channel({ scope: { kind: "team", id: "t", name: "Keuangan" } }))).toBe("Tim Keuangan");
     expect(scopeLabel(channel())).toBe("Proyek Gedung A");
-    expect(scopeLabel(dm())).toBe("Pesan pribadi");
+    expect(scopeLabel(dm())).toBe("Chat pribadi");
   });
 });
 

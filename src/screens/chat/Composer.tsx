@@ -214,8 +214,10 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
       {replyTo && (
         <div className="conv-reply-chip">
           <IconArrowBackUp size={16} aria-hidden="true" />
-          <p className="conv-reply-text">
-            <span className="conv-reply-label">Membalas {authorName(replyTo)}</span>
+          <p className="conv-reply-text" id={`${ids}-reply`}>
+            <span className="conv-reply-label" title={`Membalas ${authorName(replyTo)}`}>
+              Membalas {authorName(replyTo)}
+            </span>
             <span className="conv-reply-preview" title={messagePreview(replyTo, 400)}>
               {messagePreview(replyTo)}
             </span>
@@ -286,7 +288,7 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
             onClick={(e) => updateMention(text, e.currentTarget.selectionStart ?? text.length)}
             onBlur={() => setMention(null)}
             readOnly={sending}
-            aria-describedby={`${ids}-hint`}
+            aria-describedby={replyTo ? `${ids}-reply ${ids}-hint` : `${ids}-hint`}
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={listOpen}

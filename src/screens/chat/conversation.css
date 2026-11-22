@@ -47,6 +47,11 @@
   color: var(--text-sec);
 }
 
+.conv-scope > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .conv-chip-muted {
   gap: 4px;
 }
@@ -244,10 +249,17 @@
   background: var(--hover);
 }
 
-/* Pesan asli yang dituju dari kutipan balasan. Fokus diletakkan lewat skrip, jadi :focus, bukan :focus-visible. */
-.conv-msg:focus {
+/* Pesan asli yang dituju dari kutipan balasan. Fokus diletakkan lewat skrip, jadi cincin
+   tampil selama sorotan berlangsung walau lompatan dipicu klik. Klik biasa di teks pesan
+   tidak memunculkan cincin. */
+.conv-msg:focus-visible,
+.conv-msg-flash:focus {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
+}
+
+.conv-msg:focus:not(:focus-visible):not(.conv-msg-flash) {
+  outline: none;
 }
 
 .conv-msg-flash,
@@ -662,8 +674,14 @@
   font-size: 13px;
 }
 
+/* Nama penulis panjang dipotong supaya cuplikan pesan tetap terlihat. */
 .conv-reply-label {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 700;
   color: var(--text);
 }

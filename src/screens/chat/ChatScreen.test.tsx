@@ -79,8 +79,8 @@ describe("ChatScreen", () => {
     expect(row(/Channel tim-uji/)).toHaveTextContent("Tim Uji");
     expect(row(/Channel proyek-alfa/)).toHaveTextContent("Proyek Alfa");
     expect(row(/Channel umum/)).not.toHaveTextContent("Seluruh kantor");
-    const dms = within(list()).getByRole("region", { name: "Pesan pribadi" });
-    expect(within(dms).getByRole("button", { name: /Pesan pribadi dengan Rekan Bayu/ })).toHaveTextContent("RB");
+    const dms = within(list()).getByRole("region", { name: "Chat pribadi" });
+    expect(within(dms).getByRole("button", { name: /Chat pribadi dengan Rekan Bayu/ })).toHaveTextContent("RB");
   });
 
   it("berpindah percakapan saat baris lain diklik", async () => {
@@ -93,7 +93,7 @@ describe("ChatScreen", () => {
     expect(row(/Channel tim-uji/)).toHaveAttribute("aria-current", "true");
     expect(row(/Channel umum/)).not.toHaveAttribute("aria-current");
 
-    await user.click(row(/Pesan pribadi dengan Rekan Bayu/));
+    await user.click(row(/Chat pribadi dengan Rekan Bayu/));
     expect(within(panel()).getByRole("heading", { name: "Rekan Bayu" })).toBeInTheDocument();
   });
 
@@ -155,7 +155,7 @@ describe("ChatScreen", () => {
     expect(await screen.findByRole("heading", { name: "Belum ada percakapan" })).toBeInTheDocument();
     expect(screen.getByText(/Sebagai Tamu, Anda hanya bisa chat di channel proyek/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Channel baru/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Pesan baru/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Chat pribadi baru/ })).not.toBeInTheDocument();
     expect(screen.getByText(/Tamu tidak punya chat pribadi/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pengaturan notifikasi chat" })).toBeInTheDocument();
   });
@@ -167,7 +167,7 @@ describe("ChatScreen", () => {
     chat.overview.mockResolvedValue(guestOverview({ conversations: [proyek] }));
     render(<ChatScreen />);
     expect(await panelHeading("#proyek-alfa")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Pesan baru/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Chat pribadi baru/ })).not.toBeInTheDocument();
   });
 
   it("membuat channel baru lalu langsung membukanya", async () => {
@@ -233,8 +233,8 @@ describe("ChatScreen", () => {
 
     expect(screen.queryByRole("button", { name: /Channel baru/ })).not.toBeInTheDocument();
     expect(within(list()).getByText(NO_SCOPE_NOTE)).toBeInTheDocument();
-    // Pesan pribadi tetap bisa.
-    expect(screen.getByRole("button", { name: /Pesan baru/ })).toBeInTheDocument();
+    // Chat pribadi tetap bisa.
+    expect(screen.getByRole("button", { name: /Chat pribadi baru/ })).toBeInTheDocument();
   });
 
   it("error saat membuat channel tampil di dialog dan isian tetap ada", async () => {
@@ -267,15 +267,15 @@ describe("ChatScreen", () => {
     expect(chat.createChannel).toHaveBeenCalledTimes(2);
   });
 
-  it("membuka chat pribadi lewat Pesan baru", async () => {
+  it("membuka chat pribadi lewat Chat pribadi baru", async () => {
     const user = userEvent.setup();
     const dm = summary(`dm:${"a".repeat(64)}:${PK_C}`, REKAN_C.name, { peer: REKAN_C });
     chat.openDm.mockResolvedValue(dm);
     render(<ChatScreen />);
     await panelHeading("#umum");
 
-    await user.click(screen.getByRole("button", { name: /Pesan baru/ }));
-    const dialog = screen.getByRole("dialog", { name: "Pesan baru" });
+    await user.click(screen.getByRole("button", { name: /Chat pribadi baru/ }));
+    const dialog = screen.getByRole("dialog", { name: "Chat pribadi baru" });
     const people = within(dialog).getByRole("list", { name: "Rekan" });
     expect(
       within(people)

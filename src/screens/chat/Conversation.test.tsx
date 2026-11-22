@@ -144,7 +144,7 @@ describe("Percakapan: memuat dan menampilkan pesan", () => {
   it("keadaan kosong", async () => {
     chat.messages.mockResolvedValue(view([]));
     renderConv();
-    expect(await screen.findByText("Belum ada pesan. Mulai percakapan di sini.")).toBeInTheDocument();
+    expect(await screen.findByText("Belum ada pesan di #proyek-a. Tulis pesan pertama di kolom bawah.")).toBeInTheDocument();
   });
 
   it("keadaan error dengan tombol coba lagi", async () => {
@@ -241,7 +241,7 @@ describe("Percakapan: status kirim", () => {
     renderConv(dm());
     expect(await screen.findByRole("button", { name: /Status: Dititipkan/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sari Uji" })).toBeInTheDocument();
-    expect(screen.getByText("Pesan pribadi")).toBeInTheDocument();
+    expect(screen.getByText("Chat pribadi")).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Arsipkan channel" })).toBeNull();
   });
 });

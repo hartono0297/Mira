@@ -128,7 +128,7 @@ function EmptyChat({ guest }: { guest: boolean }) {
       ) : (
         <p>
           Channel #umum muncul di sini begitu data kantor tersalin dari laptop rekan. Sementara itu Anda bisa membuat
-          channel baru atau memulai pesan pribadi dari daftar di kiri.
+          channel baru atau memulai chat pribadi dari daftar di kiri.
         </p>
       )}
     </div>

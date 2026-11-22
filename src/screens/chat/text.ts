@@ -111,7 +111,7 @@ export function conversationTitle(summary: ConversationSummary): string {
 }
 
 export function scopeLabel(summary: ConversationSummary): string {
-  if (summary.kind === "dm" || !summary.scope) return "Pesan pribadi";
+  if (summary.kind === "dm" || !summary.scope) return "Chat pribadi";
   if (summary.scope.kind === "org") return "Seluruh kantor";
   if (summary.scope.kind === "team") return `Tim ${summary.scope.name}`;
   return `Proyek ${summary.scope.name}`;
@@ -225,7 +225,7 @@ export function mergeMessages(older: MessageView[], latest: MessageView[]): Mess
 
 export type StatusLine = { icon: DeliveryState; text: string };
 
-// Pesan pribadi: label status penerima. Channel: jumlah, misalnya "Dibaca 2 dari 5".
+// Chat pribadi: label status penerima. Channel: jumlah, misalnya "Dibaca 2 dari 5".
 export function deliveryLine(status: MessageStatus, kind: ConversationSummary["kind"]): StatusLine | null {
   if (kind === "dm") return { icon: status.state, text: DELIVERY_LABELS[status.state] };
   if (status.total <= 0) return null;

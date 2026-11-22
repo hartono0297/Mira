@@ -8,7 +8,7 @@ import { Composer } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
 import { messageDomId } from "./MessageItem";
 import { MessageList } from "./MessageList";
-import { conversationTitle, groupMessages, mergeMessages } from "./text";
+import { conversationTitle, groupMessages, mergeMessages, messagePreview } from "./text";
 import { useChatLive } from "./useChatLive";
 import "./conversation.css";
 
@@ -53,6 +53,7 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -77,6 +78,24 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
   const items = useMemo(() => groupMessages(messages), [messages]);
   const loadedIds = useMemo(() => new Set(messages.map((m) => m.id)), [messages]);
   const hasMore = olderHasMore ?? view?.hasMore ?? false;
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const announcedFor = useRef<string | null | undefined>(undefined);
+
+  // Pembaca layar: hanya pesan baru dari orang lain yang dibacakan. Riwayat saat
+  // dibuka dan pesan lama yang dimuat di atas tidak ikut dibacakan.
+  useEffect(() => {
+    if (!view) return;
+    const id = lastMessage?.id ?? null;
+    if (announcedFor.current === undefined) {
+      announcedFor.current = id;
+      return;
+    }
+    if (id === announcedFor.current) return;
+    announcedFor.current = id;
+    if (lastMessage && !lastMessage.mine && !lastMessage.deleted) {
+      setAnnounce(`Pesan baru dari ${lastMessage.author.name}: ${messagePreview(lastMessage, 160)}`);
+    }
+  }, [view, lastMessage]);
 
   // Gulir: ke bawah saat pertama dibuka, ikut pesan baru kalau pengguna di
   // dekat bawah atau pesan itu kiriman sendiri, dan tetap di tempat saat
@@ -228,7 +247,13 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
       </div>
     );
   } else if (messages.length === 0) {
-    body = <p className="conv-state">Belum ada pesan. Mulai percakapan di sini.</p>;
+    body = (
+      <p className="conv-state">
+        {summary.canPost
+          ? `Belum ada pesan di ${title}. Tulis pesan pertama di kolom bawah.`
+          : `Belum ada pesan di ${title}.`}
+      </p>
+    );
   } else {
     body = (
       <>
@@ -280,9 +305,12 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
           </ErrorAlert>
         )}
       </div>
-      <div className="conv-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-label={`Pesan di ${title}`}>
+      <div className="conv-scroll" ref={scrollRef} onScroll={onScroll} role="region" aria-label={`Pesan di ${title}`}>
         {body}
       </div>
+      <p className="sr-only" aria-live="polite">
+        {announce}
+      </p>
       <Composer
         summary={summary}
         me={me}

@@ -1,5 +1,5 @@
 import { IconBell, IconBellOff, IconChevronDown, IconChevronRight, IconPlus } from "@tabler/icons-react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AppError } from "../../api";
 import type { ChatOverview, ConversationSummary } from "../../api/chat";
 import { initials } from "../../components/initials";
@@ -40,8 +40,26 @@ export function ConversationList({
     </li>
   );
 
+  // Panah atas dan bawah, Home, End berpindah antarbaris percakapan. Tab tetap urut biasa.
+  function onRowKey(e: KeyboardEvent<HTMLElement>) {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains("chat-row")) return;
+    const rows = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>(".chat-row")).filter(
+      (r) => !r.closest("[hidden]"),
+    );
+    const at = rows.indexOf(target as HTMLButtonElement);
+    let next: number | null = null;
+    if (e.key === "ArrowDown") next = Math.min(at + 1, rows.length - 1);
+    else if (e.key === "ArrowUp") next = Math.max(at - 1, 0);
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = rows.length - 1;
+    if (next === null || at === -1) return;
+    e.preventDefault();
+    rows[next]?.focus();
+  }
+
   return (
-    <nav className="chat-list" aria-label="Daftar percakapan">
+    <nav className="chat-list" aria-label="Daftar percakapan" onKeyDown={onRowKey}>
       <div className="chat-list-head">
         <h1 id="page-title" className="page-title">
           Chat
@@ -83,16 +101,16 @@ export function ConversationList({
         {overview.canDirectMessage && !overview.canCreateChannel && <p className="chat-note">{NO_SCOPE_NOTE}</p>}
       </Section>
 
-      <Section id={`${ids}-dm`} title="Pesan pribadi">
+      <Section id={`${ids}-dm`} title="Chat pribadi">
         {directs.length > 0 ? (
           <ul className="chat-rows">{directs.map(row)}</ul>
         ) : (
-          overview.canDirectMessage && <p className="chat-note">Belum ada pesan pribadi.</p>
+          overview.canDirectMessage && <p className="chat-note">Belum ada chat pribadi.</p>
         )}
         {overview.canDirectMessage ? (
           <button type="button" className="btn btn-ghost btn-sm chat-new" onClick={onNewDirect}>
             <IconPlus size={16} aria-hidden="true" />
-            Pesan baru
+            Chat pribadi baru
           </button>
         ) : (
           <p className="chat-note">Tamu tidak punya chat pribadi. Bicara lewat channel proyek.</p>
@@ -153,7 +171,7 @@ function ListRow({
     c.kind === "channel" && c.scope && c.scope.kind !== "org" ? scopeLabel(c.scope.kind, c.scope.name) : null;
   // Nama lengkap untuk pembaca layar. Lencana dan ikon di dalam tombol hanya tampilan.
   const label = [
-    c.kind === "channel" ? `Channel ${c.name}` : `Pesan pribadi dengan ${c.name}`,
+    c.kind === "channel" ? `Channel ${c.name}` : `Chat pribadi dengan ${c.name}`,
     hint,
     c.muted ? "dibisukan" : "",
     unreadText(c.unread, c.mentionUnread),
