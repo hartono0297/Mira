@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   PDFArray,
   PDFDict,
@@ -22,6 +22,7 @@ import {
   normalizeAngle,
   stampSignature,
   toWinAnsiSafe,
+  type AuditInfo,
   type PdfRect,
 } from "./stamp";
 
@@ -277,7 +278,8 @@ describe("stampSignature", () => {
     expect(doc.getProducer()).toBe("Mira");
     expect(rawIncludes(out, DOC_TAG)).toBe(true);
     expect(rawIncludes(out, `/Keywords (kontrak 2026 ${DOC_TAG})`)).toBe(true);
-    expect(rawIncludes(out, "/ObjStm")).toBe(false);
+    // Bagian tambahan tanpa object stream, supaya terbaca dengan memindai byte.
+    expect(rawIncludes(out.subarray(pdf.length), "/ObjStm")).toBe(false);
 
     const { images, texts, balanced } = stampDraws(doc, 0);
     expect(balanced).toBe(true);
@@ -539,8 +541,8 @@ describe("appendAuditPage", () => {
     expect(last.getHeight()).toBeCloseTo(841.89, 1);
     expect(doc.getKeywords()).toContain(DOC_TAG);
     expect(doc.getProducer()).toBe("Mira");
-    expect(rawIncludes(out, DOC_TAG)).toBe(true);
-    expect(rawIncludes(out, "/ObjStm")).toBe(false);
+    expect(rawIncludes(out.subarray(stamped.length), DOC_TAG)).toBe(true);
+    expect(rawIncludes(out.subarray(stamped.length), "/ObjStm")).toBe(false);
 
     // Semua teks berada di dalam halaman.
     const { texts } = interpret(pageContentBytes(doc, 6));
@@ -575,5 +577,206 @@ describe("appendAuditPage", () => {
     await expect(appendAuditPage(new Uint8Array([1, 2, 3]), info)).rejects.toThrow(
       "File ini bukan PDF atau rusak",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Incremental update: versi baru = byte versi lama + tambahan
+
+const latin1 = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes);
+
+function isPrefix(prefix: Uint8Array, whole: Uint8Array): boolean {
+  if (prefix.length >= whole.length) return false;
+  for (let i = 0; i < prefix.length; i++) if (prefix[i] !== whole[i]) return false;
+  return true;
+}
+
+function lastStartxref(bytes: Uint8Array): number {
+  const text = latin1(bytes);
+  return Number(/^startxref\s*(\d+)/.exec(text.slice(text.lastIndexOf("startxref")))?.[1]);
+}
+
+type XrefEntry = { num: number; gen: number; offset: number };
+
+/** Entri tabel xref bagian tambahan terakhir. */
+function lastXrefEntries(bytes: Uint8Array): XrefEntry[] {
+  const text = latin1(bytes);
+  const at = lastStartxref(bytes);
+  expect(text.slice(at, at + 5)).toBe("xref\n");
+  const lines = text
+    .slice(at + 5, text.indexOf("trailer", at))
+    .split(/\r?\n/)
+    .filter((l) => l.trim());
+  const entries: XrefEntry[] = [];
+  for (let i = 0; i < lines.length; ) {
+    const [start, count] = lines[i].trim().split(/\s+/).map(Number);
+    for (let k = 0; k < count; k++) {
+      const [off, gen, kind] = lines[i + 1 + k].trim().split(/\s+/);
+      expect(kind).toBe("n");
+      entries.push({ num: start + k, gen: Number(gen), offset: Number(off) });
+    }
+    i += 1 + count;
+  }
+  return entries;
+}
+
+/** Bukti dasar satu langkah: awalan, /Prev, xref klasik yang menunjuk objeknya. */
+function expectIncrement(prev: Uint8Array, next: Uint8Array): XrefEntry[] {
+  expect(isPrefix(prev, next)).toBe(true);
+  const tail = latin1(next.subarray(prev.length));
+  expect(tail).toContain(`/Prev ${lastStartxref(prev)}`);
+  expect(tail).not.toContain("/ObjStm");
+  expect(tail).not.toContain("/XRefStm");
+  expect(tail.trimEnd().endsWith("%%EOF")).toBe(true);
+  const text = latin1(next);
+  const entries = lastXrefEntries(next);
+  expect(entries.length).toBeGreaterThan(0);
+  for (const e of entries) {
+    expect(e.offset).toBeGreaterThanOrEqual(prev.length);
+    expect(text.slice(e.offset, e.offset + 24)).toMatch(new RegExp(`^${e.num} ${e.gen} obj\\b`));
+  }
+  return entries;
+}
+
+async function originals(): Promise<{ name: string; bytes: Uint8Array }[]> {
+  const src = await PDFDocument.load(await makePdf());
+  const classic = await src.save({ useObjectStreams: false });
+  const objstm = await src.save({ useObjectStreams: true });
+  const trimmed = classic.subarray(0, latin1(classic).trimEnd().length);
+  const junk = new Uint8Array([...classic, ...new TextEncoder().encode("\r\n\0sampah setelah EOF")]);
+  return [
+    { name: "xref klasik", bytes: classic },
+    { name: "object stream", bytes: objstm },
+    { name: "tanpa baris baru di akhir", bytes: trimmed },
+    { name: "sampah setelah %%EOF", bytes: junk },
+  ];
+}
+
+const FIRST: PdfRect = { pageIndex: 0, x: 350, y: 120, width: 160, height: 60 };
+const SECOND: PdfRect = { pageIndex: 2, x: 120, y: 200, width: 160, height: 60 };
+
+const AUDIT: AuditInfo = {
+  title: "Kontrak kerja sama",
+  docTag: DOC_TAG,
+  originalHash: "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+  mode: "sequential",
+  signers: [
+    { name: "Rina Wulandari", kind: "member", signedAt: SIGNED_AT, fingerprint: "ab12 cd34 ef56 7890" },
+    { name: "Agus Prasetyo", kind: "guest", signedAt: SIGNED_AT, fingerprint: "1122 3344 5566 7788" },
+  ],
+  generatedAt: "2026-11-22T09:00:00Z",
+  timeZone: "Asia/Jakarta",
+};
+
+describe("incremental update", () => {
+  it("berantai: setiap versi awalan persis versi berikutnya", async () => {
+    for (const { name, bytes: v0 } of await originals()) {
+      const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+      const v2 = await stampSignature(v1, { ...baseOpts, signerName: "Agus Prasetyo", placement: SECOND });
+      const v3 = await appendAuditPage(v2, AUDIT);
+      expectIncrement(v0, v1);
+      expectIncrement(v1, v2);
+      expectIncrement(v2, v3);
+
+      // pdf-lib memuat ulang dan melihat stempel serta halaman catatan.
+      const doc1 = await PDFDocument.load(v1, { updateMetadata: false });
+      expect(doc1.getPageCount(), name).toBe(6);
+      expect(stampDraws(doc1, 0).images, name).toHaveLength(1);
+      const doc3 = await PDFDocument.load(v3, { updateMetadata: false });
+      expect(doc3.getPageCount(), name).toBe(7);
+      expect(stampDraws(doc3, 0).images, name).toHaveLength(1);
+      expect(stampDraws(doc3, 2).images, name).toHaveLength(1);
+      expect(stampDraws(doc3, 0).balanced, name).toBe(true);
+      expect(doc3.getKeywords(), name).toContain(DOC_TAG);
+    }
+  });
+
+  it("hanya halaman yang distempel dan kamus Info yang ditulis ulang", async () => {
+    const [classic, objstm] = await originals();
+    for (const { name, bytes: v0 } of [classic, objstm]) {
+      const src = await PDFDocument.load(v0, { updateMetadata: false });
+      const page0 = src.getPage(0).ref.objectNumber;
+      const info = (src.context.trailerInfo.Info as PDFRef).objectNumber;
+      const old = new Set(src.context.enumerateIndirectObjects().map(([r]) => r.objectNumber));
+      const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+      const rewritten = expectIncrement(v0, v1)
+        .map((e) => e.num)
+        .filter((n) => old.has(n))
+        .sort((a, b) => a - b);
+      expect(rewritten, name).toEqual([page0, info].sort((a, b) => a - b));
+    }
+  });
+
+  it("nomor objek baru tidak memakai ulang nomor object stream atau xref stream lama", async () => {
+    const [, { bytes: v0 }] = await originals();
+    const text = latin1(v0);
+    const containers = [...text.matchAll(/(\d+) 0 obj\s*<<[^]*?\/Type\s*\/(ObjStm|XRef)/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(containers.length).toBeGreaterThan(0);
+    const size = Math.max(...[...text.matchAll(/\/Size (\d+)/g)].map((m) => Number(m[1])));
+    const src = await PDFDocument.load(v0, { updateMetadata: false });
+    const old = new Set(src.context.enumerateIndirectObjects().map(([r]) => r.objectNumber));
+    const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+    for (const e of expectIncrement(v0, v1)) {
+      expect(containers).not.toContain(e.num);
+      if (!old.has(e.num)) expect(e.num).toBeGreaterThanOrEqual(size);
+    }
+  });
+
+  it("kode dokumen terbaca sebagai literal di byte tambahan", async () => {
+    const [{ bytes: v0 }] = await originals();
+    const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+    const tail = latin1(v1.subarray(v0.length));
+    expect(tail).toContain(`/MiraDocTag (${DOC_TAG})`);
+    expect(tail).toContain(`/Keywords (kontrak 2026 ${DOC_TAG})`);
+  });
+
+  it("halaman tanpa /Annots tidak mendapat /Annots kosong", async () => {
+    const src = await PDFDocument.load(await makePdf());
+    src.getPage(0).node.delete(PDFName.of("Annots"));
+    const v0 = await src.save();
+    const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+    const doc = await PDFDocument.load(v1, { updateMetadata: false });
+    expect(doc.getPage(0).node.get(PDFName.of("Annots"))).toBeUndefined();
+    expect(stampDraws(doc, 0).images).toHaveLength(1);
+  });
+
+  it("checkSignablePdf menolak PDF yang startxref-nya tidak menunjuk tabel xref", async () => {
+    const [{ bytes: v0 }] = await originals();
+    const text = latin1(v0);
+    // makePdf hanya berisi ASCII, jadi latin1 lalu UTF-8 tidak mengubah byte.
+    const broken = new TextEncoder().encode(`${text.slice(0, text.lastIndexOf("startxref"))}startxref\n12\n%%EOF\n`);
+    await expect(checkSignablePdf(broken)).rejects.toMatchObject({ code: "pdf_invalid" });
+    await expect(checkSignablePdf(v0)).resolves.toBeUndefined();
+  });
+
+  describe("dibaca pdf.js", () => {
+    let pdfjs: typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+    beforeAll(async () => {
+      pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    }, 120_000);
+
+    it("halaman bertanda tangan dan halaman catatan dirender", async () => {
+      const [, { bytes: v0 }] = await originals();
+      const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+      const v2 = await appendAuditPage(v1, AUDIT);
+      const task = pdfjs.getDocument({ data: v2.slice(), verbosity: 0 });
+      try {
+        const pdf = await task.promise;
+        expect(pdf.numPages).toBe(7);
+        const first = await pdf.getPage(1);
+        const ops = (await first.getOperatorList()).fnArray;
+        expect(ops).toContain(pdfjs.OPS.paintImageXObject);
+        expect(ops).toContain(pdfjs.OPS.showText);
+        const last = await pdf.getPage(7);
+        const lastOps = (await last.getOperatorList()).fnArray;
+        expect(lastOps.filter((op) => op === pdfjs.OPS.showText).length).toBeGreaterThan(10);
+        const text = await last.getTextContent();
+        expect(text.items.map((i) => ("str" in i ? i.str : "")).join(" ")).toContain("Halaman catatan");
+      } finally {
+        await task.destroy();
+      }
+    }, 120_000);
   });
 });
