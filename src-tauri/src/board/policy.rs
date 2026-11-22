@@ -4,7 +4,9 @@
 //! the rules of `access.rs` (the PRD permission table, guests per project,
 //! superadmins only in teams they joined) to the membership tables the Tahap 1
 //! fold keeps. For changes from other laptops, `check_at` judges the author
-//! against the moment the change was made (`access::RightsHistory`).
+//! against the moment the change was made (`access::RightsHistory`), for
+//! everyone who lost a right; `sync` adds the condition that guards against
+//! backdating (sync.rs, "Rights lost later").
 //!
 //! Every action first requires an active member; a removed laptop gets
 //! `AppError::Removed`. Guests may only read.
@@ -60,7 +62,8 @@ pub trait BoardPolicy {
 
     /// Like `check`, for a change made at `at` (unix seconds, the author's
     /// clock): also allowed when the author had the right and lost it after
-    /// `at`. The default ignores time.
+    /// `at`. The caller must not trust `at` alone (it can be backdated). The
+    /// default ignores time.
     fn check_at(
         &self,
         conn: &Connection,
@@ -283,14 +286,11 @@ impl BoardPolicy for BatchPolicy {
         if matches!(err, AppError::NotFound(_)) {
             return Err(err);
         }
-        // Only people removed from the organization are judged at the time
-        // of their change: they can no longer connect, so a late change
-        // reached us through a laptop that accepted it before the removal.
-        // Someone still in the organization (moved out of a team, demoted)
-        // can still send directly and could backdate; current rights apply.
-        if Rights::load(conn)?.is_active(actor) {
-            return Err(err);
-        }
+        // Anyone who lost the right (moved out of a team, demoted, removed
+        // from the organization) is judged at the time of the change. That
+        // time is the author's own clock, so this alone would allow
+        // backdating: `sync` also requires a colleague who still has the
+        // right to have built on the change (sync.rs, "Rights lost later").
         let owner = owner_for(conn, action)?;
         if self.history.get().is_none() {
             let loaded = RightsHistory::load(conn)?;
@@ -487,6 +487,56 @@ mod tests {
             created_by: other.clone(),
         };
         assert!(!p.allows(&l.conn, &admin, &delete_solo));
+    }
+
+    #[test]
+    fn check_at_uses_the_history_for_active_members_too() {
+        use crate::board::testutil::org_ops;
+        use crate::permissions::{self as p, InviteRole};
+
+        let mut l = Laptop::founder("Sari");
+        let mut budi = Laptop::bare("Budi");
+        let desain = org_ops::create_team(&mut l.conn, &l.id, "Desain");
+        let lain = org_ops::create_team(&mut l.conn, &l.id, "Lain");
+        org_ops::join(
+            (&mut l.conn, &l.id),
+            (&mut budi.conn, &budi.id),
+            &desain,
+            InviteRole::Member,
+            vec![],
+        );
+        let proj = "ab".repeat(16);
+        insert_project(&l, &proj, Some(&desain), &l.pk());
+        let write = BoardAction::RemoteChange {
+            project_id: proj.clone(),
+        };
+        let before = org_ops::now().unix_timestamp() - 60;
+        // Budi moves to another team but stays in the organization.
+        p::remove_team_member(&mut l.conn, &l.id, &desain, &budi.pk(), org_ops::now()).unwrap();
+        p::add_team_member(&mut l.conn, &l.id, &lain, &budi.pk(), org_ops::now()).unwrap();
+        let after = org_ops::now().unix_timestamp() + 60;
+
+        assert!(!LocalRolePolicy.allows(&l.conn, &budi.pk(), &write));
+        assert!(
+            BatchPolicy::new()
+                .check_at(&l.conn, &budi.pk(), &write, before)
+                .is_ok(),
+            "made while in the team"
+        );
+        assert!(
+            BatchPolicy::new()
+                .check_at(&l.conn, &budi.pk(), &write, after)
+                .is_err(),
+            "made after leaving the team"
+        );
+        // Someone who never had the right gets nothing from the history.
+        let stranger = pk(9);
+        add_member(&l.conn, &stranger, "Eko", "member");
+        assert!(
+            BatchPolicy::new()
+                .check_at(&l.conn, &stranger, &write, before)
+                .is_err()
+        );
     }
 
     #[test]
