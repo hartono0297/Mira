@@ -5,7 +5,7 @@
 //! Every call takes the core lock briefly; nothing here awaits.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as AsyncMutex;
@@ -92,11 +92,22 @@ fn source(s: AddressSource) -> peers::AddressSource {
 /// `SyncBackend` over the shared `MiraState`.
 pub struct MiraBackend {
     state: MiraState,
+    /// The network using this backend, once started, so a join accepted
+    /// here is pushed to the other members right away instead of on the
+    /// next periodic sync.
+    net: OnceLock<Network>,
 }
 
 impl MiraBackend {
     pub fn new(state: MiraState) -> Self {
-        Self { state }
+        Self {
+            state,
+            net: OnceLock::new(),
+        }
+    }
+
+    pub fn attach(&self, net: Network) {
+        let _ = self.net.set(net);
     }
 }
 
@@ -235,9 +246,16 @@ impl SyncBackend for MiraBackend {
                 ))
             })
             .map_err(|e| JoinReject::new("internal", &e.to_string()))?
-            .map(|data| JoinAccepted {
-                org: org_record(data.org),
-                ops: data.ops.into_iter().map(to_wire).collect(),
+            .map(|data| {
+                // Tell the other members about the newcomer now, so they
+                // accept its connection instead of refusing it as unknown.
+                if let Some(net) = self.net.get() {
+                    net.refresh();
+                }
+                JoinAccepted {
+                    org: org_record(data.org),
+                    ops: data.ops.into_iter().map(to_wire).collect(),
+                }
             })
             .map_err(|code| JoinReject::new(code.code(), &code.message()))
     }
@@ -332,9 +350,10 @@ impl AppNet {
             };
             let _ = handle.emit(name, ());
         });
-        let net = Network::start(cfg, backend, events)
+        let net = Network::start(cfg, backend.clone(), events)
             .await
             .map_err(|e| AppError::Network(format!("Jaringan Mira tidak bisa dimulai: {e}")))?;
+        backend.attach(net.clone());
         *guard = Some(net.clone());
         Ok(net)
     }
@@ -384,3 +403,6 @@ pub fn join_error(r: JoinReject) -> AppError {
 }
 
 pub use network::NetState;
+#[cfg(test)]
+#[path = "net_backend_tests.rs"]
+mod integration_tests;

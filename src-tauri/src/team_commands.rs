@@ -256,8 +256,9 @@ pub async fn join_with_code(
         .await
         .map_err(net_backend::join_error)?;
 
+    let typed_address = address.as_deref().map(str::trim).filter(|a| !a.is_empty());
     let info = state.with_core(|c| {
-        permissions::install_joined_org(
+        let info = permissions::install_joined_org(
             &mut c.db,
             &c.identity,
             net_backend::organization(accepted.org),
@@ -268,7 +269,15 @@ pub async fn join_with_code(
                 .collect(),
             &code,
             clock::now(),
-        )
+        )?;
+        // Keep the address the person typed, so this laptop can reach the
+        // organization again where automatic discovery does not work (VPN).
+        if let Some(a) = typed_address
+            && let Err(e) = peers::add_manual(&c.db, a, clock::now())
+        {
+            eprintln!("Mira: alamat bergabung tidak tersimpan [{}]: {e}", e.code());
+        }
+        Ok(info)
     })?;
     net_backend::after_change(&net, &app).await;
     Ok(info)
