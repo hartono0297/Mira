@@ -1,7 +1,9 @@
 //! Perintah Tauri tanda tangan PDF (kontrak: `docs/plans/tahap-5-lokal.md`
 //! bagian 5, sisi frontend `src/api/signing.ts`).
 //!
-//! Tipis: membangun `SignContext` lalu memanggil `service`. Byte PDF lewat IPC
+//! Tipis: membangun `SignContext` lalu memanggil `service`. Perintah berat
+//! (Argon2, hash berkas, baca tulis PDF) berjalan di `spawn_blocking`
+//! (`run_blocking`); yang ringan langsung (`run`). Byte PDF lewat IPC
 //! mentah Tauri 2: badan permintaan `InvokeBody::Raw`, data lain di header
 //! (`x-mira-file-name` berisi `encodeURIComponent(nama)`), dan
 //! `sign_read_file` membalas `tauri::ipc::Response` berisi byte.
@@ -14,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Manager, State};
+use zeroize::Zeroizing;
 
 use super::outbox::LocalOnlyOutbox;
 use super::pin::KdfParams;
@@ -70,6 +73,25 @@ fn run<T>(
         };
         f(&mut ctx)
     })
+}
+
+/// Seperti `run`, tetapi di thread `spawn_blocking`, supaya Argon2, hash
+/// BLAKE3 berkas besar, dan baca tulis berkas tidak memblokir thread async
+/// Tauri. `MiraState` dan `SignSessions` di-clone (berbagi isi yang sama).
+async fn run_blocking<T: Send + 'static>(
+    app: &AppHandle,
+    state: &State<'_, MiraState>,
+    sessions: &State<'_, SignSessions>,
+    f: impl FnOnce(&mut SignContext<'_>) -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    let (app, state, sessions) = (app.clone(), state.inner().clone(), sessions.inner().clone());
+    tauri::async_runtime::spawn_blocking(move || run(&app, &state, &sessions, f))
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Pekerjaan tanda tangan berhenti di tengah jalan. Coba lagi. Detail: {e}"
+            ))
+        })?
 }
 
 fn raw_body<'a>(request: &'a Request<'_>) -> AppResult<&'a [u8]> {
@@ -132,7 +154,7 @@ pub async fn sign_overview(
     state: State<'_, MiraState>,
     sessions: State<'_, SignSessions>,
 ) -> AppResult<SignOverview> {
-    run(&app, &state, &sessions, |c| c.overview())
+    run_blocking(&app, &state, &sessions, |c| c.overview(clock::now())).await
 }
 
 #[tauri::command]
@@ -143,20 +165,27 @@ pub async fn sign_save_signature(
     pin: String,
     png_base64: String,
 ) -> AppResult<SavedSignatureInfo> {
-    run(&app, &state, &sessions, |c| {
+    let pin = Zeroizing::new(pin);
+    run_blocking(&app, &state, &sessions, move |c| {
         c.save_signature(&pin, &png_base64, clock::now())
     })
+    .await
 }
 
+/// `pin` kosong (`null`) berarti jalur lupa PIN: tanda tangan baru baru bisa
+/// dipakai 24 jam setelah penghapusan.
 #[tauri::command]
 pub async fn sign_delete_signature(
     app: AppHandle,
     state: State<'_, MiraState>,
     sessions: State<'_, SignSessions>,
+    pin: Option<String>,
 ) -> AppResult<()> {
-    run(&app, &state, &sessions, |c| {
-        c.delete_signature(clock::now())
+    let pin = pin.map(Zeroizing::new);
+    run_blocking(&app, &state, &sessions, move |c| {
+        c.delete_signature(pin.as_deref().map(String::as_str), clock::now())
     })
+    .await
 }
 
 #[tauri::command]
@@ -166,7 +195,11 @@ pub async fn sign_unlock(
     sessions: State<'_, SignSessions>,
     pin: String,
 ) -> AppResult<UnlockResult> {
-    run(&app, &state, &sessions, |c| c.unlock(&pin, clock::now()))
+    let pin = Zeroizing::new(pin);
+    run_blocking(&app, &state, &sessions, move |c| {
+        c.unlock(&pin, clock::now())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -185,11 +218,14 @@ pub async fn sign_import_pdf(
     sessions: State<'_, SignSessions>,
     request: Request<'_>,
 ) -> AppResult<ImportedPdf> {
-    let bytes = raw_body(&request)?;
+    let bytes = raw_body(&request)?.to_vec();
     let file_name = header(&request, HEADER_FILE_NAME)
         .map(percent_decode)
         .unwrap_or_default();
-    run(&app, &state, &sessions, |c| c.import_pdf(bytes, &file_name))
+    run_blocking(&app, &state, &sessions, move |c| {
+        c.import_pdf(&bytes, &file_name)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -214,7 +250,7 @@ pub async fn sign_get_request(
     sessions: State<'_, SignSessions>,
     id: String,
 ) -> AppResult<RequestDetail> {
-    run(&app, &state, &sessions, |c| c.get_request(&id))
+    run_blocking(&app, &state, &sessions, move |c| c.get_request(&id)).await
 }
 
 #[tauri::command]
@@ -236,13 +272,14 @@ pub async fn sign_complete(
     sessions: State<'_, SignSessions>,
     request: Request<'_>,
 ) -> AppResult<RequestDetail> {
-    let bytes = raw_body(&request)?;
-    let request_id = required_header(&request, HEADER_REQUEST)?;
-    let token = required_header(&request, HEADER_TOKEN)?;
-    let base_hash = required_header(&request, HEADER_BASE_HASH)?;
-    run(&app, &state, &sessions, |c| {
-        c.complete(request_id, token, base_hash, bytes, clock::now())
+    let bytes = raw_body(&request)?.to_vec();
+    let request_id = required_header(&request, HEADER_REQUEST)?.to_owned();
+    let token = Zeroizing::new(required_header(&request, HEADER_TOKEN)?.to_owned());
+    let base_hash = required_header(&request, HEADER_BASE_HASH)?.to_owned();
+    run_blocking(&app, &state, &sessions, move |c| {
+        c.complete(&request_id, &token, &base_hash, &bytes, clock::now())
     })
+    .await
 }
 
 #[tauri::command]
@@ -262,7 +299,10 @@ pub async fn sign_export(
     sessions: State<'_, SignSessions>,
     id: String,
 ) -> AppResult<ExportResult> {
-    run(&app, &state, &sessions, |c| c.export(&id, clock::now()))
+    run_blocking(&app, &state, &sessions, move |c| {
+        c.export(&id, clock::now())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -272,8 +312,8 @@ pub async fn sign_verify_file(
     sessions: State<'_, SignSessions>,
     request: Request<'_>,
 ) -> AppResult<VerifyResult> {
-    let bytes = raw_body(&request)?;
-    run(&app, &state, &sessions, |c| c.verify_file(bytes))
+    let bytes = raw_body(&request)?.to_vec();
+    run_blocking(&app, &state, &sessions, move |c| c.verify_file(&bytes)).await
 }
 
 #[cfg(test)]

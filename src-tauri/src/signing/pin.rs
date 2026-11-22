@@ -349,6 +349,40 @@ pub fn lock_duration(failed: u32) -> Option<Duration> {
     })
 }
 
+/// Kunci waktu terlama yang masuk akal untuk `failed` kesalahan.
+fn max_lock(failed: u32) -> Duration {
+    lock_duration(failed).unwrap_or(Duration::minutes(60))
+}
+
+/// Kunci waktu bergantung jam laptop. Kalau jam dimundurkan, `locked_until`
+/// bisa jauh di depan dan pemilik terkunci sangat lama. Kalau sisa kunci
+/// lebih panjang dari lama kunci untuk `failed` kesalahan, sisa itu dibatasi
+/// menjadi `now + lama kunci`. Membalas `true` kalau ada yang dibatasi
+/// (pemanggil sebaiknya menyimpan nilai barunya, supaya kunci tetap habis
+/// walau jam tetap mundur).
+pub fn clamp_lock(attempts: &mut Attempts, now: OffsetDateTime) -> bool {
+    let limit = max_lock(attempts.failed);
+    match attempts.locked_until {
+        Some(until) if until - now > limit => {
+            attempts.locked_until = Some(now + limit);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Lama tunggu sampai `until` untuk pesan: "2 jam 5 menit", "3 jam", atau
+/// "15 menit" (dibulatkan ke atas, minimal 1 menit).
+pub fn wait_text(until: OffsetDateTime, now: OffsetDateTime) -> String {
+    let minutes = minutes_until(until, now);
+    let (hours, rest) = (minutes / 60, minutes % 60);
+    match (hours, rest) {
+        (0, m) => format!("{m} menit"),
+        (h, 0) => format!("{h} jam"),
+        (h, m) => format!("{h} jam {m} menit"),
+    }
+}
+
 /// Mencatat satu PIN salah pada waktu `now`.
 pub fn register_failure(attempts: Attempts, now: OffsetDateTime) -> Attempts {
     let failed = attempts.failed.saturating_add(1);
@@ -742,6 +776,46 @@ mod tests {
             }
         );
         assert_eq!(attempts_left(&reset()), 5);
+    }
+
+    #[test]
+    fn clamp_lock_limits_lock_after_clock_moved_back() {
+        let now = at(0);
+        // Kunci 1 menit tercatat, lalu jam dimundurkan 1 hari.
+        let mut a = fail_n(5, now + Duration::days(1));
+        assert!(clamp_lock(&mut a, now));
+        assert_eq!(a.locked_until, Some(now + Duration::minutes(1)));
+        // Nilai yang sudah dibatasi tidak berubah lagi.
+        assert!(!clamp_lock(&mut a, now));
+
+        // Kunci normal tidak disentuh.
+        let mut b = fail_n(10, now);
+        assert!(!clamp_lock(&mut b, now + Duration::seconds(30)));
+        assert_eq!(b.locked_until, Some(now + Duration::minutes(5)));
+
+        // Data tidak konsisten (bukan kelipatan 5) dibatasi 60 menit.
+        let mut c = Attempts {
+            failed: 3,
+            locked_until: Some(now + Duration::days(30)),
+        };
+        assert!(clamp_lock(&mut c, now));
+        assert_eq!(c.locked_until, Some(now + Duration::minutes(60)));
+
+        let mut none = Attempts::default();
+        assert!(!clamp_lock(&mut none, now));
+    }
+
+    #[test]
+    fn wait_text_hours_and_minutes() {
+        let now = at(0);
+        assert_eq!(wait_text(now + Duration::seconds(30), now), "1 menit");
+        assert_eq!(wait_text(now + Duration::minutes(59), now), "59 menit");
+        assert_eq!(wait_text(now + Duration::minutes(60), now), "1 jam");
+        assert_eq!(
+            wait_text(now + Duration::hours(23) + Duration::seconds(61), now),
+            "23 jam 2 menit"
+        );
+        assert_eq!(wait_text(now + Duration::hours(24), now), "24 jam");
     }
 
     #[test]

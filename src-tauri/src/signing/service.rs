@@ -12,7 +12,7 @@
 //! terbit token unlock (lihat `session`), sama dengan waktu di stempel.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use data_encoding::BASE64;
@@ -20,6 +20,7 @@ use rand_core::{OsRng, RngCore};
 use rusqlite::{Connection, TransactionBehavior};
 use serde::Serialize;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use zeroize::Zeroizing;
 
 use super::err;
@@ -27,12 +28,12 @@ use super::outbox::SignOutbox;
 use super::pin::{KdfParams, MAX_PNG_BYTES};
 use super::repo::{self, ExportRow, MemberRow, StoredEvent};
 use super::request::{
-    self, MyState, NewRequest, RequestStatus, Requester, SignMode, SignRequest, SignerInput,
-    SignerKind, SignerStatus,
+    self, MyState, NewRequest, RequestStatus, Requester, SignMode, SignRequest, Signer,
+    SignerInput, SignerKind, SignerStatus,
 };
 use super::seal::{self, EventKind, EventRecord, Integrity};
 use super::session::SignSessions;
-use super::store::{DocumentStore, MAX_PDF_BYTES};
+use super::store::{DocumentStore, MAX_PDF_BYTES, MAX_SIGNED_PDF_BYTES};
 use super::vault::{self, SavedSignatureInfo};
 use crate::clock;
 use crate::error::{AppError, AppResult};
@@ -147,12 +148,13 @@ pub struct RequestDetail {
     pub exports: Vec<ExportView>,
     pub is_last_pending: bool,
     pub doc_tag: String,
-    /// `None` kalau belum selesai; `true` kalau catatan `completed` terakhir
-    /// sah, hash-nya sama dengan versi terkini, dan file di penyimpanan utuh.
+    /// `None` kalau belum selesai; `true` kalau rantai jejak audit utuh
+    /// (lihat `seal_chain_valid`) dan file versi final di penyimpanan utuh.
     pub seal_valid: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// `Debug` manual: token dan gambar tanda tangan tidak pernah dicetak.
+#[derive(Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnlockResult {
     pub token: String,
@@ -160,6 +162,18 @@ pub struct UnlockResult {
     pub signed_at: String,
     pub width: u32,
     pub height: u32,
+}
+
+impl std::fmt::Debug for UnlockResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnlockResult")
+            .field("token", &"<disembunyikan>")
+            .field("png_base64_len", &self.png_base64.len())
+            .field("signed_at", &self.signed_at)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -281,13 +295,16 @@ fn request_not_found() -> AppError {
     )
 }
 
-/// Ukuran dan header PDF.
-fn check_pdf(bytes: &[u8], not_pdf: &str) -> AppResult<()> {
-    if bytes.len() > MAX_PDF_BYTES {
-        return Err(err(
-            "pdf_too_large",
-            "Ukuran PDF melebihi batas 50 MB. Perkecil berkasnya dulu, lalu coba lagi.",
-        ));
+const IMPORT_TOO_LARGE: &str =
+    "Ukuran PDF melebihi batas 50 MB. Perkecil berkasnya dulu, lalu coba lagi.";
+const SIGNED_TOO_LARGE: &str = "Ukuran PDF hasil tanda tangan melebihi batas 100 MB. Perkecil berkas aslinya dulu, misalnya kompres gambar di dalamnya, lalu buat permintaan baru.";
+const VERIFY_TOO_LARGE: &str =
+    "Ukuran PDF melebihi batas 100 MB, jadi tidak bisa diperiksa di Mira.";
+
+/// Ukuran (paling banyak `max` byte) dan header PDF.
+fn check_pdf(bytes: &[u8], max: usize, too_large: &str, not_pdf: &str) -> AppResult<()> {
+    if bytes.len() > max {
+        return Err(err("pdf_too_large", too_large));
     }
     if !seal::looks_like_pdf(bytes) {
         return Err(err("pdf_invalid", not_pdf));
@@ -303,11 +320,149 @@ fn blob_integrity(store: &dyn DocumentStore, hash: &str) -> Integrity {
     }
 }
 
-fn export_state(row: &ExportRow) -> Integrity {
-    match fs::read(&row.path) {
-        Ok(bytes) => seal::check_bytes(&row.hash, Some(&bytes)),
+/// Keadaan file di luar Mira dibanding `expected_hash`, tanpa memuat seluruh
+/// file ke memori: ukuran diperiksa dulu (lebih dari `MAX_SIGNED_PDF_BYTES`
+/// berarti `Changed` tanpa dibaca), lalu di-hash secara streaming. File yang
+/// tidak ada atau tidak bisa dibaca dianggap `Missing`.
+pub fn file_integrity(path: &Path, expected_hash: &str) -> Integrity {
+    let limit = MAX_SIGNED_PDF_BYTES as u64;
+    let Ok(meta) = fs::metadata(path) else {
+        return Integrity::Missing;
+    };
+    if !meta.is_file() {
+        return Integrity::Missing;
+    }
+    if meta.len() > limit {
+        return Integrity::Changed;
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return Integrity::Missing;
+    };
+    let mut hasher = blake3::Hasher::new();
+    // `take` menjaga kalau file membesar setelah `metadata`.
+    let mut reader = io::BufReader::with_capacity(64 * 1024, file).take(limit + 1);
+    match io::copy(&mut reader, &mut hasher) {
+        Ok(n) if n > limit => Integrity::Changed,
+        Ok(_) if hasher.finalize().to_hex().as_str() == expected_hash => Integrity::Intact,
+        Ok(_) => Integrity::Changed,
         Err(_) => Integrity::Missing,
     }
+}
+
+fn export_state(row: &ExportRow) -> Integrity {
+    file_integrity(Path::new(&row.path), &row.hash)
+}
+
+fn parse_at(s: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(s, &Rfc3339).ok()
+}
+
+/// Rantai jejak audit permintaan yang selesai utuh:
+///
+/// - ada catatan `created` sah dari `requested_by` dengan `hash_after` =
+///   versi asli;
+/// - setiap penanda tangan berstatus signed punya catatan `signed` sah dari
+///   kuncinya sendiri dengan `hash_after` = `hash_after` penanda tangan itu,
+///   dan semua penanda tangan sudah signed;
+/// - diurutkan menurut waktu, `hash_before` setiap catatan `signed` = hash
+///   versi sebelumnya (yang pertama = versi asli), dan versi terakhir =
+///   `current_hash`;
+/// - catatan `completed` terakhir sah, `hash_after`-nya = `current_hash`, dan
+///   pelakunya penanda tangan yang `hash_after`-nya versi final itu.
+///
+/// Jadi catatan dari kunci yang bukan penanda tangan, atau database yang
+/// diubah langsung, tidak cukup untuk membuat permintaan tampak terkunci sah.
+pub fn seal_chain_valid(req: &SignRequest, events: &[StoredEvent]) -> bool {
+    let final_hash = req.current_hash.as_str();
+    let created_ok = events.iter().any(|e| {
+        e.kind == EventKind::Created.as_str()
+            && e.actor == req.requested_by
+            && e.hash_after.as_deref() == Some(req.original_hash.as_str())
+            && e.is_valid()
+    });
+    if !created_ok {
+        return false;
+    }
+
+    let mut chain = Vec::with_capacity(req.signers.len());
+    for s in &req.signers {
+        let (SignerStatus::Signed, Some(after)) = (s.status, s.hash_after.as_deref()) else {
+            return false;
+        };
+        let Some(e) = events.iter().find(|e| {
+            e.kind == EventKind::Signed.as_str()
+                && e.actor == s.public_key
+                && e.hash_after.as_deref() == Some(after)
+                && e.is_valid()
+        }) else {
+            return false;
+        };
+        let Some(at) = parse_at(&e.at) else {
+            return false;
+        };
+        chain.push((at, e.id, e));
+    }
+    chain.sort_by_key(|(at, id, _)| (*at, *id));
+    let mut prev = req.original_hash.as_str();
+    for (_, _, e) in &chain {
+        if e.hash_before.as_deref() != Some(prev) {
+            return false;
+        }
+        prev = e.hash_after.as_deref().unwrap_or_default();
+    }
+    if prev != final_hash {
+        return false;
+    }
+
+    events
+        .iter()
+        .rev()
+        .find(|e| e.kind == EventKind::Completed.as_str())
+        .is_some_and(|done| {
+            done.hash_after.as_deref() == Some(final_hash)
+                && req.signers.iter().any(|s| {
+                    s.public_key == done.actor && s.hash_after.as_deref() == Some(final_hash)
+                })
+                && done.is_valid()
+        })
+}
+
+/// Penanda tangan yang sudah menandatangani sampai versi `file_hash`, urut
+/// waktu. Kosong untuk versi asli (atau hash yang tidak dikenal).
+fn signers_up_to<'a>(req: &'a SignRequest, file_hash: &str) -> Vec<&'a Signer> {
+    let mut signed: Vec<&Signer> = req
+        .signers
+        .iter()
+        .filter(|s| s.status == SignerStatus::Signed)
+        .collect();
+    signed.sort_by_key(|s| (s.signed_at.as_deref().and_then(parse_at), s.position));
+    match signed
+        .iter()
+        .position(|s| s.hash_after.as_deref() == Some(file_hash))
+    {
+        Some(i) => signed[..=i].to_vec(),
+        None => Vec::new(),
+    }
+}
+
+/// Menyisipkan `extra` (urut waktu) ke `events` menurut waktu, tanpa
+/// mengubah urutan `events` sendiri. Catatan dengan waktu sama: `events`
+/// lebih dulu.
+fn merge_by_time(events: Vec<StoredEvent>, extra: Vec<StoredEvent>) -> Vec<StoredEvent> {
+    let mut out = Vec::with_capacity(events.len() + extra.len());
+    let mut extra = extra.into_iter().peekable();
+    for e in events {
+        let at = parse_at(&e.at);
+        while extra.peek().is_some_and(|x| match (parse_at(&x.at), at) {
+            (Some(xa), Some(ea)) => xa < ea,
+            _ => false,
+        }) {
+            out.extend(extra.next());
+        }
+        out.push(e);
+    }
+    out.extend(extra);
+    out
 }
 
 /// Bagian nama file yang aman untuk Windows: tanpa `<>:"/\|?*`, karakter
@@ -427,15 +582,6 @@ fn summary(
     }
 }
 
-/// Catatan `completed` terakhir sah dan menunjuk `hash`.
-fn sealed_at(events: &[StoredEvent], hash: &str) -> bool {
-    events
-        .iter()
-        .rev()
-        .find(|e| e.kind == EventKind::Completed.as_str())
-        .is_some_and(|e| e.is_valid() && e.hash_after.as_deref() == Some(hash))
-}
-
 fn mode_label(mode: SignMode) -> &'static str {
     match mode {
         SignMode::Sequential => "berurutan",
@@ -502,13 +648,35 @@ impl SignContext<'_> {
         }
     }
 
+    /// Catatan `signature_saved` dan `signature_deleted` milik penanda tangan
+    /// `req` sejak permintaan dibuat, urut waktu. Catatan ini tidak terikat
+    /// permintaan (`request_id` kosong), tetapi ditampilkan supaya pengirim
+    /// tahu kalau tanda tangan seseorang dibuat ulang selama permintaan
+    /// berjalan.
+    fn signature_events_since_created(&self, req: &SignRequest) -> AppResult<Vec<StoredEvent>> {
+        let Some(since) = parse_at(&req.created_at) else {
+            return Ok(Vec::new());
+        };
+        let mut extra = Vec::new();
+        for s in &req.signers {
+            extra.extend(
+                repo::signature_events_of(self.db(), &s.public_key)?
+                    .into_iter()
+                    .filter(|e| parse_at(&e.at).is_some_and(|at| at >= since)),
+            );
+        }
+        extra.sort_by_key(|e| (parse_at(&e.at), e.id));
+        Ok(extra)
+    }
+
     fn detail(&self, req: &SignRequest) -> AppResult<RequestDetail> {
         let me = self.me();
         let integrity = blob_integrity(self.store, &req.current_hash);
         let exports = self.export_views(&req.id)?;
         let events = repo::events_for(self.db(), &req.id)?;
         let seal_valid = (req.status == RequestStatus::Completed)
-            .then(|| integrity == Integrity::Intact && sealed_at(&events, &req.current_hash));
+            .then(|| integrity == Integrity::Intact && seal_chain_valid(req, &events));
+        let events = merge_by_time(events, self.signature_events_since_created(req)?);
         let signers = req
             .signers
             .iter()
@@ -558,8 +726,9 @@ impl SignContext<'_> {
     // Alur.
     // -----------------------------------------------------------------------
 
-    /// Ringkasan layar Tanda tangan.
-    pub fn overview(&self) -> AppResult<SignOverview> {
+    /// Ringkasan layar Tanda tangan. `now` dipakai untuk membatasi kunci
+    /// waktu PIN yang terlalu panjang karena jam laptop dimundurkan.
+    pub fn overview(&self, now: OffsetDateTime) -> AppResult<SignOverview> {
         let me = self.me();
         let (org_id, row) = self.membership()?;
         let kind = row
@@ -581,7 +750,7 @@ impl SignContext<'_> {
             requests.push(summary(&req, me, integrity, &exports));
         }
         Ok(SignOverview {
-            saved: vault::status(self.db(), me)?,
+            saved: vault::status(self.db(), me, now)?,
             requests,
             can_request,
             me: Me {
@@ -599,6 +768,7 @@ impl SignContext<'_> {
         png_base64: &str,
         now: OffsetDateTime,
     ) -> AppResult<SavedSignatureInfo> {
+        self.ensure_not_removed()?;
         let encoded = png_base64.trim();
         if encoded.len() > MAX_PNG_BASE64_LEN {
             return Err(err(
@@ -616,11 +786,15 @@ impl SignContext<'_> {
         let at = now_str(now);
         let tx = self.conn.transaction()?;
         let info = vault::save(&tx, identity, pin, &png, now, &self.kdf)?;
+        let mut detail = format!("{}x{} piksel", info.width, info.height);
+        if info.usable_after.is_some() {
+            detail.push_str(", masa tunggu 24 jam karena tanda tangan lama dihapus tanpa PIN");
+        }
         store_event(
             identity,
             &tx,
             &EventRecord {
-                detail: format!("{}x{} piksel", info.width, info.height),
+                detail,
                 ..new_event(identity, None, EventKind::SignatureSaved, &at)
             },
         )?;
@@ -628,26 +802,43 @@ impl SignContext<'_> {
         Ok(info)
     }
 
-    /// Menghapus tanda tangan tersimpan (tanpa PIN). Tidak ada yang dihapus
-    /// juga dianggap berhasil.
-    pub fn delete_signature(&mut self, now: OffsetDateTime) -> AppResult<()> {
+    /// Menghapus tanda tangan tersimpan. Dengan `pin`: PIN diperiksa seperti
+    /// `unlock` dan tanda tangan baru bisa langsung dipakai. Tanpa PIN (lupa
+    /// PIN): tanda tangan baru baru bisa dipakai 24 jam setelah penghapusan
+    /// (lihat `vault`). Tidak ada yang dihapus juga dianggap berhasil.
+    pub fn delete_signature(&mut self, pin: Option<&str>, now: OffsetDateTime) -> AppResult<()> {
+        self.ensure_not_removed()?;
         let identity = self.identity;
         let at = now_str(now);
-        let tx = self.conn.transaction()?;
-        if vault::delete(&tx, identity.public_key_hex())? {
-            store_event(
-                identity,
-                &tx,
-                &new_event(identity, None, EventKind::SignatureDeleted, &at),
-            )?;
+        let event = |detail: &str| EventRecord {
+            detail: detail.to_owned(),
+            ..new_event(identity, None, EventKind::SignatureDeleted, &at)
+        };
+        match pin {
+            Some(pin) => {
+                vault::delete_with_pin(self.conn, identity, pin, now, |tx| {
+                    store_event(identity, tx, &event("dengan PIN"))
+                })?;
+            }
+            None => {
+                let tx = self.conn.transaction()?;
+                if vault::delete_forgot_pin(&tx, identity.public_key_hex(), now)? {
+                    store_event(
+                        identity,
+                        &tx,
+                        &event("tanpa PIN (lupa PIN), masa tunggu 24 jam"),
+                    )?;
+                }
+                tx.commit()?;
+            }
         }
-        tx.commit()?;
         Ok(())
     }
 
     /// Membuka gambar tanda tangan dengan PIN dan menerbitkan token sekali
     /// pakai untuk `complete`.
     pub fn unlock(&mut self, pin: &str, now: OffsetDateTime) -> AppResult<UnlockResult> {
+        self.ensure_not_removed()?;
         let unlocked = vault::unlock(self.conn, self.identity, pin, now)?;
         let (token, signed_at) = self.sessions.issue(self.identity.public_key_hex(), now);
         Ok(UnlockResult {
@@ -689,6 +880,8 @@ impl SignContext<'_> {
     pub fn import_pdf(&self, bytes: &[u8], file_name: &str) -> AppResult<ImportedPdf> {
         check_pdf(
             bytes,
+            MAX_PDF_BYTES,
+            IMPORT_TOO_LARGE,
             "File yang dipilih bukan PDF yang valid. Pilih file PDF lain.",
         )?;
         let file_hash = self.store.put(bytes)?;
@@ -857,7 +1050,10 @@ impl SignContext<'_> {
     ///
     /// `token` dari `unlock` (sekali pakai; waktu terbitnya menjadi waktu
     /// tanda tangan resmi), `base_hash` = versi yang distempel (harus versi
-    /// terkini), `bytes` = PDF hasil stempel yang memuat `mira-doc:<id>`.
+    /// terkini, dan file-nya di penyimpanan masih utuh), `bytes` = PDF hasil
+    /// stempel (paling besar `MAX_SIGNED_PDF_BYTES`) yang memuat
+    /// `mira-doc:<id>` di mana saja (penanda lama dari ekspor sebelumnya
+    /// boleh ada di depannya).
     pub fn complete(
         &mut self,
         request_id: &str,
@@ -879,13 +1075,30 @@ impl SignContext<'_> {
         }
         check_pdf(
             bytes,
+            MAX_SIGNED_PDF_BYTES,
+            SIGNED_TOO_LARGE,
             "File hasil tanda tangan bukan PDF yang valid. Ulangi tanda tangan dari layar Mira.",
         )?;
-        if seal::find_mira_doc_id(bytes).as_deref() != Some(req.id.as_str()) {
+        if !seal::contains_doc_tag(bytes, &req.id) {
             return Err(err(
                 "tag_missing",
                 "File hasil tanda tangan tidak memuat penanda dokumen Mira untuk permintaan ini. Ulangi tanda tangan dari layar Mira.",
             ));
+        }
+        match blob_integrity(self.store, &req.current_hash) {
+            Integrity::Intact => {}
+            Integrity::Changed => {
+                return Err(err(
+                    "pdf_invalid",
+                    "File versi sebelumnya di penyimpanan Mira sudah berubah sejak dicatat, jadi tanda tangan tidak bisa disimpan di atasnya. Minta pengirim atau penanda tangan sebelumnya mengirim ulang filenya.",
+                ));
+            }
+            Integrity::Missing => {
+                return Err(err(
+                    "pdf_invalid",
+                    "File versi sebelumnya tidak ditemukan di penyimpanan Mira, jadi tanda tangan tidak bisa disimpan di atasnya. Minta pengirim atau penanda tangan sebelumnya mengirim ulang filenya.",
+                ));
+            }
         }
         if seal::hash_hex(bytes) == req.current_hash {
             return Err(err(
@@ -936,6 +1149,7 @@ impl SignContext<'_> {
 
     /// Pengirim membatalkan permintaan yang masih berjalan.
     pub fn cancel(&mut self, id: &str, now: OffsetDateTime) -> AppResult<RequestDetail> {
+        self.ensure_not_removed()?;
         let mut req = self.load(id)?;
         let at = now_str(now);
         req.cancel(self.me(), &at)?;
@@ -1000,17 +1214,27 @@ impl SignContext<'_> {
         Ok(ExportResult { path: path_text })
     }
 
-    /// Mencocokkan file dari mana saja dengan yang tercatat di Mira.
+    /// Mencocokkan file dari mana saja (paling besar `MAX_SIGNED_PDF_BYTES`)
+    /// dengan yang tercatat di Mira.
     ///
-    /// `match_final` hanya kalau permintaan selesai, hash sama dengan versi
-    /// final, dan catatan `completed` yang menunjuk hash itu sah (jadi
-    /// mengubah `current_hash` langsung di database tidak cukup).
+    /// - `match_final`: permintaan selesai, hash sama dengan versi final, dan
+    ///   rantai jejak audit utuh (`seal_chain_valid`: catatan `created`,
+    ///   setiap `signed` dari kunci penanda tangannya sendiri dan bersambung
+    ///   dari versi asli sampai versi final, lalu `completed` dari penanda
+    ///   tangan terakhir). Mengubah `current_hash` atau status langsung di
+    ///   database, atau menambah catatan dari kunci lain, tidak cukup.
+    /// - `match_version`: hash sama dengan salah satu versi tercatat.
+    ///   `signers` hanya berisi yang sudah menandatangani sampai versi itu
+    ///   (urut waktu) dan `completed_at` kosong.
+    /// - `changed`: hash tidak dikenal, tetapi file memuat penanda
+    ///   `mira-doc:<id>` permintaan yang dikenal. Semua penanda yang valid
+    ///   dicocokkan (file yang disimpan ulang aplikasi lain bisa membawa
+    ///   penanda lama di depan); kalau lebih dari satu dikenal, dipilih yang
+    ///   terakhir berubah.
+    /// - `unknown`: selain itu.
     pub fn verify_file(&self, bytes: &[u8]) -> AppResult<VerifyResult> {
-        if bytes.len() > MAX_PDF_BYTES {
-            return Err(err(
-                "pdf_too_large",
-                "Ukuran PDF melebihi batas 50 MB. Perkecil berkasnya dulu, lalu coba lagi.",
-            ));
+        if bytes.len() > MAX_SIGNED_PDF_BYTES {
+            return Err(err("pdf_too_large", VERIFY_TOO_LARGE));
         }
         let file_hash = seal::hash_hex(bytes);
         let mut matches = Vec::new();
@@ -1024,44 +1248,74 @@ impl SignContext<'_> {
         for req in &matches {
             if req.status == RequestStatus::Completed
                 && req.current_hash == file_hash
-                && sealed_at(&repo::events_for(self.db(), &req.id)?, &file_hash)
+                && seal_chain_valid(req, &repo::events_for(self.db(), &req.id)?)
             {
-                return Ok(verify_result(VerifyState::MatchFinal, file_hash, Some(req)));
+                let signers = req.signers.iter().collect();
+                return Ok(verify_result(
+                    VerifyState::MatchFinal,
+                    file_hash,
+                    Some(req),
+                    req.completed_at.clone(),
+                    signers,
+                ));
             }
         }
         if let Some(req) = matches.first() {
+            let signers = signers_up_to(req, &file_hash);
             return Ok(verify_result(
                 VerifyState::MatchVersion,
                 file_hash,
                 Some(req),
+                None,
+                signers,
             ));
         }
-        if let Some(id) = seal::find_mira_doc_id(bytes)
-            && let Some(req) = repo::load_request(self.db(), &id)?
-        {
-            return Ok(verify_result(VerifyState::Changed, file_hash, Some(&req)));
+        let mut tagged = Vec::new();
+        for id in seal::find_all_mira_doc_ids(bytes) {
+            if let Some(req) = repo::load_request(self.db(), &id)? {
+                tagged.push(req);
+            }
         }
-        Ok(verify_result(VerifyState::Unknown, file_hash, None))
+        tagged.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        if let Some(req) = tagged.first() {
+            let signers = req.signers.iter().collect();
+            return Ok(verify_result(
+                VerifyState::Changed,
+                file_hash,
+                Some(req),
+                req.completed_at.clone(),
+                signers,
+            ));
+        }
+        Ok(verify_result(
+            VerifyState::Unknown,
+            file_hash,
+            None,
+            None,
+            Vec::new(),
+        ))
     }
 }
 
-fn verify_result(state: VerifyState, file_hash: String, req: Option<&SignRequest>) -> VerifyResult {
+fn verify_result(
+    state: VerifyState,
+    file_hash: String,
+    req: Option<&SignRequest>,
+    completed_at: Option<String>,
+    signers: Vec<&Signer>,
+) -> VerifyResult {
     VerifyResult {
         state,
         file_hash,
         request_id: req.map(|r| r.id.clone()),
         title: req.map(|r| r.title.clone()),
-        completed_at: req.and_then(|r| r.completed_at.clone()),
-        signers: req
-            .map(|r| {
-                r.signers
-                    .iter()
-                    .map(|s| VerifySigner {
-                        display_name: s.display_name.clone(),
-                        signed_at: s.signed_at.clone(),
-                    })
-                    .collect()
+        completed_at,
+        signers: signers
+            .into_iter()
+            .map(|s| VerifySigner {
+                display_name: s.display_name.clone(),
+                signed_at: s.signed_at.clone(),
             })
-            .unwrap_or_default(),
+            .collect(),
     }
 }

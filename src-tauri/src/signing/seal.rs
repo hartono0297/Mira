@@ -13,7 +13,9 @@
 //!   32 hex, hash kalau ada harus 64 hex, jadi `Some("")` tidak bisa
 //!   menghasilkan byte yang sama dengan `None`.
 //! - Penanda berkas Mira: kata kunci `mira-doc:<id 32 hex>` di metadata PDF,
-//!   dicari dengan memindai byte (`find_mira_doc_id`).
+//!   dicari dengan memindai byte (`contains_doc_tag`, `find_all_mira_doc_ids`,
+//!   `find_mira_doc_id`). Satu berkas bisa membawa lebih dari satu penanda
+//!   (penanda lama dari ekspor sebelumnya yang disimpan ulang aplikasi lain).
 
 use serde::{Deserialize, Serialize};
 
@@ -192,30 +194,74 @@ fn is_lower_hex_byte(b: u8) -> bool {
     matches!(b, b'0'..=b'9' | b'a'..=b'f')
 }
 
-/// Id permintaan pertama dari penanda `mira-doc:` yang diikuti tepat 32 hex
-/// huruf kecil (byte sesudahnya bukan hex). Memindai byte tanpa menyalin
-/// berkas, cukup cepat untuk PDF 50 MB.
-pub fn find_mira_doc_id(bytes: &[u8]) -> Option<String> {
+/// Batas jumlah id berbeda yang dikumpulkan `find_all_mira_doc_ids`, supaya
+/// file yang sengaja diisi ribuan penanda tidak memicu ribuan pencarian.
+pub const MAX_DOC_IDS: usize = 64;
+
+/// Semua id (sebagai byte) dari penanda `mira-doc:` yang diikuti tepat 32
+/// hex huruf kecil (byte sesudahnya bukan hex), urut kemunculan. Memindai
+/// byte tanpa menyalin berkas, cukup cepat untuk PDF 100 MB.
+fn doc_ids(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
     let prefix = MIRA_DOC_TAG_PREFIX.as_bytes();
     let needed = prefix.len() + REQUEST_ID_HEX_LEN;
     let mut start = 0;
-    while bytes.len().saturating_sub(start) >= needed {
-        let i = start + bytes[start..].iter().position(|&b| b == prefix[0])?;
-        let id_start = i + prefix.len();
-        let id_end = id_start + REQUEST_ID_HEX_LEN;
-        if id_end <= bytes.len()
-            && bytes[i..id_start] == *prefix
-            && bytes[id_start..id_end]
-                .iter()
-                .all(|&b| is_lower_hex_byte(b))
-            && bytes.get(id_end).is_none_or(|b| !b.is_ascii_hexdigit())
-        {
-            // Semua byte ASCII hex, jadi konversi ini tidak pernah gagal.
-            return Some(String::from_utf8_lossy(&bytes[id_start..id_end]).into_owned());
+    std::iter::from_fn(move || {
+        while bytes.len().saturating_sub(start) >= needed {
+            let i = start + bytes[start..].iter().position(|&b| b == prefix[0])?;
+            start = i + 1;
+            let id_start = i + prefix.len();
+            let id_end = id_start + REQUEST_ID_HEX_LEN;
+            if id_end <= bytes.len()
+                && bytes[i..id_start] == *prefix
+                && bytes[id_start..id_end]
+                    .iter()
+                    .all(|&b| is_lower_hex_byte(b))
+                && bytes.get(id_end).is_none_or(|b| !b.is_ascii_hexdigit())
+            {
+                return Some(&bytes[id_start..id_end]);
+            }
         }
-        start = i + 1;
+        None
+    })
+}
+
+fn id_string(id: &[u8]) -> String {
+    // Semua byte ASCII hex, jadi konversi ini tidak pernah gagal.
+    String::from_utf8_lossy(id).into_owned()
+}
+
+/// Id permintaan dari penanda `mira-doc:` valid yang pertama.
+///
+/// Hati-hati: PDF yang pernah diekspor lalu disimpan ulang di aplikasi lain
+/// bisa membawa penanda lama di depan penanda baru. Untuk memastikan file
+/// memuat penanda permintaan tertentu, pakai `contains_doc_tag`; untuk
+/// mencocokkan file dengan permintaan yang dikenal, pakai
+/// `find_all_mira_doc_ids`.
+pub fn find_mira_doc_id(bytes: &[u8]) -> Option<String> {
+    doc_ids(bytes).next().map(id_string)
+}
+
+/// Semua id berbeda dari penanda `mira-doc:` yang valid, urut kemunculan
+/// pertama, paling banyak `MAX_DOC_IDS`.
+pub fn find_all_mira_doc_ids(bytes: &[u8]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in doc_ids(bytes) {
+        if out.len() >= MAX_DOC_IDS {
+            break;
+        }
+        let id = id_string(id);
+        if !out.contains(&id) {
+            out.push(id);
+        }
     }
-    None
+    out
+}
+
+/// Benar kalau penanda `mira-doc:<request_id>` yang valid ada di mana saja
+/// dalam berkas (tidak harus yang pertama).
+pub fn contains_doc_tag(bytes: &[u8], request_id: &str) -> bool {
+    let want = request_id.as_bytes();
+    doc_ids(bytes).any(|id| id == want)
 }
 
 /// Benar kalau `%PDF-` muncul di 1024 byte pertama.
@@ -467,6 +513,47 @@ mod tests {
         binary.extend_from_slice(tag.as_bytes());
         binary.push(0xe2);
         assert_eq!(find_mira_doc_id(&binary), Some(ID.into()));
+    }
+
+    #[test]
+    fn all_ids_and_contains_tag_see_every_valid_tag() {
+        let old = "f".repeat(32);
+        // Penanda lama dari ekspor sebelumnya, lalu penanda baru.
+        let resaved = format!(
+            "%PDF-1.7 <x:Keywords>{}</x:Keywords> mira-doc:{} /Keywords ({}) {}",
+            doc_tag(&old),
+            &ID[..31],
+            doc_tag(ID),
+            doc_tag(&old)
+        );
+        let bytes = resaved.as_bytes();
+        assert_eq!(find_mira_doc_id(bytes), Some(old.clone()));
+        assert_eq!(find_all_mira_doc_ids(bytes), vec![old.clone(), ID.into()]);
+        assert!(contains_doc_tag(bytes, ID));
+        assert!(contains_doc_tag(bytes, &old));
+        assert!(!contains_doc_tag(bytes, &"e".repeat(32)));
+        // Id yang terpotong atau kepanjangan tidak dihitung.
+        assert!(!contains_doc_tag(bytes, &ID[..31]));
+        let longer = format!("({}0)", doc_tag(ID));
+        assert!(!contains_doc_tag(longer.as_bytes(), ID));
+        assert!(find_all_mira_doc_ids(longer.as_bytes()).is_empty());
+        assert!(find_all_mira_doc_ids(b"").is_empty());
+
+        // Penanda yang tumpang tindih: "mira-doc:mira-doc:<id>".
+        let overlap = format!("mira-doc:{}", doc_tag(ID));
+        assert!(contains_doc_tag(overlap.as_bytes(), ID));
+    }
+
+    #[test]
+    fn all_ids_is_capped() {
+        let mut many = String::new();
+        for i in 0..(MAX_DOC_IDS + 10) {
+            many.push_str(&doc_tag(&format!("{i:032x}")));
+            many.push(' ');
+        }
+        let ids = find_all_mira_doc_ids(many.as_bytes());
+        assert_eq!(ids.len(), MAX_DOC_IDS);
+        assert_eq!(ids[0], format!("{:032x}", 0));
     }
 
     #[test]

@@ -16,8 +16,13 @@ use super::err;
 use super::seal::{hash_hex, is_hash_hex};
 use crate::error::{AppError, AppResult};
 
-/// Batas ukuran satu berkas PDF: 50 MB.
+/// Batas ukuran PDF yang diimpor (dibuka untuk permintaan baru): 50 MB.
 pub const MAX_PDF_BYTES: usize = 50 * 1024 * 1024;
+
+/// Batas ukuran PDF versi bertanda tangan: 100 MB. pdf-lib menyimpan ulang
+/// tanpa object stream, jadi hasil stempel bisa sekitar dua kali berkas
+/// asli. Ini juga batas penyimpanan (`put`) dan batas file yang diperiksa.
+pub const MAX_SIGNED_PDF_BYTES: usize = 100 * 1024 * 1024;
 
 /// Penyimpanan berkas PDF yang dialamatkan dengan hash BLAKE3 (64 hex).
 ///
@@ -42,10 +47,10 @@ pub trait DocumentStore: Send + Sync {
 }
 
 fn check_size(bytes: &[u8]) -> AppResult<()> {
-    if bytes.len() > MAX_PDF_BYTES {
+    if bytes.len() > MAX_SIGNED_PDF_BYTES {
         return Err(err(
             "pdf_too_large",
-            "Ukuran PDF melebihi batas 50 MB. Perkecil berkasnya dulu, lalu coba lagi.",
+            "Ukuran PDF melebihi batas 100 MB. Perkecil berkasnya dulu, lalu coba lagi.",
         ));
     }
     Ok(())
@@ -304,7 +309,7 @@ mod tests {
 
     #[test]
     fn put_rejects_too_large() {
-        let big = vec![0u8; MAX_PDF_BYTES + 1];
+        let big = vec![0u8; MAX_SIGNED_PDF_BYTES + 1];
         let (_tmp, folder) = folder();
         assert_eq!(folder.put(&big).unwrap_err().code(), "pdf_too_large");
         assert_eq!(

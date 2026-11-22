@@ -16,6 +16,16 @@
 //! - `schema`: SQL migrasi tanda tangan.
 //!
 //! Rencana dan kontrak perintah: `docs/plans/tahap-5-lokal.md`.
+//!
+//! Kode error tanda tangan (`AppError::Signing`): `pin_invalid`, `pin_wrong`,
+//! `pin_locked`, `pin_mismatch` (frontend saja), `signature_missing`,
+//! `signature_exists`, `signature_cooling` (tanda tangan dibuat dalam 24 jam
+//! setelah tanda tangan lama dihapus tanpa PIN, lihat `vault`),
+//! `image_invalid`, `pdf_invalid`, `pdf_too_large`, `request_invalid`,
+//! `guest_cannot_request`, `not_a_signer`, `not_your_turn`, `already_signed`,
+//! `request_closed`, `not_requester`, `session_expired`, `version_conflict`,
+//! `tag_missing`, `export_failed`. Error lama yang dipakai ulang: `not_found`,
+//! `removed`, `database`, `internal`.
 
 pub mod commands;
 pub mod outbox;

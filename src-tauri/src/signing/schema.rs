@@ -3,6 +3,10 @@
 //!
 //! Kunci publik, hash, dan tanda tangan disimpan sebagai hex huruf kecil.
 //! Waktu dalam RFC 3339 UTC.
+//!
+//! `sign_pin_resets` mencatat kapan tanda tangan terakhir dihapus tanpa PIN
+//! (jalur lupa PIN), per pemilik. Tanda tangan yang dibuat dalam 24 jam
+//! sesudahnya mendapat `sign_saved_signature.usable_after` (lihat `vault`).
 
 pub const SIGNING_SCHEMA: &str = r#"
 CREATE TABLE sign_saved_signature (
@@ -15,7 +19,13 @@ CREATE TABLE sign_saved_signature (
     height          INTEGER NOT NULL CHECK (height > 0),
     created_at      TEXT NOT NULL,
     failed_attempts INTEGER NOT NULL DEFAULT 0 CHECK (failed_attempts >= 0),
-    locked_until    TEXT
+    locked_until    TEXT,
+    usable_after    TEXT
+) STRICT;
+
+CREATE TABLE sign_pin_resets (
+    owner    TEXT PRIMARY KEY CHECK (length(owner) = 64),
+    reset_at TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE sign_requests (

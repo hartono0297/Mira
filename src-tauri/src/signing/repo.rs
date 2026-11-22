@@ -245,27 +245,52 @@ pub fn insert_event(conn: &Connection, rec: &EventRecord, sig: &str) -> AppResul
     Ok(conn.last_insert_rowid())
 }
 
+fn stored_event(r: &Row<'_>) -> rusqlite::Result<StoredEvent> {
+    Ok(StoredEvent {
+        id: r.get(0)?,
+        request_id: r.get(1)?,
+        kind: r.get(2)?,
+        actor: r.get(3)?,
+        actor_name: r.get(4)?,
+        at: r.get(5)?,
+        hash_before: r.get(6)?,
+        hash_after: r.get(7)?,
+        detail: r.get(8)?,
+        sig: r.get(9)?,
+    })
+}
+
+const EVENT_COLUMNS: &str =
+    "id, request_id, kind, actor, actor_name, at, hash_before, hash_after, detail, sig";
+
 /// Catatan jejak audit satu permintaan, urut waktu dicatat.
 pub fn events_for(conn: &Connection, request_id: &str) -> AppResult<Vec<StoredEvent>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, request_id, kind, actor, actor_name, at, hash_before, hash_after, detail, sig
-         FROM sign_events WHERE request_id = ?1 ORDER BY id",
-    )?;
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {EVENT_COLUMNS} FROM sign_events WHERE request_id = ?1 ORDER BY id"
+    ))?;
     let events = stmt
-        .query_map(params![request_id], |r| {
-            Ok(StoredEvent {
-                id: r.get(0)?,
-                request_id: r.get(1)?,
-                kind: r.get(2)?,
-                actor: r.get(3)?,
-                actor_name: r.get(4)?,
-                at: r.get(5)?,
-                hash_before: r.get(6)?,
-                hash_after: r.get(7)?,
-                detail: r.get(8)?,
-                sig: r.get(9)?,
-            })
-        })?
+        .query_map(params![request_id], stored_event)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(events)
+}
+
+/// Catatan `signature_saved` dan `signature_deleted` milik `actor` (tanpa
+/// permintaan), urut waktu dicatat.
+pub fn signature_events_of(conn: &Connection, actor: &str) -> AppResult<Vec<StoredEvent>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {EVENT_COLUMNS} FROM sign_events
+         WHERE request_id IS NULL AND actor = ?1 AND kind IN (?2, ?3)
+         ORDER BY id"
+    ))?;
+    let events = stmt
+        .query_map(
+            params![
+                actor,
+                EventKind::SignatureSaved.as_str(),
+                EventKind::SignatureDeleted.as_str()
+            ],
+            stored_event,
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(events)
 }

@@ -2,11 +2,36 @@
 //! `owner` (kunci publik laptop). Gambar PNG terenkripsi dengan kunci turunan
 //! PIN (lihat `pin`); lebar dan tinggi disimpan tanpa enkripsi supaya kotak
 //! tanda tangan bisa ditempatkan sebelum PIN diminta.
+//!
+//! Menghapus tanda tangan punya dua jalur:
+//!
+//! - Dengan PIN (`delete_with_pin`): PIN diperiksa seperti `unlock` (ikut
+//!   batas percobaan, pesan sama). Tanda tangan baru bisa langsung dipakai.
+//! - Tanpa PIN (`delete_forgot_pin`, jalur lupa PIN): waktu penghapusan
+//!   dicatat di `sign_pin_resets`. Tanda tangan yang dibuat dalam 24 jam
+//!   sesudahnya mendapat `usable_after` = waktu hapus + 24 jam dan baru bisa
+//!   dibuka mulai saat itu (`signature_cooling`).
+//!
+//! Masa tunggu menutup celah "hapus lalu buat ulang": rekan di laptop yang
+//! tidak terkunci bisa menghapus tanda tangan pemilik dan membuat yang baru
+//! dengan PIN-nya sendiri, tetapi baru bisa memakainya 24 jam kemudian, dan
+//! pemilik melihat `usableAfter` di layarnya serta catatan
+//! `signature_deleted` di jejak audit setiap permintaan yang berjalan.
+//!
+//! Catatan reset TIDAK dihapus oleh penghapusan berikutnya yang memakai PIN.
+//! Kalau dihapus, celah bisa diakali: hapus tanpa PIN, buat tanda tangan
+//! baru dengan PIN sendiri, hapus lagi dengan PIN itu, lalu buat lagi tanpa
+//! masa tunggu. Jadi masa tunggu tetap berlaku sampai habis, siapa pun yang
+//! menghapus sesudahnya. Hapus tanpa PIN lagi selama masa tunggu memulai
+//! masa tunggu dari awal.
+//!
+//! Waktu memakai jam laptop. Jam yang dimundurkan memperpanjang masa tunggu
+//! (arah yang aman); memajukan jam Windows butuh hak admin.
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::{Duration, OffsetDateTime};
 use zeroize::Zeroizing;
 
 use super::err;
@@ -14,6 +39,9 @@ use super::pin::{self, Attempts, KdfParams, SealedImage};
 use crate::clock;
 use crate::error::{AppError, AppResult};
 use crate::identity::Identity;
+
+/// Masa tunggu tanda tangan baru setelah tanda tangan lama dihapus tanpa PIN.
+pub const RESET_COOLDOWN: Duration = Duration::hours(24);
 
 /// Yang dilihat frontend tentang tanda tangan tersimpan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -25,6 +53,11 @@ pub struct SavedSignatureInfo {
     pub failed_attempts: u32,
     pub locked_until: Option<String>,
     pub attempts_left: u32,
+    /// Diisi kalau tanda tangan dibuat dalam 24 jam setelah tanda tangan lama
+    /// dihapus tanpa PIN: baru bisa dipakai mulai waktu ini. Dibalas apa
+    /// adanya (juga setelah lewat); frontend membandingkan dengan jam
+    /// sekarang.
+    pub usable_after: Option<String>,
 }
 
 /// Gambar tanda tangan yang sudah dibuka dengan PIN.
@@ -90,12 +123,16 @@ fn write_attempts(conn: &Connection, owner: &str, attempts: &Attempts) -> AppRes
 }
 
 /// Info tanda tangan tersimpan milik `owner`, atau `None` kalau belum ada.
-/// `locked_until` dibalas apa adanya; frontend membandingkan dengan jam
-/// sekarang.
-pub fn status(conn: &Connection, owner: &str) -> AppResult<Option<SavedSignatureInfo>> {
+/// `locked_until` dibatasi seperti `pin::clamp_lock` pada waktu `now` (hanya
+/// di hasil; nilai di database dibatasi saat PIN diperiksa).
+pub fn status(
+    conn: &Connection,
+    owner: &str,
+    now: OffsetDateTime,
+) -> AppResult<Option<SavedSignatureInfo>> {
     let row = conn
         .query_row(
-            "SELECT width, height, created_at, failed_attempts, locked_until
+            "SELECT width, height, created_at, failed_attempts, locked_until, usable_after
              FROM sign_saved_signature WHERE owner = ?1",
             params![owner],
             |r| {
@@ -105,14 +142,17 @@ pub fn status(conn: &Connection, owner: &str) -> AppResult<Option<SavedSignature
                     r.get::<_, String>(2)?,
                     r.get::<_, i64>(3)?,
                     r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()?;
-    let Some((width, height, created_at, failed, locked_until)) = row else {
+    let Some((width, height, created_at, failed, locked_until, usable_after)) = row else {
         return Ok(None);
     };
-    let attempts = attempts_from_row(failed, locked_until.as_deref())?;
+    let mut attempts = attempts_from_row(failed, locked_until.as_deref())?;
+    pin::clamp_lock(&mut attempts, now);
+    let usable_after = usable_after.as_deref().map(parse_time).transpose()?;
     Ok(Some(SavedSignatureInfo {
         width: to_u32(width)?,
         height: to_u32(height)?,
@@ -120,7 +160,36 @@ pub fn status(conn: &Connection, owner: &str) -> AppResult<Option<SavedSignature
         failed_attempts: attempts.failed,
         locked_until: attempts.locked_until.map(clock::format_rfc3339),
         attempts_left: pin::attempts_left(&attempts),
+        usable_after: usable_after.map(clock::format_rfc3339),
     }))
+}
+
+/// Waktu terakhir tanda tangan `owner` dihapus tanpa PIN, kalau pernah.
+pub fn last_reset(conn: &Connection, owner: &str) -> AppResult<Option<OffsetDateTime>> {
+    let at = conn
+        .query_row(
+            "SELECT reset_at FROM sign_pin_resets WHERE owner = ?1",
+            params![owner],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?;
+    at.as_deref().map(parse_time).transpose()
+}
+
+/// Mencatat hapus tanpa PIN pada `now`. Kalau catatan lama lebih baru (jam
+/// pernah dimundurkan), catatan lama dipertahankan supaya masa tunggu tidak
+/// bisa dipendekkan.
+fn record_reset(conn: &Connection, owner: &str, now: OffsetDateTime) -> AppResult<()> {
+    let at = match last_reset(conn, owner)? {
+        Some(prev) if prev > now => prev,
+        _ => now,
+    };
+    conn.execute(
+        "INSERT INTO sign_pin_resets (owner, reset_at) VALUES (?1, ?2)
+         ON CONFLICT (owner) DO UPDATE SET reset_at = excluded.reset_at",
+        params![owner, clock::format_rfc3339(at)],
+    )?;
+    Ok(())
 }
 
 fn exists_error() -> AppError {
@@ -131,6 +200,8 @@ fn exists_error() -> AppError {
 }
 
 /// Menyimpan tanda tangan baru milik laptop ini, dienkripsi dengan PIN.
+/// Kalau tanda tangan lama dihapus tanpa PIN kurang dari 24 jam lalu, yang
+/// baru mendapat `usable_after` = waktu hapus + 24 jam.
 pub fn save(
     conn: &Connection,
     identity: &Identity,
@@ -144,9 +215,12 @@ pub fn save(
     let owner = identity.public_key_hex();
     // Periksa dulu supaya Argon2 tidak dijalankan sia-sia; `ON CONFLICT` di
     // bawah tetap menjaga kalau ada dua penyimpanan bersamaan.
-    if status(conn, owner)?.is_some() {
+    if status(conn, owner, now)?.is_some() {
         return Err(exists_error());
     }
+    let usable_after = last_reset(conn, owner)?
+        .map(|reset| reset + RESET_COOLDOWN)
+        .filter(|until| *until > now);
     let sealed = pin::seal_image(
         pin,
         |salt| pin::pepper_from_identity(identity, salt),
@@ -156,8 +230,8 @@ pub fn save(
     )?;
     let inserted = conn.execute(
         "INSERT INTO sign_saved_signature
-             (owner, kdf, salt, nonce, ciphertext, width, height, created_at, failed_attempts, locked_until)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, NULL)
+             (owner, kdf, salt, nonce, ciphertext, width, height, created_at, failed_attempts, locked_until, usable_after)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, NULL, ?9)
          ON CONFLICT (owner) DO NOTHING",
         params![
             owner,
@@ -168,22 +242,52 @@ pub fn save(
             width,
             height,
             clock::format_rfc3339(now),
+            usable_after.map(clock::format_rfc3339),
         ],
     )?;
     if inserted == 0 {
         return Err(exists_error());
     }
-    status(conn, owner)?
+    status(conn, owner, now)?
         .ok_or_else(|| AppError::Internal("Tanda tangan tidak ditemukan setelah disimpan.".into()))
 }
 
-/// Menghapus tanda tangan milik `owner`. `true` kalau ada yang dihapus.
-pub fn delete(conn: &Connection, owner: &str) -> AppResult<bool> {
+/// Menghapus tanda tangan milik `owner` tanpa PIN (jalur lupa PIN) dan
+/// mencatat waktu reset. `true` kalau ada yang dihapus; tidak ada yang
+/// dihapus berarti tidak ada reset yang dicatat. Panggil di dalam transaksi.
+pub fn delete_forgot_pin(conn: &Connection, owner: &str, now: OffsetDateTime) -> AppResult<bool> {
     let n = conn.execute(
         "DELETE FROM sign_saved_signature WHERE owner = ?1",
         params![owner],
     )?;
+    if n > 0 {
+        record_reset(conn, owner, now)?;
+    }
     Ok(n > 0)
+}
+
+/// Menghapus tanda tangan milik laptop ini setelah PIN-nya diperiksa seperti
+/// `unlock` (format, kunci waktu, hitungan salah, pesan yang sama). Masa
+/// tunggu tidak menghalangi hapus dengan PIN, dan catatan reset tidak
+/// disentuh (lihat dokumentasi modul). `on_deleted` dijalankan di transaksi
+/// yang sama setelah baris dihapus (misalnya untuk jejak audit). `false`
+/// kalau belum ada tanda tangan.
+pub fn delete_with_pin(
+    conn: &mut Connection,
+    identity: &Identity,
+    pin: &str,
+    now: OffsetDateTime,
+    on_deleted: impl FnOnce(&Connection) -> AppResult<()>,
+) -> AppResult<bool> {
+    let owner = identity.public_key_hex();
+    let opened = check_pin(conn, identity, pin, now, false, |tx| {
+        tx.execute(
+            "DELETE FROM sign_saved_signature WHERE owner = ?1",
+            params![owner],
+        )?;
+        on_deleted(tx)
+    })?;
+    Ok(opened.is_some())
 }
 
 fn missing_error() -> AppError {
@@ -203,22 +307,26 @@ fn locked_error(until: OffsetDateTime, now: OffsetDateTime) -> AppError {
     )
 }
 
-/// Membuka tanda tangan milik laptop ini dengan PIN.
-///
-/// Urutan: baris harus ada (`signature_missing`), format PIN harus benar
-/// (`pin_invalid`, tidak menambah hitungan), tidak sedang terkunci
-/// (`pin_locked`). PIN salah menambah hitungan dalam transaksi lalu membalas
-/// `pin_wrong`; PIN benar mereset hitungan.
-pub fn unlock(
-    conn: &mut Connection,
-    identity: &Identity,
-    pin: &str,
-    now: OffsetDateTime,
-) -> AppResult<Unlocked> {
-    let owner = identity.public_key_hex();
+fn cooling_error(until: OffsetDateTime, now: OffsetDateTime) -> AppError {
+    err(
+        "signature_cooling",
+        format!(
+            "Tanda tangan ini dibuat setelah tanda tangan lama dihapus tanpa PIN, jadi baru bisa dipakai sekitar {} lagi. Masa tunggu ini mencegah orang lain memakai tanda tangan buatannya atas nama Anda. Kalau bukan Anda yang menghapus tanda tangan lama, segera beri tahu admin.",
+            pin::wait_text(until, now)
+        ),
+    )
+}
+
+struct SealedRow {
+    sealed: SealedImage,
+    attempts: Attempts,
+    usable_after: Option<OffsetDateTime>,
+}
+
+fn load_sealed(conn: &Connection, owner: &str) -> AppResult<Option<SealedRow>> {
     let row = conn
         .query_row(
-            "SELECT kdf, salt, nonce, ciphertext, failed_attempts, locked_until
+            "SELECT kdf, salt, nonce, ciphertext, failed_attempts, locked_until, usable_after
              FROM sign_saved_signature WHERE owner = ?1",
             params![owner],
             |r| {
@@ -229,28 +337,65 @@ pub fn unlock(
                     r.get::<_, Vec<u8>>(3)?,
                     r.get::<_, i64>(4)?,
                     r.get::<_, Option<String>>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )
         .optional()?;
-    let Some((kdf, salt, nonce, ciphertext, failed, locked_until)) = row else {
-        return Err(missing_error());
+    let Some((kdf, salt, nonce, ciphertext, failed, locked_until, usable_after)) = row else {
+        return Ok(None);
     };
+    Ok(Some(SealedRow {
+        sealed: SealedImage {
+            kdf,
+            salt: salt.try_into().map_err(|_| corrupt())?,
+            nonce: nonce.try_into().map_err(|_| corrupt())?,
+            ciphertext,
+        },
+        attempts: attempts_from_row(failed, locked_until.as_deref())?,
+        usable_after: usable_after.as_deref().map(parse_time).transpose()?,
+    }))
+}
+
+/// Pemeriksaan PIN bersama `unlock` dan `delete_with_pin`. `Ok(None)` kalau
+/// belum ada tanda tangan.
+///
+/// Urutan: baris harus ada; kalau `enforce_cooling`, masa tunggu harus sudah
+/// lewat (`signature_cooling`, sebelum Argon2 dan tidak dihitung salah);
+/// format PIN benar (`pin_invalid`, tidak dihitung); tidak sedang terkunci
+/// (`pin_locked`; kunci yang terlalu panjang karena jam mundur dibatasi dan
+/// disimpan). PIN salah menambah hitungan dalam transaksi lalu membalas
+/// `pin_wrong`; PIN benar mereset hitungan lalu menjalankan `on_ok` di
+/// transaksi yang sama.
+fn check_pin(
+    conn: &mut Connection,
+    identity: &Identity,
+    pin: &str,
+    now: OffsetDateTime,
+    enforce_cooling: bool,
+    on_ok: impl FnOnce(&Connection) -> AppResult<()>,
+) -> AppResult<Option<Zeroizing<Vec<u8>>>> {
+    let owner = identity.public_key_hex();
+    let Some(mut row) = load_sealed(conn, owner)? else {
+        return Ok(None);
+    };
+    if enforce_cooling
+        && let Some(until) = row.usable_after
+        && until > now
+    {
+        return Err(cooling_error(until, now));
+    }
     pin::validate_pin(pin)?;
-    let attempts = attempts_from_row(failed, locked_until.as_deref())?;
-    if let Err(until) = pin::check_locked(&attempts, now) {
+    if pin::clamp_lock(&mut row.attempts, now) {
+        write_attempts(conn, owner, &row.attempts)?;
+    }
+    if let Err(until) = pin::check_locked(&row.attempts, now) {
         return Err(locked_error(until, now));
     }
-    let sealed = SealedImage {
-        kdf,
-        salt: salt.try_into().map_err(|_| corrupt())?,
-        nonce: nonce.try_into().map_err(|_| corrupt())?,
-        ciphertext,
-    };
     let opened = pin::open_image(
         pin,
         |salt| pin::pepper_from_identity(identity, salt),
-        &sealed,
+        &row.sealed,
         &pin::aad_for(owner),
     )?;
 
@@ -263,9 +408,9 @@ pub fn unlock(
             if current != pin::reset() {
                 write_attempts(&tx, owner, &pin::reset())?;
             }
+            on_ok(&tx)?;
             tx.commit()?;
-            let (width, height) = pin::validate_png(&png).map_err(|_| corrupt())?;
-            Ok(Unlocked { png, width, height })
+            Ok(Some(png))
         }
         None => {
             let next = pin::register_failure(current, now);
@@ -284,6 +429,24 @@ pub fn unlock(
             Err(err("pin_wrong", message))
         }
     }
+}
+
+/// Membuka tanda tangan milik laptop ini dengan PIN.
+///
+/// Urutan: baris harus ada (`signature_missing`), masa tunggu setelah hapus
+/// tanpa PIN sudah lewat (`signature_cooling`), format PIN harus benar
+/// (`pin_invalid`, tidak menambah hitungan), tidak sedang terkunci
+/// (`pin_locked`). PIN salah menambah hitungan dalam transaksi lalu membalas
+/// `pin_wrong`; PIN benar mereset hitungan.
+pub fn unlock(
+    conn: &mut Connection,
+    identity: &Identity,
+    pin: &str,
+    now: OffsetDateTime,
+) -> AppResult<Unlocked> {
+    let png = check_pin(conn, identity, pin, now, true, |_| Ok(()))?.ok_or_else(missing_error)?;
+    let (width, height) = pin::validate_png(&png).map_err(|_| corrupt())?;
+    Ok(Unlocked { png, width, height })
 }
 
 #[cfg(test)]
@@ -333,7 +496,7 @@ mod tests {
     }
 
     fn failed(e: &Env) -> u32 {
-        status(&e.conn, e.id.public_key_hex())
+        status(&e.conn, e.id.public_key_hex(), at(0))
             .unwrap()
             .unwrap()
             .failed_attempts
@@ -347,7 +510,7 @@ mod tests {
     fn save_status_unlock_delete() {
         let mut e = env();
         let owner = e.id.public_key_hex().to_owned();
-        assert_eq!(status(&e.conn, &owner).unwrap(), None);
+        assert_eq!(status(&e.conn, &owner, at(0)).unwrap(), None);
 
         let png = tiny_png(320, 120);
         let info = save_test(&e, &png).unwrap();
@@ -360,11 +523,12 @@ mod tests {
                 failed_attempts: 0,
                 locked_until: None,
                 attempts_left: 5,
+                usable_after: None,
             }
         );
-        assert_eq!(status(&e.conn, &owner).unwrap(), Some(info));
+        assert_eq!(status(&e.conn, &owner, at(0)).unwrap(), Some(info));
 
-        let json = serde_json::to_value(status(&e.conn, &owner).unwrap()).unwrap();
+        let json = serde_json::to_value(status(&e.conn, &owner, at(0)).unwrap()).unwrap();
         assert_eq!(json["createdAt"], clock::format_rfc3339(at(0)));
         assert_eq!(json["failedAttempts"], 0);
         assert_eq!(json["lockedUntil"], serde_json::Value::Null);
@@ -385,9 +549,9 @@ mod tests {
         assert_eq!((u.width, u.height), (320, 120));
         assert!(format!("{u:?}").contains("png_len"));
 
-        assert!(delete(&e.conn, &owner).unwrap());
-        assert!(!delete(&e.conn, &owner).unwrap());
-        assert_eq!(status(&e.conn, &owner).unwrap(), None);
+        assert!(delete_forgot_pin(&e.conn, &owner, at(2)).unwrap());
+        assert!(!delete_forgot_pin(&e.conn, &owner, at(2)).unwrap());
+        assert_eq!(status(&e.conn, &owner, at(0)).unwrap(), None);
     }
 
     #[test]
@@ -420,7 +584,7 @@ mod tests {
             err.to_string(),
             "Tanda tangan sudah tersimpan. Hapus dulu kalau ingin menggantinya."
         );
-        assert!(delete(&e.conn, e.id.public_key_hex()).unwrap());
+        assert!(delete_forgot_pin(&e.conn, e.id.public_key_hex(), at(2)).unwrap());
         assert_eq!(save_test(&e, &tiny_png(20, 20)).unwrap().width, 20);
     }
 
@@ -441,7 +605,7 @@ mod tests {
         assert_eq!(err.code(), "image_invalid");
         let err = save_test(&e, &tiny_png(2001, 2)).unwrap_err();
         assert_eq!(err.code(), "image_invalid");
-        assert_eq!(status(&e.conn, e.id.public_key_hex()).unwrap(), None);
+        assert_eq!(status(&e.conn, e.id.public_key_hex(), at(0)).unwrap(), None);
     }
 
     #[test]
@@ -489,7 +653,7 @@ mod tests {
             err.to_string(),
             "PIN salah. Tanda tangan dikunci sementara, coba lagi dalam sekitar 1 menit."
         );
-        let info = status(&e.conn, &owner).unwrap().unwrap();
+        let info = status(&e.conn, &owner, at(10)).unwrap().unwrap();
         assert_eq!(info.failed_attempts, 5);
         assert_eq!(info.attempts_left, 5);
         assert_eq!(
@@ -512,7 +676,7 @@ mod tests {
         // Setelah kunci habis, PIN benar mereset hitungan.
         let u = unlock(&mut e.conn, &e.id, PIN, at(70)).unwrap();
         assert_eq!((u.width, u.height), (5, 5));
-        let info = status(&e.conn, &owner).unwrap().unwrap();
+        let info = status(&e.conn, &owner, at(0)).unwrap().unwrap();
         assert_eq!(info.failed_attempts, 0);
         assert_eq!(info.locked_until, None);
         assert_eq!(info.attempts_left, 5);
@@ -586,5 +750,232 @@ mod tests {
         let err = unlock(&mut e.conn, &e.id, PIN, at(1)).unwrap_err();
         assert_eq!(err.code(), "internal");
         assert_eq!(failed(&e), 0);
+    }
+
+    fn usable_after(e: &Env, now: OffsetDateTime) -> Option<String> {
+        status(&e.conn, e.id.public_key_hex(), now)
+            .unwrap()
+            .unwrap()
+            .usable_after
+    }
+
+    fn reset_at(e: &Env) -> Option<OffsetDateTime> {
+        last_reset(&e.conn, e.id.public_key_hex()).unwrap()
+    }
+
+    fn code_of<T>(r: AppResult<T>) -> &'static str {
+        match r {
+            Ok(_) => "ok",
+            Err(e) => e.code(),
+        }
+    }
+
+    #[test]
+    fn forgot_pin_delete_starts_cooling_for_new_signature() {
+        let mut e = env();
+        let owner = e.id.public_key_hex().to_owned();
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        assert_eq!(usable_after(&e, at(0)), None);
+
+        assert!(delete_forgot_pin(&e.conn, &owner, at(100)).unwrap());
+        assert_eq!(reset_at(&e), Some(at(100)));
+
+        // Tanda tangan baru dengan PIN lain (misalnya orang lain).
+        let info = save(
+            &e.conn,
+            &e.id,
+            "999999",
+            &tiny_png(6, 6),
+            at(200),
+            &KdfParams::TEST,
+        )
+        .unwrap();
+        let until = at(100) + RESET_COOLDOWN;
+        assert_eq!(info.usable_after, Some(clock::format_rfc3339(until)));
+        assert_eq!(usable_after(&e, at(300)), info.usable_after);
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["usableAfter"], clock::format_rfc3339(until));
+
+        // Sebelum masa tunggu habis: ditolak dan tidak dihitung salah, juga
+        // dengan PIN yang salah.
+        for pin in ["999999", "000000"] {
+            let err = unlock(&mut e.conn, &e.id, pin, at(200)).unwrap_err();
+            assert_eq!(err.code(), "signature_cooling");
+            no_em_dash(&err);
+            assert!(
+                err.to_string().contains("sekitar 23 jam 59 menit lagi"),
+                "{err}"
+            );
+        }
+        assert_eq!(failed(&e), 0);
+        let err = unlock(&mut e.conn, &e.id, "999999", until - Duration::minutes(30)).unwrap_err();
+        assert!(err.to_string().contains("sekitar 30 menit lagi"), "{err}");
+
+        // Tepat saat masa tunggu habis: bisa dipakai.
+        let u = unlock(&mut e.conn, &e.id, "999999", until).unwrap();
+        assert_eq!((u.width, u.height), (6, 6));
+    }
+
+    #[test]
+    fn cooling_is_checked_before_argon2() {
+        let mut e = env();
+        let owner = e.id.public_key_hex().to_owned();
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        delete_forgot_pin(&e.conn, &owner, at(1)).unwrap();
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        // `kdf` rusak akan gagal sebagai `internal` kalau Argon2 dijalankan.
+        e.conn
+            .execute(
+                "UPDATE sign_saved_signature SET kdf = 'argon2id;v=19;m=4294967295;t=3;p=1'",
+                [],
+            )
+            .unwrap();
+        let err = unlock(&mut e.conn, &e.id, "12", at(2)).unwrap_err();
+        assert_eq!(err.code(), "signature_cooling");
+    }
+
+    #[test]
+    fn save_after_cooling_window_has_no_wait() {
+        let e = env();
+        let owner = e.id.public_key_hex().to_owned();
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        delete_forgot_pin(&e.conn, &owner, at(0)).unwrap();
+        let later = at(0) + RESET_COOLDOWN;
+        let info = save(
+            &e.conn,
+            &e.id,
+            PIN,
+            &tiny_png(5, 5),
+            later,
+            &KdfParams::TEST,
+        )
+        .unwrap();
+        assert_eq!(info.usable_after, None);
+    }
+
+    #[test]
+    fn delete_with_pin_checks_pin_like_unlock() {
+        let mut e = env();
+        let owner = e.id.public_key_hex().to_owned();
+        // Belum ada tanda tangan: tidak ada yang dihapus.
+        assert!(!delete_with_pin(&mut e.conn, &e.id, PIN, at(0), |_| Ok(())).unwrap());
+
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        let err = delete_with_pin(&mut e.conn, &e.id, "12", at(1), |_| Ok(())).unwrap_err();
+        assert_eq!(err.code(), "pin_invalid");
+        for i in 1..=4u32 {
+            let err = delete_with_pin(&mut e.conn, &e.id, "000000", at(1), |_| Ok(())).unwrap_err();
+            assert_eq!(err.code(), "pin_wrong");
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "PIN salah. Sisa {} kali lagi sebelum dikunci sementara.",
+                    5 - i
+                )
+            );
+        }
+        // Salah lewat unlock dan lewat hapus dihitung bersama.
+        let err = unlock(&mut e.conn, &e.id, "000000", at(1)).unwrap_err();
+        assert!(err.to_string().contains("dikunci sementara"), "{err}");
+        let err = delete_with_pin(&mut e.conn, &e.id, PIN, at(2), |_| Ok(())).unwrap_err();
+        assert_eq!(err.code(), "pin_locked");
+        assert!(status(&e.conn, &owner, at(2)).unwrap().is_some());
+
+        let mut called = false;
+        assert!(
+            delete_with_pin(&mut e.conn, &e.id, PIN, at(70), |_| {
+                called = true;
+                Ok(())
+            })
+            .unwrap()
+        );
+        assert!(called);
+        assert_eq!(status(&e.conn, &owner, at(70)).unwrap(), None);
+        // Hapus dengan PIN tidak mencatat reset, jadi tanpa masa tunggu.
+        assert_eq!(reset_at(&e), None);
+        let info = save_test(&e, &tiny_png(5, 5)).unwrap();
+        assert_eq!(info.usable_after, None);
+    }
+
+    #[test]
+    fn delete_with_pin_rolls_back_when_callback_fails() {
+        let mut e = env();
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        let err = delete_with_pin(&mut e.conn, &e.id, PIN, at(1), |_| {
+            Err(AppError::Internal("gagal".into()))
+        })
+        .unwrap_err();
+        assert_eq!(err.code(), "internal");
+        assert!(
+            status(&e.conn, e.id.public_key_hex(), at(1))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn delete_create_delete_with_new_pin_keeps_cooling() {
+        let mut e = env();
+        let owner = e.id.public_key_hex().to_owned();
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        // Rekan menghapus tanpa PIN, membuat tanda tangan dengan PIN sendiri,
+        // menghapusnya dengan PIN itu, lalu membuat lagi.
+        delete_forgot_pin(&e.conn, &owner, at(10)).unwrap();
+        let p = KdfParams::TEST;
+        save(&e.conn, &e.id, "777777", &tiny_png(5, 5), at(20), &p).unwrap();
+        assert!(delete_with_pin(&mut e.conn, &e.id, "777777", at(30), |_| Ok(())).unwrap());
+        let info = save(&e.conn, &e.id, "777777", &tiny_png(5, 5), at(40), &p).unwrap();
+        let until = at(10) + RESET_COOLDOWN;
+        assert_eq!(info.usable_after, Some(clock::format_rfc3339(until)));
+        assert_eq!(
+            code_of(unlock(&mut e.conn, &e.id, "777777", at(50))),
+            "signature_cooling"
+        );
+
+        // Hapus tanpa PIN lagi memulai masa tunggu dari awal.
+        delete_forgot_pin(&e.conn, &owner, at(1000)).unwrap();
+        let info = save(&e.conn, &e.id, "777777", &tiny_png(5, 5), at(1001), &p).unwrap();
+        assert_eq!(
+            info.usable_after,
+            Some(clock::format_rfc3339(at(1000) + RESET_COOLDOWN))
+        );
+
+        // Jam dimundurkan: catatan reset yang lebih baru dipertahankan.
+        delete_forgot_pin(&e.conn, &owner, at(5)).unwrap();
+        assert_eq!(reset_at(&e), Some(at(1000)));
+    }
+
+    #[test]
+    fn lock_after_clock_moved_back_is_limited_and_saved() {
+        let mut e = env();
+        let owner = e.id.public_key_hex().to_owned();
+        save_test(&e, &tiny_png(5, 5)).unwrap();
+        // 5 salah tercatat sehari "di depan", lalu jam dimundurkan.
+        e.conn
+            .execute(
+                "UPDATE sign_saved_signature SET failed_attempts = 5, locked_until = ?1",
+                params![clock::format_rfc3339(at(0) + Duration::days(1))],
+            )
+            .unwrap();
+        let info = status(&e.conn, &owner, at(0)).unwrap().unwrap();
+        assert_eq!(
+            info.locked_until,
+            Some(clock::format_rfc3339(at(0) + Duration::minutes(1)))
+        );
+        let err = unlock(&mut e.conn, &e.id, PIN, at(0)).unwrap_err();
+        assert_eq!(err.code(), "pin_locked");
+        assert!(err.to_string().contains("sekitar 1 menit"), "{err}");
+        // Nilai yang dibatasi disimpan, jadi kunci habis walau jam tetap mundur.
+        let stored: Option<String> = e
+            .conn
+            .query_row("SELECT locked_until FROM sign_saved_signature", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            stored,
+            Some(clock::format_rfc3339(at(0) + Duration::minutes(1)))
+        );
+        assert!(unlock(&mut e.conn, &e.id, PIN, at(61)).is_ok());
     }
 }

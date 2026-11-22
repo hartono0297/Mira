@@ -10,7 +10,7 @@
 //! sama di stempel, dan `service::complete` mencatatnya di jejak audit.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
 use time::{Duration, OffsetDateTime};
@@ -28,10 +28,12 @@ struct Entry {
     expires: OffsetDateTime,
 }
 
-/// Token unlock yang masih berlaku, dikelola Tauri (`app.manage`).
-#[derive(Default)]
+/// Token unlock yang masih berlaku, dikelola Tauri (`app.manage`). Murah
+/// untuk di-clone: semua salinan berbagi isi yang sama, jadi perintah bisa
+/// membawanya ke `spawn_blocking`.
+#[derive(Default, Clone)]
 pub struct SignSessions {
-    entries: Mutex<HashMap<[u8; 32], Entry>>,
+    entries: Arc<Mutex<HashMap<[u8; 32], Entry>>>,
 }
 
 fn expired() -> AppError {
@@ -149,6 +151,15 @@ mod tests {
         assert!(s.take(&token, ME, at(2)).is_err());
         assert!(s.take("", ME, at(2)).is_err());
         assert!(s.take(&"0".repeat(64), ME, at(2)).is_err());
+    }
+
+    #[test]
+    fn clones_share_tokens() {
+        let s = SignSessions::default();
+        let c = s.clone();
+        let (token, _) = s.issue(ME, at(0));
+        assert!(c.take(&token, ME, at(1)).is_ok());
+        assert!(s.take(&token, ME, at(1)).is_err());
     }
 
     #[test]

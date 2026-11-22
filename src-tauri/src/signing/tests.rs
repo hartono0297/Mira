@@ -11,8 +11,9 @@ use time::{Duration, OffsetDateTime};
 
 use super::outbox::SignOutbox;
 use super::pin::KdfParams;
-use super::request::SignRequest;
-use super::seal;
+use super::repo;
+use super::request::{RequestStatus, SignRequest};
+use super::seal::{self, EventKind, EventRecord};
 use super::service::{
     RequestDetail, SignContext, VerifyState, clean_file_name, clean_name_part, export_stem,
 };
@@ -183,7 +184,7 @@ impl Fx {
     }
 
     fn sign(&mut self, d: &RequestDetail, bytes: &[u8]) -> AppResult<RequestDetail> {
-        let token = self.unlock(t(10));
+        let token = self.ctx().unlock(PIN, t(10))?.token;
         let (id, base) = (d.summary.id.clone(), d.current_hash.clone());
         self.ctx().complete(&id, &token, &base, bytes, t(20))
     }
@@ -201,9 +202,9 @@ fn kinds(d: &RequestDetail) -> Vec<&str> {
 fn full_flow_single_signer() {
     let mut f = fx();
     let me = f.me();
-    assert!(f.ctx().overview().unwrap().saved.is_none());
+    assert!(f.ctx().overview(t(1000)).unwrap().saved.is_none());
     f.save_signature();
-    let saved = f.ctx().overview().unwrap().saved.unwrap();
+    let saved = f.ctx().overview(t(1000)).unwrap().saved.unwrap();
     assert_eq!((saved.width, saved.height), (300, 100));
 
     let d = f.create(std::slice::from_ref(&me), "sequential");
@@ -274,7 +275,7 @@ fn full_flow_single_signer() {
         "session_expired"
     );
 
-    let ov = f.ctx().overview().unwrap();
+    let ov = f.ctx().overview(t(1000)).unwrap();
     assert_eq!(ov.requests.len(), 1);
     assert_eq!(ov.requests[0].integrity, seal::Integrity::Intact);
     assert_eq!(ov.requests[0].signed_count, 1);
@@ -290,9 +291,9 @@ fn full_flow_single_signer() {
     );
 
     // Hapus tanda tangan dicatat; hapus kedua kali tidak error.
-    f.ctx().delete_signature(t(30)).unwrap();
-    f.ctx().delete_signature(t(31)).unwrap();
-    assert!(f.ctx().overview().unwrap().saved.is_none());
+    f.ctx().delete_signature(None, t(30)).unwrap();
+    f.ctx().delete_signature(None, t(31)).unwrap();
+    assert!(f.ctx().overview(t(1000)).unwrap().saved.is_none());
     let personal: Vec<String> = f
         .conn
         .prepare("SELECT kind FROM sign_events WHERE request_id IS NULL ORDER BY id")
@@ -460,7 +461,7 @@ fn guest_rules() {
     // Dibuat saat masih anggota; lalu laptop ini menjadi Tamu.
     let d = f.create(std::slice::from_ref(&me), "sequential");
     f.set_my_row("guest", "member");
-    let ov = f.ctx().overview().unwrap();
+    let ov = f.ctx().overview(t(1000)).unwrap();
     assert!(!ov.can_request);
     assert_eq!(ov.me.kind.as_str(), "guest");
     let hash = f.import(&original_pdf());
@@ -473,7 +474,7 @@ fn guest_rules() {
     );
     // Peran lama `guest` juga Tamu.
     f.set_my_row("member", "guest");
-    assert!(!f.ctx().overview().unwrap().can_request);
+    assert!(!f.ctx().overview(t(1000)).unwrap().can_request);
     assert_eq!(
         code(
             f.ctx()
@@ -493,7 +494,7 @@ fn guest_rules() {
         "UPDATE members SET status = 'removed' WHERE public_key = ?1",
         params![me],
     );
-    assert!(!f.ctx().overview().unwrap().can_request);
+    assert!(!f.ctx().overview(t(1000)).unwrap().can_request);
     assert_eq!(code(f.sign(&d, &stamped(&d.summary.id, 1))), "removed");
     assert_eq!(
         code(
@@ -570,7 +571,7 @@ fn invalid_requests() {
     );
     assert_eq!(code(ctx.get_request(&"0".repeat(32))), "not_found");
     assert_eq!(code(ctx.get_request("../../etc")), "not_found");
-    assert!(ctx.overview().unwrap().requests.is_empty());
+    assert!(ctx.overview(t(1000)).unwrap().requests.is_empty());
 }
 
 #[test]
@@ -592,7 +593,7 @@ fn no_organization_means_no_requests() {
         export_dir: dir.path(),
         kdf: KdfParams::TEST,
     };
-    let ov = ctx.overview().unwrap();
+    let ov = ctx.overview(t(1000)).unwrap();
     assert!(!ov.can_request);
     assert_eq!(ov.me.display_name, "");
     assert!(ctx.list_candidates().unwrap().is_empty());
@@ -615,7 +616,7 @@ fn tampered_blob_is_reported_and_blocks_export() {
 
     f.store.tamper(&done.current_hash, b"%PDF-1.7 diubah");
     assert_eq!(
-        f.ctx().overview().unwrap().requests[0].integrity,
+        f.ctx().overview(t(1000)).unwrap().requests[0].integrity,
         seal::Integrity::Changed
     );
     let d = f.ctx().get_request(&id).unwrap();
@@ -683,13 +684,19 @@ fn export_does_not_overwrite_and_watches_files() {
         ]
     );
     assert!(d.events.iter().all(|e| e.valid));
-    assert_eq!(f.ctx().overview().unwrap().requests[0].export_warnings, 0);
+    assert_eq!(
+        f.ctx().overview(t(1000)).unwrap().requests[0].export_warnings,
+        0
+    );
 
     // Ubah satu byte file ekspor.
     let mut bytes = std::fs::read(&a_path).unwrap();
     bytes[10] ^= 0x01;
     std::fs::write(&a_path, &bytes).unwrap();
-    assert_eq!(f.ctx().overview().unwrap().requests[0].export_warnings, 1);
+    assert_eq!(
+        f.ctx().overview(t(1000)).unwrap().requests[0].export_warnings,
+        1
+    );
     let d = f.ctx().get_request(&id).unwrap();
     let state_of =
         |d: &RequestDetail, p: &str| d.exports.iter().find(|e| e.path == p).unwrap().state;
@@ -847,7 +854,12 @@ fn tampered_audit_records_are_invalid() {
         valid,
         [("created", true), ("signed", false), ("completed", true)]
     );
-    assert_eq!(d.seal_valid, Some(true));
+    // Catatan `signed` yang tidak sah memutus rantai.
+    assert_eq!(d.seal_valid, Some(false));
+    assert_eq!(
+        f.ctx().verify_file(&stamped(&id, 1)).unwrap().state,
+        VerifyState::MatchVersion
+    );
 
     f.exec(
         "UPDATE sign_events SET detail = '5 penanda tangan' WHERE kind = 'completed'",
@@ -938,13 +950,13 @@ fn overview_lists_latest_change_first() {
         .ctx()
         .create_request("Kedua", &hash, "parallel", std::slice::from_ref(&me), t(6))
         .unwrap();
-    let ov = f.ctx().overview().unwrap();
+    let ov = f.ctx().overview(t(1000)).unwrap();
     let ids: Vec<&str> = ov.requests.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, [second.summary.id.as_str(), first.summary.id.as_str()]);
 
     // Ditandatangani di t(10) lebih baru dari pembuatan permintaan kedua.
     f.sign(&first, &stamped(&first.summary.id, 1)).unwrap();
-    let ov = f.ctx().overview().unwrap();
+    let ov = f.ctx().overview(t(1000)).unwrap();
     assert_eq!(ov.requests[0].id, first.summary.id);
 }
 
@@ -1037,7 +1049,7 @@ fn json_uses_contract_field_names() {
     assert_eq!(j["exports"][0]["state"], "intact");
     assert_eq!(j["events"][1]["kind"], "signed");
 
-    let ov = serde_json::to_value(f.ctx().overview().unwrap()).unwrap();
+    let ov = serde_json::to_value(f.ctx().overview(t(1000)).unwrap()).unwrap();
     assert_eq!(keys(&ov), set(&["saved", "requests", "canRequest", "me"]));
     assert_eq!(keys(&ov["me"]), set(&["publicKey", "displayName", "kind"]));
     assert_eq!(keys(&ov["requests"][0]), set(&summary_keys));
@@ -1049,9 +1061,11 @@ fn json_uses_contract_field_names() {
             "createdAt",
             "failedAttempts",
             "lockedUntil",
-            "attemptsLeft"
+            "attemptsLeft",
+            "usableAfter"
         ])
     );
+    assert_eq!(ov["saved"]["usableAfter"], serde_json::Value::Null);
 
     let c = serde_json::to_value(f.ctx().list_candidates().unwrap()).unwrap();
     assert_eq!(
@@ -1104,10 +1118,486 @@ fn signing_sources_have_no_em_dash() {
         include_str!("session.rs"),
         include_str!("outbox.rs"),
         include_str!("repo.rs"),
+        include_str!("vault.rs"),
+        include_str!("seal.rs"),
+        include_str!("store.rs"),
     ];
     for src in sources {
         assert!(!src.contains('\u{2014}'));
     }
     let e: AppError = super::err("x", "y");
     assert_eq!(e.code(), "x");
+}
+
+// ---------------------------------------------------------------------------
+// Perbaikan review keamanan.
+// ---------------------------------------------------------------------------
+
+fn other_identity() -> (tempfile::TempDir, Identity) {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = db::open(dir.path()).unwrap();
+    let id = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
+    (dir, id)
+}
+
+fn png_b64() -> String {
+    BASE64.encode(&tiny_png(300, 100))
+}
+
+impl Fx {
+    /// Menyisipkan catatan yang ditandatangani `signer` (sah secara
+    /// kriptografi, tetapi belum tentu bagian rantai yang benar).
+    fn forge(&self, signer: &Identity, rec: EventRecord) {
+        let sig = seal::sign_event(signer, &rec).unwrap();
+        repo::insert_event(&self.conn, &rec, &sig).unwrap();
+    }
+
+    fn completed_single(&mut self) -> RequestDetail {
+        let me = self.me();
+        self.save_signature();
+        let d = self.create(std::slice::from_ref(&me), "sequential");
+        let done = self.sign(&d, &stamped(&d.summary.id, 1)).unwrap();
+        assert_eq!(done.seal_valid, Some(true));
+        done
+    }
+}
+
+fn rec(
+    actor: &Identity,
+    request_id: &str,
+    kind: EventKind,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> EventRecord {
+    EventRecord {
+        request_id: Some(request_id.to_owned()),
+        kind,
+        actor: actor.public_key_hex().to_owned(),
+        actor_name: "Pemalsu".into(),
+        at: clock::format_rfc3339(t(15)),
+        hash_before: before.map(str::to_owned),
+        hash_after: after.map(str::to_owned),
+        detail: String::new(),
+    }
+}
+
+#[test]
+fn delete_without_pin_cools_new_signature_and_shows_in_request() {
+    let mut f = fx();
+    let me = f.me();
+    f.save_signature();
+    let d = f.create(std::slice::from_ref(&me), "sequential");
+    let id = d.summary.id.clone();
+    let budi = f.add_member(0xb4, "Budi Santoso", "member", "member", "active");
+    let others = f.create(std::slice::from_ref(&budi), "parallel");
+
+    // Rekan menghapus tanpa PIN, lalu membuat tanda tangan dengan PIN-nya.
+    f.ctx().delete_signature(None, t(30)).unwrap();
+    let info = f.ctx().save_signature("999999", &png_b64(), t(40)).unwrap();
+    let until = t(30) + Duration::hours(24);
+    assert_eq!(info.usable_after, Some(clock::format_rfc3339(until)));
+    assert_eq!(
+        f.ctx().overview(t(41)).unwrap().saved.unwrap().usable_after,
+        info.usable_after
+    );
+    let err = f.ctx().unlock("999999", t(50)).unwrap_err();
+    assert_eq!(err.code(), "signature_cooling");
+    assert!(err.to_string().contains("sekitar 24 jam lagi"), "{err}");
+
+    // Menghapus dengan PIN barunya lalu membuat lagi tidak menghapus masa tunggu.
+    f.ctx().delete_signature(Some("999999"), t(60)).unwrap();
+    let info = f.ctx().save_signature("999999", &png_b64(), t(70)).unwrap();
+    assert_eq!(info.usable_after, Some(clock::format_rfc3339(until)));
+    assert_eq!(code(f.ctx().unlock("999999", t(80))), "signature_cooling");
+
+    // Pengirim melihat semua penggantian di jejak audit permintaan, urut waktu.
+    let d = f.ctx().get_request(&id).unwrap();
+    let seen: Vec<(&str, &str)> = d
+        .events
+        .iter()
+        .map(|e| (e.kind.as_str(), e.detail.as_str()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("created", "berurutan, 1 penanda tangan"),
+            (
+                "signature_deleted",
+                "tanpa PIN (lupa PIN), masa tunggu 24 jam"
+            ),
+            (
+                "signature_saved",
+                "300x100 piksel, masa tunggu 24 jam karena tanda tangan lama dihapus tanpa PIN"
+            ),
+            ("signature_deleted", "dengan PIN"),
+            (
+                "signature_saved",
+                "300x100 piksel, masa tunggu 24 jam karena tanda tangan lama dihapus tanpa PIN"
+            ),
+        ]
+    );
+    assert!(d.events.iter().all(|e| e.valid));
+    // Permintaan yang tidak melibatkan laptop ini tidak menampilkannya.
+    assert_eq!(
+        kinds(&f.ctx().get_request(&others.summary.id).unwrap()),
+        ["created"]
+    );
+
+    // Setelah masa tunggu habis, tanda tangan bisa dipakai dan tercatat di
+    // antara catatan penggantian sesuai waktunya.
+    let unlocked = f.ctx().unlock("999999", until).unwrap();
+    let done = f
+        .ctx()
+        .complete(
+            &id,
+            &unlocked.token,
+            &d.current_hash,
+            &stamped(&id, 1),
+            until,
+        )
+        .unwrap();
+    assert_eq!(
+        kinds(&done),
+        [
+            "created",
+            "signature_deleted",
+            "signature_saved",
+            "signature_deleted",
+            "signature_saved",
+            "signed",
+            "completed"
+        ]
+    );
+    assert_eq!(done.seal_valid, Some(true));
+}
+
+#[test]
+fn delete_with_wrong_pin_counts_and_keeps_signature() {
+    let mut f = fx();
+    f.save_signature();
+    let err = f.ctx().delete_signature(Some("000000"), t(1)).unwrap_err();
+    assert_eq!(err.code(), "pin_wrong");
+    assert_eq!(
+        err.to_string(),
+        "PIN salah. Sisa 4 kali lagi sebelum dikunci sementara."
+    );
+    assert_eq!(
+        code(f.ctx().delete_signature(Some("12"), t(1))),
+        "pin_invalid"
+    );
+    let saved = f.ctx().overview(t(2)).unwrap().saved.unwrap();
+    assert_eq!(saved.failed_attempts, 1);
+
+    f.ctx().delete_signature(Some(PIN), t(3)).unwrap();
+    assert!(f.ctx().overview(t(3)).unwrap().saved.is_none());
+    let info = f.ctx().save_signature(PIN, &png_b64(), t(4)).unwrap();
+    assert_eq!(info.usable_after, None);
+    assert!(f.ctx().unlock(PIN, t(5)).is_ok());
+}
+
+#[test]
+fn removed_laptop_cannot_act() {
+    let mut f = fx();
+    let me = f.me();
+    f.save_signature();
+    let d = f.create(std::slice::from_ref(&me), "parallel");
+    f.exec(
+        "UPDATE members SET status = 'removed' WHERE public_key = ?1",
+        params![me],
+    );
+    assert_eq!(code(f.ctx().cancel(&d.summary.id, t(10))), "removed");
+    assert_eq!(code(f.ctx().unlock(PIN, t(10))), "removed");
+    assert_eq!(code(f.ctx().delete_signature(None, t(10))), "removed");
+    assert_eq!(code(f.ctx().delete_signature(Some(PIN), t(10))), "removed");
+    assert_eq!(
+        code(f.ctx().save_signature(PIN, &png_b64(), t(10))),
+        "removed"
+    );
+    // Tidak ada yang berubah.
+    assert!(f.ctx().overview(t(11)).unwrap().saved.is_some());
+    assert_eq!(
+        f.ctx().get_request(&d.summary.id).unwrap().summary.status,
+        RequestStatus::InProgress
+    );
+}
+
+#[test]
+fn seal_rejects_completed_from_a_non_signer() {
+    let mut f = fx();
+    let done = f.completed_single();
+    let id = done.summary.id.clone();
+    let (_dir, other) = other_identity();
+    f.forge(
+        &other,
+        rec(
+            &other,
+            &id,
+            EventKind::Completed,
+            None,
+            Some(&done.current_hash),
+        ),
+    );
+    let d = f.ctx().get_request(&id).unwrap();
+    assert!(
+        d.events.last().unwrap().valid,
+        "tanda tangannya sendiri sah"
+    );
+    assert_eq!(d.seal_valid, Some(false));
+    assert_eq!(
+        f.ctx().verify_file(&stamped(&id, 1)).unwrap().state,
+        VerifyState::MatchVersion
+    );
+}
+
+#[test]
+fn seal_rejects_broken_chain() {
+    let (_dir, other) = other_identity();
+
+    // `signed` dari kunci lain menggantikan catatan penanda tangan.
+    let mut f = fx();
+    let done = f.completed_single();
+    let id = done.summary.id.clone();
+    f.exec("DELETE FROM sign_events WHERE kind = 'signed'", []);
+    f.forge(
+        &other,
+        rec(
+            &other,
+            &id,
+            EventKind::Signed,
+            Some(&done.original_hash),
+            Some(&done.current_hash),
+        ),
+    );
+    assert_eq!(f.ctx().get_request(&id).unwrap().seal_valid, Some(false));
+
+    // `signed` sah dari penanda tangan, tetapi `hash_before` bukan versi asli.
+    let mut f = fx();
+    let done = f.completed_single();
+    let id = done.summary.id.clone();
+    f.exec("DELETE FROM sign_events WHERE kind = 'signed'", []);
+    f.forge(
+        &f.id,
+        rec(
+            &f.id,
+            &id,
+            EventKind::Signed,
+            Some(&"a".repeat(64)),
+            Some(&done.current_hash),
+        ),
+    );
+    assert_eq!(f.ctx().get_request(&id).unwrap().seal_valid, Some(false));
+    // Catatan yang benar mengembalikan rantai.
+    f.exec("DELETE FROM sign_events WHERE kind = 'signed'", []);
+    f.forge(
+        &f.id,
+        rec(
+            &f.id,
+            &id,
+            EventKind::Signed,
+            Some(&done.original_hash),
+            Some(&done.current_hash),
+        ),
+    );
+    assert_eq!(f.ctx().get_request(&id).unwrap().seal_valid, Some(true));
+
+    // `created` dari kunci selain pengirim.
+    f.exec("DELETE FROM sign_events WHERE kind = 'created'", []);
+    f.forge(
+        &other,
+        rec(
+            &other,
+            &id,
+            EventKind::Created,
+            None,
+            Some(&done.original_hash),
+        ),
+    );
+    assert_eq!(f.ctx().get_request(&id).unwrap().seal_valid, Some(false));
+
+    // Status penanda tangan diubah langsung di database.
+    let mut f = fx();
+    let done = f.completed_single();
+    let id = done.summary.id.clone();
+    f.exec(
+        "UPDATE sign_signers SET hash_after = ?1 WHERE request_id = ?2",
+        params!["b".repeat(64), id],
+    );
+    assert_eq!(f.ctx().get_request(&id).unwrap().seal_valid, Some(false));
+}
+
+#[test]
+fn seal_chain_follows_time_order_for_several_signers() {
+    let mut f = fx();
+    let me = f.me();
+    let budi_id = other_identity();
+    let budi = budi_id.1.public_key_hex().to_owned();
+    f.exec(
+        "INSERT INTO members (organization_id, public_key, display_name, role, added_at, status, kind)
+         VALUES (?1, ?2, 'Budi Santoso', 'member', ?3, 'active', 'member')",
+        params![f.org_id, budi, clock::format_rfc3339(t(0))],
+    );
+    f.save_signature();
+    let d = f.create(&[budi.clone(), me.clone()], "parallel");
+    let id = d.summary.id.clone();
+    // Laptop ini menandatangani lebih dulu (versi 1).
+    let v1 = f.sign(&d, &stamped(&id, 1)).unwrap();
+    // Budi menandatangani versi 1 menjadi versi 2 (disimulasikan: catatan
+    // dari kunci Budi, lalu baris permintaan diperbarui seperti sinkronisasi).
+    let v2_bytes = stamped(&id, 2);
+    let v2 = f.store.put(&v2_bytes).unwrap();
+    let mut signed = rec(
+        &budi_id.1,
+        &id,
+        EventKind::Signed,
+        Some(&v1.current_hash),
+        Some(&v2),
+    );
+    signed.at = clock::format_rfc3339(t(30));
+    f.forge(&budi_id.1, signed);
+    let mut completed = rec(&budi_id.1, &id, EventKind::Completed, None, Some(&v2));
+    completed.at = clock::format_rfc3339(t(30));
+    f.forge(&budi_id.1, completed);
+    f.exec(
+        "UPDATE sign_signers SET status = 'signed', signed_at = ?1, hash_after = ?2
+         WHERE request_id = ?3 AND public_key = ?4",
+        params![clock::format_rfc3339(t(30)), v2, id, budi],
+    );
+    f.exec(
+        "UPDATE sign_requests SET status = 'completed', current_hash = ?1, completed_at = ?2 WHERE id = ?3",
+        params![v2, clock::format_rfc3339(t(30)), id],
+    );
+    let d = f.ctx().get_request(&id).unwrap();
+    assert_eq!(d.seal_valid, Some(true));
+
+    let r = f.ctx().verify_file(&v2_bytes).unwrap();
+    assert_eq!(r.state, VerifyState::MatchFinal);
+    assert_eq!(r.signers.len(), 2);
+
+    // Versi 1: hanya laptop ini yang sudah menandatangani, tanpa waktu selesai.
+    let r = f.ctx().verify_file(&stamped(&id, 1)).unwrap();
+    assert_eq!(r.state, VerifyState::MatchVersion);
+    assert_eq!(r.completed_at, None);
+    let names: Vec<&str> = r.signers.iter().map(|s| s.display_name.as_str()).collect();
+    assert_eq!(names, ["Sari Dewi"]);
+    assert_eq!(r.signers[0].signed_at, v1.signers[1].signed_at);
+
+    // Versi asli: belum ada penanda tangan.
+    let r = f.ctx().verify_file(&original_pdf()).unwrap();
+    assert_eq!(r.state, VerifyState::MatchVersion);
+    assert!(r.signers.is_empty());
+    assert_eq!(r.completed_at, None);
+}
+
+#[test]
+fn complete_accepts_old_tag_before_new_one() {
+    let mut f = fx();
+    let me = f.me();
+    f.save_signature();
+    let d = f.create(std::slice::from_ref(&me), "sequential");
+    let id = d.summary.id.clone();
+    let old = "f".repeat(32);
+    let resaved = format!(
+        "%PDF-1.7\n<x:Keywords>{}</x:Keywords>\n2 0 obj << /Keywords ({}) >> endobj\n%%EOF\n",
+        seal::doc_tag(&old),
+        seal::doc_tag(&id)
+    )
+    .into_bytes();
+    assert_eq!(seal::find_mira_doc_id(&resaved), Some(old.clone()));
+    let done = f.sign(&d, &resaved).unwrap();
+    assert_eq!(done.summary.status, RequestStatus::Completed);
+
+    // Periksa file: penanda lama (tidak dikenal) di depan tidak menghalangi.
+    let mut changed = resaved.clone();
+    changed.extend_from_slice(b"% diubah\n");
+    let r = f.ctx().verify_file(&changed).unwrap();
+    assert_eq!(r.state, VerifyState::Changed);
+    assert_eq!(r.request_id.as_deref(), Some(id.as_str()));
+}
+
+#[test]
+fn complete_requires_intact_base_version() {
+    let mut f = fx();
+    let me = f.me();
+    f.save_signature();
+    let d = f.create(std::slice::from_ref(&me), "sequential");
+    let id = d.summary.id.clone();
+
+    f.store.tamper(&d.current_hash, b"%PDF-1.7 diganti");
+    let err = f.sign(&d, &stamped(&id, 1)).unwrap_err();
+    assert_eq!(err.code(), "pdf_invalid");
+    assert!(err.to_string().contains("sudah berubah"), "{err}");
+
+    f.store.remove(&d.current_hash);
+    let err = f.sign(&d, &stamped(&id, 1)).unwrap_err();
+    assert_eq!(err.code(), "pdf_invalid");
+    assert!(err.to_string().contains("tidak ditemukan"), "{err}");
+
+    f.store.put(&original_pdf()).unwrap();
+    assert!(f.sign(&d, &stamped(&id, 1)).is_ok());
+}
+
+#[test]
+fn signed_version_may_exceed_import_limit() {
+    use super::store::{MAX_PDF_BYTES, MAX_SIGNED_PDF_BYTES};
+    let mut f = fx();
+    let me = f.me();
+    f.save_signature();
+    let d = f.create(std::slice::from_ref(&me), "sequential");
+    let id = d.summary.id.clone();
+
+    let mut big = stamped(&id, 1);
+    big.resize(MAX_PDF_BYTES + 1024, b' ');
+    assert_eq!(code(f.ctx().import_pdf(&big, "besar.pdf")), "pdf_too_large");
+
+    let mut too_big = stamped(&id, 1);
+    too_big.resize(MAX_SIGNED_PDF_BYTES + 1, b' ');
+    let err = f.sign(&d, &too_big).unwrap_err();
+    assert_eq!(err.code(), "pdf_too_large");
+    assert!(err.to_string().contains("100 MB"), "{err}");
+    drop(too_big);
+
+    let done = f.sign(&d, &big).unwrap();
+    assert_eq!(done.summary.status, RequestStatus::Completed);
+    assert_eq!(
+        f.ctx().verify_file(&big).unwrap().state,
+        VerifyState::MatchFinal
+    );
+}
+
+#[test]
+fn file_integrity_streams_and_skips_oversized_files() {
+    use super::service::file_integrity;
+    use super::store::MAX_SIGNED_PDF_BYTES;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.pdf");
+    std::fs::write(&path, b"%PDF-1.7 isi").unwrap();
+    let h = seal::hash_hex(b"%PDF-1.7 isi");
+    assert_eq!(file_integrity(&path, &h), seal::Integrity::Intact);
+    assert_eq!(
+        file_integrity(&path, &"0".repeat(64)),
+        seal::Integrity::Changed
+    );
+    assert_eq!(
+        file_integrity(&dir.path().join("tidak-ada.pdf"), &h),
+        seal::Integrity::Missing
+    );
+    assert_eq!(file_integrity(dir.path(), &h), seal::Integrity::Missing);
+
+    // Berkas jarang (sparse) yang lebih besar dari batas: berubah tanpa dibaca.
+    let big = dir.path().join("besar.pdf");
+    let file = std::fs::File::create(&big).unwrap();
+    file.set_len(MAX_SIGNED_PDF_BYTES as u64 + 1).unwrap();
+    drop(file);
+    assert_eq!(file_integrity(&big, &h), seal::Integrity::Changed);
+}
+
+#[test]
+fn unlock_result_debug_hides_secrets() {
+    let mut f = fx();
+    f.save_signature();
+    let u = f.ctx().unlock(PIN, t(1)).unwrap();
+    let shown = format!("{u:?}");
+    assert!(!shown.contains(&u.token), "{shown}");
+    assert!(!shown.contains(&u.png_base64), "{shown}");
+    assert!(shown.contains("png_base64_len"), "{shown}");
 }
