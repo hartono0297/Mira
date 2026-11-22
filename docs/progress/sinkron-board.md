@@ -2,8 +2,6 @@
 
 Tanggal: 22 November 2026. Branch `claude/sinkron-board-e01670`. Dasar: `main` 63eb72b. Rencana: `docs/plans/sinkron-board.md`.
 
-DRAF. Bagian bertanda `[PERIKSA]` ditulis dari keadaan kode saat ini dan bisa berubah karena masih ada pekerjaan di `sync.rs`, `policy.rs`, `rules.rs`, `doc.rs`, `feature.rs`, dan tes konvergensi.
-
 ## Ringkasan
 
 Change board sekarang bisa berpindah antar laptop. Setiap change Automerge yang sudah ditandatangani dikirim sebagai satu record lewat kontrak `network/feature.rs` (`FeatureSync`, topik `board`). Laptop yang menerima memeriksa sendiri setiap change sebelum memakainya. Dua laptop yang memegang change yang sama melihat isi board yang sama.
@@ -16,29 +14,29 @@ Tamu sekarang diundang per proyek. Undangan Tamu memilih proyek dari tim yang sa
 
 Tampilan board memuat ulang sendiri saat ada change dari laptop lain (event `mira://feature` dengan topik `board`). Ketikan yang belum disimpan tidak tertimpa. Kalau task atau proyek hilang karena change dari rekan, tampilan menjelaskan penyebabnya.
 
-Transport jaringan yang memanggil kontrak ini belum digabung ke branch ini. Jadi sinkron sudah diuji di Rust dengan beberapa database lokal dan di aplikasi satu laptop, tapi belum antar laptop sungguhan. Belum ada commit untuk laporan ini, push, atau merge ke `main`.
+Transport jaringan yang memanggil kontrak ini belum digabung ke branch ini. Jadi sinkron sudah diuji di Rust dengan beberapa database lokal dan di aplikasi satu laptop, tapi belum antar laptop sungguhan. Semua pekerjaan di-commit lokal di branch ini. Tidak ada push, remote baru, atau merge ke `main`.
 
 ## Yang dibuat
 
 **Inti Rust (`src-tauri/src/board/`)**
 - `schema.rs`: migrasi `BOARD_SYNC_SCHEMA` (v6 di branch ini). Isinya kolom `record_id` di `board_changes`, kolom `doc_code` di `board_projects`, tabel `board_pending` untuk change yang belum bisa dipakai, dan tabel `board_rejected` untuk id record yang ditolak.
 - `access.rs`: aturan siapa boleh melihat dan mengubah proyek mana. `Rights` dibaca dari tabel hasil fold Tahap 1 (`members`, `teams`, `team_members`, `guest_access`). `RightsHistory` memutar ulang log keanggotaan untuk menjawab "apakah penulis punya hak ini saat change dibuat". Di sini juga ada fungsi untuk chat dan dokumen (lihat bagian 6).
-- `policy.rs`: `LocalRolePolicy` memakai aturan `access.rs`. `check_at` menilai change dari rekan menurut waktu change dibuat. `BatchPolicy` memuat riwayat hak sekali per kiriman. `[PERIKSA]`
-- `rules.rs`: menilai setiap operasi di dalam satu change dari rekan, misalnya "boleh mengisi kolom task" atau "tidak boleh menghapus kunci task". `[PERIKSA]`
-- `sync.rs`: sisi penyimpanan. Setiap change dari rekan mendapat satu hasil: diterapkan, sudah ada, ditahan, ditolak, menunggu change induk, atau proyek belum dikenal. `[PERIKSA]`
-- `feature.rs`: `BoardFeature`, implementasi `FeatureSync` topik `board`. Isinya menawarkan record, menerima record, menyimpan antrean pending, dan mencoba lagi change yang ditahan. `BoardSyncNotifier` adalah hook untuk change lokal: memicu pengingat tenggat lalu memberi tahu `FeatureHub`. `register` memasang semuanya ke aplikasi. `[PERIKSA]`
+- `policy.rs`: `LocalRolePolicy` memakai aturan `access.rs`. `check_at` menilai change dari rekan menurut waktu change dibuat. `BatchPolicy` memuat riwayat hak sekali per kiriman.
+- `rules.rs`: menilai setiap operasi di dalam satu change dari rekan, misalnya "boleh mengisi kolom task" atau "tidak boleh menghapus kunci task". Juga memeriksa bahwa task dan komentar baru memakai id yang terikat ke penulisnya, dan membatasi nomor task.
+- `sync.rs`: sisi penyimpanan. Setiap change dari rekan mendapat satu hasil: diterapkan, sudah ada, ditahan, ditolak, menunggu change induk, atau proyek belum dikenal. Di sini juga aturan "didukung rekan" untuk change dari orang yang sudah kehilangan haknya.
+- `feature.rs`: `BoardFeature`, implementasi `FeatureSync` topik `board`. Isinya menawarkan record, menerima record, menyimpan antrean pending, dan mencoba lagi change yang ditahan. `BoardSyncNotifier` adalah hook untuk change lokal: memicu pengingat tenggat lalu memberi tahu `FeatureHub`. `register` memasang semuanya ke aplikasi.
 - `numbers.rs`: penomoran ulang task yang nomornya sama setelah sinkron.
 - `store.rs`:
   - `derive_project_id`: id proyek dihitung dari pembuat, tim, dan nonce acak.
   - `is_syncable`: memeriksa apakah id proyek sudah terikat seperti itu.
   - `refresh_codes`: menentukan kode proyek yang tampil kalau ada kode ganda.
-- `doc.rs`: operasi baru `renumber_task` dan `rename_project`, dan jenis riwayat `renumbered`. `[PERIKSA]`
+- `doc.rs`: operasi baru `renumber_task` dan `rename_project`, jenis riwayat `renumbered`, dan id task serta komentar yang diturunkan dari penulis dan nonce (`derive_task_id`, `derive_comment_id`).
 - `sign.rs`: bentuk record yang dikirim (`record_body`, `from_record_body`). Batas satu change turun ke 120 KiB supaya record tetap muat di batas transport 256 KiB.
 - `assignees.rs`: daftar penanggung jawab = semua yang boleh menulis di proyek itu.
 - `commands.rs`: command baru `board_update_project` untuk mengganti nama proyek.
 - `reminder.rs`: pengingat hanya untuk proyek yang masih boleh dilihat laptop ini.
 - `model.rs`, `view.rs`: field baru `teamName` di ringkasan proyek dan `canComment` di detail task.
-- Tes: `access/tests.rs`, `rules/tests.rs`, `feature/tests.rs` (tiga laptop dengan log keanggotaan sungguhan), `feature/convergence_tests.rs` (proptest konvergensi, pembatasan, dan change palsu), `testutil.rs`. `[PERIKSA]`
+- Tes: `access/tests.rs`, `rules/tests.rs`, `feature/tests.rs` (tiga laptop dengan log keanggotaan sungguhan), `feature/convergence_tests.rs` (proptest konvergensi tiga laptop, nomor ganda, hapus vs edit, urutan kedatangan, pembatasan, change palsu), `testutil.rs`.
 
 **Tampilan (`src/screens/board/`, `src/screens/org/`, `src/api/board.ts`)**
 - `api/board.ts`: `subscribeBoard` sekarang juga mendengar `mira://feature`. Hanya payload dengan `topic: "board"` yang memicu muat ulang. Ada `updateProject` dan field `teamName`, `canComment`, serta jenis riwayat `renumbered`.
@@ -58,7 +56,7 @@ Transport jaringan yang memanggil kontrak ini belum digabung ke branch ini. Jadi
 - `org/InviteDialog.tsx`: undangan Tamu memilih proyek dari tim yang dipilih, paling banyak 50 proyek.
 
 **Uji ujung ke ujung**
-- `scripts/board-sync-e2e.mjs`: satu laptop. Membuat tim dan proyek tim, mengubah judul task dari inti Rust saat deskripsi sedang diketik, memancarkan `mira://feature` topik `board` dan `chat`, mengubah nama proyek, membuat undangan Tamu, mengambil screenshot terang dan gelap, lalu restart. `[PERIKSA]` (skrip ini sedang diubah)
+- `scripts/board-sync-e2e.mjs`: satu laptop. Membuat tim dan proyek tim, mengubah judul task dari inti Rust saat deskripsi sedang diketik, memancarkan `mira://feature` topik `board` dan `chat`, mengubah nama proyek, membuat undangan Tamu, mengambil screenshot terang dan gelap, lalu restart.
 
 ## Aturan akses
 
@@ -102,44 +100,46 @@ Konflik terjadi kalau dua orang mengubah hal yang sama saat laptop mereka belum 
 
 ## Keamanan
 
-**Pemeriksaan per operasi (`rules.rs`).** Change dari rekan tidak dinilai dari hasil gabungannya, tapi dari setiap operasi di dalamnya. Cara ini memberi hasil yang sama di semua laptop, apa pun urutan change datang. Yang boleh, antara lain: membuat task baru, mengisi kolom task, mengedit judul dan deskripsi, menambah komentar dan riwayat atas nama penulis sendiri, dan mengganti nama atau kode proyek kalau punya hak atur. Yang ditolak permanen, antara lain: menghapus kunci task atau komentar, mengganti seluruh daftar task atau data proyek, mengubah pembuat task, mengedit komentar orang lain atau riwayat lama, dan memindah proyek ke tim lain. Satu change paling banyak 50.000 operasi. `[PERIKSA]`
+**Pemeriksaan per operasi (`rules.rs`).** Change dari rekan tidak dinilai dari hasil gabungannya, tapi dari setiap operasi di dalamnya. Cara ini memberi hasil yang sama di semua laptop, apa pun urutan change datang. Yang boleh, antara lain: membuat task baru, mengisi kolom task, mengedit judul dan deskripsi, menambah komentar dan riwayat atas nama penulis sendiri, dan mengganti nama atau kode proyek kalau punya hak atur. Yang ditolak permanen, antara lain: menghapus kunci task atau komentar, mengganti seluruh daftar task atau data proyek, mengubah pembuat task, mengedit komentar orang lain atau riwayat lama, dan memindah proyek ke tim lain. Task dan komentar baru wajib memakai id yang diturunkan dari penulisnya dan nonce, jadi orang lain tidak bisa membuat task dengan id task orang lain. Nomor task yang ditulis change rekan dibatasi supaya tidak bisa diracuni dengan angka raksasa. Satu change paling banyak 50.000 operasi.
 
 **Id proyek terikat ke pembuat dan tim.** Id proyek baru adalah 32 karakter pertama hash BLAKE3 dari pembuat, tim, dan nonce acak (`store::derive_project_id`). Orang lain tidak bisa mengaku sebagai pembuat proyek itu atau memindahkannya ke tim lain dengan change pertama palsu. Proyek yang dibuat sebelum versi ini belum punya id terikat, jadi tidak ditawarkan ke laptop lain (`store::is_syncable`).
 
-**Hak pada saat change dibuat.** Change dari rekan diterima kalau penulisnya punya hak itu sekarang. Ada satu pengecualian: orang yang sudah dikeluarkan dari organisasi dinilai menurut waktu change dibuat. Change yang ia buat sebelum dikeluarkan, tapi baru sampai sesudahnya, tetap diterima di semua laptop, jadi isi board tidak bercabang. Change sesudah dikeluarkan ditolak. Anggota yang masih di organisasi tapi keluar tim atau turun peran selalu dinilai dengan hak sekarang, karena ia masih bisa mengirim langsung dan bisa memundurkan jam laptopnya. `[PERIKSA]`
+**Hak pada saat change dibuat.** Change dari rekan diterima kalau penulisnya punya hak itu sekarang. Kalau penulisnya sudah kehilangan hak (keluar tim, turun dari admin, atau dikeluarkan dari organisasi), change tetap diterima kalau dua syarat terpenuhi:
+- Penulis masih punya hak itu saat change dibuat. Waktu kehilangan hak diambil dari op keanggotaan yang mencabutnya.
+- Change itu didukung rekan: ada change lain dari orang yang masih berhak, yang dibangun di atas change itu. Artinya rekan yang berhak sudah melihatnya. Pendukung harus orang lain, bukan penulisnya sendiri.
+
+Contoh: Budi menulis di proyek Desain hari Senin, Selasa dipindah ke tim lain, Rabu Sari masuk Desain. Change Budi yang sudah dikomentari rekan tetap sampai ke Sari, jadi board Sari tidak beku. Sebaliknya, kalau Budi memundurkan jam laptopnya dan mengirim change baru, tidak ada rekan yang membangun di atasnya, jadi change itu ditahan.
 
 **Change ditahan vs ditolak.** Op keanggotaan dan change board datang lewat aliran yang berbeda. Change dari anggota baru bisa tiba sebelum op yang memasukkannya ke tim. Karena itu:
 
 | Keadaan | Yang terjadi |
 |---|---|
 | Tanda tangan, format, hash, atau bentuk dokumen rusak | Ditolak permanen. Id record disimpan di `board_rejected` dan dicatat di `rejected_changes`. |
-| Penulis adalah Tamu | Ditolak permanen. |
-| Penulis anggota, tapi belum punya hak menurut keanggotaan yang diketahui laptop ini | Ditahan di `board_pending` (alasan `rights`), dicatat sekali. Dicoba lagi saat log keanggotaan berubah. |
+| Penulis saat ini Tamu | Tidak disimpan dan tidak dicatat. Rekan akan menawarkannya lagi; kalau Tamu itu ternyata baru dijadikan anggota, change diterima setelah op-nya tiba. |
+| Penulis anggota, tapi belum punya hak (atau belum didukung rekan) menurut keanggotaan yang diketahui laptop ini | Ditahan di `board_pending` (alasan `rights`), dicatat sekali. Dicoba lagi saat log keanggotaan berubah atau saat change baru untuk proyek itu datang. |
 | Penulis belum pernah terlihat sebagai anggota | Tidak disimpan. Rekan akan menawarkannya lagi dan change diperiksa ulang. |
-| Change induk belum ada | Ditunggu di `board_pending` (alasan `deps`). |
-| Proyek belum dikenal | Ditunggu di `board_pending` (alasan `project`). |
+| Change induk belum ada | Ditunggu di `board_pending` (alasan `deps`), hanya kalau penulisnya pernah jadi anggota. |
+| Proyek belum dikenal | Ditunggu di `board_pending` (alasan `project`), hanya kalau penulisnya pernah jadi anggota. |
 
-`[PERIKSA]` untuk isi tabel ini.
-
-**Batas pending.** `board_pending` paling banyak 20.000 baris dan 64 MiB total, dan 5.000 baris per laptop pengirim. Baris `deps` dan `project` yang lebih tua dari 30 hari dibuang. Satu panggilan penerapan paling banyak 1.000 change atau 16 MiB; sisanya menunggu giliran berikutnya. `[PERIKSA]`
+**Batas pending.** `board_pending` paling banyak 20.000 baris dan 64 MiB total. Per laptop pengirim paling banyak 5.000 baris dan 8 MiB. Baris `deps` dan `project` dibuang setelah 30 hari, baris `rights` setelah 90 hari. Satu panggilan penerapan paling banyak 1.000 change atau 16 MiB; sisanya menunggu giliran berikutnya. Satu jawaban `records_for` paling banyak 8 MiB.
 
 **Penawaran.** Laptop hanya menawarkan change proyek yang boleh dilihat rekan saat ini, dan memeriksa lagi setiap id yang diminta rekan. Change yang masih pending atau ditolak tidak pernah diteruskan.
 
-**Dua putaran review keamanan.** `[PERIKSA]` (pembagian temuan per putaran)
-- Putaran 1, setelah fondasi (commit `52ca060`):
-  - Change rekan dinilai per operasi, tidak bergantung urutan datang.
-  - Komentar dan riwayat baru wajib atas nama penulisnya.
-  - Batas 50.000 operasi per change.
-  - Hak menurut waktu hanya untuk orang yang sudah dikeluarkan dari organisasi.
-  - Change pertama proyek dipilih dengan cara yang sama di semua laptop.
-  - Batas ukuran change 120 KiB dan batas nomor task.
-  - Pengingat hanya untuk proyek yang masih boleh dilihat.
-  - Undangan Tamu hanya untuk proyek tim itu.
+**Dua putaran review keamanan** oleh subagent terpisah, plus satu review tampilan.
+- Putaran 1 (setelah fondasi):
+  - Hapus task lewat penghapusan key, ganti map task, pindah tim, hidupkan task terhapus: sekarang dinilai per operasi (`rules.rs`), tidak bergantung urutan datang.
+  - Komentar dan riwayat atas nama orang lain: ditolak.
+  - Pembajakan id proyek lewat change pertama palsu: id proyek diikat ke pembuat dan tim.
+  - Backdating oleh anggota yang turun hak: lihat "Hak pada saat change dibuat".
+  - Ledakan operasi, batas ukuran record, banjir tabel pending: batas 50.000 operasi, change 120 KiB, kuota pending.
   - Tampilan: 13 temuan, antara lain ubah nama tidak menimpa rekan, izin dicabut saat mengetik, proyek tanpa tim tidak dibuat diam-diam, teks Tamu, dan fokus.
-- Putaran 2:
-  - Id proyek diikat ke pembuat dan tim, supaya change pertama palsu tidak bisa membajak proyek (commit `ecfbbe3`).
-  - Proyek lama yang id-nya belum terikat tidak ditawarkan (commit `10537b1`).
-  - Change dari penulis yang belum dikenal tidak lagi ditolak permanen, supaya anggota baru tidak kehilangan change-nya (commit `10537b1`).
+- Putaran 2 (setelah sinkron digabung):
+  - Change tanpa dependensi selain change pertama pilihan impor lolos tanpa penilaian: diperbaiki.
+  - Bentrok id task dan komentar memecah board: id sekarang terikat ke penulis.
+  - Riwayat sah dari orang yang pindah tim tertahan selamanya: aturan "didukung rekan".
+  - Plafon nomor task bisa diracuni: nomor dibatasi.
+  - Kuota pending dalam byte per pengirim, umur baris `rights`, batas jawaban 8 MiB, cache id proyek terikat.
+- Tes konvergensi menemukan dua bug lagi yang sudah diperbaiki: change dari Tamu yang baru dijadikan anggota sempat ditolak permanen, dan change pendukung dari pengirim lain sempat tidak dinilai bersama change yang ditahan.
 
 ## Fungsi akses proyek untuk chat dan dokumen
 
@@ -171,7 +171,7 @@ Fungsi ini menjawab hak saat ini. Kalau chat atau dokumen perlu menerima pesan l
 | Proyek yang dibuat sebelum versi ini tidak disinkronkan. | Id-nya belum terikat ke pembuat dan tim, jadi laptop lain tidak bisa membedakan change pertamanya dari change palsu. Proyek itu tetap bisa dipakai di laptop pembuatnya. |
 | Kode proyek ganda hanya diselesaikan di tampilan lokal (PA2, PA3). | Kode di dokumen tidak berubah, jadi tidak perlu change baru dan laptop yang hanya memegang satu proyek tetap melihat PA. |
 | Nomor task ganda diselesaikan dengan change bertanda tangan. | Nomor task dipakai di pesan dan catatan, jadi semua laptop harus sepakat dan riwayatnya harus jelas. |
-| Hak menurut waktu hanya untuk orang yang sudah dikeluarkan dari organisasi. | Hanya mereka yang tidak bisa mengirim langsung lagi. Anggota yang masih aktif bisa memundurkan jam laptopnya. |
+| Change dari orang yang sudah kehilangan hak diterima kalau dibuat sebelum haknya dicabut dan didukung rekan yang masih berhak. | Riwayat sah tetap sampai ke anggota baru, tapi orang yang memundurkan jam laptopnya tidak bisa menulis sendirian. |
 | Change dari penulis yang belum dikenal tidak disimpan, tapi juga tidak ditolak permanen. | Op keanggotaan bisa datang belakangan. Menyimpan change dari orang asing membuka celah memenuhi disk. |
 | Record board = satu change dengan body JSON dalam urutan field tetap. | Semua laptop menyusun body yang sama dari change yang sama, jadi id record sama di mana-mana dan tidak dikirim dua kali. |
 | Draf di tampilan tidak pernah tertimpa muat ulang. | Ketikan pengguna lebih berharga dari tampilan terbaru. Pengguna diberi tahu kalau rekan mengubah isian yang sama. |
@@ -191,7 +191,6 @@ Fungsi ini menjawab hak saat ini. Kalau chat atau dokumen perlu menerima pesan l
 Screenshot di `docs/progress/screenshots/sinkron-board/`:
 - Mode terang: `sb-01-tim-desain-terang.png` sampai `sb-09-detail-task-terang.png`, antara lain proyek baru dengan tim, draf yang tetap ada setelah sinkron, ubah nama proyek, dan undangan Tamu dengan pilihan proyek.
 - Mode gelap: `sb-10-board-gelap.png`, `sb-11-detail-task-gelap.png`, `sb-12-undangan-tamu-gelap.png`, `sb-13-setelah-restart-gelap.png`.
-- `sb-gagal.png` adalah screenshot dari run yang gagal. `[PERIKSA]` (hapus atau jelaskan sebelum commit)
 
 ## Belum dicek atau masih kurang
 
@@ -216,5 +215,5 @@ Screenshot di `docs/progress/screenshots/sinkron-board/`:
   - Setelah `ingest` mengembalikan `changed: true`, transport memancarkan `mira://feature` dengan payload `{ topic }`. UI board sudah mendengarnya dan hanya bereaksi pada `topic: "board"`.
   - Semua method `BoardFeature` sinkron dan membuka SQLite, jadi transport perlu memanggil `ingest` (dan method lain) di thread blocking, sesuai catatan di kontrak.
   - `peer_connected` dipakai untuk mencoba lagi change yang ditahan. Transport cukup memanggilnya saat rekan tersambung.
-  - Tidak ada kebutuhan tambahan lain yang saya temukan. `[PERIKSA]`
+  - Tidak ada kebutuhan tambahan lain yang saya temukan.
 - **Di luar repo.** Folder `D:\GitHub\ChatCompany` tidak disentuh.
