@@ -12,6 +12,7 @@
 //! (BLAKE3 of the payload). Everything else is decided by the backend.
 
 mod discovery;
+pub mod feature;
 mod join;
 mod node;
 pub mod route;

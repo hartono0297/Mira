@@ -91,6 +91,9 @@ pub fn run() {
                 hook: std::sync::Arc::new(reminders),
             });
             app.manage(state);
+            // Feature sync contract (network/feature.rs): chat, board, documents
+            // and signing register here; the transport sets the real link.
+            app.manage(std::sync::Arc::new(network::feature::FeatureHub::default()));
             // Document library: managed even when the data folder is missing
             // (its commands then return the error). Edit sessions left from
             // the last run are recovered in the background.
