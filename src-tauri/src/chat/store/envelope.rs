@@ -15,7 +15,9 @@ use crate::blobs::{BlobHash, BlobStore};
 use crate::chat::audience::Ctx;
 use crate::chat::fetch::{self, FetchKind, PRIORITY_MINE};
 use crate::chat::judge::{self, Verdict, envelope_expired};
-use crate::chat::model::{Body, CipherFileRef, FileRef, Rejection, VerifiedRecord, parse_stored, verify_record};
+use crate::chat::model::{
+    Body, CipherFileRef, FileRef, Rejection, VerifiedRecord, parse_stored, verify_record,
+};
 use crate::chat::seal::{self, FileKey};
 use crate::error::AppResult;
 use crate::identity::Identity;
@@ -33,7 +35,10 @@ pub(super) fn apply_envelope(
     now: OffsetDateTime,
     fx: &mut Effects,
 ) -> AppResult<()> {
-    let Body::Envelope { to, cipher_files, .. } = rec.body() else {
+    let Body::Envelope {
+        to, cipher_files, ..
+    } = rec.body()
+    else {
         return Ok(());
     };
     let conn = ctx.conn;
@@ -77,10 +82,13 @@ fn prefer_list(keys: &[Option<&str>]) -> Vec<String> {
     out
 }
 
+/// Maps a cipher hash to the plaintext hash it decrypts to.
+type PlainOf<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
 fn queue_ciphers(
     ctx: &Ctx,
     files: &[CipherFileRef],
-    plain_of: Option<&dyn Fn(&str) -> Option<String>>,
+    plain_of: Option<&PlainOf<'_>>,
     prefer: &[String],
     priority: i64,
     fx: &mut Effects,
@@ -91,7 +99,16 @@ fn queue_ciphers(
             continue;
         }
         let plain = plain_of.and_then(|p| p(&f.hash));
-        fetch::queue(ctx.conn, &f.hash, FetchKind::Cipher, f.size, plain.as_deref(), prefer, priority, &now)?;
+        fetch::queue(
+            ctx.conn,
+            &f.hash,
+            FetchKind::Cipher,
+            f.size,
+            plain.as_deref(),
+            prefer,
+            priority,
+            &now,
+        )?;
         fx.queued = true;
     }
     Ok(())
@@ -106,7 +123,12 @@ fn has_valid_ack(ctx: &Ctx, envelope: &str, recipient: &str) -> AppResult<bool> 
     Ok(n > 0)
 }
 
-pub(super) fn apply_ack(ctx: &Ctx, author: &str, envelope: &str, fx: &mut Effects) -> AppResult<()> {
+pub(super) fn apply_ack(
+    ctx: &Ctx,
+    author: &str,
+    envelope: &str,
+    fx: &mut Effects,
+) -> AppResult<()> {
     let row: Option<(String, i64)> = ctx
         .conn
         .query_row(
@@ -163,7 +185,13 @@ pub fn expire(ctx: &Ctx, now: OffsetDateTime, fx: &mut Effects) -> AppResult<()>
         .conn
         .prepare("SELECT id, recipient, at FROM chat_envelopes WHERE acked = 0")?;
     let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     for (id, recipient, at) in rows {
         let old = parse_time(&at).is_none_or(|t| envelope_expired(t, now));
@@ -196,7 +224,13 @@ pub fn open_pending(
          ORDER BY e.at, e.id",
     )?;
     let rows = stmt
-        .query_map([ctx.me()], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
+        .query_map([ctx.me()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     for (id, author, body) in rows {
         match open_one(ctx, identity, &author, &body, from, now, fx)? {
@@ -208,7 +242,14 @@ pub fn open_pending(
             }
             Opened::Later => {}
             Opened::Broken(rej) => {
-                permissions::log_rejection(ctx.conn, from, None, &format!("chat_{}", rej.code), &rej.detail, now)?;
+                permissions::log_rejection(
+                    ctx.conn,
+                    from,
+                    None,
+                    &format!("chat_{}", rej.code),
+                    &rej.detail,
+                    now,
+                )?;
                 ctx.conn.execute(
                     "UPDATE chat_envelopes SET opened = 1, open_error = ?2, file_keys = '[]' WHERE id = ?1",
                     params![id, rej.detail],
@@ -229,10 +270,21 @@ fn open_one(
     fx: &mut Effects,
 ) -> AppResult<Opened> {
     let Ok(stored) = parse_stored(body) else {
-        return Ok(Opened::Broken(Rejection::new("bad_envelope", "titipan rusak")));
+        return Ok(Opened::Broken(Rejection::new(
+            "bad_envelope",
+            "titipan rusak",
+        )));
     };
-    let Body::Envelope { sealed, cipher_files, .. } = stored.body() else {
-        return Ok(Opened::Broken(Rejection::new("bad_envelope", "bukan titipan")));
+    let Body::Envelope {
+        sealed,
+        cipher_files,
+        ..
+    } = stored.body()
+    else {
+        return Ok(Opened::Broken(Rejection::new(
+            "bad_envelope",
+            "bukan titipan",
+        )));
     };
     let content = match seal::open_sealed(identity, sealed) {
         Ok(c) => c,
@@ -244,7 +296,10 @@ fn open_one(
         Err(r) => return Ok(Opened::Broken(r)),
     };
     let Body::Message { files, .. } = inner.body() else {
-        return Ok(Opened::Broken(Rejection::new("envelope_mismatch", "isi titipan bukan pesan")));
+        return Ok(Opened::Broken(Rejection::new(
+            "envelope_mismatch",
+            "isi titipan bukan pesan",
+        )));
     };
     if inner.author() != env_author {
         return Ok(Opened::Broken(Rejection::new(
@@ -310,7 +365,9 @@ pub fn complete(
         .collect::<Result<Vec<_>, _>>()?;
     // A deleted (or purged) message needs none of its files.
     for (id, author, ciphers, keys) in rows {
-        let keys: Vec<FileKey> = keys.and_then(|k| serde_json::from_str(&k).ok()).unwrap_or_default();
+        let keys: Vec<FileKey> = keys
+            .and_then(|k| serde_json::from_str(&k).ok())
+            .unwrap_or_default();
         let ciphers: Vec<CipherFileRef> = serde_json::from_str(&ciphers).unwrap_or_default();
         let mut pending = Vec::new();
         for k in &keys {
@@ -324,7 +381,11 @@ pub fn complete(
             create(ctx, identity, Body::EnvelopeAck { envelope: id }, now, fx)?;
         } else {
             let prefer = prefer_list(&[Some(author.as_str())]);
-            let plain_of = |cipher: &str| keys.iter().find(|k| k.cipher == cipher).map(|k| k.hash.clone());
+            let plain_of = |cipher: &str| {
+                keys.iter()
+                    .find(|k| k.cipher == cipher)
+                    .map(|k| k.hash.clone())
+            };
             queue_ciphers(ctx, &pending, Some(&plain_of), &prefer, PRIORITY_MINE, fx)?;
         }
     }
@@ -381,14 +442,23 @@ fn fx_unqueue_plain(ctx: &Ctx, hash: &str) -> AppResult<()> {
 pub fn drop_key(ctx: &Ctx, envelope: &str, cipher: &str) -> AppResult<()> {
     let keys: Option<String> = ctx
         .conn
-        .query_row("SELECT file_keys FROM chat_envelopes WHERE id = ?1", [envelope], |r| r.get(0))
+        .query_row(
+            "SELECT file_keys FROM chat_envelopes WHERE id = ?1",
+            [envelope],
+            |r| r.get(0),
+        )
         .optional()?
         .flatten();
-    let mut keys: Vec<FileKey> = keys.and_then(|k| serde_json::from_str(&k).ok()).unwrap_or_default();
+    let mut keys: Vec<FileKey> = keys
+        .and_then(|k| serde_json::from_str(&k).ok())
+        .unwrap_or_default();
     keys.retain(|k| k.cipher != cipher);
     ctx.conn.execute(
         "UPDATE chat_envelopes SET file_keys = ?2 WHERE id = ?1",
-        params![envelope, serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into())],
+        params![
+            envelope,
+            serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into())
+        ],
     )?;
     Ok(())
 }

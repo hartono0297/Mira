@@ -63,7 +63,10 @@ fn standing(ctx: &Ctx, author: &str, at: OffsetDateTime) -> Result<Standing, Ver
         Some(m) if m.active => Ok(Standing::Active),
         Some(m) => match m.removed_at {
             Some(removed) if at < removed => Ok(Standing::RemovedBefore),
-            _ => Err(reject("removed", "pembuat sudah dikeluarkan dari organisasi")),
+            _ => Err(reject(
+                "removed",
+                "pembuat sudah dikeluarkan dari organisasi",
+            )),
         },
     }
 }
@@ -112,7 +115,9 @@ pub fn judge(ctx: &Ctx, rec: &VerifiedRecord, now: OffsetDateTime) -> AppResult<
             message_author,
             ..
         } => message_delete(ctx, rec, st, conv, message, message_author),
-        Body::Envelope { to, cipher_files, .. } => envelope(ctx, rec, st, to, cipher_files, now),
+        Body::Envelope {
+            to, cipher_files, ..
+        } => envelope(ctx, rec, st, to, cipher_files, now),
         Body::EnvelopeAck { envelope } => {
             let recipient: Option<String> = ctx
                 .conn
@@ -191,7 +196,9 @@ fn may_post(
     }
     let guest = is_guest(ctx, author);
     Ok(match (&info.scope, st) {
-        (Scope::Umum | Scope::Org, _) if guest => forbidden("tamu tidak bisa menulis di channel kantor"),
+        (Scope::Umum | Scope::Org, _) if guest => {
+            forbidden("tamu tidak bisa menulis di channel kantor")
+        }
         (_, Standing::RemovedBefore) => Verdict::Accept,
         (Scope::Umum | Scope::Org, Standing::Active) => Verdict::Accept,
         // Team or project membership may not have reached this laptop yet.
@@ -250,7 +257,9 @@ fn channel_create(
     }
     if st == Standing::RemovedBefore {
         return Ok(match scope {
-            ChannelScope::Org => forbidden("hak superadmin pembuat yang sudah dikeluarkan tidak bisa diperiksa"),
+            ChannelScope::Org => {
+                forbidden("hak superadmin pembuat yang sudah dikeluarkan tidak bisa diperiksa")
+            }
             _ => Verdict::Accept,
         });
     }
@@ -278,7 +287,9 @@ fn channel_admin(ctx: &Ctx, rec: &VerifiedRecord, st: Standing, conv: &str) -> A
 
 fn admin_rights(ctx: &Ctx, info: &ConvInfo, author: &str, st: Standing) -> AppResult<Verdict> {
     if st == Standing::RemovedBefore {
-        return Ok(forbidden("hak admin pembuat yang sudah dikeluarkan tidak bisa diperiksa"));
+        return Ok(forbidden(
+            "hak admin pembuat yang sudah dikeluarkan tidak bisa diperiksa",
+        ));
     }
     if ctx.is_admin(info, author)? {
         return Ok(Verdict::Accept);

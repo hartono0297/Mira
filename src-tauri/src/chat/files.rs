@@ -53,7 +53,9 @@ fn file_row(ctx: &Ctx, hash: &str) -> AppResult<FileRow> {
             return Ok(row);
         }
     }
-    Err(AppError::NotFound("File tidak ditemukan di percakapan yang bisa kamu buka.".into()))
+    Err(AppError::NotFound(
+        "File tidak ditemukan di percakapan yang bisa kamu buka.".into(),
+    ))
 }
 
 fn parse_hash(hash: &str) -> AppResult<BlobHash> {
@@ -67,7 +69,13 @@ pub fn safe_file_name(name: &str) -> String {
     }
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_control() || "\\/:*?\"<>|".contains(c) { '_' } else { c })
+        .map(|c| {
+            if c.is_control() || "\\/:*?\"<>|".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let cleaned = cleaned.trim().trim_matches('.').to_owned();
     if cleaned.is_empty() || !model::is_file_name(&cleaned) {
@@ -104,9 +112,15 @@ impl ChatSync {
             Ok(file_row(ctx, hash)?.name)
         })?;
         if !self.blobs.contains(&blob) {
-            return Err(AppError::NotFound("File belum ada di laptop ini. Unduh dulu.".into()));
+            return Err(AppError::NotFound(
+                "File belum ada di laptop ini. Unduh dulu.".into(),
+            ));
         }
-        let path = self.data_dir()?.join(OPEN_DIR).join(hash).join(safe_file_name(&name));
+        let path = self
+            .data_dir()?
+            .join(OPEN_DIR)
+            .join(hash)
+            .join(safe_file_name(&name));
         if !path.is_file() {
             self.blobs.copy_to(&blob, &path)?;
         }
@@ -120,7 +134,9 @@ impl ChatSync {
             file_row(ctx, hash).map(|_| ())
         })?;
         if !self.blobs.contains(&blob) {
-            return Err(AppError::NotFound("File belum ada di laptop ini. Unduh dulu.".into()));
+            return Err(AppError::NotFound(
+                "File belum ada di laptop ini. Unduh dulu.".into(),
+            ));
         }
         self.blobs.copy_to(&blob, dest)
     }
@@ -135,7 +151,16 @@ impl ChatSync {
             require_member(ctx)?;
             let row = file_row(ctx, hash)?;
             let now = format_time(clock::now());
-            fetch::queue(ctx.conn, hash, FetchKind::Plain, row.size, None, &[row.author], PRIORITY_USER, &now)?;
+            fetch::queue(
+                ctx.conn,
+                hash,
+                FetchKind::Plain,
+                row.size,
+                None,
+                &[row.author],
+                PRIORITY_USER,
+                &now,
+            )?;
             fx.queued = true;
             fx.visible = true;
             Ok(())
@@ -167,11 +192,19 @@ impl ChatSync {
         if !ok {
             let _ = std::fs::remove_file(downloaded);
             self.fetch_failed(job, "isi file tidak cocok dengan hash")?;
-            return Err(AppError::InvalidInput("File yang diunduh tidak cocok dengan aslinya.".into()));
+            return Err(AppError::InvalidInput(
+                "File yang diunduh tidak cocok dengan aslinya.".into(),
+            ));
         }
         let result = self.with_ctx(|ctx, identity, fx| {
             let now = clock::now();
-            fetch::put_tracked_file(ctx.conn, &self.blobs, downloaded, job.kind, &format_time(now))?;
+            fetch::put_tracked_file(
+                ctx.conn,
+                &self.blobs,
+                downloaded,
+                job.kind,
+                &format_time(now),
+            )?;
             fetch::unqueue(ctx.conn, &job.hash, job.kind)?;
             envelope::complete(ctx, identity, &self.blobs, now, fx)?;
             fx.visible = true;

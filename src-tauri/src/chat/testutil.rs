@@ -8,9 +8,9 @@ use std::sync::Arc;
 use rusqlite::{Connection, params};
 
 use super::audience::BoardTeamAudience;
+use super::fetch::FetchJob;
 use super::hooks::RecordingHooks;
 use super::sync::ChatSync;
-use super::fetch::FetchJob;
 use crate::identity::{self, MemoryKeyStore};
 use crate::network::feature::{FeatureIngest, FeatureSync, testing};
 use crate::org;
@@ -35,7 +35,10 @@ pub struct Laptop {
 impl Laptop {
     fn new(name: &str) -> Laptop {
         let tmp = tempfile::tempdir().unwrap();
-        let state = MiraState::new(Ok(tmp.path().to_path_buf()), Box::new(MemoryKeyStore::new()));
+        let state = MiraState::new(
+            Ok(tmp.path().to_path_buf()),
+            Box::new(MemoryKeyStore::new()),
+        );
         let pk = state
             .with_core(|c| {
                 identity::save_display_name(&mut c.db, &mut c.identity, name)?;
@@ -43,7 +46,8 @@ impl Laptop {
             })
             .unwrap();
         let hooks = Arc::new(RecordingHooks::default());
-        let chat = ChatSync::new(state.clone(), Arc::new(BoardTeamAudience), hooks.clone()).unwrap();
+        let chat =
+            ChatSync::new(state.clone(), Arc::new(BoardTeamAudience), hooks.clone()).unwrap();
         Laptop {
             tmp,
             state,
@@ -66,7 +70,11 @@ impl Laptop {
         (self.pk.as_str(), &self.chat as &dyn FeatureSync)
     }
 
-    pub fn chat_ingest(&self, from: &str, records: Vec<crate::network::feature::FeatureRecord>) -> FeatureIngest {
+    pub fn chat_ingest(
+        &self,
+        from: &str,
+        records: Vec<crate::network::feature::FeatureRecord>,
+    ) -> FeatureIngest {
         self.chat.ingest(from, records).unwrap()
     }
 
@@ -76,8 +84,13 @@ impl Laptop {
 
     pub fn rejected_codes(&self) -> Vec<String> {
         self.with_conn(|c| {
-            let mut stmt = c.prepare("SELECT code FROM rejected_changes ORDER BY id").unwrap();
-            stmt.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+            let mut stmt = c
+                .prepare("SELECT code FROM rejected_changes ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
         })
     }
 }
@@ -233,7 +246,9 @@ pub fn run_fetches(to: &Laptop, sources: &[&Laptop]) -> usize {
             to.chat.fetch_done(job, &dest).unwrap();
             done += 1;
         } else {
-            to.chat.fetch_failed(job, "tidak ada laptop yang punya").unwrap();
+            to.chat
+                .fetch_failed(job, "tidak ada laptop yang punya")
+                .unwrap();
         }
     }
     done

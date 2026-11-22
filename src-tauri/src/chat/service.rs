@@ -63,7 +63,10 @@ fn clean_text(text: &str) -> AppResult<String> {
 
 /// MIME type from the file extension; `application/octet-stream` otherwise.
 pub fn mime_for(name: &str) -> &'static str {
-    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
     match ext.as_str() {
         "pdf" => "application/pdf",
         "doc" => "application/msword",
@@ -92,7 +95,10 @@ pub fn mime_for(name: &str) -> &'static str {
 /// Copies one picked file into the blob store and describes it.
 fn attach(ctx: &Ctx, blobs: &BlobStore, path: &Path, now: &str) -> AppResult<FileRef> {
     let meta = std::fs::metadata(path).map_err(|_| {
-        invalid(&format!("File {} tidak bisa dibaca. Pastikan file masih ada.", path.display()))
+        invalid(&format!(
+            "File {} tidak bisa dibaca. Pastikan file masih ada.",
+            path.display()
+        ))
     })?;
     if !meta.is_file() {
         return Err(invalid("Yang dipilih bukan file."));
@@ -160,7 +166,9 @@ fn make_envelopes(
     let (keys, ciphers) = seal_files(ctx, blobs, files, &format_time(now))?;
     let content = SealedContent::new(message.body_json.clone(), keys);
     for to in recipients {
-        let Ok(sealed) = seal::seal_for(to, &content) else { continue };
+        let Ok(sealed) = seal::seal_for(to, &content) else {
+            continue;
+        };
         if sealed.len() > MAX_SEALED_CHARS {
             continue;
         }
@@ -186,7 +194,12 @@ impl ChatSync {
         })
     }
 
-    pub fn conversation(&self, conv: &str, before: Option<String>, limit: u32) -> AppResult<ConversationView> {
+    pub fn conversation(
+        &self,
+        conv: &str,
+        before: Option<String>,
+        limit: u32,
+    ) -> AppResult<ConversationView> {
         self.with_ctx(|ctx, _, _| {
             require_member(ctx)?;
             let info = readable(ctx, conv)?;
@@ -229,10 +242,14 @@ impl ChatSync {
             require_member(ctx)?;
             let info = readable(ctx, conv)?;
             if info.archived {
-                return Err(forbidden("Channel ini diarsipkan. Kembalikan dulu sebelum mengirim pesan."));
+                return Err(forbidden(
+                    "Channel ini diarsipkan. Kembalikan dulu sebelum mengirim pesan.",
+                ));
             }
             if !read::can_post(ctx, &info)? {
-                return Err(forbidden("Kamu tidak bisa mengirim pesan di percakapan ini."));
+                return Err(forbidden(
+                    "Kamu tidak bisa mengirim pesan di percakapan ini.",
+                ));
             }
             let text = clean_text(text)?;
             if files.len() > MAX_FILES {
@@ -286,7 +303,9 @@ impl ChatSync {
             let info = readable(ctx, conv)?;
             let row = read::message_row(ctx.conn, message_id)?
                 .filter(|m| m.conv == conv && !m.deleted)
-                .ok_or_else(|| AppError::NotFound("Pesan tidak ditemukan atau sudah dihapus.".into()))?;
+                .ok_or_else(|| {
+                    AppError::NotFound("Pesan tidak ditemukan atau sudah dihapus.".into())
+                })?;
             let mine = row.author == ctx.me();
             if !mine && (!info.is_channel() || !ctx.is_admin(&info, ctx.me())?) {
                 return Err(forbidden("Kamu hanya bisa menghapus pesanmu sendiri."));
@@ -325,7 +344,11 @@ impl ChatSync {
         })
     }
 
-    pub fn create_channel(&self, name: &str, scope: NewChannelScope) -> AppResult<ConversationSummary> {
+    pub fn create_channel(
+        &self,
+        name: &str,
+        scope: NewChannelScope,
+    ) -> AppResult<ConversationSummary> {
         self.with_ctx(|ctx, identity, fx| {
             require_member(ctx)?;
             let me = ctx.me().to_owned();
@@ -387,7 +410,9 @@ impl ChatSync {
             if !read::can_admin_channel(ctx, &info)? {
                 return Err(forbidden("Hanya admin channel ini yang bisa menghapusnya."));
             }
-            let body = Body::ChannelDelete { conv: conv.to_owned() };
+            let body = Body::ChannelDelete {
+                conv: conv.to_owned(),
+            };
             store::create(ctx, identity, body, clock::now(), fx)?;
             Ok(())
         })
@@ -453,10 +478,16 @@ fn after_last_archive(ctx: &Ctx, conv: &str) -> AppResult<time::OffsetDateTime> 
     let now = clock::now();
     let last: Option<String> = ctx
         .conn
-        .query_row("SELECT archive_at FROM chat_channels WHERE conv = ?1", [conv], |r| r.get(0))
+        .query_row(
+            "SELECT archive_at FROM chat_channels WHERE conv = ?1",
+            [conv],
+            |r| r.get(0),
+        )
         .ok()
         .flatten();
-    let last = last.as_deref().and_then(crate::permissions::format::parse_time);
+    let last = last
+        .as_deref()
+        .and_then(crate::permissions::format::parse_time);
     Ok(match last {
         Some(t) if t >= now => t + time::Duration::seconds(1),
         _ => now,
@@ -467,7 +498,9 @@ fn channel_scope(ctx: &Ctx, me: &str, scope: NewChannelScope) -> AppResult<Chann
     match (scope.kind, scope.id) {
         (ScopeKind::Org, _) => {
             if !ctx.dir.is_superadmin(me) {
-                return Err(forbidden("Hanya superadmin yang bisa membuat channel untuk seluruh kantor."));
+                return Err(forbidden(
+                    "Hanya superadmin yang bisa membuat channel untuk seluruh kantor.",
+                ));
             }
             Ok(ChannelScope::Org)
         }
@@ -499,11 +532,15 @@ fn ensure_unique_name(ctx: &Ctx, name: &str, scope: &ChannelScope) -> AppResult<
         ChannelScope::Team { id } | ChannelScope::Project { id } => Some(id.as_str()),
     };
     for conv in ctx.all_channel_convs()? {
-        let Some(info) = ctx.conv(&conv)? else { continue };
+        let Some(info) = ctx.conv(&conv)? else {
+            continue;
+        };
         let same_scope = match (&info.scope, wanted) {
             (Scope::Umum | Scope::Org, None) => matches!(scope, ChannelScope::Org),
             (Scope::Team(t), Some(id)) => matches!(scope, ChannelScope::Team { .. }) && t == id,
-            (Scope::Project(p), Some(id)) => matches!(scope, ChannelScope::Project { .. }) && p == id,
+            (Scope::Project(p), Some(id)) => {
+                matches!(scope, ChannelScope::Project { .. }) && p == id
+            }
             _ => false,
         };
         if same_scope && !info.deleted && info.name == name {
@@ -517,7 +554,9 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
     let me = ctx.me().to_owned();
     let mut convs = Vec::new();
     for conv in ctx.all_channel_convs()? {
-        let Some(info) = ctx.conv(&conv)? else { continue };
+        let Some(info) = ctx.conv(&conv)? else {
+            continue;
+        };
         if !info.deleted && ctx.in_audience(&info, &me)? {
             convs.push(read::summary(ctx, &info)?);
         }
@@ -526,10 +565,16 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
         "SELECT conv FROM chat_messages WHERE conv LIKE 'dm:%'
          UNION SELECT conv FROM chat_conv_settings WHERE conv LIKE 'dm:%' AND opened_at IS NOT NULL",
     )?;
-    let dms = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    let dms = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
     for conv in dms {
-        let Some(info) = ctx.conv(&conv)? else { continue };
-        if read::dm_peer(&info, &me).is_some() && matches!(&info.scope, Scope::Direct(a, b) if *a == me || *b == me) {
+        let Some(info) = ctx.conv(&conv)? else {
+            continue;
+        };
+        if read::dm_peer(&info, &me).is_some()
+            && matches!(&info.scope, Scope::Direct(a, b) if *a == me || *b == me)
+        {
             convs.push(read::summary(ctx, &info)?);
         }
     }
@@ -548,7 +593,12 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
             .then_with(|| b.last_at.cmp(&a.last_at))
             .then_with(|| a.name.cmp(&b.name))
     });
-    let people_keys: Vec<String> = ctx.dir.full_members().into_iter().filter(|p| *p != me).collect();
+    let people_keys: Vec<String> = ctx
+        .dir
+        .full_members()
+        .into_iter()
+        .filter(|p| *p != me)
+        .collect();
     let mut teams: Vec<TeamRef> = ctx
         .dir
         .teams
@@ -571,7 +621,8 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
         }
     }
     let full = ctx.dir.is_full_member(&me);
-    let notify = crate::settings::get(ctx.conn, NOTIFY_SETTING)?.map_or(NotifyMode::All, |m| NotifyMode::parse(&m));
+    let notify = crate::settings::get(ctx.conn, NOTIFY_SETTING)?
+        .map_or(NotifyMode::All, |m| NotifyMode::parse(&m));
     Ok(ChatOverview {
         me: me.clone(),
         can_create_channel: full,

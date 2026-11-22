@@ -1,10 +1,10 @@
 //! Three-laptop tests over `network::feature::testing` (plan section 13).
 
 mod basic;
+mod prop;
 mod rejects;
 mod scoping;
 mod titipan;
-mod prop;
 
 use super::model::{self, Body, VerifiedRecord};
 use super::testutil::Laptop;

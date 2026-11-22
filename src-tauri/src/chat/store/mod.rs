@@ -51,9 +51,11 @@ pub struct Effects {
 }
 
 pub fn is_known(conn: &Connection, id: &str) -> AppResult<bool> {
-    let n: i64 = conn.query_row("SELECT count(*) FROM chat_records WHERE id = ?1", [id], |r| {
-        r.get(0)
-    })?;
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM chat_records WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
     Ok(n > 0)
 }
 
@@ -137,14 +139,21 @@ pub fn apply(
 ) -> AppResult<()> {
     let conn = ctx.conn;
     if let Some(conv) = rec.body().conv()
-        && !matches!(rec.body(), Body::ChannelCreate { .. } | Body::ChannelDelete { .. })
+        && !matches!(
+            rec.body(),
+            Body::ChannelCreate { .. } | Body::ChannelDelete { .. }
+        )
         && ctx.conv(&conv)?.is_some_and(|c| c.deleted)
     {
         // Content for a deleted channel: known, never shown or offered.
         return insert_record(conn, rec, false, from, now);
     }
     match rec.body() {
-        Body::ChannelCreate { channel, name, scope } => {
+        Body::ChannelCreate {
+            channel,
+            name,
+            scope,
+        } => {
             insert_record(conn, rec, true, from, now)?;
             channel_create(ctx, rec, channel, name, scope)?;
             fx.visible = true;
@@ -255,9 +264,11 @@ fn file_hashes(conn: &Connection, sql: &str, arg: &str) -> AppResult<Vec<String>
 /// Drops downloads and chat-created blobs no message needs any more.
 fn release_files(conn: &Connection, hashes: &[String], fx: &mut Effects) -> AppResult<()> {
     for h in hashes {
-        let still: i64 = conn.query_row("SELECT count(*) FROM chat_files WHERE hash = ?1", [h], |r| {
-            r.get(0)
-        })?;
+        let still: i64 = conn.query_row(
+            "SELECT count(*) FROM chat_files WHERE hash = ?1",
+            [h],
+            |r| r.get(0),
+        )?;
         if still > 0 {
             continue;
         }
@@ -391,7 +402,11 @@ fn message_delete(
     match row {
         // The judge checked the real author against this delete.
         Some(false) => {
-            let hashes = file_hashes(conn, "SELECT hash FROM chat_files WHERE message_id = ?1", message)?;
+            let hashes = file_hashes(
+                conn,
+                "SELECT hash FROM chat_files WHERE message_id = ?1",
+                message,
+            )?;
             conn.execute(
                 "UPDATE chat_messages SET deleted = 1, text = '', mentions = '[]', reply_to = NULL
                  WHERE id = ?1",

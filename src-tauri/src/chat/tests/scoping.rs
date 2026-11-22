@@ -7,29 +7,52 @@ use crate::network::feature::FeatureSync;
 
 #[test]
 fn team_channel_never_reaches_a_non_member_even_through_a_relay() {
-    let o = Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member), ("Dewi", Who::Member)]);
+    let o = Office::new(&[
+        ("Sari", Who::Superadmin),
+        ("Budi", Who::Member),
+        ("Dewi", Who::Member),
+    ]);
     let (a, b, d) = (&o.l[0], &o.l[1], &o.l[2]);
     let (_team, conv) = o.add_team("Keuangan", &[(&a.pk, true), (&b.pk, false)]);
     a.hooks.set_connected(&[&b.pk, &d.pk]);
-    a.chat.send(&conv, "laporan laba rugi", None, vec![], vec![]).unwrap();
+    a.chat
+        .send(&conv, "laporan laba rugi", None, vec![], vec![])
+        .unwrap();
     pull(a, b);
     assert_eq!(messages(b, &conv).len(), 1);
     // B relays to D: nothing of the team channel is offered or handed out.
     assert!(b.chat.record_ids_for(&d.pk).unwrap().is_empty());
     let ids: Vec<String> = a.with_conn(|c| {
         let mut s = c.prepare("SELECT id FROM chat_records").unwrap();
-        s.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+        s.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     });
     assert!(b.chat.records_for(&d.pk, &ids).unwrap().is_empty());
     sync(&[a, b, d]);
     assert_eq!(d.count("SELECT count(*) FROM chat_records"), 0);
-    assert_eq!(d.chat.conversation(&conv, None, 10).unwrap_err().code(), "forbidden");
-    assert!(!d.chat.overview().unwrap().conversations.iter().any(|s| s.id == conv));
+    assert_eq!(
+        d.chat.conversation(&conv, None, 10).unwrap_err().code(),
+        "forbidden"
+    );
+    assert!(
+        !d.chat
+            .overview()
+            .unwrap()
+            .conversations
+            .iter()
+            .any(|s| s.id == conv)
+    );
 }
 
 #[test]
 fn guest_sees_only_its_project_and_cannot_use_chat_pribadi() {
-    let o = Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member), ("Gita", Who::Guest)]);
+    let o = Office::new(&[
+        ("Sari", Who::Superadmin),
+        ("Budi", Who::Member),
+        ("Gita", Who::Guest),
+    ]);
     let (a, b, g) = (&o.l[0], &o.l[1], &o.l[2]);
     let (team, team_conv) = o.add_team("Proyek", &[(&a.pk, true), (&b.pk, false)]);
     let p = o.add_project("Renovasi Kantor Klien", Some(&team), &a.pk);
@@ -45,7 +68,10 @@ fn guest_sees_only_its_project_and_cannot_use_chat_pribadi() {
     let ids: Vec<&str> = ov.conversations.iter().map(|s| s.id.as_str()).collect();
     assert_eq!(ids, vec![p_conv.as_str()]);
     assert_eq!(ov.conversations[0].name, "renovasi-kantor-klien");
-    assert_eq!(ov.conversations[0].scope.as_ref().unwrap().name, "Renovasi Kantor Klien");
+    assert_eq!(
+        ov.conversations[0].scope.as_ref().unwrap().name,
+        "Renovasi Kantor Klien"
+    );
     assert!(!ov.can_create_channel && !ov.can_direct_message);
     assert_eq!(g.count("SELECT count(*) FROM chat_messages"), 1);
     assert_eq!(b.count("SELECT count(*) FROM chat_messages"), 4);
@@ -53,21 +79,46 @@ fn guest_sees_only_its_project_and_cannot_use_chat_pribadi() {
     assert_eq!(g.chat.open_dm(&a.pk).unwrap_err().code(), "forbidden");
     assert_eq!(a.chat.open_dm(&g.pk).unwrap_err().code(), "forbidden");
     let dm = model::dm_conv(&a.pk, &g.pk);
-    let forged = sign_as(g, &o.org_id, crate::clock::now(), text_message(&dm, "halo bos"));
+    let forged = sign_as(
+        g,
+        &o.org_id,
+        crate::clock::now(),
+        text_message(&dm, "halo bos"),
+    );
     let got = a.chat.ingest(&g.pk, vec![feature(&forged)]).unwrap();
     assert_eq!((got.accepted, got.rejected), (0, 1));
     assert_eq!(a.rejected_codes().last().unwrap(), "chat_forbidden");
 
     // The guest may hold a sealed envelope for an offline member.
     a.hooks.set_connected(&[&g.pk]);
-    let m = a.chat.send(&p_conv, "untuk Budi lewat Gita", None, vec![], vec![]).unwrap();
+    let m = a
+        .chat
+        .send(&p_conv, "untuk Budi lewat Gita", None, vec![], vec![])
+        .unwrap();
     pull(a, g);
-    assert_eq!(g.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"), 1);
-    assert_eq!(g.count("SELECT count(*) FROM chat_messages"), 2, "the project message itself");
-    let a2 = a.chat.send(&o.umum(), "pengumuman untuk Budi", None, vec![], vec![]).unwrap();
+    assert_eq!(
+        g.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"),
+        1
+    );
+    assert_eq!(
+        g.count("SELECT count(*) FROM chat_messages"),
+        2,
+        "the project message itself"
+    );
+    let a2 = a
+        .chat
+        .send(&o.umum(), "pengumuman untuk Budi", None, vec![], vec![])
+        .unwrap();
     pull(a, g);
-    assert_eq!(g.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"), 2);
-    assert_eq!(g.count("SELECT count(*) FROM chat_messages"), 2, "umum stays sealed for the guest");
+    assert_eq!(
+        g.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"),
+        2
+    );
+    assert_eq!(
+        g.count("SELECT count(*) FROM chat_messages"),
+        2,
+        "umum stays sealed for the guest"
+    );
     pull(g, b);
     let umum_msgs = messages(b, &o.umum());
     assert!(umum_msgs.iter().any(|x| x.id == a2.id));
@@ -76,11 +127,20 @@ fn guest_sees_only_its_project_and_cannot_use_chat_pribadi() {
 
 #[test]
 fn removed_member_gets_nothing_and_late_records_are_judged_by_time() {
-    let o = Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member), ("Citra", Who::Member)]);
+    let o = Office::new(&[
+        ("Sari", Who::Superadmin),
+        ("Budi", Who::Member),
+        ("Citra", Who::Member),
+    ]);
     let (a, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
     let umum = o.umum();
     let now = crate::clock::now();
-    let before = sign_as(b, &o.org_id, now - time::Duration::hours(2), text_message(&umum, "sebelum keluar"));
+    let before = sign_as(
+        b,
+        &o.org_id,
+        now - time::Duration::hours(2),
+        text_message(&umum, "sebelum keluar"),
+    );
     let after = sign_as(b, &o.org_id, now, text_message(&umum, "sesudah keluar"));
     a.hooks.set_connected(&[&c.pk]);
     a.chat.send(&umum, "halo", None, vec![], vec![]).unwrap();
@@ -88,7 +148,10 @@ fn removed_member_gets_nothing_and_late_records_are_judged_by_time() {
     o.remove_member(&b.pk, &removed_at);
 
     assert!(a.chat.record_ids_for(&b.pk).unwrap().is_empty());
-    let got = c.chat.ingest(&a.pk, vec![feature(&before), feature(&after)]).unwrap();
+    let got = c
+        .chat
+        .ingest(&a.pk, vec![feature(&before), feature(&after)])
+        .unwrap();
     assert_eq!((got.accepted, got.rejected), (1, 1));
     assert_eq!(c.rejected_codes().last().unwrap(), "chat_removed");
     let texts: Vec<String> = messages(c, &umum).into_iter().map(|m| m.text).collect();

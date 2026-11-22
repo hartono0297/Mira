@@ -246,17 +246,36 @@ mod tests {
         };
         let v = serde_json::to_value(&s).unwrap();
         for key in [
-            "id", "kind", "name", "scope", "peer", "isUmum", "archived", "muted", "unread",
-            "mentionUnread", "lastAt", "lastPreview", "canPost", "canArchive", "canDelete",
+            "id",
+            "kind",
+            "name",
+            "scope",
+            "peer",
+            "isUmum",
+            "archived",
+            "muted",
+            "unread",
+            "mentionUnread",
+            "lastAt",
+            "lastPreview",
+            "canPost",
+            "canArchive",
+            "canDelete",
         ] {
             assert!(v.get(key).is_some(), "missing {key}");
         }
         assert_eq!(v["kind"], "dm");
         assert_eq!(v["scope"]["kind"], "org");
         assert!(v["scope"]["id"].is_null());
-        assert_eq!(serde_json::to_value(DeliveryState::Deposited).unwrap(), "deposited");
+        assert_eq!(
+            serde_json::to_value(DeliveryState::Deposited).unwrap(),
+            "deposited"
+        );
         assert_eq!(serde_json::to_value(FileState::Missing).unwrap(), "missing");
-        assert_eq!(serde_json::to_value(NotifyMode::Mentions).unwrap(), "mentions");
+        assert_eq!(
+            serde_json::to_value(NotifyMode::Mentions).unwrap(),
+            "mentions"
+        );
         let scope: NewChannelScope = serde_json::from_str(r#"{"kind":"team","id":"ab"}"#).unwrap();
         assert_eq!(scope.kind, ScopeKind::Team);
     }

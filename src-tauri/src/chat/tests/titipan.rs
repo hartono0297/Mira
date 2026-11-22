@@ -8,7 +8,11 @@ use crate::chat::model::Body;
 use crate::network::feature::FeatureSync;
 
 fn office() -> Office {
-    Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member), ("Citra", Who::Member)])
+    Office::new(&[
+        ("Sari", Who::Superadmin),
+        ("Budi", Who::Member),
+        ("Citra", Who::Member),
+    ])
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -17,7 +21,11 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 fn assert_no_plaintext(l: &Laptop, secret: &[u8]) {
     for (path, bytes) in all_bytes_under(&l.data_dir()) {
-        assert!(!contains(&bytes, secret), "plaintext found in {}", path.display());
+        assert!(
+            !contains(&bytes, secret),
+            "plaintext found in {}",
+            path.display()
+        );
     }
 }
 
@@ -30,15 +38,24 @@ fn titipan_reaches_offline_recipient_after_sender_is_off() {
     let secret = "Gaji bulan ini naik, rahasia ya Citra";
     let m = a.chat.send(&dm, secret, None, vec![], vec![]).unwrap();
     assert_eq!(m.status.unwrap().state, DeliveryState::Pending);
-    assert_eq!(a.count("SELECT count(*) FROM chat_envelopes WHERE recipient IS NOT NULL"), 1);
+    assert_eq!(
+        a.count("SELECT count(*) FROM chat_envelopes WHERE recipient IS NOT NULL"),
+        1
+    );
 
     // B holds the envelope; A sees "Dititipkan".
     pull(a, b);
     pull(b, a);
     assert_eq!(status_of(a, &dm, &m.id), DeliveryState::Deposited);
-    assert_eq!(b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"), 1);
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"),
+        1
+    );
     assert_eq!(b.count("SELECT count(*) FROM chat_messages"), 0);
-    assert_eq!(b.chat.conversation(&dm, None, 10).unwrap_err().code(), "forbidden");
+    assert_eq!(
+        b.chat.conversation(&dm, None, 10).unwrap_err().code(),
+        "forbidden"
+    );
     assert_no_plaintext(b, secret.as_bytes());
 
     // A is switched off. B and C meet.
@@ -61,11 +78,18 @@ fn titipan_reaches_offline_recipient_after_sender_is_off() {
     // A comes back and meets only B: the ack says it arrived.
     sync(&[a, b]);
     assert_eq!(status_of(a, &dm, &m.id), DeliveryState::Delivered);
-    assert_eq!(a.count("SELECT count(*) FROM chat_records WHERE kind = 'envelope' AND body IS NOT NULL"), 0);
+    assert_eq!(
+        a.count("SELECT count(*) FROM chat_records WHERE kind = 'envelope' AND body IS NOT NULL"),
+        0
+    );
     // Later A meets C: read receipt.
     sync(&[a, c]);
     assert_eq!(status_of(a, &dm, &m.id), DeliveryState::Read);
-    assert_eq!(c.count("SELECT count(*) FROM chat_messages"), 1, "no duplicate from the direct copy");
+    assert_eq!(
+        c.count("SELECT count(*) FROM chat_messages"),
+        1,
+        "no duplicate from the direct copy"
+    );
 }
 
 #[test]
@@ -77,7 +101,10 @@ fn titipan_with_small_attachment_goes_encrypted_through_custodian() {
     let file_secret = b"Isi kontrak rahasia nomor 4471 untuk Citra saja".repeat(20);
     let src = a.data_dir().join("kontrak.txt");
     std::fs::write(&src, &file_secret).unwrap();
-    let m = a.chat.send(&dm, "", None, vec![], vec![src.clone()]).unwrap();
+    let m = a
+        .chat
+        .send(&dm, "", None, vec![], vec![src.clone()])
+        .unwrap();
     assert_eq!(m.files.len(), 1);
     let hash = m.files[0].hash.clone();
     assert_eq!(m.files[0].mime, "text/plain");
@@ -86,7 +113,10 @@ fn titipan_with_small_attachment_goes_encrypted_through_custodian() {
     pull(a, b);
     assert_eq!(run_fetches(b, &[a]), 1, "custodian copies the cipher file");
     assert_no_plaintext(b, &file_secret);
-    assert_eq!(b.count("SELECT count(*) FROM chat_blobs WHERE kind = 'cipher'"), 1);
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_blobs WHERE kind = 'cipher'"),
+        1
+    );
 
     // A is off.
     sync(&[b, c]);
@@ -99,8 +129,15 @@ fn titipan_with_small_attachment_goes_encrypted_through_custodian() {
     assert_eq!(std::fs::read(&path).unwrap(), file_secret);
 
     sync(&[b, c]);
-    assert_eq!(b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 1"), 1);
-    assert_eq!(b.count("SELECT count(*) FROM chat_blobs"), 0, "cipher blob released");
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 1"),
+        1
+    );
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_blobs"),
+        0,
+        "cipher blob released"
+    );
     let cipher_files = all_bytes_under(&b.data_dir().join("blobs"))
         .into_iter()
         .filter(|(p, _)| !p.components().any(|c| c.as_os_str() == "tmp"))
@@ -110,8 +147,15 @@ fn titipan_with_small_attachment_goes_encrypted_through_custodian() {
 
     sync(&[a, b]);
     assert_eq!(status_of(a, &dm, &m.id), DeliveryState::Delivered);
-    assert_eq!(a.count("SELECT count(*) FROM chat_blobs WHERE kind = 'cipher'"), 0);
-    assert_eq!(a.count("SELECT count(*) FROM chat_blobs WHERE kind = 'plain'"), 1, "original kept");
+    assert_eq!(
+        a.count("SELECT count(*) FROM chat_blobs WHERE kind = 'cipher'"),
+        0
+    );
+    assert_eq!(
+        a.count("SELECT count(*) FROM chat_blobs WHERE kind = 'plain'"),
+        1,
+        "original kept"
+    );
 }
 
 #[test]
@@ -132,18 +176,45 @@ fn acks_count_only_from_the_recipient_even_when_early() {
     let (a, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
     a.hooks.set_connected(&[&b.pk]);
     let dm = a.chat.open_dm(&c.pk).unwrap().id;
-    a.chat.send(&dm, "untuk Citra", None, vec![], vec![]).unwrap();
-    let env: String = a.with_conn(|conn| conn.query_row("SELECT id FROM chat_envelopes", [], |r| r.get(0)).unwrap());
+    a.chat
+        .send(&dm, "untuk Citra", None, vec![], vec![])
+        .unwrap();
+    let env: String = a.with_conn(|conn| {
+        conn.query_row("SELECT id FROM chat_envelopes", [], |r| r.get(0))
+            .unwrap()
+    });
     let now = crate::clock::now();
-    let fake = sign_as(b, &o.org_id, now, Body::EnvelopeAck { envelope: env.clone() });
+    let fake = sign_as(
+        b,
+        &o.org_id,
+        now,
+        Body::EnvelopeAck {
+            envelope: env.clone(),
+        },
+    );
     // Known envelope, wrong author: refused.
-    assert_eq!(a.chat_ingest(&b.pk, vec![fake.to_feature_record()]).rejected, 1);
+    assert_eq!(
+        a.chat_ingest(&b.pk, vec![fake.to_feature_record()])
+            .rejected,
+        1
+    );
     // Unknown envelope: stored, but it does nothing when the envelope arrives.
-    assert_eq!(c.chat_ingest(&b.pk, vec![fake.to_feature_record()]).accepted, 1);
+    assert_eq!(
+        c.chat_ingest(&b.pk, vec![fake.to_feature_record()])
+            .accepted,
+        1
+    );
     pull(a, b);
-    assert_eq!(b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"), 1);
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"),
+        1
+    );
     sync(&[b, c]);
-    assert_eq!(b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 1"), 1, "real ack");
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 1"),
+        1,
+        "real ack"
+    );
     assert_eq!(messages(c, &dm).len(), 1);
 }
 
@@ -153,12 +224,30 @@ fn early_ack_from_someone_else_leaves_the_envelope_live() {
     let (a, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
     a.hooks.set_connected(&[&b.pk]);
     let dm = a.chat.open_dm(&c.pk).unwrap().id;
-    a.chat.send(&dm, "untuk Citra", None, vec![], vec![]).unwrap();
-    let env: String = a.with_conn(|conn| conn.query_row("SELECT id FROM chat_envelopes", [], |r| r.get(0)).unwrap());
-    let fake = sign_as(a, &o.org_id, crate::clock::now(), Body::EnvelopeAck { envelope: env });
-    assert_eq!(b.chat_ingest(&a.pk, vec![fake.to_feature_record()]).accepted, 1);
+    a.chat
+        .send(&dm, "untuk Citra", None, vec![], vec![])
+        .unwrap();
+    let env: String = a.with_conn(|conn| {
+        conn.query_row("SELECT id FROM chat_envelopes", [], |r| r.get(0))
+            .unwrap()
+    });
+    let fake = sign_as(
+        a,
+        &o.org_id,
+        crate::clock::now(),
+        Body::EnvelopeAck { envelope: env },
+    );
+    assert_eq!(
+        b.chat_ingest(&a.pk, vec![fake.to_feature_record()])
+            .accepted,
+        1
+    );
     pull(a, b);
-    assert_eq!(b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"), 1, "fake ack ignored");
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"),
+        1,
+        "fake ack ignored"
+    );
 }
 
 #[test]
@@ -176,8 +265,14 @@ fn old_envelopes_and_envelopes_for_removed_members_expire() {
             cipher_files: vec![],
         },
     );
-    assert_eq!(b.chat_ingest(&a.pk, vec![old.to_feature_record()]).accepted, 1);
-    assert_eq!(b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 2"), 1);
+    assert_eq!(
+        b.chat_ingest(&a.pk, vec![old.to_feature_record()]).accepted,
+        1
+    );
+    assert_eq!(
+        b.count("SELECT count(*) FROM chat_envelopes WHERE acked = 2"),
+        1
+    );
     assert!(b.chat.record_ids_for(&c.pk).unwrap().is_empty());
 
     a.hooks.set_connected(&[&b.pk]);
@@ -189,11 +284,18 @@ fn old_envelopes_and_envelopes_for_removed_members_expire() {
     b.chat.fetch_jobs().unwrap();
     for l in [a, b] {
         assert_eq!(
-            l.count("SELECT count(*) FROM chat_records WHERE kind = 'envelope' AND body IS NOT NULL"),
+            l.count(
+                "SELECT count(*) FROM chat_records WHERE kind = 'envelope' AND body IS NOT NULL"
+            ),
             0
         );
     }
-    let st = messages(a, &dm).into_iter().find(|x| x.id == m.id).unwrap().status.unwrap();
+    let st = messages(a, &dm)
+        .into_iter()
+        .find(|x| x.id == m.id)
+        .unwrap()
+        .status
+        .unwrap();
     assert_eq!(st.total, 0, "Citra is no longer in the conversation");
 }
 
@@ -205,12 +307,20 @@ fn unobtainable_cipher_file_backs_off_then_is_given_up_and_acked() {
     let dm = a.chat.open_dm(&c.pk).unwrap().id;
     let src = a.data_dir().join("foto.jpg");
     std::fs::write(&src, b"bukan foto sungguhan").unwrap();
-    a.chat.send(&dm, "fotonya", None, vec![], vec![src]).unwrap();
+    a.chat
+        .send(&dm, "fotonya", None, vec![], vec![src])
+        .unwrap();
     pull(a, b);
     sync(&[b, c]); // B never copied the cipher file.
     assert_eq!(run_fetches(c, &[b]), 0);
-    assert!(c.chat.fetch_jobs().unwrap().is_empty(), "waiting before the next try");
-    let hash: String = c.with_conn(|conn| conn.query_row("SELECT hash FROM chat_files", [], |r| r.get(0)).unwrap());
+    assert!(
+        c.chat.fetch_jobs().unwrap().is_empty(),
+        "waiting before the next try"
+    );
+    let hash: String = c.with_conn(|conn| {
+        conn.query_row("SELECT hash FROM chat_files", [], |r| r.get(0))
+            .unwrap()
+    });
     assert_eq!(c.chat.file_view(&hash).unwrap().state, FileState::Missing);
     c.with_conn(|conn| {
         conn.execute(
@@ -220,8 +330,16 @@ fn unobtainable_cipher_file_backs_off_then_is_given_up_and_acked() {
         .unwrap();
     });
     assert_eq!(run_fetches(c, &[b]), 0);
-    assert_eq!(c.count("SELECT count(*) FROM chat_fetch_queue"), 0, "dropped after 7 days");
-    assert_eq!(c.count("SELECT count(*) FROM chat_envelopes WHERE acked = 1"), 1, "acked anyway");
+    assert_eq!(
+        c.count("SELECT count(*) FROM chat_fetch_queue"),
+        0,
+        "dropped after 7 days"
+    );
+    assert_eq!(
+        c.count("SELECT count(*) FROM chat_envelopes WHERE acked = 1"),
+        1,
+        "acked anyway"
+    );
     assert_eq!(c.chat.file_view(&hash).unwrap().state, FileState::Missing);
     assert_eq!(messages(c, &dm).len(), 1);
 }

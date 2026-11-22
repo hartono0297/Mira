@@ -93,7 +93,15 @@ pub fn queue(
            next_try_at = CASE WHEN excluded.priority > chat_fetch_queue.priority
                               THEN NULL ELSE chat_fetch_queue.next_try_at END,
            priority = max(chat_fetch_queue.priority, excluded.priority)",
-        params![hash, kind.as_str(), size_i64(size), plain, prefer, priority, now],
+        params![
+            hash,
+            kind.as_str(),
+            size_i64(size),
+            plain,
+            prefer,
+            priority,
+            now
+        ],
     )?;
     Ok(())
 }
@@ -106,7 +114,11 @@ pub fn unqueue(conn: &Connection, hash: &str, kind: FetchKind) -> AppResult<()> 
     Ok(())
 }
 
-pub fn queue_state(conn: &Connection, hash: &str, kind: FetchKind) -> AppResult<Option<QueueState>> {
+pub fn queue_state(
+    conn: &Connection,
+    hash: &str,
+    kind: FetchKind,
+) -> AppResult<Option<QueueState>> {
     Ok(conn
         .query_row(
             "SELECT last_error FROM chat_fetch_queue WHERE hash = ?1 AND kind = ?2",
@@ -166,7 +178,12 @@ fn jobs_where(conn: &Connection, filter: &str, now: &str) -> AppResult<Vec<Fetch
 }
 
 /// Records a failed try. Returns `true` when the job was dropped for good.
-pub fn mark_failed(conn: &Connection, job: &FetchJob, err: &str, now: OffsetDateTime) -> AppResult<bool> {
+pub fn mark_failed(
+    conn: &Connection,
+    job: &FetchJob,
+    err: &str,
+    now: OffsetDateTime,
+) -> AppResult<bool> {
     let row: Option<(i64, Option<String>)> = conn
         .query_row(
             "SELECT attempts, first_error_at FROM chat_fetch_queue WHERE hash = ?1 AND kind = ?2",
@@ -231,7 +248,13 @@ fn file_err(path: &Path, e: &std::io::Error) -> AppError {
 
 /// Notes that chat put `hash` into the store. The first entry wins, so a blob
 /// that was present before chat touched it stays marked as preexisting.
-pub fn track(conn: &Connection, hash: &str, kind: FetchKind, preexisting: bool, now: &str) -> AppResult<()> {
+pub fn track(
+    conn: &Connection,
+    hash: &str,
+    kind: FetchKind,
+    preexisting: bool,
+    now: &str,
+) -> AppResult<()> {
     conn.execute(
         "INSERT OR IGNORE INTO chat_blobs (hash, kind, preexisting, added_at) VALUES (?1, ?2, ?3, ?4)",
         params![hash, kind.as_str(), preexisting, now],
@@ -259,7 +282,13 @@ pub fn put_tracked_file(
     let (hash, _) = hash_file(path)?;
     let pre = blobs.contains(&hash);
     let info = blobs.put_file(path)?;
-    track(conn, info.hash.as_str(), kind, pre && info.hash == hash, now)?;
+    track(
+        conn,
+        info.hash.as_str(),
+        kind,
+        pre && info.hash == hash,
+        now,
+    )?;
     Ok(info)
 }
 

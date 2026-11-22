@@ -18,7 +18,7 @@ use super::audience::{Ctx, ProjectAudience};
 use super::fetch::{self, FetchKind};
 use super::hooks::{ChatHooks, MessageNotification};
 use super::judge::{self, Verdict, envelope_expired};
-use super::model::{Body, ReceiptState, MAX_RECEIPT_MESSAGES, verify_record};
+use super::model::{Body, MAX_RECEIPT_MESSAGES, ReceiptState, verify_record};
 use super::store::{self, Effects, envelope};
 use super::view::{NotifyMode, truncate_chars};
 use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
@@ -26,7 +26,10 @@ use crate::clock;
 use crate::error::{AppError, AppResult};
 use crate::identity::Identity;
 use crate::network::feature::{BlobSource, FeatureIngest, FeatureRecord, FeatureSync, TOPIC_CHAT};
-use crate::permissions::{self, format::{format_time, parse_time}};
+use crate::permissions::{
+    self,
+    format::{format_time, parse_time},
+};
 use crate::state::{Core, MiraState};
 
 /// Setting key for notifications: `all` (default), `mentions`, `off`.
@@ -108,7 +111,8 @@ impl ChatSync {
 
 pub(crate) fn no_org() -> AppError {
     AppError::Forbidden(
-        "Chat baru bisa dipakai setelah laptop ini membuat atau bergabung dengan organisasi.".into(),
+        "Chat baru bisa dipakai setelah laptop ini membuat atau bergabung dengan organisasi."
+            .into(),
     )
 }
 
@@ -146,13 +150,24 @@ fn map_row(r: &rusqlite::Row) -> rusqlite::Result<Row> {
 }
 
 /// Whether `peer` may receive `row`. `peer` was checked as active.
-fn may_offer(ctx: &Ctx, peer: &str, row: &Row, now: OffsetDateTime, seen: &mut HashMap<String, bool>) -> AppResult<bool> {
+fn may_offer(
+    ctx: &Ctx,
+    peer: &str,
+    row: &Row,
+    now: OffsetDateTime,
+    seen: &mut HashMap<String, bool>,
+) -> AppResult<bool> {
     match row.kind.as_str() {
-        "envelope" => Ok(row.recipient.as_deref().is_some_and(|r| ctx.dir.is_active(r))
+        "envelope" => Ok(row
+            .recipient
+            .as_deref()
+            .is_some_and(|r| ctx.dir.is_active(r))
             && parse_time(&row.at).is_some_and(|t| !envelope_expired(t, now))),
         "envelope_ack" => Ok(true),
         _ => {
-            let Some(conv) = &row.conv else { return Ok(false) };
+            let Some(conv) = &row.conv else {
+                return Ok(false);
+            };
             if let Some(hit) = seen.get(conv) {
                 return Ok(*hit);
             }
@@ -185,7 +200,9 @@ impl ChatSync {
                 return Ok(Vec::new());
             }
             let mut stmt = core.db.prepare(OFFER_SQL)?;
-            let mut rows = stmt.query_map([], map_row)?.collect::<Result<Vec<_>, _>>()?;
+            let mut rows = stmt
+                .query_map([], map_row)?
+                .collect::<Result<Vec<_>, _>>()?;
             sort_rows(&mut rows);
             let now = clock::now();
             let mut seen = HashMap::new();
@@ -225,9 +242,15 @@ impl ChatSync {
                 if !may_offer(&ctx, peer, &row, now, &mut seen)? {
                     continue;
                 }
-                let body: String =
-                    core.db.query_row("SELECT body FROM chat_records WHERE id = ?1", [&row.id], |r| r.get(0))?;
-                if row.kind == "envelope" && row.author == me && row.recipient.as_deref() != Some(peer) {
+                let body: String = core.db.query_row(
+                    "SELECT body FROM chat_records WHERE id = ?1",
+                    [&row.id],
+                    |r| r.get(0),
+                )?;
+                if row.kind == "envelope"
+                    && row.author == me
+                    && row.recipient.as_deref() != Some(peer)
+                {
                     deposited |= core.db.execute(
                         "UPDATE chat_envelopes SET deposited = 1 WHERE id = ?1 AND deposited = 0",
                         [&row.id],
@@ -262,7 +285,13 @@ impl ChatSync {
     }
 }
 
-fn log(conn: &Connection, from: &str, code: &str, detail: &str, now: OffsetDateTime) -> AppResult<()> {
+fn log(
+    conn: &Connection,
+    from: &str,
+    code: &str,
+    detail: &str,
+    now: OffsetDateTime,
+) -> AppResult<()> {
     permissions::log_rejection(conn, Some(from), None, &format!("chat_{code}"), detail, now)
 }
 
@@ -290,7 +319,7 @@ fn ingest_batch(
         }
     }
     // Stable: records of the same rank and second keep the sender's order.
-    verified.sort_by(|a, b| (a.body().apply_rank(), a.at).cmp(&(b.body().apply_rank(), b.at)));
+    verified.sort_by_key(|v| (v.body().apply_rank(), v.at));
     for v in &verified {
         match judge::judge(ctx, v, now)? {
             Verdict::Accept => {
@@ -327,7 +356,12 @@ pub(crate) fn after_batch(
     Ok(())
 }
 
-fn delivered_receipts(ctx: &Ctx, identity: &Identity, now: OffsetDateTime, fx: &mut Effects) -> AppResult<()> {
+fn delivered_receipts(
+    ctx: &Ctx,
+    identity: &Identity,
+    now: OffsetDateTime,
+    fx: &mut Effects,
+) -> AppResult<()> {
     let mut per_conv: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in &fx.new_messages {
         let ids = per_conv.entry(m.conv.clone()).or_default();
@@ -359,7 +393,9 @@ fn auto_downloads(
     let mut queued = false;
     for m in &fx.new_messages {
         for f in &m.files {
-            let Ok(hash) = BlobHash::parse(&f.hash) else { continue };
+            let Ok(hash) = BlobHash::parse(&f.hash) else {
+                continue;
+            };
             if blobs.contains(&hash) {
                 fetch::track(ctx.conn, &f.hash, FetchKind::Plain, true, &now_s)?;
                 continue;
@@ -371,7 +407,16 @@ fn auto_downloads(
             if let Some(p) = from.filter(|p| *p != m.author) {
                 prefer.push(p.to_owned());
             }
-            fetch::queue(ctx.conn, &f.hash, FetchKind::Plain, f.size, None, &prefer, 0, &now_s)?;
+            fetch::queue(
+                ctx.conn,
+                &f.hash,
+                FetchKind::Plain,
+                f.size,
+                None,
+                &prefer,
+                0,
+                &now_s,
+            )?;
             queued = true;
         }
     }
@@ -400,8 +445,10 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
         if is_muted(ctx.conn, &conv)? {
             continue;
         }
-        let Some(info) = ctx.conv(&conv)? else { continue };
-        let mention = !info.is_channel() || m.mentions.iter().any(|k| *k == me);
+        let Some(info) = ctx.conv(&conv)? else {
+            continue;
+        };
+        let mention = !info.is_channel() || m.mentions.contains(&me);
         if mode == NotifyMode::Mentions && !mention {
             continue;
         }
@@ -471,7 +518,9 @@ impl FeatureSync for ChatSync {
 
 impl ChatSync {
     fn blob_allowed(&self, peer: &str, hash: &str) -> AppResult<Option<PathBuf>> {
-        let Ok(parsed) = BlobHash::parse(hash) else { return Ok(None) };
+        let Ok(parsed) = BlobHash::parse(hash) else {
+            return Ok(None);
+        };
         if !self.blobs.contains(&parsed) {
             return Ok(None);
         }

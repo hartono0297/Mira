@@ -33,7 +33,10 @@ pub fn not_found_conv() -> AppError {
 /// The conversation if this laptop may read it: a channel it is in, or a chat
 /// pribadi it takes part in (kept readable after the other side left).
 pub fn readable(ctx: &Ctx, conv: &str) -> AppResult<ConvInfo> {
-    let info = ctx.conv(conv)?.filter(|i| !i.deleted).ok_or_else(not_found_conv)?;
+    let info = ctx
+        .conv(conv)?
+        .filter(|i| !i.deleted)
+        .ok_or_else(not_found_conv)?;
     let ok = match &info.scope {
         Scope::Direct(a, b) => a == ctx.me() || b == ctx.me(),
         _ => ctx.in_audience(&info, ctx.me())?,
@@ -41,7 +44,9 @@ pub fn readable(ctx: &Ctx, conv: &str) -> AppResult<ConvInfo> {
     if ok {
         Ok(info)
     } else {
-        Err(AppError::Forbidden("Kamu bukan anggota percakapan ini.".into()))
+        Err(AppError::Forbidden(
+            "Kamu bukan anggota percakapan ini.".into(),
+        ))
     }
 }
 
@@ -58,7 +63,10 @@ pub fn can_post(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
 }
 
 pub fn can_admin_channel(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
-    Ok(info.is_channel() && info.scope != Scope::Umum && !info.deleted && ctx.is_admin(info, ctx.me())?)
+    Ok(info.is_channel()
+        && info.scope != Scope::Umum
+        && !info.deleted
+        && ctx.is_admin(info, ctx.me())?)
 }
 
 fn scope_view(info: &ConvInfo) -> Option<ChannelScopeView> {
@@ -89,7 +97,9 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
         } else {
             ConversationKind::Dm
         },
-        name: peer.as_ref().map_or_else(|| info.name.clone(), |p| p.name.clone()),
+        name: peer
+            .as_ref()
+            .map_or_else(|| info.name.clone(), |p| p.name.clone()),
         scope: scope_view(info),
         peer,
         is_umum: info.scope == Scope::Umum,
@@ -105,12 +115,17 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
     })
 }
 
-const UNREAD_SQL: &str = "FROM chat_messages m WHERE m.conv = ?1 AND m.author != ?2 AND m.deleted = 0
+const UNREAD_SQL: &str =
+    "FROM chat_messages m WHERE m.conv = ?1 AND m.author != ?2 AND m.deleted = 0
      AND NOT EXISTS (SELECT 1 FROM chat_receipts r
                      WHERE r.message_id = m.id AND r.reader = ?2 AND r.state = 'read')";
 
 fn unread_counts(conn: &Connection, conv: &str, me: &str) -> AppResult<(u32, u32)> {
-    let unread: i64 = conn.query_row(&format!("SELECT count(*) {UNREAD_SQL}"), params![conv, me], |r| r.get(0))?;
+    let unread: i64 = conn.query_row(
+        &format!("SELECT count(*) {UNREAD_SQL}"),
+        params![conv, me],
+        |r| r.get(0),
+    )?;
     let mentions: i64 = conn.query_row(
         &format!("SELECT count(*) {UNREAD_SQL} AND m.mentions LIKE ?3"),
         params![conv, me, format!("%\"{me}\"%")],
@@ -140,7 +155,15 @@ fn last_message(ctx: &Ctx, conv: &str) -> AppResult<(Option<String>, Option<Stri
                     (SELECT count(*) FROM chat_files f WHERE f.message_id = m.id)
              FROM chat_messages m WHERE conv = ?1 ORDER BY at DESC, rowid DESC LIMIT 1",
             [conv],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0, r.get(3)?, r.get(4)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                    r.get(3)?,
+                    r.get(4)?,
+                ))
+            },
         )
         .optional()?;
     let Some((author, text, deleted, at, files)) = row else {
@@ -154,7 +177,10 @@ fn last_message(ctx: &Ctx, conv: &str) -> AppResult<(Option<String>, Option<Stri
         } else {
             text.trim().to_owned()
         };
-        truncate_chars(&format!("{}: {content}", ctx.dir.name(&author)), PREVIEW_CHARS)
+        truncate_chars(
+            &format!("{}: {content}", ctx.dir.name(&author)),
+            PREVIEW_CHARS,
+        )
     };
     Ok((Some(at), Some(preview)))
 }
@@ -190,7 +216,11 @@ fn map_message(r: &rusqlite::Row) -> rusqlite::Result<MessageRow> {
 
 pub fn message_row(conn: &Connection, id: &str) -> AppResult<Option<MessageRow>> {
     Ok(conn
-        .query_row(&format!("SELECT {MESSAGE_COLS} FROM chat_messages WHERE id = ?1"), [id], map_message)
+        .query_row(
+            &format!("SELECT {MESSAGE_COLS} FROM chat_messages WHERE id = ?1"),
+            [id],
+            map_message,
+        )
         .optional()?)
 }
 
@@ -226,7 +256,12 @@ pub fn message_page(
     Ok((rows, has_more))
 }
 
-pub fn file_state(conn: &Connection, blobs: &BlobStore, hash: &str, size: u64) -> AppResult<FileState> {
+pub fn file_state(
+    conn: &Connection,
+    blobs: &BlobStore,
+    hash: &str,
+    size: u64,
+) -> AppResult<FileState> {
     if BlobHash::parse(hash).is_ok_and(|h| blobs.contains(&h)) {
         return Ok(FileState::Local);
     }
@@ -243,10 +278,17 @@ pub fn file_state(conn: &Connection, blobs: &BlobStore, hash: &str, size: u64) -
 }
 
 pub fn files_of(conn: &Connection, blobs: &BlobStore, message: &str) -> AppResult<Vec<FileView>> {
-    let mut stmt = conn.prepare("SELECT hash, size, name, mime FROM chat_files WHERE message_id = ?1 ORDER BY idx")?;
+    let mut stmt = conn.prepare(
+        "SELECT hash, size, name, mime FROM chat_files WHERE message_id = ?1 ORDER BY idx",
+    )?;
     let rows = stmt
         .query_map([message], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
@@ -272,7 +314,9 @@ pub fn recipient_states(
 ) -> AppResult<Vec<(String, DeliveryState)>> {
     let mut receipts: HashMap<String, DeliveryState> = HashMap::new();
     let mut stmt = conn.prepare("SELECT reader, state FROM chat_receipts WHERE message_id = ?1")?;
-    for row in stmt.query_map([message], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+    for row in stmt.query_map([message], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
         let (reader, state) = row?;
         let s = if state == "read" {
             DeliveryState::Read
@@ -282,9 +326,14 @@ pub fn recipient_states(
         let e = receipts.entry(reader).or_insert(s);
         *e = (*e).max(s);
     }
-    let mut stmt = conn.prepare("SELECT recipient, deposited, acked FROM chat_envelopes WHERE message_id = ?1")?;
+    let mut stmt = conn
+        .prepare("SELECT recipient, deposited, acked FROM chat_envelopes WHERE message_id = ?1")?;
     for row in stmt.query_map([message], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
     })? {
         let (recipient, deposited, acked) = row?;
         let s = if acked == ACKED {
@@ -299,25 +348,42 @@ pub fn recipient_states(
     }
     Ok(recipients
         .iter()
-        .map(|r| (r.clone(), receipts.get(r).copied().unwrap_or(DeliveryState::Pending)))
+        .map(|r| {
+            (
+                r.clone(),
+                receipts.get(r).copied().unwrap_or(DeliveryState::Pending),
+            )
+        })
         .collect())
 }
 
 /// Combined status: the lowest state among recipients. With nobody else in
 /// the conversation the message counts as delivered.
 pub fn status(states: &[(String, DeliveryState)]) -> MessageStatus {
-    let count = |min: DeliveryState| to_u32(states.iter().filter(|(_, s)| *s >= min).count() as i64);
+    let count =
+        |min: DeliveryState| to_u32(states.iter().filter(|(_, s)| *s >= min).count() as i64);
     MessageStatus {
-        state: states.iter().map(|(_, s)| *s).min().unwrap_or(DeliveryState::Delivered),
+        state: states
+            .iter()
+            .map(|(_, s)| *s)
+            .min()
+            .unwrap_or(DeliveryState::Delivered),
         read: count(DeliveryState::Read),
         delivered: count(DeliveryState::Delivered),
-        deposited: to_u32(states.iter().filter(|(_, s)| *s == DeliveryState::Deposited).count() as i64),
+        deposited: to_u32(
+            states
+                .iter()
+                .filter(|(_, s)| *s == DeliveryState::Deposited)
+                .count() as i64,
+        ),
         total: to_u32(states.len() as i64),
     }
 }
 
 fn reply_preview(ctx: &Ctx, row: &MessageRow) -> AppResult<Option<ReplyPreview>> {
-    let Some(id) = &row.reply_to else { return Ok(None) };
+    let Some(id) = &row.reply_to else {
+        return Ok(None);
+    };
     let target = message_row(ctx.conn, id)?;
     Ok(match target {
         // A reply into another conversation is ignored.
@@ -352,7 +418,11 @@ pub struct ConvFacts {
 
 pub fn conv_facts(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConvFacts> {
     let me = ctx.me().to_owned();
-    let recipients = ctx.audience(info)?.into_iter().filter(|p| *p != me).collect();
+    let recipients = ctx
+        .audience(info)?
+        .into_iter()
+        .filter(|p| *p != me)
+        .collect();
     Ok(ConvFacts {
         recipients,
         admin: ctx.is_admin(info, &me)?,
@@ -360,10 +430,19 @@ pub fn conv_facts(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConvFacts> {
     })
 }
 
-pub fn message_view(ctx: &Ctx, blobs: &BlobStore, facts: &ConvFacts, row: &MessageRow) -> AppResult<MessageView> {
+pub fn message_view(
+    ctx: &Ctx,
+    blobs: &BlobStore,
+    facts: &ConvFacts,
+    row: &MessageRow,
+) -> AppResult<MessageView> {
     let mine = row.author == ctx.me();
     let status = if mine && !row.deleted {
-        Some(status(&recipient_states(ctx.conn, &row.id, &facts.recipients)?))
+        Some(status(&recipient_states(
+            ctx.conn,
+            &row.id,
+            &facts.recipients,
+        )?))
     } else {
         None
     };
@@ -372,9 +451,17 @@ pub fn message_view(ctx: &Ctx, blobs: &BlobStore, facts: &ConvFacts, row: &Messa
         conv: row.conv.clone(),
         author: person(&ctx.dir, &row.author),
         at: row.at.clone(),
-        text: if row.deleted { String::new() } else { row.text.clone() },
+        text: if row.deleted {
+            String::new()
+        } else {
+            row.text.clone()
+        },
         mentions: row.mentions.iter().map(|m| person(&ctx.dir, m)).collect(),
-        reply_to: if row.deleted { None } else { reply_preview(ctx, row)? },
+        reply_to: if row.deleted {
+            None
+        } else {
+            reply_preview(ctx, row)?
+        },
         files: if row.deleted {
             Vec::new()
         } else {
@@ -388,7 +475,11 @@ pub fn message_view(ctx: &Ctx, blobs: &BlobStore, facts: &ConvFacts, row: &Messa
 }
 
 pub fn receipts_for(ctx: &Ctx, info: &ConvInfo, row: &MessageRow) -> AppResult<Vec<ReceiptView>> {
-    let recipients: Vec<String> = ctx.audience(info)?.into_iter().filter(|p| *p != row.author).collect();
+    let recipients: Vec<String> = ctx
+        .audience(info)?
+        .into_iter()
+        .filter(|p| *p != row.author)
+        .collect();
     let mut out: Vec<ReceiptView> = recipient_states(ctx.conn, &row.id, &recipients)?
         .into_iter()
         .map(|(pk, state)| ReceiptView {
@@ -402,6 +493,10 @@ pub fn receipts_for(ctx: &Ctx, info: &ConvInfo, row: &MessageRow) -> AppResult<V
 
 pub fn people(dir: &Directory, keys: &[String]) -> Vec<Person> {
     let mut out: Vec<Person> = keys.iter().map(|k| person(dir, k)).collect();
-    out.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.public_key.cmp(&b.public_key)));
+    out.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.public_key.cmp(&b.public_key))
+    });
     out
 }

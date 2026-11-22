@@ -82,7 +82,8 @@ impl ProjectAudience for BoardTeamAudience {
     }
 
     fn projects(&self, conn: &Connection) -> AppResult<Vec<ProjectInfo>> {
-        let mut stmt = conn.prepare("SELECT id, name, team_id FROM board_projects ORDER BY name")?;
+        let mut stmt =
+            conn.prepare("SELECT id, name, team_id FROM board_projects ORDER BY name")?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(ProjectInfo {
@@ -189,7 +190,11 @@ impl Directory {
         dir.load_teams(conn)?;
         let mut stmt = conn.prepare("SELECT id, team_id, name FROM channels")?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })?;
         for row in rows {
             let (id, team, name) = row?;
@@ -211,7 +216,9 @@ impl Directory {
             Ok((
                 r.get::<_, String>(0)?,
                 MemberInfo {
-                    name: r.get::<_, Option<String>>(1)?.filter(|n| !n.trim().is_empty()),
+                    name: r
+                        .get::<_, Option<String>>(1)?
+                        .filter(|n| !n.trim().is_empty()),
                     active: status == "active",
                     guest: kind == "guest" || role == "guest",
                     superadmin: r.get::<_, i64>(4)? != 0,
@@ -229,7 +236,11 @@ impl Directory {
     fn load_teams(&mut self, conn: &Connection) -> AppResult<()> {
         let mut stmt = conn.prepare("SELECT id, name, deleted FROM teams")?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)? != 0))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)? != 0,
+            ))
         })?;
         for row in rows {
             let (id, name, deleted) = row?;
@@ -244,7 +255,11 @@ impl Directory {
         }
         let mut stmt = conn.prepare("SELECT team_id, public_key, role FROM team_members")?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)? == "admin"))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)? == "admin",
+            ))
         })?;
         for row in rows {
             let (team, pk, admin) = row?;
@@ -407,7 +422,9 @@ impl<'a> Ctx<'a> {
             return Ok(hit.clone());
         }
         let info = self.resolve(conv)?;
-        self.convs.borrow_mut().insert(conv.to_owned(), info.clone());
+        self.convs
+            .borrow_mut()
+            .insert(conv.to_owned(), info.clone());
         Ok(info)
     }
 
@@ -428,7 +445,9 @@ impl<'a> Ctx<'a> {
             Some(Conv::Channel(id)) => id,
         };
         let row = channel_row(self.conn, conv)?;
-        let (archived, deleted) = row.as_ref().map_or((false, false), |r| (r.archived, r.deleted));
+        let (archived, deleted) = row
+            .as_ref()
+            .map_or((false, false), |r| (r.archived, r.deleted));
         let base = |scope, name: String, scope_name: String, created| ConvInfo {
             conv: conv.to_owned(),
             scope,
