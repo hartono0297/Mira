@@ -335,16 +335,40 @@ fn open_removes_leftover_temp_files() {
     let dir = tempfile::tempdir().unwrap();
     let store = BlobStore::open(dir.path().join("blobs")).unwrap();
     let tmp = store.root().join(TMP_DIR_NAME);
-    fs::write(tmp.join("0123456789abcdef0123456789abcdef"), b"setengah").unwrap();
-    let ro = tmp.join("fedcba9876543210fedcba9876543210");
-    fs::write(&ro, b"read-only sisa").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let leftover = |name: &str, bytes: &[u8]| {
+        let path = tmp.join(name);
+        fs::write(&path, bytes).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        path
+    };
+    leftover("0123456789abcdef0123456789abcdef", b"setengah");
+    let ro = leftover("fedcba9876543210fedcba9876543210", b"read-only sisa");
     set_readonly(&ro).unwrap();
-    fs::create_dir(tmp.join("folder-sisa")).unwrap();
     let kept = store.put_bytes(b"tetap ada").unwrap();
 
     let reopened = BlobStore::open(store.root()).unwrap();
     assert_eq!(tmp_entries(&reopened), 0);
     assert_eq!(reopened.read_all(&kept.hash).unwrap(), b"tetap ada");
+}
+
+#[test]
+fn open_keeps_fresh_temp_files_of_another_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = BlobStore::open(dir.path().join("blobs")).unwrap();
+    let fresh = store
+        .root()
+        .join(TMP_DIR_NAME)
+        .join("0123456789abcdef0123456789abcdef");
+    fs::write(&fresh, b"sedang ditulis Mira lain").unwrap();
+
+    BlobStore::open(store.root()).unwrap();
+    assert!(fresh.exists(), "a temp file written moments ago may belong to another window");
 }
 
 #[test]

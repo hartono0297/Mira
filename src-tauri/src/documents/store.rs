@@ -150,8 +150,25 @@ pub fn new_id() -> String {
 
 const RESERVED_NAMES: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "CONIN$",
+    "CONOUT$", "COM\u{b9}", "COM\u{b2}", "COM\u{b3}", "LPT\u{b9}", "LPT\u{b2}", "LPT\u{b3}",
 ];
+
+/// Invisible formatting characters (Unicode category Cf) that can hide a
+/// file's real extension, e.g. U+202E makes "laporan\u{202E}xcod.exe" look
+/// like "laporanexe.docx".
+fn is_invisible_format(c: char) -> bool {
+    matches!(c,
+        '\u{ad}'
+        | '\u{61c}'
+        | '\u{180e}'
+        | '\u{200b}'..='\u{200f}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{2066}'..='\u{206f}'
+        | '\u{feff}'
+        | '\u{fff9}'..='\u{fffb}')
+}
 const FORBIDDEN_CHARS: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
 fn invalid_name(detail: &str) -> AppError {
@@ -169,6 +186,9 @@ pub fn sanitize_file_name(raw: &str) -> AppResult<String> {
     }
     if name.chars().any(|c| c.is_control()) {
         return Err(invalid_name("ada karakter kontrol"));
+    }
+    if name.chars().any(is_invisible_format) {
+        return Err(invalid_name("ada karakter tak terlihat"));
     }
     if let Some(c) = name.chars().find(|c| FORBIDDEN_CHARS.contains(c)) {
         return Err(invalid_name(&format!(
@@ -859,7 +879,7 @@ pub fn insert_edit_session(conn: &Connection, s: &EditSession) -> AppResult<()> 
     })?;
     let parents = serde_json::to_string(&s.parent_ids)
         .map_err(|e| AppError::Internal(format!("Induk sesi edit tidak bisa disimpan: {e}")))?;
-    conn.execute(
+    let inserted = conn.execute(
         "INSERT INTO document_edit_sessions
              (document_id, editor, parent_ids, working_path, started_at, last_hash, last_saved_at, lock_seen)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -873,8 +893,19 @@ pub fn insert_edit_session(conn: &Connection, s: &EditSession) -> AppResult<()> 
             s.last_saved_at,
             s.lock_seen as i64
         ],
-    )?;
-    Ok(())
+    );
+    match inserted {
+        Ok(_) => Ok(()),
+        // Another start won the race between the check above and this insert.
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            Err(AppError::DocumentEditing(
+                "Dokumen ini sudah sedang diedit di laptop ini.".into(),
+            ))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// A save of the working copy settled. In one transaction: if the content is
@@ -1057,6 +1088,11 @@ pub(crate) mod tests {
         );
 
         for bad in [
+            "laporan\u{202E}xcod.exe",
+            "\u{feff}laporan.docx",
+            "rab\u{200f}.xlsx",
+            "CONIN$",
+            "COM\u{b9}.txt",
             "",
             "   ",
             ".",

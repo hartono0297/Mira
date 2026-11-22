@@ -48,6 +48,10 @@ const COPY_BUF_BYTES: usize = 64 * 1024;
 /// Folder under the store root that holds files still being written.
 const TMP_DIR_NAME: &str = "tmp";
 
+/// Temp files younger than this are left alone by `open` (they may belong to
+/// another Mira process writing right now).
+const TMP_LEFTOVER_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 /// True when a blob of `size` bytes should be pushed to rekan right away.
 pub fn should_auto_replicate(size: u64) -> bool {
     size <= AUTO_REPLICATE_MAX_BYTES
@@ -287,6 +291,17 @@ impl BlobStore {
             if active.contains(&name) {
                 continue;
             }
+            // A second Mira window on the same data folder has its own running
+            // puts; only files untouched for a while count as leftovers.
+            let fresh = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age < TMP_LEFTOVER_AGE);
+            if fresh {
+                continue;
+            }
             let path = entry.path();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             let result = if is_dir {
@@ -344,8 +359,12 @@ impl BlobStore {
                 temp.persisted = true;
                 Ok(info)
             }
-            // Another put of the same content won the race.
-            Err(_) if dest.is_file() => Ok(info),
+            // Another put of the same content won the race. Only accept the
+            // existing file if it has the right length; otherwise a damaged
+            // blob that could not be replaced would be reported as stored.
+            Err(_) if fs::metadata(&dest).is_ok_and(|m| m.is_file() && m.len() == size) => {
+                Ok(info)
+            }
             Err(e) => Err(storage_err("tidak bisa disimpan", &dest, &e)),
         }
     }

@@ -180,7 +180,9 @@ pub fn apply_remote_document(
         team_id: d.team_id.clone(),
         project_id: d.project_id.clone(),
         name: store::unique_name(&tx, &scope, &name)?,
-        kind: d.kind,
+        // Derived from the name, never trusted from the rekan, so the icon and
+        // the Edit button always match what Windows will open.
+        kind: DocumentKind::from_file_name(&name),
         created_by: d.created_by.clone(),
         created_at: d.created_at.clone(),
     };
@@ -386,6 +388,18 @@ mod tests {
             created_by: REKAN.into(),
             created_at: T0.into(),
         }
+    }
+
+    #[test]
+    fn remote_kind_comes_from_the_name_not_the_sender() {
+        let mut f = Fixture::new();
+        let lying = RemoteDocument {
+            kind: DocumentKind::Word,
+            ..remote_doc("laporan.exe")
+        };
+        assert!(apply_remote_document(&mut f.conn, &lying, T1).unwrap());
+        let stored = store::get_document(&f.conn, &lying.id).unwrap();
+        assert_eq!(stored.kind, DocumentKind::Other);
     }
 
     #[test]
