@@ -7,6 +7,7 @@
 //! - `schema`  SQL for the documents migration.
 //! - `kinds`   file kind from the extension (Word, Excel, PDF, other).
 //! - `store`   documents, versions, heads, restore, resolve, edit-session rows.
+//! - `view`    what the frontend sees (summary, detail), re-exported by `store`.
 //! - `access`  who may do what (role check; team/project scoping hook).
 //! - `sync`    connection points for the network stage (outbound trait and
 //!   inbound `apply_remote_*` functions).
@@ -19,4 +20,5 @@ pub mod office;
 pub mod schema;
 pub mod store;
 pub mod sync;
+pub mod view;
 pub mod watch;

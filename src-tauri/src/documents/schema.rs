@@ -67,3 +67,113 @@ CREATE TABLE document_remote_editing (
     PRIMARY KEY (document_id, editor)
 ) STRICT;
 "#;
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use crate::db;
+    use crate::documents::store::{self, DocScope};
+    use crate::identity::{self, MemoryKeyStore};
+    use crate::org;
+
+    const DOCUMENT_TABLES: [&str; 5] = [
+        "documents",
+        "document_versions",
+        "document_version_parents",
+        "document_edit_sessions",
+        "document_remote_editing",
+    ];
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 1
+    }
+
+    /// A database from before the documents migration (Tahap 1 = v2) with an
+    /// identity, an organization and a setting upgrades to the latest schema,
+    /// keeps its data and gets the documents tables.
+    ///
+    /// `db::migrations` is private, so the old database is made by opening a
+    /// new one, filling it, then dropping the documents tables and setting
+    /// `user_version` back to the version before this migration. This assumes
+    /// the documents migration is the last one; adjust when later stages
+    /// append theirs.
+    #[test]
+    fn database_before_documents_upgrades_and_keeps_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let before = db::latest_version() - 1;
+        assert!(before >= 2, "documents come after the Tahap 1 schema");
+        let (pk, org_id) = {
+            let mut conn = db::open(tmp.path()).unwrap();
+            let mut me = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
+            identity::save_display_name(&mut conn, &mut me, "Sari").unwrap();
+            let info = org::create_organization(&mut conn, &me, "CV Maju Jaya").unwrap();
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES ('theme.mode', 'dark', 't')",
+                [],
+            )
+            .unwrap();
+            for t in DOCUMENT_TABLES.iter().rev() {
+                conn.execute_batch(&format!("DROP TABLE {t};")).unwrap();
+            }
+            conn.pragma_update(None, "user_version", before).unwrap();
+            (me.public_key_hex().to_owned(), info.id)
+        };
+
+        let mut conn = db::open(tmp.path()).unwrap();
+        assert_eq!(db::schema_version(&conn).unwrap(), db::latest_version());
+        for t in DOCUMENT_TABLES {
+            assert!(table_exists(&conn, t), "missing table {t}");
+        }
+        let (name, role): (String, String) = conn
+            .query_row(
+                "SELECT o.name, m.role FROM organizations o JOIN members m ON m.organization_id = o.id
+                 WHERE o.id = ?1 AND m.public_key = ?2",
+                [&org_id, &pk],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (name.as_str(), role.as_str()),
+            ("CV Maju Jaya", "superadmin")
+        );
+        let theme: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'theme.mode'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(theme, "dark");
+        let ops: i64 = conn
+            .query_row("SELECT count(*) FROM org_ops", [], |r| r.get(0))
+            .unwrap();
+        assert!(ops >= 1, "membership log kept");
+
+        // The new tables work, including their constraints.
+        let blobs = crate::blobs::BlobStore::in_data_dir(tmp.path()).unwrap();
+        let blob = blobs.put_bytes(b"isi").unwrap();
+        let (doc, v1) = store::create_document(
+            &mut conn,
+            &DocScope::default(),
+            "Laporan.docx",
+            &blob,
+            &pk,
+            "2026-11-22T08:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(v1.seq, 1);
+        let bad = conn.execute(
+            "INSERT INTO document_versions (id, document_id, seq, blob_hash, size, author, created_at, origin)
+             VALUES (?1, ?2, 2, ?3, 1, ?4, 't', 'copied')",
+            [&"ab".repeat(16), &doc.id, &"cd".repeat(32), &pk],
+        );
+        assert!(bad.is_err(), "origin is checked");
+    }
+}
