@@ -71,6 +71,15 @@ const MAX_PUSH_FRAME: usize = 256 * 1024;
 const MAX_FIRST_FRAME: usize = 1024 * 1024;
 /// Rejection log entries per remote IP per minute.
 const REJECTION_LOGS_PER_MINUTE: usize = 10;
+/// Op-sync responder sessions (`respond_sync`) running at once for one
+/// member connection. The peer's `schedule_sync` runs one session at a time
+/// (a follow-up starts only after it ends); the second slot covers a session
+/// the peer gave up on while ours is still winding down.
+const MAX_OP_SYNC_RESPONDERS: usize = 2;
+/// Reset code for a feature session that hit `SYNC_SESSION_TIMEOUT`, so the
+/// initiator sees an aborted session and retries instead of a normal end.
+/// Same value as `RESET_ABORTED` in `feature_net.rs`.
+const FEATURE_RESET_ABORTED: u32 = 0x22;
 
 pub(crate) const PORT_RANGE: std::ops::RangeInclusive<u16> = 47800..=47809;
 
@@ -768,6 +777,7 @@ impl Inner {
     /// Serves the peer's streams until the connection ends.
     async fn drive(self: Arc<Self>, conn: Connection, pk: String, slot: ConnSlot) {
         let streams = Arc::new(Semaphore::new(tls::MAX_BIDI_STREAMS as usize));
+        let op_syncs = Arc::new(Semaphore::new(MAX_OP_SYNC_RESPONDERS));
         while let Ok((mut send, mut recv)) = conn.accept_bi().await {
             let Ok(slot) = streams.clone().try_acquire_owned() else {
                 let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
@@ -776,8 +786,9 @@ impl Inner {
             };
             let me = self.clone();
             let pk = pk.clone();
+            let op_syncs = op_syncs.clone();
             tokio::spawn(async move {
-                me.handle_stream(&pk, send, recv).await;
+                me.handle_stream(&pk, &op_syncs, send, recv).await;
                 drop(slot);
             });
         }
@@ -803,7 +814,15 @@ impl Inner {
         }
     }
 
-    async fn handle_stream(self: &Arc<Self>, pk: &str, mut send: SendStream, mut recv: RecvStream) {
+    /// One bidirectional stream from member `pk`. `op_syncs` limits the
+    /// op-sync responder sessions of this connection.
+    async fn handle_stream(
+        self: &Arc<Self>,
+        pk: &str,
+        op_syncs: &Arc<Semaphore>,
+        mut send: SendStream,
+        mut recv: RecvStream,
+    ) {
         if !matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. }) {
             let _ = send.reset(VarInt::from_u32(code::NOT_MEMBER));
             self.recheck_peers();
@@ -811,6 +830,11 @@ impl Inner {
         }
         match wire::read_msg_timeout(&mut recv, MAX_FIRST_FRAME, READ_TIMEOUT).await {
             Ok(Some(Msg::SyncHave { ids })) => {
+                let Ok(_permit) = op_syncs.clone().try_acquire_owned() else {
+                    let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
+                    let _ = recv.stop(VarInt::from_u32(code::PROTOCOL));
+                    return;
+                };
                 let _ = tokio::time::timeout(
                     SYNC_SESSION_TIMEOUT,
                     self.respond_sync(pk, ids, &mut send, &mut recv),
@@ -819,12 +843,17 @@ impl Inner {
                 let _ = send.finish();
             }
             Ok(Some(Msg::FeatureHave { topic, ids })) => {
-                let _ = tokio::time::timeout(
+                let done = tokio::time::timeout(
                     SYNC_SESSION_TIMEOUT,
                     self.respond_feature(pk, topic, ids, &mut send, &mut recv),
                 )
                 .await;
-                let _ = send.finish();
+                if done.is_ok() {
+                    let _ = send.finish();
+                } else {
+                    let _ = send.reset(VarInt::from_u32(FEATURE_RESET_ABORTED));
+                    let _ = recv.stop(VarInt::from_u32(FEATURE_RESET_ABORTED));
+                }
             }
             Ok(Some(Msg::BlobGet { hash })) => {
                 // Has its own time limits (a large file takes a while).

@@ -44,8 +44,17 @@ pub const MAX_INCOMING: usize = 256;
 /// connection window bounds what a peer can park in memory on streams the
 /// application never reads (it is replenished as data is read, so it limits
 /// throughput, not frame size).
-pub const STREAM_WINDOW: u32 = 1024 * 1024;
+///
+/// The stream window is small enough that `MAX_BIDI_STREAMS - 1` busy
+/// streams (one op sync, four feature sessions and two blob downloads hold
+/// 3.5 MiB) cannot fill the connection window: there is always room left
+/// for the op-sync session and `Removed` pushes.
+pub const STREAM_WINDOW: u32 = 512 * 1024;
 pub const CONNECTION_WINDOW: u32 = 4 * 1024 * 1024;
+const _: () = assert!(
+    (MAX_BIDI_STREAMS as u64 - 1) * (STREAM_WINDOW as u64) < CONNECTION_WINDOW as u64,
+    "seven busy streams must not fill the connection window"
+);
 
 /// DER prefix of an Ed25519 SubjectPublicKeyInfo (RFC 8410): SEQUENCE,
 /// AlgorithmIdentifier { id-Ed25519 } with no parameters, BIT STRING of 32

@@ -22,7 +22,11 @@ pub const MAX_FRAME: usize = 4 * 1024 * 1024;
 /// Largest frame accepted on the join ALPN, where only small messages exist.
 pub const MAX_JOIN_FRAME: usize = 64 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One message. Serialized as a JSON object whose `t` field names the
+/// variant in snake_case (`{"t":"sync_want","ids":[]}`). Not `Deserialize`:
+/// parse frames with [`decode`] only, which never buffers a whole frame into
+/// serde's generic tree the way an internally tagged enum would.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Msg {
     Hello {
@@ -132,12 +136,92 @@ pub fn encode(msg: &Msg) -> Result<Vec<u8>, WireError> {
     Ok(out)
 }
 
+/// Only the tag of a message. Other fields are skipped by serde without
+/// being stored.
+#[derive(Deserialize)]
+struct Tag {
+    t: String,
+}
+
+fn parse<'a, T: Deserialize<'a>>(body: &'a [u8]) -> Result<T, WireError> {
+    serde_json::from_slice(body).map_err(|e| WireError::Malformed(e.to_string()))
+}
+
+/// Parses the body of one variant into a plain struct (its `t` field is
+/// skipped as unknown) and builds the `Msg`.
+macro_rules! variant {
+    ($body:expr, $variant:ident { $($field:ident: $ty:ty),* $(,)? }) => {{
+        #[derive(Deserialize)]
+        struct Body {
+            $($field: $ty,)*
+        }
+        let b: Body = parse($body)?;
+        Msg::$variant { $($field: b.$field),* }
+    }};
+}
+
 /// Parses a frame body (without the length prefix).
+///
+/// Two steps: first only the tag, then the fields straight into the
+/// variant's own struct. Deserializing an internally tagged enum directly
+/// would first copy the whole frame into serde's generic `Content` tree,
+/// where a 2 MiB array of small numbers grows to tens of MB.
 pub fn decode(body: &[u8]) -> Result<Msg, WireError> {
     if body.is_empty() {
         return Err(WireError::Malformed("frame kosong".into()));
     }
-    serde_json::from_slice(body).map_err(|e| WireError::Malformed(e.to_string()))
+    let tag: Tag = parse(body)?;
+    let msg = match tag.t.as_str() {
+        "hello" => variant!(body, Hello {
+            proto: u32,
+            org: String,
+            pk: String,
+            listen_port: u16,
+            addrs: Vec<String>,
+        }),
+        "sync_have" => variant!(body, SyncHave { ids: Vec<String> }),
+        "sync_want" => variant!(body, SyncWant { ids: Vec<String> }),
+        "sync_ops" => variant!(body, SyncOps { ops: Vec<WireOp> }),
+        "removed" => variant!(body, Removed { op: WireOp }),
+        "join_hello" => variant!(body, JoinHello { tag: String }),
+        "join_challenge" => variant!(
+            body,
+            JoinChallenge {
+                org: String,
+                invite: String
+            }
+        ),
+        "join_proof" => variant!(body, JoinProof { proof: JoinProof }),
+        "join_accepted" => variant!(
+            body,
+            JoinAccepted {
+                accepted: JoinAccepted
+            }
+        ),
+        "join_rejected" => variant!(
+            body,
+            JoinRejected {
+                code: String,
+                message: String
+            }
+        ),
+        "feature_have" => variant!(body, FeatureHave { topic: String, ids: Vec<String> }),
+        "feature_want" => variant!(body, FeatureWant { topic: String, ids: Vec<String> }),
+        "feature_records" => variant!(body, FeatureRecords {
+            topic: String,
+            records: Vec<FeatureRecord>,
+        }),
+        "blob_get" => variant!(body, BlobGet { hash: String }),
+        "blob_header" => variant!(body, BlobHeader { size: u64 }),
+        "blob_refused" => variant!(body, BlobRefused { code: String }),
+        other => {
+            let shown: String = other.chars().take(32).collect();
+            return Err(WireError::Malformed(format!(
+                "jenis pesan tidak dikenal: {shown}"
+            )));
+        }
+    };
+    Ok(msg)
 }
 
 /// Splits records into `FeatureRecords` batches of at most `max_count`
@@ -441,6 +525,149 @@ mod tests {
             let json = String::from_utf8(frame[4..].to_vec()).unwrap();
             assert!(json.starts_with(&format!("{{\"t\":\"{tag}\"")), "{json}");
         }
+    }
+
+    /// One of every variant.
+    fn every_variant() -> Vec<Msg> {
+        let op = WireOp {
+            payload: "{\"v\":1}".into(),
+            sig: "0".repeat(128),
+        };
+        vec![
+            Msg::Hello {
+                proto: PROTO_VERSION,
+                org: "a".repeat(32),
+                pk: "b".repeat(64),
+                listen_port: 47800,
+                addrs: vec!["192.168.1.10:47800".into()],
+            },
+            Msg::SyncHave {
+                ids: vec!["c".repeat(64)],
+            },
+            Msg::SyncWant { ids: vec![] },
+            Msg::SyncOps {
+                ops: vec![op.clone()],
+            },
+            Msg::Removed { op: op.clone() },
+            Msg::JoinHello {
+                tag: "ABCD2345".into(),
+            },
+            Msg::JoinChallenge {
+                org: "a".repeat(32),
+                invite: "1".repeat(32),
+            },
+            Msg::JoinProof {
+                proof: JoinProof {
+                    member: "b".repeat(64),
+                    name: "Budi \"B\" \u{e9}".into(),
+                    invite_sig: "0".repeat(128),
+                    member_sig: "1".repeat(128),
+                },
+            },
+            Msg::JoinAccepted {
+                accepted: JoinAccepted {
+                    org: crate::network::OrgRecord {
+                        id: "a".repeat(32),
+                        name: "Kantor".into(),
+                        founder_public_key: "f".repeat(64),
+                        created_at: "2026-11-22T08:00:00Z".into(),
+                        genesis_signature: "0".repeat(128),
+                    },
+                    ops: vec![op],
+                },
+            },
+            Msg::JoinRejected {
+                code: "invite_not_found".into(),
+                message: "x".into(),
+            },
+            Msg::FeatureHave {
+                topic: "chat".into(),
+                ids: vec!["d".repeat(64)],
+            },
+            Msg::FeatureWant {
+                topic: "chat".into(),
+                ids: vec![],
+            },
+            Msg::FeatureRecords {
+                topic: "chat".into(),
+                records: vec![FeatureRecord::new("{\"x\":1}")],
+            },
+            Msg::BlobGet {
+                hash: "a".repeat(64),
+            },
+            Msg::BlobHeader { size: u64::MAX },
+            Msg::BlobRefused {
+                code: "busy".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn every_variant_round_trips() {
+        let all = every_variant();
+        let tags: std::collections::HashSet<String> = all
+            .iter()
+            .map(|m| {
+                let v = serde_json::to_value(m).unwrap();
+                v["t"].as_str().unwrap().to_owned()
+            })
+            .collect();
+        assert_eq!(tags.len(), 16, "one sample per variant");
+        for m in all {
+            let frame = encode(&m).unwrap();
+            assert_eq!(decode(&frame[4..]).unwrap(), m);
+        }
+    }
+
+    #[test]
+    fn tag_may_come_after_the_fields_and_extra_fields_are_ignored() {
+        let got = decode(br#"{"ids":["x"],"extra":[1,2,{"a":3}],"t":"sync_have"}"#).unwrap();
+        assert_eq!(
+            got,
+            Msg::SyncHave {
+                ids: vec!["x".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_or_missing_tag_is_rejected() {
+        let bodies: [&[u8]; 7] = [
+            br#"{"t":"nope","ids":[]}"#,
+            br#"{"t":"Sync_Have","ids":[]}"#,
+            br#"{"t":5}"#,
+            br#"{"ids":[]}"#,
+            br#"[]"#,
+            br#"{"t":"sync_have"}"#,
+            br#"{"t":"blob_header","size":-1}"#,
+        ];
+        for body in bodies {
+            assert!(
+                matches!(decode(body), Err(WireError::Malformed(_))),
+                "{}",
+                String::from_utf8_lossy(body)
+            );
+        }
+    }
+
+    /// About 2 MiB of `0,` in place of the records. Rejected as malformed:
+    /// the tag step skips the array without storing it, the body step fails
+    /// on its first element, instead of the whole frame being buffered as a
+    /// generic tree first.
+    #[test]
+    fn junk_records_frame_is_rejected() {
+        let junk = "0,".repeat(1024 * 1024);
+        let tag_first = format!(r#"{{"t":"feature_records","topic":"chat","records":[{junk}0]}}"#);
+        assert!(tag_first.len() > 2 * 1024 * 1024);
+        assert!(matches!(
+            decode(tag_first.as_bytes()),
+            Err(WireError::Malformed(_))
+        ));
+        let tag_last = format!(r#"{{"records":[{junk}0],"topic":"chat","t":"feature_records"}}"#);
+        assert!(matches!(
+            decode(tag_last.as_bytes()),
+            Err(WireError::Malformed(_))
+        ));
     }
 
     #[test]
