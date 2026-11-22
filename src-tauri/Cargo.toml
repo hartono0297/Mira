@@ -47,6 +47,8 @@ tauri-plugin-dialog = "2.8.4"
 # Tahap 5 (tanda tangan PDF): kunci turunan PIN dan enkripsi gambar tanda tangan.
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+# Tahap 2 (chat): titipan tersegel untuk penerima yang offline.
+crypto_box = { version = "0.9.1", features = ["seal"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -4,6 +4,7 @@
 //! and `permissions/` next to these without reshaping them.
 
 pub mod board;
+pub mod chat;
 pub mod blobs;
 pub mod clock;
 pub mod commands;
