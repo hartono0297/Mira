@@ -271,10 +271,55 @@ mod tests {
             format!("mira://peer?{nine}"),
             format!("mira://peer?addr=10.0.0.1:1&x={}", "a".repeat(MAX_LINK_LEN)),
             "mira://peer?addr=10.0.0.1:1&n=é".into(),
+            "mira://peer?addr=%".into(),
+            "mira://peer?addr=%%41".into(),
+            "mira://peer?pk=%".into(),
+            "mira://peer?addr=%2".into(),
+            "mira://peer?addr=10.0.0.1:1%0A".into(),
+            "mira://peer?addr=%5Bfe80::1%25eth0%5D:1".into(),
+            "mira://peer?addr=10.0.0.1:99999".into(),
+            "mira://peer:1?addr=10.0.0.1:1".into(),
+            "mira://peer@x?addr=10.0.0.1:1".into(),
+            "mira://peer#?addr=10.0.0.1:1".into(),
+            "mira:/".into(),
         ];
         for link in &bad {
             assert_eq!(parse_share_link(link), None, "{link:?}");
         }
+    }
+
+    /// The longest link `share_link` can build still fits the parser's limit
+    /// and the QR code, and parses back to the same addresses.
+    #[test]
+    fn longest_link_round_trips() {
+        let addrs: Vec<SocketAddr> = (0..MAX_ADDRS as u16)
+            .map(|i| {
+                // Unicast (ff00::/8 is multicast), every group 4 digits.
+                let ip = std::net::Ipv6Addr::new(
+                    0x2001,
+                    0xffff,
+                    0xffff,
+                    0xffff,
+                    0xffff,
+                    0xffff,
+                    0xffff,
+                    0x1000 + i,
+                );
+                SocketAddr::V6(SocketAddrV6::new(ip, 65535, 0, 0))
+            })
+            .collect();
+        let link = share_link(PK, &addrs);
+        assert!(link.len() < MAX_LINK_LEN, "{}", link.len());
+        assert_eq!(parse_share_link(&link), Some((Some(PK.to_owned()), addrs)));
+        assert!(qr_svg(&link).starts_with("<svg"));
+
+        let other = [
+            addr("127.0.0.1:47800"),
+            addr("[::ffff:192.168.1.2]:47800"),
+            addr("[::1]:1"),
+        ];
+        let link = share_link(PK, &other);
+        assert_eq!(parse_share_link(&link).unwrap().1, other);
     }
 
     #[test]

@@ -104,10 +104,11 @@ fn status_impl(program_path: String, admin_command: String) -> FirewallStatus {
             parse_status_output(&out.stdout, program_path, admin_command)
         }
         Ok(out) => {
-            let reason = if out.stderr.trim().is_empty() {
+            let stderr = stderr_text(&out.stderr);
+            let reason = if stderr.is_empty() {
                 format!("PowerShell selesai tanpa hasil (kode {}).", out.code_text())
             } else {
-                out.stderr.trim().to_owned()
+                stderr
             };
             unknown(program_path, admin_command, &reason)
         }
@@ -119,18 +120,23 @@ fn status_impl(program_path: String, admin_command: String) -> FirewallStatus {
 /// inbound block rules for this program (for example from declining the
 /// Windows "allow access" prompt), then (re)creates one inbound UDP allow
 /// rule for this program on all profiles. Safe to run more than once.
+///
+/// Block rules are selected by exact, case-insensitive comparison of the
+/// stored program path (also after expanding `%VAR%`, since the persistent
+/// store keeps paths like `%ProgramFiles%\...` that the status check sees
+/// expanded), never by a pattern, so rules of other programs are never touched.
 pub fn admin_command(program: &Path) -> String {
     let path = program_path_string(program);
     let quoted = ps_quote(&path);
-    let wildcard = ps_quote(&ps_wildcard_escape(&path));
     let name = ps_quote(&rule_name(&path));
     format!(
-        "$f = @(Get-NetFirewallApplicationFilter -Program {wildcard} -ErrorAction SilentlyContinue); \
+        "$p = {quoted}; \
+         $f = @(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | Where-Object {{ $_.Program -ieq $p -or ($_.Program -like '*%*' -and [Environment]::ExpandEnvironmentVariables($_.Program) -ieq $p) }}); \
          if ($f.Count -gt 0) {{ $f | Get-NetFirewallRule | Where-Object {{ $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' }} | Disable-NetFirewallRule }}; \
          Remove-NetFirewallRule -Name {name} -ErrorAction SilentlyContinue; \
          New-NetFirewallRule -Name {name} -DisplayName '{RULE_DISPLAY_NAME}' \
          -Description 'Mira: sambungan antarlaptop di jaringan kantor (QUIC dan mDNS)' \
-         -Direction Inbound -Program {quoted} -Protocol UDP -Action Allow -Profile Domain,Private,Public"
+         -Direction Inbound -Program $p -Protocol UDP -Action Allow -Profile Domain,Private,Public"
     )
 }
 
@@ -162,11 +168,12 @@ fn request_rule_impl(program: &Path) -> AppResult<bool> {
         Some(0) => Ok(true),
         Some(EXIT_CANCELLED) => Ok(false),
         _ => {
-            let detail = if out.stderr.trim().is_empty() {
-                format!("kode keluar {}", out.code_text())
-            } else {
-                truncate(out.stderr.trim(), DETAIL_MAX_CHARS)
-            };
+            // The script prints its reason on stdout; stderr may be CLIXML.
+            let detail = [out.stdout.trim().to_owned(), stderr_text(&out.stderr)]
+                .into_iter()
+                .find(|s| !s.is_empty())
+                .map(|s| truncate(&s, DETAIL_MAX_CHARS))
+                .unwrap_or_else(|| format!("kode keluar {}", out.code_text()));
             Err(AppError::Internal(format!(
                 "Aturan Windows Firewall untuk Mira tidak berhasil dibuat. Minta bantuan admin IT dengan perintah yang tersedia. Detail: {detail}"
             )))
@@ -230,6 +237,7 @@ fn status_script(path: &str) -> String {
     let wildcard = ps_quote(&ps_wildcard_escape(path));
     format!(
         r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 try {{ [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 }} catch {{}}
 $p = {quoted}
 $out = [ordered]@{{ rules = @(); profiles = @(); firewall = @(); errors = @() }}
@@ -264,7 +272,8 @@ try {{
 
 /// Script for [`request_rule`]: starts an elevated, hidden PowerShell running
 /// [`admin_command`], waits for it, and exits with its exit code, or 1223 when
-/// the user declined UAC.
+/// the user declined UAC. A failure reason goes to stdout, because Windows
+/// PowerShell wraps a redirected stderr in CLIXML once any record is written.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn request_script(program: &Path) -> String {
     let inner = format!(
@@ -275,8 +284,14 @@ fn request_script(program: &Path) -> String {
     let exe = ps_quote(&powershell_exe());
     format!(
         r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+try {{ [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 }} catch {{}}
 try {{
   $proc = Start-Process -FilePath {exe} -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList '-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand','{encoded}'
+  if ($null -eq $proc -or $null -eq $proc.ExitCode) {{
+    [Console]::Out.WriteLine('Kode keluar PowerShell administrator tidak terbaca.')
+    exit 1
+  }}
   exit [int]$proc.ExitCode
 }} catch {{
   $e = $_.Exception
@@ -284,7 +299,7 @@ try {{
     if ($e -is [System.ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq {EXIT_CANCELLED}) {{ exit {EXIT_CANCELLED} }}
     $e = $e.InnerException
   }}
-  [Console]::Error.WriteLine($_.Exception.Message)
+  [Console]::Out.WriteLine($_.Exception.Message)
   exit 1
 }}
 "#
@@ -320,6 +335,36 @@ fn unknown(program_path: String, admin_command: String, reason: &str) -> Firewal
             truncate(reason, DETAIL_MAX_CHARS)
         )),
     }
+}
+
+/// Readable text from PowerShell's stderr. Windows PowerShell 5.1 writes the
+/// error, warning and progress streams of a redirected `-EncodedCommand` run as
+/// CLIXML (`#< CLIXML<Objs ...>`); only the error-stream text is kept.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn stderr_text(stderr: &str) -> String {
+    const MARK: &str = "#< CLIXML";
+    const OPEN: &str = "<S S=\"Error\">";
+    let Some(at) = stderr.find(MARK) else {
+        return stderr.trim().to_owned();
+    };
+    let mut text = stderr[..at].trim().to_owned();
+    let mut rest = &stderr[at + MARK.len()..];
+    while let Some(start) = rest.find(OPEN) {
+        rest = &rest[start + OPEN.len()..];
+        let end = rest.find("</S>").unwrap_or(rest.len());
+        text.push(' ');
+        text.push_str(&rest[..end]);
+        rest = &rest[end..];
+    }
+    let text = text
+        .replace("_x000D_", " ")
+        .replace("_x000A_", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -397,15 +442,13 @@ fn parse_status_output(
     if active == 0 {
         active = ALL_PROFILES;
     }
-    let firewall = as_list(&root["firewall"]);
-    let firewall_on = if firewall.is_empty() {
-        ALL_PROFILES
-    } else {
-        firewall
-            .into_iter()
-            .filter(|v| parse_gpo_enabled(&v["Enabled"]))
-            .fold(0u8, |acc, v| acc | profile_name_bit(&v["Name"]))
-    };
+    // Fail safe: a profile counts as off only when it is listed by a known
+    // name with Enabled = False; missing or unrecognized entries count as on.
+    let firewall_off = as_list(&root["firewall"])
+        .into_iter()
+        .filter(|v| !parse_gpo_enabled(&v["Enabled"]))
+        .fold(0u8, |acc, v| acc | profile_name_bit(&v["Name"]));
+    let firewall_on = ALL_PROFILES & !firewall_off;
 
     let (rule, detail) = evaluate(&rules, active, firewall_on);
     FirewallStatus {
@@ -859,6 +902,35 @@ mod tests {
     }
 
     #[test]
+    fn unrecognized_firewall_profiles_count_as_on() {
+        // Garbled or partial profile data must not read as "firewall off".
+        for firewall in [
+            r#"[{"Name":"","Enabled":"True"}]"#,
+            r#"[{"Name":"Weird","Enabled":"False"}]"#,
+            r#"[{"Enabled":"True"}]"#,
+            r#"[{"Name":"Private","Enabled":"False"}]"#,
+            r#"[{"Name":"Public","Enabled":"NotConfigured"}]"#,
+        ] {
+            let s = parse(&format!(
+                r#"{{"rules":[],"profiles":{PUBLIC_WIFI},"firewall":{firewall}}}"#
+            ));
+            assert_eq!(s.rule, RuleState::Missing, "{firewall}");
+        }
+    }
+
+    #[test]
+    fn stderr_clixml_is_reduced_to_error_text() {
+        let raw = "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj S=\"progress\" RefId=\"0\"><MS><PR N=\"Record\"><AV>Preparing modules for first use.</AV></PR></MS></Obj><S S=\"warning\">warn</S><S S=\"Error\">Access is denied &amp; &lt;x&gt;_x000D__x000A_</S><S S=\"Error\">At line:2 char:1_x000D__x000A_</S></Objs>";
+        assert_eq!(stderr_text(raw), "Access is denied & <x> At line:2 char:1");
+        assert_eq!(stderr_text("  plain message\r\n"), "plain message");
+        assert_eq!(
+            stderr_text("#< CLIXML\r\n<Objs><S S=\"warning\">w</S></Objs>"),
+            ""
+        );
+        assert_eq!(stderr_text(""), "");
+    }
+
+    #[test]
     fn rule_query_error_is_unknown() {
         let s = parse(&format!(
             r#"{{"rules":[],"profiles":[{PRIVATE_LAN}],"errors":"rules: Access is denied."}}"#
@@ -938,12 +1010,16 @@ mod tests {
         let program = PathBuf::from(r"C:\Users\O'Brien\AppData\Local\Mira [dev]\mira.exe");
         let cmd = admin_command(&program);
         assert!(!cmd.contains('\n'), "must be one line");
+        assert!(cmd.starts_with(r"$p = 'C:\Users\O''Brien\AppData\Local\Mira [dev]\mira.exe'; "));
         assert!(cmd.contains(
-            r"-Direction Inbound -Program 'C:\Users\O''Brien\AppData\Local\Mira [dev]\mira.exe' -Protocol UDP -Action Allow -Profile Domain,Private,Public"
+            r"-Direction Inbound -Program $p -Protocol UDP -Action Allow -Profile Domain,Private,Public"
         ));
-        assert!(cmd.contains(
-            r"Get-NetFirewallApplicationFilter -Program 'C:\Users\O''Brien\AppData\Local\Mira `[dev`]\mira.exe'"
-        ));
+        // Block rules are picked by exact path comparison, never by a
+        // wildcard pattern that could match other programs.
+        assert!(cmd.contains("Where-Object { $_.Program -ieq $p -or ("));
+        assert!(!cmd.contains("-Program '") && !cmd.contains('`'));
+        assert!(cmd.contains("$_.Direction -eq 'Inbound' -and $_.Action -eq 'Block'"));
+        assert!(!cmd.contains("Remove-NetFirewallRule -DisplayName"));
         assert!(cmd.contains("-DisplayName 'Mira'"));
         let name = rule_name(&program_path_string(&program));
         assert!(cmd.contains(&format!("Remove-NetFirewallRule -Name '{name}'")));
@@ -971,6 +1047,11 @@ mod tests {
         let request = request_script(Path::new(path));
         assert!(request.contains("-Verb RunAs"));
         assert!(request.contains("exit 1223"));
+        assert!(request.contains("$ProgressPreference = 'SilentlyContinue'"));
+        assert!(
+            !request.contains("[Console]::Error"),
+            "reason goes to stdout"
+        );
         // The elevated command travels base64-encoded, never as raw text.
         assert!(!request.contains("New-NetFirewallRule"));
         let inner = format!(
@@ -978,6 +1059,57 @@ mod tests {
             admin_command(Path::new(path))
         );
         assert!(request.contains(&encode_command(&inner)));
+    }
+
+    /// Feeds every generated script to PowerShell's parser (nothing is run)
+    /// for paths with quotes, `$`, backticks, `;`, wildcards and non-ASCII:
+    /// `cargo test -- --ignored scripts_parse_in_powershell`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "starts PowerShell (parses only, changes nothing)"]
+    fn scripts_parse_in_powershell() {
+        let paths = [
+            r"C:\Program Files\Mira\mira.exe",
+            r"C:\Users\O'Brien\it’s $(calc) `x; [a]*?\%TEMP%\é ü 日本\mira.exe",
+        ];
+        for path in paths {
+            let program = Path::new(path);
+            // (script, whether it holds the path as plain text)
+            for (script, has_path) in [
+                (admin_command(program), true),
+                (status_script(path), true),
+                (request_script(program), false),
+                (
+                    format!(
+                        "$ErrorActionPreference = 'Stop'\n{}\n",
+                        admin_command(program)
+                    ),
+                    true,
+                ),
+            ] {
+                let check = format!(
+                    "$t = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{}'))\n\
+                     $tokens = $null; $errs = $null\n\
+                     $ast = [System.Management.Automation.Language.Parser]::ParseInput($t, [ref]$tokens, [ref]$errs)\n\
+                     if ($errs.Count -gt 0) {{ $errs | ForEach-Object {{ $_.Message }}; exit 1 }}\n\
+                     $s = @($ast.FindAll({{ $args[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $args[0].Value -like '*mira.exe' }}, $true) | ForEach-Object {{ $_.Value }})\n\
+                     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n\
+                     $s -join \"`n\"",
+                    encode_command(&script)
+                );
+                let out = ps::run(&check, std::time::Duration::from_secs(60)).unwrap();
+                assert_eq!(out.code, Some(0), "{script}\n{}", out.stdout);
+                // Every literal naming the exe is the path itself (or its
+                // wildcard-escaped form), never a fragment of it.
+                let escaped = ps_wildcard_escape(path);
+                let literals: Vec<&str> = out.stdout.lines().filter(|l| !l.is_empty()).collect();
+                assert_eq!(!literals.is_empty(), has_path, "{script}");
+                assert!(
+                    literals.iter().all(|l| *l == path || *l == escaped),
+                    "{path}: {literals:?}"
+                );
+            }
+        }
     }
 
     /// Runs the real, read-only status check on this machine:

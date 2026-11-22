@@ -71,6 +71,17 @@ fn bad_length_error() -> AppError {
     )
 }
 
+/// Copies a stored secret straight into its wiped-on-drop buffer, so no
+/// unzeroized `[u8; 32]` temporary is left on the stack.
+fn secret_from_slice(bytes: &[u8]) -> AppResult<SecretKey> {
+    if bytes.len() != 32 {
+        return Err(bad_length_error());
+    }
+    let mut secret = Zeroizing::new([0u8; 32]);
+    secret.copy_from_slice(bytes);
+    Ok(secret)
+}
+
 fn store_error(detail: impl std::fmt::Display) -> AppError {
     AppError::Keystore(format!(
         "Windows Credential Manager tidak bisa diakses untuk menyimpan atau membaca kunci laptop. Detail: {detail}"
@@ -90,9 +101,7 @@ impl KeyStore for KeyringStore {
                 "Mira: kunci laptop tidak bisa dipindah ke penyimpanan lokal (kode Windows {code})."
             );
         }
-        <[u8; 32]>::try_from(stored.blob.as_slice())
-            .map(|secret| Some(Zeroizing::new(secret)))
-            .map_err(|_| bad_length_error())
+        secret_from_slice(&stored.blob).map(Some)
     }
 
     fn set(&self, account: &str, secret: &[u8; 32]) -> AppResult<()> {
@@ -122,15 +131,8 @@ impl KeyringStore {
 #[cfg(not(windows))]
 impl KeyStore for KeyringStore {
     fn get(&self, account: &str) -> AppResult<Option<SecretKey>> {
-        use zeroize::Zeroize;
         match self.entry(account)?.get_secret() {
-            Ok(mut bytes) => {
-                let result = <[u8; 32]>::try_from(bytes.as_slice())
-                    .map(Zeroizing::new)
-                    .map_err(|_| bad_length_error());
-                bytes.zeroize();
-                result.map(Some)
-            }
+            Ok(bytes) => secret_from_slice(&Zeroizing::new(bytes)).map(Some),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(store_error(e)),
         }
@@ -393,6 +395,16 @@ mod tests {
     #[test]
     fn memory_store_roundtrip() {
         roundtrip(&MemoryKeyStore::new(), "device-key-test");
+    }
+
+    #[test]
+    fn secret_length_is_checked() {
+        let bytes: Vec<u8> = (0..32).collect();
+        assert_eq!(secret_from_slice(&bytes).unwrap().as_slice(), &bytes[..]);
+        for len in [0, 31, 33, 64] {
+            let err = secret_from_slice(&vec![1u8; len]).unwrap_err();
+            assert_eq!(err.code(), "key_mismatch", "{len}");
+        }
     }
 
     /// The target name must match what `keyring` 3 used in Tahap 0, or
