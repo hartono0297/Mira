@@ -3,6 +3,8 @@ import {
   IconArrowLeft,
   IconCheck,
   IconCircleCheck,
+  IconClockHour4,
+  IconDownload,
   IconFolderOpen,
   IconLock,
   IconMinus,
@@ -11,7 +13,7 @@ import {
 } from "@tabler/icons-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { toAppError, type AppError } from "../../api";
+import { subscribeFeature, toAppError, type AppError } from "../../api";
 import { signingApi, type ExportView, type RequestDetail, type SignerView, type SignOverview } from "../../api/signing";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -26,10 +28,15 @@ import {
   coolingText,
   exportNoticeText,
   exportStateLabel,
+  fileNeed,
+  fileNeedText,
+  formatSize,
   formatWhen,
   headerStatusLabel,
   integrityLabel,
   kindLabel,
+  rejectReasonText,
+  signErrorMessage,
 } from "./labels";
 import {
   BOX_MIN_WIDTH_PT,
@@ -52,6 +59,8 @@ type Loaded = { detail: RequestDetail; overview: SignOverview };
 type FileState =
   | { status: "idle" }
   | { status: "missing" }
+  // File dari laptop rekan belum tersalin ke laptop ini.
+  | { status: "absent" }
   | { status: "loading"; hash: string }
   | { status: "ready"; hash: string; data: Uint8Array }
   | { status: "error"; hash: string; error: AppError };
@@ -70,7 +79,20 @@ const QUICK_SPOTS: { spot: QuickSpot; label: string }[] = [
 ];
 
 // Error yang berarti data di layar sudah usang; layar dimuat ulang di belakang.
-const STALE_CODES = new Set(["version_conflict", "not_your_turn", "request_closed", "already_signed", "not_found"]);
+// not_available: file belum ada di laptop ini, keadaan unduhannya mungkin berubah.
+const STALE_CODES = new Set([
+  "version_conflict",
+  "not_your_turn",
+  "request_closed",
+  "already_signed",
+  "not_found",
+  "not_available",
+]);
+
+// File dari rekan belum tersalin. Nilai yang tidak dikirim dianggap ada.
+function fileHere(detail: RequestDetail): boolean {
+  return detail.fileAvailable !== false;
+}
 
 function signerStatus(
   s: SignerView,
@@ -80,6 +102,7 @@ function signerStatus(
   if (s.status === "signed") return { text: s.signedAt ? `Sudah, ${formatWhen(s.signedAt)}` : "Sudah", tone: "done" };
   if (detail.status === "cancelled") return { text: "Belum, permintaan dibatalkan", tone: "wait" };
   if (s.isMe && s.canSignNow) {
+    if (!fileHere(detail)) return { text: "Giliran Anda, menunggu file", tone: "wait" };
     return fileTrusted ? { text: "Giliran Anda", tone: "now" } : { text: "Tidak bisa ditandatangani", tone: "wait" };
   }
   return { text: "Menunggu", tone: "wait" };
@@ -87,7 +110,9 @@ function signerStatus(
 
 // Banner bahaya. Langkah lanjutnya beda untuk pengirim: ia sendiri yang
 // memegang file asli, jadi tidak disuruh meminta salinan dari pengirim.
+// File dari rekan yang belum tersalin bukan file hilang, jadi tidak ada banner.
 function integrityProblem(detail: RequestDetail, isRequester: boolean): { title: string; body: ReactNode } | null {
+  if (!fileHere(detail) && detail.integrity === "missing") return null;
   if (detail.integrity === "changed") {
     return {
       title: integrityLabel("changed"),
@@ -172,6 +197,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   const [exportError, setExportError] = useState<AppError | null>(null);
   const [revealError, setRevealError] = useState<AppError | null>(null);
 
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<AppError | null>(null);
+
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<AppError | null>(null);
@@ -213,6 +241,12 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
 
   // Byte PDF hanya diganti saat hash versi berubah, supaya PdfViewer tidak memuat ulang.
   const loadFile = useCallback(async (detail: RequestDetail, force = false) => {
+    if (!fileHere(detail)) {
+      ++fileSeq.current;
+      fileHash.current = null;
+      setFile({ status: "absent" });
+      return;
+    }
     if (detail.integrity === "missing") {
       // Naikkan nomor urut supaya balasan baca file yang masih berjalan diabaikan.
       ++fileSeq.current;
@@ -256,6 +290,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Tanda tangan, pembatalan, atau file yang selesai tersalin dari laptop rekan.
+  useEffect(() => subscribeFeature("sign", () => void load()), [load]);
 
   const detail = data?.detail ?? null;
   const overview = data?.overview ?? null;
@@ -451,7 +488,31 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
       else if (error.code === "pin_wrong" || error.code === "pin_locked" || error.code === "signature_cooling") {
         void refreshOverview();
       }
-      throw error;
+      // Penolakan bukti stempel dan file yang belum ada dijelaskan dengan kalimat sendiri.
+      throw { ...error, message: signErrorMessage(error) } satisfies AppError;
+    }
+  }
+
+  // File di atas 20 MB dari rekan tidak disalin otomatis.
+  async function downloadFile() {
+    if (!detail || downloading) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const result = await signingApi.downloadFile(detail.id);
+      if (!mounted.current) return;
+      setData((d) => (d ? { ...d, detail: result } : d));
+      void loadFile(result, true);
+      onChanged?.();
+      // Tombol unduh hilang setelah berhasil; fokus dipindah ke judul.
+      window.setTimeout(() => titleRef.current?.focus(), 0);
+    } catch (err) {
+      if (!mounted.current) return;
+      const error = toAppError(err);
+      setDownloadError({ ...error, message: signErrorMessage(error) });
+      void load();
+    } finally {
+      if (mounted.current) setDownloading(false);
     }
   }
 
@@ -566,6 +627,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
       0.01;
   const minWidthReached = sizeFixed(-SIZE_STEP_PT);
   const maxWidthReached = sizeFixed(SIZE_STEP_PT);
+  const rejected = Array.isArray(d.rejected) ? d.rejected : [];
   const changedCopies = d.exports.filter((x) => x.state === "changed").length;
   const exportBlocked = d.integrity !== "intact" || d.sealValid === false;
   const exportOff = exporting || exportBlocked;
@@ -750,6 +812,8 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
         </p>
       </div>
     );
+  } else if (d.status === "in_progress" && mySigner?.canSignNow && !fileHere(d)) {
+    myPart = <p className="sdoc-text">Giliran Anda. Tanda tangan bisa dibuat setelah file dokumen ada di laptop ini.</p>;
   } else if (d.status === "in_progress" && mySigner?.canSignNow && !fileTrusted) {
     myPart = (
       <p className="sdoc-text">
@@ -784,8 +848,49 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
     myPart = <p className="sdoc-text">Permintaan ini sudah dibatalkan, jadi tidak bisa ditandatangani lagi.</p>;
   }
 
+  // File yang belum ada di laptop ini (atau tanda tangan terbaru yang filenya
+  // belum sampai): keterangan, dan tombol unduh untuk file di atas 20 MB.
+  const need = fileNeed(d);
+  const arrival = need ? (
+    <div className="sdoc-arrival">
+      <p className="sdoc-arrival-text">
+        {need.state === "manual" ? (
+          <IconDownload size={18} aria-hidden="true" />
+        ) : (
+          <IconClockHour4 size={18} aria-hidden="true" />
+        )}
+        <span>
+          {fileNeedText(need, d.fileSize)}
+          {need.state === "copying" && !need.newer && ". Halaman tampil di sini begitu salinannya selesai."}
+          {need.state === "copying" && need.newer && ". Status penanda tangan diperbarui setelah file itu sampai."}
+        </span>
+      </p>
+      {need.state === "manual" && (
+        <button
+          type="button"
+          className="btn btn-sm sdoc-fit"
+          onClick={guarded(downloading, () => void downloadFile())}
+          aria-disabled={downloading || undefined}
+          aria-busy={downloading || undefined}
+        >
+          <IconDownload size={16} aria-hidden="true" />
+          {downloading ? "Mengunduh..." : `Unduh file (${formatSize(d.fileSize)})`}
+        </button>
+      )}
+      <div aria-live="polite">
+        {downloadError && (
+          <ErrorAlert title="File belum bisa diunduh">
+            <p>{downloadError.message}</p>
+          </ErrorAlert>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   let viewer: ReactNode;
-  if (file.status === "ready") {
+  if (file.status === "absent") {
+    viewer = <div className="sdoc-viewer-msg">{arrival}</div>;
+  } else if (file.status === "ready") {
     viewer = (
       <PdfViewer
         data={file.data}
@@ -842,6 +947,8 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
           <ErrorAlert title={problem.title}>{problem.body}</ErrorAlert>
         </div>
       )}
+
+      {need?.newer && file.status !== "absent" && <div className="sdoc-banner">{arrival}</div>}
 
       {changedCopies > 0 && (
         <div className="sdoc-banner">
@@ -907,11 +1014,35 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             </ol>
             {othersPending && (
               <p className="sdoc-small">
-                Mira belum bisa mengirim dokumen lewat jaringan. Rekan di daftar ini baru menerima dokumen setelah pengiriman lewat
-                jaringan tersedia.
+                Dokumen dikirim ke penanda tangan lain saat laptop mereka tersambung. Daftar ini berubah begitu mereka
+                menandatangani.
               </p>
             )}
           </section>
+
+          {rejected.length > 0 && (
+            <section className="sdoc-sec" aria-labelledby={`${titleId}-rejected`}>
+              <h2 id={`${titleId}-rejected`} className="sdoc-h">
+                Versi yang ditolak
+              </h2>
+              <p className="sdoc-small">
+                Mira tidak memakai versi ini. Dokumen tetap memakai versi sah terakhir, dan tanda tangan di versi yang
+                ditolak tidak dihitung.
+              </p>
+              <ul className="sdoc-rejected">
+                {rejected.map((x, i) => (
+                  <li key={`${x.signerName}-${x.at}-${i}`} className="sdoc-reject">
+                    <p className="sdoc-reject-head">
+                      <IconAlertTriangle size={16} aria-hidden="true" />
+                      Versi dari {x.signerName}
+                    </p>
+                    <p className="sdoc-small">{formatWhen(x.at)}</p>
+                    <p>{rejectReasonText(x.reason)}</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           {myPart && (
             <section className="sdoc-sec" aria-labelledby={`${titleId}-me`}>
@@ -977,7 +1108,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             </button>
             {exportBlocked && (
               <p id={exportHintId} className="sdoc-small">
-                {d.integrity === "missing"
+                {!fileHere(d)
+                  ? "Salinan bisa disimpan setelah file dokumen ada di laptop ini."
+                  : d.integrity === "missing"
                   ? "Salinan tidak bisa disimpan karena file dokumen ini tidak ditemukan."
                   : "Salinan tidak bisa disimpan karena isi file ini tidak cocok dengan catatan Mira."}
               </p>

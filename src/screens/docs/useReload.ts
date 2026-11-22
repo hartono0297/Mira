@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toAppError, type AppError } from "../../api";
+import { subscribeFeature, toAppError, type AppError } from "../../api";
 import { subscribeDocuments } from "../../api/documents";
 
 export type Loaded<T> = {
@@ -9,7 +9,8 @@ export type Loaded<T> = {
   reload: () => Promise<void>;
 };
 
-// Memuat data dan memuat ulang saat event "mira://documents" datang atau saat
+// Memuat data dan memuat ulang saat event "mira://documents" atau
+// "mira://feature" bertopik docs datang, atau saat
 // jendela Mira kembali fokus (misalnya setelah menutup Word). Kalau muat ulang
 // gagal, data terakhir tetap ditampilkan bersama error-nya. `load` null = tidak memuat.
 export function useReload<T>(load: (() => Promise<T>) | null, key: string): Loaded<T> {
@@ -54,11 +55,14 @@ export function useReload<T>(load: (() => Promise<T>) | null, key: string): Load
     setLoading(true);
     void reload();
     const stop = subscribeDocuments(() => void reload());
+    // Dokumen, versi, atau tanda edit baru dari laptop rekan.
+    const stopFeature = subscribeFeature("docs", () => void reload());
     const onFocus = () => void reload();
     window.addEventListener("focus", onFocus);
     return () => {
       alive.current = false;
       stop();
+      stopFeature();
       window.removeEventListener("focus", onFocus);
     };
   }, [key, enabled, reload]);

@@ -1,6 +1,7 @@
 import { IconArrowDown, IconArrowUp, IconInfoCircle } from "@tabler/icons-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { toAppError, type AppError } from "../../api";
+import { boardApi, type ProjectSummary } from "../../api/board";
 import { signingApi, type Candidate, type ImportedPdf, type RequestDetail, type SignMode } from "../../api/signing";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -42,9 +43,21 @@ function GuestChip() {
   );
 }
 
+// "Rekan A", "Rekan A dan Rekan B", "Rekan A, Rekan B, dan Rekan C".
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return `${names[0]} dan ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, dan ${names[names.length - 1]}`;
+}
+
 export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Props) {
   const [title, setTitle] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [projectsError, setProjectsError] = useState<AppError | null>(null);
+  // "" = tanpa proyek.
+  const [projectId, setProjectId] = useState("");
+  const [dropped, setDropped] = useState<string[]>([]);
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [loadError, setLoadError] = useState<AppError | null>(null);
   const [order, setOrder] = useState<string[]>([]);
@@ -56,11 +69,17 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
   const moveRefs = useRef(new Map<string, HTMLButtonElement | null>());
   const pendingFocus = useRef<Move | null>(null);
   const loadSeq = useRef(0);
+  const projectSeq = useRef(0);
+  const candidatesRef = useRef<Candidate[]>([]);
+  const orderRef = useRef<string[]>([]);
+  orderRef.current = order;
 
   const ids = {
     title: useId(),
     titleHint: useId(),
     titleError: useId(),
+    project: useId(),
+    projectHint: useId(),
     signers: useId(),
     signersHint: useId(),
     signersError: useId(),
@@ -68,20 +87,47 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
     order: useId(),
   };
 
-  const loadCandidates = useCallback(async () => {
+  // Calon penanda tangan bergantung pada proyek: Tamu hanya muncul untuk
+  // proyek yang boleh ia buka. Pilihan yang tidak ada lagi di daftar baru
+  // dilepas, dan namanya disebut supaya pengirim tahu.
+  const loadCandidates = useCallback(async (project: ProjectSummary | null) => {
     const mine = ++loadSeq.current;
     setLoadError(null);
     setCandidates(null);
     try {
-      const list = await signingApi.listCandidates();
+      const list = await signingApi.listCandidates(project ? { projectId: project.id, teamId: project.teamId } : {});
       if (mine !== loadSeq.current) return;
       const sorted = [...list].sort(byName);
+      const before = new Map(candidatesRef.current.map((c) => [c.publicKey, c]));
+      const keys = new Set(sorted.map((c) => c.publicKey));
+      candidatesRef.current = sorted;
       setCandidates(sorted);
-      // Diri sendiri tercentang bawaan, kecuali pengguna sudah memilih sendiri.
-      setOrder((prev) => (prev.length ? prev : sorted.filter((c) => c.isMe).map((c) => c.publicKey)));
+      const prev = orderRef.current;
+      if (!prev.length) {
+        // Diri sendiri tercentang bawaan, kecuali pengguna sudah memilih sendiri.
+        setOrder(sorted.filter((c) => c.isMe).map((c) => c.publicKey));
+      } else {
+        const gone = prev.filter((k) => !keys.has(k));
+        setDropped(gone.map((k) => before.get(k)?.displayName ?? "Satu penanda tangan"));
+        setOrder(prev.filter((k) => keys.has(k)));
+      }
     } catch (err) {
       if (mine !== loadSeq.current) return;
       setLoadError(toAppError(err));
+    }
+  }, []);
+
+  const loadProjects = useCallback(async () => {
+    const mine = ++projectSeq.current;
+    setProjectsError(null);
+    setProjects(null);
+    try {
+      const list = await boardApi.listProjects();
+      if (mine !== projectSeq.current) return;
+      setProjects([...list].sort((a, b) => a.code.localeCompare(b.code, "id")));
+    } catch (err) {
+      if (mine !== projectSeq.current) return;
+      setProjectsError(toAppError(err));
     }
   }, []);
 
@@ -89,6 +135,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
   useEffect(() => {
     if (!open) {
       loadSeq.current++;
+      projectSeq.current++;
       return;
     }
     setTitle(imported ? titleFromFileName(imported.fileName) : "");
@@ -98,8 +145,21 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
     setMode("sequential");
     setSaving(false);
     setSaveError(null);
-    void loadCandidates();
-  }, [open, imported, loadCandidates]);
+    setProjectId("");
+    setDropped([]);
+    candidatesRef.current = [];
+    void loadProjects();
+    void loadCandidates(null);
+  }, [open, imported, loadCandidates, loadProjects]);
+
+  const project = projects?.find((p) => p.id === projectId) ?? null;
+
+  function chooseProject(id: string) {
+    setProjectId(id);
+    setDropped([]);
+    setSignersError(null);
+    void loadCandidates(projects?.find((p) => p.id === id) ?? null);
+  }
 
   // Setelah baris dipindah, fokus tetap di tombol yang sama. Kalau tombol itu
   // nonaktif karena baris sudah di ujung, fokus pindah ke tombol arah sebaliknya.
@@ -167,6 +227,8 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
         fileHash: imported.fileHash,
         mode,
         signers: chosen.map((c) => c.publicKey),
+        // Cakupan hanya dikirim kalau proyek dipilih; tanpa proyek = Pustaka Umum.
+        ...(project ? { projectId: project.id, teamId: project.teamId } : {}),
       });
       setSaving(false);
       onCreated(detail);
@@ -220,6 +282,40 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
           </div>
         </div>
 
+        <div className="field">
+          <label htmlFor={ids.project}>Proyek</label>
+          <select
+            id={ids.project}
+            value={projectId}
+            onChange={(e) => chooseProject(e.target.value)}
+            aria-describedby={ids.projectHint}
+            disabled={saving}
+          >
+            <option value="">Tanpa proyek</option>
+            {(projects ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.code} · {p.name}
+              </option>
+            ))}
+          </select>
+          <p id={ids.projectHint} className="hint">
+            Tamu hanya bisa dipilih untuk proyek yang boleh ia buka. Tanpa proyek, pilihannya anggota saja.
+          </p>
+          {projects === null && !projectsError && (
+            <p className="hint" role="status">
+              Memuat daftar proyek...
+            </p>
+          )}
+          {projectsError && (
+            <p className="hint sign-project-error">
+              Daftar proyek belum terbaca ({projectsError.message}). Permintaan tetap bisa dibuat tanpa proyek.{" "}
+              <button type="button" className="link-btn" onClick={() => void loadProjects()}>
+                Baca daftar proyek lagi
+              </button>
+            </p>
+          )}
+        </div>
+
         <fieldset
           id={ids.signers}
           className="sign-set"
@@ -239,14 +335,16 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
             <div role="alert">
               <ErrorAlert title="Daftar anggota belum terbaca">
                 <p>{loadError.message}</p>
-                <button type="button" className="btn btn-ghost btn-sm sign-inline-btn" onClick={() => void loadCandidates()}>
+                <button type="button" className="btn btn-ghost btn-sm sign-inline-btn" onClick={() => void loadCandidates(project)}>
                   Coba lagi
                 </button>
               </ErrorAlert>
             </div>
           )}
           {candidates && candidates.length === 0 && (
-            <p className="sign-empty-small">Belum ada anggota di direktori laptop ini.</p>
+            <p className="sign-empty-small">
+              {project ? "Belum ada anggota yang boleh membuka proyek ini." : "Belum ada anggota di direktori laptop ini."}
+            </p>
           )}
           {candidates && candidates.length > 0 && (
             <ul className="sign-pick">
@@ -270,6 +368,14 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
           )}
           <div id={ids.signersError} role="alert">
             {signersError && <FieldError text={signersError} />}
+          </div>
+          <div aria-live="polite">
+            {dropped.length > 0 && (
+              <p className="hint sign-dropped">
+                {joinNames(dropped)} tidak bisa melihat dokumen dengan pilihan proyek ini, jadi dilepas dari penanda
+                tangan.
+              </p>
+            )}
           </div>
         </fieldset>
 
@@ -353,8 +459,8 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
           <div className="sign-note">
             <IconInfoCircle size={18} aria-hidden="true" />
             <p>
-              Permintaan tersimpan di laptop ini. Rekan baru menerimanya setelah pengiriman lewat jaringan tersedia di
-              Mira.
+              Dikirim ke penanda tangan saat laptop mereka tersambung. Sampai saat itu, permintaan tersimpan di laptop
+              ini.
             </p>
           </div>
         )}

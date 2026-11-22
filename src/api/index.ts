@@ -92,18 +92,22 @@ export const api = {
 
 export type MiraEvent = "mira://network" | "mira://directory";
 
-// Berlangganan event dari inti Rust. Isi event tidak dipakai: tampilan cukup
-// memuat ulang. Di luar aplikasi desktop (browser biasa, tes) tidak melakukan
-// apa pun, dan polling di pemanggil tetap jadi cadangan.
-export function subscribe(event: MiraEvent, handler: () => void): () => void {
+// Event sinkron fitur dari laptop rekan (network/feature.rs). Isinya { topic }.
+export const FEATURE_EVENT = "mira://feature";
+export type FeatureTopic = "docs" | "sign" | (string & {});
+
+// Berlangganan satu event Tauri dengan aman. Di luar aplikasi desktop (browser
+// biasa, tes) tidak melakukan apa pun, dan polling atau muat ulang saat fokus
+// di pemanggil tetap jadi cadangan.
+function listenSafely(event: string, onEvent: (payload: unknown) => void): () => void {
   if (!isTauri()) return () => {};
   let stopped = false;
   let unlisten: (() => unknown) | null = null;
   // Berhenti berlangganan bisa gagal kalau jendela sedang ditutup; tidak perlu ditampilkan.
   const stop = (fn: () => unknown) => void Promise.resolve().then(fn).catch(() => {});
   try {
-    listen(event, () => {
-      if (!stopped) handler();
+    listen(event, (e: { payload?: unknown } | undefined) => {
+      if (!stopped) onEvent(e?.payload);
     })
       .then((fn) => {
         if (stopped) stop(fn);
@@ -111,10 +115,24 @@ export function subscribe(event: MiraEvent, handler: () => void): () => void {
       })
       .catch(() => {});
   } catch {
-    // listen tidak tersedia: polling tetap berjalan.
+    // listen tidak tersedia: cadangan di pemanggil tetap berjalan.
   }
   return () => {
     stopped = true;
     if (unlisten) stop(unlisten);
   };
+}
+
+// Berlangganan event dari inti Rust. Isi event tidak dipakai: tampilan cukup memuat ulang.
+export function subscribe(event: MiraEvent, handler: () => void): () => void {
+  return listenSafely(event, () => handler());
+}
+
+// Memuat ulang hanya untuk topik fitur sendiri: perubahan board dari rekan
+// tidak membuat layar Dokumen membaca ulang daftarnya.
+export function subscribeFeature(topic: FeatureTopic, handler: () => void): () => void {
+  return listenSafely(FEATURE_EVENT, (payload) => {
+    const got = payload && typeof payload === "object" ? (payload as { topic?: unknown }).topic : undefined;
+    if (got === topic) handler();
+  });
 }

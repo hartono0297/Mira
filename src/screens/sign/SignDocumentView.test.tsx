@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   complete: vi.fn(),
   cancel: vi.fn(),
   exportFile: vi.fn(),
+  downloadFile: vi.fn(),
 }));
 
 const flow = vi.hoisted(() => ({ runSignFlow: vi.fn() }));
@@ -101,6 +102,13 @@ function detail(over: Partial<RequestDetail> = {}): RequestDetail {
     completedAt: null,
     integrity: "intact",
     exportWarnings: 0,
+    fromPeer: true,
+    requestedByName: "Pengirim Uji",
+    fileAvailable: true,
+    fileSize: 1024,
+    pending: false,
+    scope: { teamId: null, projectId: null },
+    rejected: [],
     requestedBy: { publicKey: OTHER, displayName: "Pengirim Uji" },
     originalHash: "ab".repeat(32),
     currentHash: "cd".repeat(32),
@@ -361,12 +369,12 @@ describe("SignDocumentView", () => {
     expect(title).toHaveFocus();
   });
 
-  it("chip status, catatan jaringan, dan petunjuk keyboard", async () => {
+  it("chip status, catatan pengiriman, dan petunjuk keyboard", async () => {
     const { user } = setup();
     expect(await screen.findByText("Berjalan, 0 dari 2 sudah tanda tangan")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Mira belum bisa mengirim dokumen lewat jaringan. Rekan di daftar ini baru menerima dokumen setelah pengiriman lewat jaringan tersedia.",
+        "Dokumen dikirim ke penanda tangan lain saat laptop mereka tersambung. Daftar ini berubah begitu mereka menandatangani.",
       ),
     ).toBeInTheDocument();
     await startPlacing(user);
@@ -532,5 +540,111 @@ describe("SignDocumentView", () => {
     expect(
       screen.getByText("2 salinan yang disimpan di luar Mira berubah. Rinciannya ada di bagian Salinan PDF."),
     ).toBeInTheDocument();
+  });
+
+  it("versi yang ditolak tampil dengan penanda tangan, waktu, dan alasan", async () => {
+    setup(
+      detail({
+        requestedBy: { publicKey: ME, displayName: "Penanda Uji" },
+        rejected: [
+          { signerName: "Rekan Uji", at: "2026-11-21T04:00:00Z", reason: "version_changes_content" },
+          { signerName: "Tamu Uji", at: "2026-11-21T05:00:00Z", reason: "ditandatangani bersamaan" },
+        ],
+      }),
+    );
+    const section = await screen.findByRole("region", { name: "Versi yang ditolak" });
+    expect(within(section).getByText(/Dokumen tetap memakai versi sah terakhir/)).toBeInTheDocument();
+    const items = within(section).getAllByRole("listitem");
+    expect(within(items[0]).getByText("Versi dari Rekan Uji")).toBeInTheDocument();
+    expect(within(items[0]).getByText(/21 November 2026/)).toBeInTheDocument();
+    expect(
+      within(items[0]).getByText("Versi ditolak karena mengubah isi dokumen selain stempel tanda tangan."),
+    ).toBeInTheDocument();
+    expect(within(items[1]).getByText("Versi ditolak karena ditandatangani bersamaan.")).toBeInTheDocument();
+  });
+
+  it("tanpa versi ditolak, bagiannya tidak tampil", async () => {
+    setup();
+    await screen.findByRole("heading", { level: 1, name: "Kontrak uji" });
+    expect(screen.queryByText("Versi yang ditolak")).not.toBeInTheDocument();
+  });
+
+  it("bukti stempel menolak versi baru: pesan dengan kata biasa di dialog PIN", async () => {
+    flow.runSignFlow.mockRejectedValue({ code: "version_changes_content", message: "increment check failed" });
+    const { user } = setup();
+    await startPlacing(user);
+    await user.click(screen.getByRole("button", { name: "Selesai dan tanda tangani" }));
+    await user.type(await screen.findByLabelText("PIN tanda tangan"), "135790{Enter}");
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText(/mengubah isi dokumen selain stempel tanda tangan\. Coba lagi\./),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText("increment check failed")).not.toBeInTheDocument();
+  });
+
+  it("versi lama tidak utuh di dalam versi baru: pesannya sendiri", async () => {
+    flow.runSignFlow.mockRejectedValue({ code: "version_not_prefix", message: "not a prefix" });
+    const { user } = setup();
+    await startPlacing(user);
+    await user.click(screen.getByRole("button", { name: "Selesai dan tanda tangani" }));
+    await user.type(await screen.findByLabelText("PIN tanda tangan"), "135790{Enter}");
+    expect(await screen.findByText(/isi versi sebelumnya tidak utuh di dalamnya/)).toBeInTheDocument();
+  });
+
+  it("file kecil dari rekan belum tersalin: status, tanpa banner hilang, belum bisa ditandatangani", async () => {
+    setup(detail({ fileAvailable: false, integrity: "missing", fileSize: 300 * 1024 }));
+    expect(await screen.findByText(/File sedang disalin dari laptop rekan\. Halaman tampil di sini/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("File dokumen tidak ditemukan")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Unduh file/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Giliran Anda, menunggu file")).toBeInTheDocument();
+    expect(
+      screen.getByText("Giliran Anda. Tanda tangan bisa dibuat setelah file dokumen ada di laptop ini."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tempatkan tanda tangan" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan PDF" })).toHaveAccessibleDescription(
+      "Salinan bisa disimpan setelah file dokumen ada di laptop ini.",
+    );
+    expect(api.readFile).not.toHaveBeenCalled();
+  });
+
+  it("file besar dari rekan: Unduh file sibuk, lalu dokumen tampil", async () => {
+    const big = 30 * 1024 * 1024;
+    let finish: (d: RequestDetail) => void = () => {};
+    api.downloadFile.mockImplementation(() => new Promise<RequestDetail>((resolve) => (finish = resolve)));
+    const { user, onChanged } = setup(detail({ fileAvailable: false, integrity: "missing", fileSize: big }));
+    expect(await screen.findByText("File 30 MB belum diunduh. File di atas 20 MB tidak disalin otomatis.")).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Unduh file (30 MB)" });
+    await user.click(button);
+    expect(api.downloadFile).toHaveBeenCalledWith("req-uji");
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveTextContent("Mengunduh...");
+    await user.click(button);
+    expect(api.downloadFile).toHaveBeenCalledTimes(1);
+
+    const after = detail({ fileSize: big });
+    api.getRequest.mockResolvedValue(after);
+    finish(after);
+    expect(await screen.findByTestId("viewer")).toBeInTheDocument();
+    expect(api.readFile).toHaveBeenCalledWith("req-uji", "cd".repeat(32));
+    expect(onChanged).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /^Unduh file/ })).not.toBeInTheDocument();
+  });
+
+  it("unduh gagal karena tidak ada rekan yang menyimpan file: pesan dengan kata biasa", async () => {
+    api.downloadFile.mockRejectedValue({ code: "not_available", message: "no peer" });
+    const { user } = setup(detail({ fileAvailable: false, integrity: "missing", fileSize: 30 * 1024 * 1024 }));
+    await user.click(await screen.findByRole("button", { name: "Unduh file (30 MB)" }));
+    expect(await screen.findByText("File belum bisa diunduh")).toBeInTheDocument();
+    expect(screen.getByText(/^Belum ada laptop rekan yang tersambung dan menyimpan file ini\./)).toBeInTheDocument();
+    expect(screen.queryByText("no peer")).not.toBeInTheDocument();
+  });
+
+  it("tanda tangan terbaru dari rekan belum sampai: keterangan di atas layar", async () => {
+    setup(detail({ pending: true }));
+    expect(
+      await screen.findByText(/Tanda tangan terbaru dari rekan sedang disalin ke laptop ini\. Status penanda tangan/),
+    ).toBeInTheDocument();
+    expect(await screen.findByTestId("viewer")).toBeInTheDocument();
   });
 });

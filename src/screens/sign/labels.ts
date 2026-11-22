@@ -1,13 +1,16 @@
 // Label Indonesia untuk tanda tangan PDF. Dipakai layar daftar dan layar dokumen.
 
-import type {
-  EventKind,
-  Integrity,
-  MyState,
-  RequestStatus,
-  RequestSummary,
-  SignMode,
-  SignerKind,
+import type { AppError } from "../../api";
+import {
+  AUTO_COPY_MAX_BYTES,
+  type EventKind,
+  type Integrity,
+  type MyState,
+  type RequestStatus,
+  type RequestSummary,
+  type SignErrorCode,
+  type SignMode,
+  type SignerKind,
 } from "../../api/signing";
 import { formatSignedAt } from "./stamp";
 
@@ -35,16 +38,21 @@ export function statusLabel(status: RequestStatus): string {
   }
 }
 
-// Giliran saya DAN file utuh. File yang berubah atau hilang tidak bisa
-// ditandatangani, jadi tidak dihitung sebagai "menunggu tanda tangan Anda".
-export function isActionable(r: Pick<RequestSummary, "status" | "myState" | "integrity">): boolean {
-  return r.status === "in_progress" && r.myState === "your_turn" && r.integrity === "intact";
+type StateInput = Pick<RequestSummary, "status" | "myState" | "integrity"> &
+  Partial<Pick<RequestSummary, "fileAvailable">>;
+
+// Giliran saya DAN file ada dan utuh. File yang berubah, hilang, atau belum
+// tersalin dari rekan tidak bisa ditandatangani, jadi tidak dihitung sebagai
+// "menunggu tanda tangan Anda".
+export function isActionable(r: StateInput): boolean {
+  return r.status === "in_progress" && r.myState === "your_turn" && r.integrity === "intact" && r.fileAvailable !== false;
 }
 
 // Satu label untuk baris daftar: status akhir menang atas keadaan saya, dan
 // giliran saya atas file yang bermasalah bukan lagi "Giliran Anda".
-export function requestStateLabel(r: Pick<RequestSummary, "status" | "myState" | "integrity">): string {
+export function requestStateLabel(r: StateInput): string {
   if (r.status !== "in_progress") return statusLabel(r.status);
+  if (r.myState === "your_turn" && r.fileAvailable === false) return "Menunggu file";
   if (r.myState === "your_turn" && r.integrity !== "intact") return "Tidak bisa ditandatangani";
   if (r.myState === "not_involved") return "Menunggu penanda tangan";
   return myStateLabel(r.myState);
@@ -137,6 +145,63 @@ export function exportWarningLabel(count: number): string {
   return count > 1
     ? `${count} salinan PDF yang disimpan di luar Mira berubah`
     : "Salinan PDF yang disimpan di luar Mira berubah";
+}
+
+// File dari laptop rekan yang belum ada di laptop ini, untuk daftar dan layar dokumen:
+// - copying: sampai 20 MB, disalin otomatis (sedang atau saat rekan tersambung);
+// - manual: lebih dari 20 MB, diunduh lewat tombol "Unduh file".
+// `pending` berarti versi bertanda tangan yang lebih baru belum sampai.
+export type FileNeed = { state: "copying" | "manual"; newer: boolean };
+
+export function fileNeed(r: Pick<RequestSummary, "fileAvailable" | "pending" | "fileSize" | "status">): FileNeed | null {
+  const missing = r.fileAvailable === false;
+  const newer = !missing && r.pending === true;
+  if (!missing && !newer) return null;
+  // Permintaan yang sudah selesai atau dibatalkan tetap bisa diunduh untuk dibaca.
+  return { state: r.fileSize > AUTO_COPY_MAX_BYTES ? "manual" : "copying", newer };
+}
+
+export function fileNeedText(need: FileNeed, fileSize: number): string {
+  if (need.newer) {
+    return need.state === "copying"
+      ? "Tanda tangan terbaru dari rekan sedang disalin ke laptop ini"
+      : "Versi bertanda tangan terbaru belum diunduh. File di atas 20 MB tidak disalin otomatis.";
+  }
+  return need.state === "copying"
+    ? "File sedang disalin dari laptop rekan"
+    : `File ${formatSize(fileSize)} belum diunduh. File di atas 20 MB tidak disalin otomatis.`;
+}
+
+// Pesan yang mudah dipahami untuk kode error tanda tangan yang baru. Kode lain
+// memakai pesan Indonesia dari inti Rust apa adanya.
+export function signErrorMessage(error: AppError): string {
+  switch (error.code as SignErrorCode | string) {
+    case "version_not_prefix":
+      return "Mira menolak hasil tanda tangan ini karena isi versi sebelumnya tidak utuh di dalamnya. Tanda tangan hanya boleh ditambahkan di belakang isi lama. Coba lagi. Kalau tetap ditolak, minta pengirim membuat permintaan baru.";
+    case "version_changes_content":
+      return "Mira menolak hasil tanda tangan ini karena mengubah isi dokumen selain stempel tanda tangan. Coba lagi. Kalau tetap ditolak, minta pengirim membuat permintaan baru.";
+    case "not_available":
+      return "Belum ada laptop rekan yang tersambung dan menyimpan file ini. Coba lagi saat laptop rekan yang menyimpannya menyala dan tersambung ke Mira.";
+    default:
+      return error.message;
+  }
+}
+
+const REJECT_REASONS: Record<string, string> = {
+  version_changes_content: "Versi ditolak karena mengubah isi dokumen selain stempel tanda tangan.",
+  version_not_prefix: "Versi ditolak karena isi versi sebelumnya tidak utuh di dalamnya.",
+  concurrent:
+    "Versi ditolak karena ditandatangani bersamaan dengan penanda tangan lain saat laptop tidak tersambung. Yang lebih dulu dipakai.",
+};
+
+// Alasan penolakan dari inti Rust bisa berupa kode atau potongan kalimat
+// ("ditandatangani bersamaan"); keduanya dijadikan satu kalimat utuh.
+export function rejectReasonText(reason: string): string {
+  const r = reason.trim();
+  if (REJECT_REASONS[r]) return REJECT_REASONS[r];
+  if (!r) return "Versi ditolak Mira.";
+  if (/^[a-z]/.test(r)) return `Versi ditolak karena ${r.replace(/\.$/, "")}.`;
+  return r;
 }
 
 // Pemberitahuan di atas layar dokumen.

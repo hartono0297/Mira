@@ -1,9 +1,9 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PDFDocument } from "pdf-lib";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, RequestDetail, RequestSummary, SignOverview } from "../../api/signing";
-import { SignScreen, sortRequests } from "./SignScreen";
+import { SignScreen, sortRequests, waitingRequests } from "./SignScreen";
 import { integrityLabel } from "./labels";
 
 const api = vi.hoisted(() => ({
@@ -14,11 +14,26 @@ const api = vi.hoisted(() => ({
   listCandidates: vi.fn(),
   createRequest: vi.fn(),
   verifyFile: vi.fn(),
+  downloadFile: vi.fn(),
 }));
 vi.mock("../../api/signing", async (orig) => ({
   ...(await orig<typeof import("../../api/signing")>()),
   signingApi: api,
 }));
+
+// Proyek untuk dialog permintaan baru; dialognya dites sendiri.
+const board = vi.hoisted(() => ({ listProjects: vi.fn() }));
+vi.mock("../../api/board", async (orig) => ({
+  ...(await orig<typeof import("../../api/board")>()),
+  boardApi: board,
+}));
+
+// Event Tauri mira://feature. Hanya dipakai kalau tes memasang __TAURI_INTERNALS__.
+const tauriEvent = vi.hoisted(() => ({
+  handlers: [] as { event: string; fn: (e: { payload: unknown }) => void }[],
+  listen: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/event", () => ({ listen: tauriEvent.listen }));
 
 // Layar dokumen dibuat terpisah; di sini cukup tiruan dengan props yang sama.
 vi.mock("./SignDocumentView", () => ({
@@ -73,6 +88,11 @@ function summary(extra: Partial<RequestSummary> = {}): RequestSummary {
     completedAt: null,
     integrity: "intact",
     exportWarnings: 0,
+    fromPeer: false,
+    requestedByName: "Penguji",
+    fileAvailable: true,
+    fileSize: 2048,
+    pending: false,
     ...extra,
   };
 }
@@ -121,6 +141,20 @@ const candidates: Candidate[] = [
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   api.listCandidates.mockResolvedValue(candidates);
+  board.listProjects.mockReset().mockResolvedValue([]);
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  tauriEvent.handlers = [];
+  tauriEvent.listen.mockReset().mockImplementation(async (event: string, fn: (e: { payload: unknown }) => void) => {
+    const entry = { event, fn };
+    tauriEvent.handlers.push(entry);
+    return () => {
+      tauriEvent.handlers = tauriEvent.handlers.filter((h) => h !== entry);
+    };
+  });
+});
+
+afterEach(() => {
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 });
 
 describe("SignScreen: keadaan dasar", () => {
@@ -153,7 +187,7 @@ describe("SignScreen: keadaan dasar", () => {
     render(<SignScreen />);
     expect(
       await screen.findByText(
-        "Tamu tidak bisa meminta tanda tangan. Dokumen yang meminta tanda tangan Anda muncul di sini setelah pengiriman lewat jaringan tersedia.",
+        "Tamu tidak bisa meminta tanda tangan, tetapi bisa menandatangani dokumen yang dikirim rekan untuk proyek yang boleh Anda buka.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pilih PDF untuk ditandatangani" })).not.toBeInTheDocument();
@@ -409,6 +443,148 @@ describe("SignScreen: daftar dokumen", () => {
     render(<SignScreen />);
     await user.click(await screen.findByRole("button", { name: "Periksa file PDF" }));
     expect(screen.getByRole("dialog", { name: "Periksa file PDF" })).toBeInTheDocument();
+  });
+
+  it("waitingRequests: hanya dari rekan, giliran saya dulu, lalu menunggu orang lain", () => {
+    const list = [
+      summary({ id: "w1", fromPeer: true, myState: "waiting_others", updatedAt: "2026-11-22T09:00:00Z" }),
+      summary({ id: "w2", fromPeer: true, myState: "your_turn", fileAvailable: false, updatedAt: "2026-11-22T08:00:00Z" }),
+      summary({ id: "w3", fromPeer: true, myState: "your_turn", updatedAt: "2026-11-21T08:00:00Z" }),
+      summary({ id: "w4", fromPeer: false, myState: "your_turn" }),
+      summary({ id: "w5", fromPeer: true, myState: "signed" }),
+      summary({ id: "w6", fromPeer: true, myState: "your_turn", status: "cancelled" }),
+      summary({ id: "w7", fromPeer: true, myState: "not_involved" }),
+    ];
+    expect(waitingRequests(list).map((r) => r.id)).toEqual(["w3", "w2", "w1"]);
+  });
+});
+
+describe("SignScreen: permintaan dari rekan", () => {
+  const fromRekan = (extra: Partial<RequestSummary>) =>
+    summary({ fromPeer: true, requestedByName: "Rekan Pengirim", ...extra });
+
+  it("Menunggu tanda tangan: giliran Anda di atas, nama peminta tampil, tidak ganda di Dokumen", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [
+          fromRekan({ id: "r1", title: "Menunggu Rekan Uji", myState: "waiting_others", updatedAt: "2026-11-22T09:00:00Z" }),
+          fromRekan({ id: "r2", title: "Giliran Rekan Uji", myState: "your_turn", updatedAt: "2026-11-20T09:00:00Z" }),
+          summary({ id: "r3", title: "Milik Saya Uji" }),
+          fromRekan({ id: "r4", title: "Sudah Saya Uji", myState: "signed" }),
+        ],
+      }),
+    );
+    render(<SignScreen />);
+    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan" });
+    const titles = within(wait)
+      .getAllByRole("listitem")
+      .map((li) => li.querySelector(".sign-row-title")?.textContent);
+    expect(titles).toEqual(["Giliran Rekan Uji", "Menunggu Rekan Uji"]);
+    expect(within(wait).getAllByText("Diminta oleh Rekan Pengirim")).toHaveLength(2);
+    expect(
+      within(wait).getByRole("button", { name: /Giliran Rekan Uji.*Diminta oleh Rekan Pengirim.*Giliran Anda/ }),
+    ).toBeInTheDocument();
+
+    const docs = screen.getByRole("region", { name: "Dokumen" });
+    expect(within(docs).queryByText("Giliran Rekan Uji")).not.toBeInTheDocument();
+    expect(within(docs).getByText("Milik Saya Uji")).toBeInTheDocument();
+    // Permintaan rekan yang sudah saya tanda tangani tetap di Dokumen, dengan nama pemintanya.
+    expect(within(docs).getByText("Sudah Saya Uji")).toBeInTheDocument();
+    expect(within(docs).getByText("Diminta oleh Rekan Pengirim")).toBeInTheDocument();
+    expect(screen.getByText("1 dokumen menunggu tanda tangan Anda")).toBeInTheDocument();
+  });
+
+  it("tanpa permintaan dari rekan, bagian Menunggu tanda tangan tidak tampil", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ title: "Milik Saya Uji" })] }));
+    render(<SignScreen />);
+    await screen.findByText("Milik Saya Uji");
+    expect(screen.queryByText("Menunggu tanda tangan")).not.toBeInTheDocument();
+  });
+
+  it("file kecil yang belum tersalin: status tenang, tanpa tombol, tanpa peringatan file hilang", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [
+          fromRekan({ id: "k1", title: "Kecil Uji", myState: "your_turn", fileAvailable: false, integrity: "missing" }),
+        ],
+      }),
+    );
+    render(<SignScreen />);
+    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan" });
+    expect(within(wait).getByText("File sedang disalin dari laptop rekan")).toBeInTheDocument();
+    expect(within(wait).getByText("Menunggu file")).toBeInTheDocument();
+    expect(within(wait).queryByRole("button", { name: /^Unduh file/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(integrityLabel("missing"))).not.toBeInTheDocument();
+    expect(screen.queryByText(/perlu diperiksa/)).not.toBeInTheDocument();
+    // Belum bisa ditandatangani, jadi belum dihitung menunggu tanda tangan Anda.
+    expect(screen.queryByText(/menunggu tanda tangan Anda/)).not.toBeInTheDocument();
+  });
+
+  it("file besar: Unduh file sibuk, lalu berhasil dan fokus ke baris", async () => {
+    const big = 32 * 1024 * 1024;
+    const before = fromRekan({ id: "b1", title: "Besar Uji", myState: "your_turn", fileAvailable: false, integrity: "missing", fileSize: big });
+    api.overview.mockResolvedValue(overview({ requests: [before] }));
+    let finish: (d: RequestDetail) => void = () => {};
+    api.downloadFile.mockImplementation(() => new Promise<RequestDetail>((resolve) => (finish = resolve)));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+
+    expect(
+      await screen.findByText("File 32 MB belum diunduh. File di atas 20 MB tidak disalin otomatis."),
+    ).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Unduh file Besar Uji, 32 MB" });
+    expect(button).toHaveTextContent("Unduh file (32 MB)");
+    await user.click(button);
+    expect(api.downloadFile).toHaveBeenCalledWith("b1");
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveTextContent("Mengunduh...");
+    expect(button).toHaveFocus();
+    await user.click(button);
+    expect(api.downloadFile).toHaveBeenCalledTimes(1);
+
+    api.overview.mockResolvedValue(overview({ requests: [{ ...before, fileAvailable: true, integrity: "intact" }] }));
+    await act(async () => finish({ id: "b1" } as RequestDetail));
+    expect(await screen.findByText("File Besar Uji sudah ada di laptop ini.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Unduh file/ })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Besar Uji/ })).toHaveFocus());
+  });
+
+  it("unduh gagal karena tidak ada rekan yang menyimpan file: pesan dengan kata biasa", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [fromRekan({ id: "b2", title: "Besar Uji", fileAvailable: false, integrity: "missing", fileSize: 25 * 1024 * 1024 })],
+      }),
+    );
+    api.downloadFile.mockRejectedValue({ code: "not_available", message: "no peer" });
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    await user.click(await screen.findByRole("button", { name: /^Unduh file Besar Uji/ }));
+    expect(await screen.findByText("File belum bisa diunduh")).toBeInTheDocument();
+    expect(screen.getByText(/^Belum ada laptop rekan yang tersambung dan menyimpan file ini\./)).toBeInTheDocument();
+    expect(screen.queryByText("no peer")).not.toBeInTheDocument();
+  });
+
+  it("event mira://feature memuat ulang hanya untuk topik sign", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    api.overview.mockResolvedValue(overview());
+    render(<SignScreen />);
+    await screen.findByText(/Belum ada dokumen/);
+    await waitFor(() => expect(tauriEvent.handlers.some((h) => h.event === "mira://feature")).toBe(true));
+    const emit = (topic: string) =>
+      act(() => {
+        for (const h of tauriEvent.handlers.filter((x) => x.event === "mira://feature")) h.fn({ payload: { topic } });
+      });
+    const calls = api.overview.mock.calls.length;
+
+    emit("docs");
+    emit("board");
+    await act(async () => {});
+    expect(api.overview.mock.calls.length).toBe(calls);
+
+    api.overview.mockResolvedValue(overview({ requests: [fromRekan({ title: "Baru dari Rekan Uji", myState: "your_turn" })] }));
+    emit("sign");
+    expect(await screen.findByText("Baru dari Rekan Uji")).toBeInTheDocument();
+    expect(api.overview.mock.calls.length).toBe(calls + 1);
   });
 
   it("sortRequests tidak mengubah array asal", () => {

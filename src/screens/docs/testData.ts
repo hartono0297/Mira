@@ -19,6 +19,8 @@ export function version(docId: string, number: number, extra: Partial<DocumentVe
     isHead: false,
     received: false,
     available: true,
+    downloading: false,
+    autoDownload: false,
     ...extra,
   };
 }

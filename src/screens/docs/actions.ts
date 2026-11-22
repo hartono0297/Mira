@@ -11,6 +11,7 @@ export type DocActions = {
   askRestore: (doc: DocumentSummary, version: DocumentVersion) => void;
   resolve: (doc: DocumentSummary, keep: DocumentVersion) => void;
   showConflict: (doc: DocumentSummary) => void;
+  download: (doc: DocumentSummary, version: DocumentVersion) => void;
 };
 
 export const keys = {
@@ -19,5 +20,6 @@ export const keys = {
   open: (docId: string, versionId: string | null) => `open:${docId}:${versionId ?? ""}`,
   export: (docId: string, versionId: string) => `export:${docId}:${versionId}`,
   resolve: (docId: string, versionId: string) => `resolve:${docId}:${versionId}`,
+  download: (docId: string, versionId: string) => `download:${docId}:${versionId}`,
   add: "add",
 };

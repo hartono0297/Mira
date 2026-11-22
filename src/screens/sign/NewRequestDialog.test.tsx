@@ -9,6 +9,11 @@ vi.mock("../../api/signing", async (orig) => ({
   ...(await orig<typeof import("../../api/signing")>()),
   signingApi: api,
 }));
+const board = vi.hoisted(() => ({ listProjects: vi.fn() }));
+vi.mock("../../api/board", async (orig) => ({
+  ...(await orig<typeof import("../../api/board")>()),
+  boardApi: board,
+}));
 
 // Data uji: nama dan kunci jelas buatan.
 const ME_KEY = "a".repeat(64);
@@ -54,7 +59,7 @@ describe("NewRequestDialog", () => {
     expect(screen.getByRole("checkbox", { name: /Tamu Uji/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Tamu Uji, Tamu" })).toBeInTheDocument();
     // Hanya diri sendiri: tanpa catatan pengiriman dan tanpa daftar urutan.
-    expect(screen.queryByText(/Rekan baru menerimanya/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Dikirim ke penanda tangan saat laptop mereka tersambung/)).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Urutan" })).not.toBeInTheDocument();
   });
 
@@ -63,7 +68,7 @@ describe("NewRequestDialog", () => {
     await user.click(await screen.findByRole("checkbox", { name: "Anggota Uji" }));
     await user.click(screen.getByRole("checkbox", { name: /Tamu Uji/ }));
     expect(orderNames()).toEqual(["Penguji", "Anggota Uji", "Tamu Uji"]);
-    expect(screen.getByText(/Rekan baru menerimanya setelah pengiriman lewat jaringan tersedia/)).toBeInTheDocument();
+    expect(screen.getByText(/Dikirim ke penanda tangan saat laptop mereka tersambung/)).toBeInTheDocument();
 
     expect(screen.getByRole("button", { name: "Naikkan Penguji" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Naikkan Tamu Uji" }));
@@ -150,6 +155,91 @@ describe("NewRequestDialog", () => {
     expect(await screen.findByText("Judul berisi baris baru.")).toBeInTheDocument();
     expect(screen.getByText("Permintaan belum dibuat")).toBeInTheDocument();
     expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("pilih proyek: calon dimuat ulang untuk proyek itu, Tamu ikut, cakupan dikirim", async () => {
+    board.listProjects.mockResolvedValue([
+      { id: "p2", code: "GDG", name: "Gudang Uji", teamId: "t1", openCount: 0, taskCount: 0, canManage: true },
+      { id: "p1", code: "AUD", name: "Audit Uji", teamId: null, openCount: 0, taskCount: 0, canManage: true },
+    ]);
+    // Tanpa proyek: hanya anggota. Proyek Gudang: Tamu Uji boleh membukanya.
+    api.listCandidates.mockImplementation(async (scope?: { projectId?: string | null }) =>
+      scope?.projectId === "p2" ? candidates : candidates.filter((c) => c.kind !== "guest"),
+    );
+    const { user, onCreated } = setup();
+    await screen.findByRole("checkbox", { name: "Penguji (Anda)" });
+    expect(api.listCandidates).toHaveBeenLastCalledWith({});
+    expect(screen.queryByRole("checkbox", { name: /Tamu Uji/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Tamu hanya bisa dipilih untuk proyek yang boleh ia buka/)).toBeInTheDocument();
+
+    const select = screen.getByLabelText("Proyek");
+    expect(select).toHaveValue("");
+    // Diurutkan menurut kode proyek.
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Tanpa proyek",
+      "AUD · Audit Uji",
+      "GDG · Gudang Uji",
+    ]);
+    await user.selectOptions(select, "p2");
+    expect(api.listCandidates).toHaveBeenLastCalledWith({ projectId: "p2", teamId: "t1" });
+    await user.click(await screen.findByRole("checkbox", { name: "Tamu Uji, Tamu" }));
+    // Pilihan sebelumnya tetap tercentang.
+    expect(screen.getByRole("checkbox", { name: "Penguji (Anda)" })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Buat permintaan" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
+    expect(api.createRequest).toHaveBeenCalledWith({
+      title: "Kontrak Uji",
+      fileHash: imported.fileHash,
+      mode: "sequential",
+      signers: [ME_KEY, KEY_C],
+      projectId: "p2",
+      teamId: "t1",
+    });
+  });
+
+  it("ganti proyek melepas penanda tangan yang tidak bisa melihatnya, dengan pesan", async () => {
+    board.listProjects.mockResolvedValue([
+      { id: "p2", code: "GDG", name: "Gudang Uji", teamId: null, openCount: 0, taskCount: 0, canManage: true },
+    ]);
+    api.listCandidates.mockImplementation(async (scope?: { projectId?: string | null }) =>
+      scope?.projectId === "p2" ? candidates : candidates.filter((c) => c.kind !== "guest"),
+    );
+    const { user } = setup();
+    const select = screen.getByLabelText("Proyek");
+    await screen.findByRole("option", { name: "GDG · Gudang Uji" });
+    await user.selectOptions(select, "p2");
+    await user.click(await screen.findByRole("checkbox", { name: "Tamu Uji, Tamu" }));
+    await user.selectOptions(select, "");
+    expect(
+      await screen.findByText(
+        "Tamu Uji tidak bisa melihat dokumen dengan pilihan proyek ini, jadi dilepas dari penanda tangan.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Buat permintaan" }));
+    await waitFor(() => expect(api.createRequest).toHaveBeenCalled());
+    // Tanpa proyek: cakupan tidak dikirim.
+    expect(api.createRequest.mock.calls[0][0]).toEqual({
+      title: "Kontrak Uji",
+      fileHash: imported.fileHash,
+      mode: "sequential",
+      signers: [ME_KEY],
+    });
+  });
+
+  it("daftar proyek gagal dibaca: permintaan tetap bisa dibuat tanpa proyek", async () => {
+    board.listProjects.mockRejectedValueOnce({ code: "database", message: "Board terkunci." });
+    const { user, onCreated } = setup();
+    expect(await screen.findByText(/Daftar proyek belum terbaca \(Board terkunci\.\)/)).toBeInTheDocument();
+    await screen.findByRole("checkbox", { name: "Penguji (Anda)" });
+    await user.click(screen.getByRole("button", { name: "Buat permintaan" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+
+    board.listProjects.mockResolvedValue([
+      { id: "p1", code: "AUD", name: "Audit Uji", teamId: null, openCount: 0, taskCount: 0, canManage: true },
+    ]);
+    await user.click(screen.getByRole("button", { name: "Baca daftar proyek lagi" }));
+    expect(await screen.findByRole("option", { name: "AUD · Audit Uji" })).toBeInTheDocument();
   });
 
   it("daftar anggota gagal dibaca bisa dicoba lagi", async () => {

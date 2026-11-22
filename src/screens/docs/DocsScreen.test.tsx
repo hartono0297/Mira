@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DocumentDetail, DocumentSummary } from "../../api/documents";
 import { DocsScreen } from "./DocsScreen";
 import { detailOf, meRef, rekanC, summary, version } from "./testData";
@@ -17,9 +17,18 @@ const docsApi = vi.hoisted(() => ({
   exportVersion: vi.fn(),
   pickFilesToAdd: vi.fn(),
   pickExportDestination: vi.fn(),
+  downloadVersion: vi.fn(),
   subscribeDocuments: vi.fn((_handler: () => void): (() => void) => () => {}),
 }));
 vi.mock("../../api/documents", () => docsApi);
+
+// Event Tauri untuk sinkron fitur (mira://feature). Hanya dipakai kalau tes
+// memasang __TAURI_INTERNALS__; di tes lain subscribeFeature tidak berlangganan.
+const tauriEvent = vi.hoisted(() => ({
+  handlers: [] as { event: string; fn: (e: { payload: unknown }) => void }[],
+  listen: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/event", () => ({ listen: tauriEvent.listen }));
 
 // Empat keadaan baris: biasa, diedit di laptop ini, diedit rekan, bentrok.
 const laporan = summary("d1", "laporan-bulanan.docx", {
@@ -61,6 +70,43 @@ function row(name: string): HTMLElement {
 beforeEach(() => {
   for (const fn of Object.values(docsApi)) fn.mockReset();
   docsApi.subscribeDocuments.mockImplementation(() => () => {});
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  tauriEvent.handlers = [];
+  tauriEvent.listen.mockReset().mockImplementation(async (event: string, fn: (e: { payload: unknown }) => void) => {
+    const entry = { event, fn };
+    tauriEvent.handlers.push(entry);
+    return () => {
+      tauriEvent.handlers = tauriEvent.handlers.filter((h) => h !== entry);
+    };
+  });
+});
+
+afterEach(() => {
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+});
+
+function emitFeature(topic: string) {
+  act(() => {
+    for (const h of tauriEvent.handlers.filter((x) => x.event === "mira://feature")) h.fn({ payload: { topic } });
+  });
+}
+
+// Versi dari rekan yang isinya belum ada di laptop ini.
+const MB = 1024 * 1024;
+const besar = summary("d6", "gambar-kerja.docx", {
+  current: version("d6", 2, {
+    isHead: true,
+    author: rekanC,
+    received: true,
+    available: false,
+    autoDownload: false,
+    size: 45 * MB,
+  }),
+  versionCount: 2,
+});
+const kecil = summary("d7", "notulen.docx", {
+  current: version("d7", 2, { isHead: true, author: rekanC, received: true, available: false, downloading: true }),
+  versionCount: 2,
 });
 
 describe("Layar Dokumen", () => {
@@ -156,9 +202,9 @@ describe("Layar Dokumen", () => {
     expect(within(box).getByText(/Versi 4 dan 5 dibuat terpisah/)).toBeInTheDocument();
     const heads = within(box).getAllByRole("listitem");
     expect(heads).toHaveLength(2);
-    expect(within(heads[0]).getByText("Versi 5")).toBeInTheDocument();
-    expect(within(heads[1]).getByText("Versi 4")).toBeInTheDocument();
-    expect(within(heads[1]).getByText(/Rekan C/)).toBeInTheDocument();
+    // Pembuat tiap versi terbaca di judul kartu.
+    expect(within(heads[0]).getByText("Versi 5 dari Anda")).toBeInTheDocument();
+    expect(within(heads[1]).getByText("Versi 4 dari Rekan C")).toBeInTheDocument();
 
     await user.click(within(box).getByRole("button", { name: "Gabung manual dari versi 4" }));
     expect(docsApi.startEdit).toHaveBeenCalledWith("d4", "d4-v4");
@@ -366,5 +412,111 @@ describe("Layar Dokumen", () => {
     const afterEvent = docsApi.listDocuments.mock.calls.length;
     fireEvent.focus(window);
     await waitFor(() => expect(docsApi.listDocuments.mock.calls.length).toBeGreaterThan(afterEvent));
+  });
+
+  it("event mira://feature memuat ulang hanya untuk topik docs", async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    setup([laporan]);
+    render(<DocsScreen />);
+    await screen.findByText("Versi 3 · Diubah Anda 5 menit lalu");
+    // Daftar dan panel detail masing-masing berlangganan.
+    await waitFor(() => expect(tauriEvent.handlers.filter((h) => h.event === "mira://feature")).toHaveLength(2));
+    const before = docsApi.listDocuments.mock.calls.length;
+
+    emitFeature("sign");
+    emitFeature("board");
+    await act(async () => {});
+    expect(docsApi.listDocuments.mock.calls.length).toBe(before);
+
+    docsApi.listDocuments.mockResolvedValue([{ ...laporan, editing: [{ editor: rekanC, since: new Date().toISOString(), local: false, lastSavedAt: null }] }]);
+    emitFeature("docs");
+    expect(await screen.findByText(/Sedang diedit Rekan C/)).toBeInTheDocument();
+    expect(docsApi.listDocuments.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("versi besar dari rekan: tanpa Edit dan Buka, tombol unduh sibuk lalu berhasil", async () => {
+    const user = userEvent.setup();
+    setup([besar]);
+    let finish: (value: DocumentSummary) => void = () => {};
+    docsApi.downloadVersion.mockImplementation(() => new Promise<DocumentSummary>((resolve) => (finish = resolve)));
+    render(<DocsScreen />);
+
+    await screen.findByText("gambar-kerja.docx", { selector: ".doc-name" });
+    const r = row("gambar-kerja.docx");
+    expect(within(r).getByText("Versi 2 belum diunduh (45 MB)")).toBeInTheDocument();
+    expect(within(r).queryByRole("button", { name: /^Edit di/ })).toBeNull();
+    expect(within(r).queryByRole("button", { name: /^Buka/ })).toBeNull();
+    const rowDownload = within(r).getByRole("button", { name: "Unduh dari rekan (45 MB) gambar-kerja.docx" });
+
+    const history = await screen.findByRole("list", { name: "Riwayat versi gambar-kerja.docx" });
+    const v2 = within(history).getAllByRole("listitem")[0];
+    expect(within(v2).getByText("Versi 2")).toBeInTheDocument();
+    expect(within(v2).getByText(/File di atas 20 MB tidak disalin otomatis/)).toBeInTheDocument();
+    expect(within(v2).queryByRole("button", { name: "Buka versi 2" })).toBeNull();
+    expect(within(v2).queryByRole("button", { name: "Simpan salinan versi 2" })).toBeNull();
+    // Versi 1 dari laptop ini tetap bisa dibuka.
+    expect(within(history).getByRole("button", { name: "Buka versi 1" })).toBeInTheDocument();
+
+    const download = within(v2).getByRole("button", { name: "Unduh versi 2 dari rekan, 45 MB" });
+    await user.click(download);
+    expect(docsApi.downloadVersion).toHaveBeenCalledWith("d6", "d6-v2");
+    expect(download).toHaveAttribute("aria-busy", "true");
+    expect(download).toHaveTextContent("Mengunduh...");
+    expect(download).toHaveFocus();
+    expect(rowDownload).toHaveAttribute("aria-disabled", "true");
+    // Klik kedua selama mengunduh ditolak.
+    await user.click(rowDownload);
+    expect(docsApi.downloadVersion).toHaveBeenCalledTimes(1);
+
+    const done = { ...besar, current: { ...besar.current, available: true } };
+    docsApi.listDocuments.mockResolvedValue([done]);
+    await act(async () => finish(done));
+    expect(await screen.findByText("Isi versi 2 dari gambar-kerja.docx sudah ada di laptop ini.")).toBeInTheDocument();
+    expect(await within(row("gambar-kerja.docx")).findByRole("button", { name: "Edit di Word gambar-kerja.docx" })).toBeInTheDocument();
+  });
+
+  it("unduhan gagal karena tidak ada rekan yang menyimpan file: pesan dengan kata biasa", async () => {
+    const user = userEvent.setup();
+    setup([besar]);
+    docsApi.downloadVersion.mockRejectedValue({ code: "not_available", message: "peer blob unavailable" });
+    render(<DocsScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "Unduh versi 2 dari rekan, 45 MB" }));
+    expect(await screen.findByText("File belum bisa diunduh")).toBeInTheDocument();
+    expect(screen.getByText("Belum ada laptop rekan yang tersambung dan menyimpan file ini.")).toBeInTheDocument();
+    expect(screen.getByText(/Coba lagi saat laptop rekan yang menyimpan versi ini menyala/)).toBeInTheDocument();
+    expect(screen.queryByText("peer blob unavailable")).toBeNull();
+  });
+
+  it("versi kecil dari rekan yang sedang disalin: status tenang, tanpa tombol", async () => {
+    setup([kecil]);
+    render(<DocsScreen />);
+    await screen.findByText("notulen.docx", { selector: ".doc-name" });
+    const r = row("notulen.docx");
+    expect(within(r).getByText("Versi 2 sedang disalin dari laptop rekan")).toBeInTheDocument();
+    // Hanya tombol pilih file; tidak ada Edit, Buka, atau Unduh.
+    expect(within(r).getAllByRole("button")).toHaveLength(1);
+
+    const history = await screen.findByRole("list", { name: "Riwayat versi notulen.docx" });
+    const v2 = within(history).getAllByRole("listitem")[0];
+    expect(within(v2).getByText("Isinya sedang disalin dari laptop rekan.")).toBeInTheDocument();
+    expect(within(v2).queryByRole("button")).toBeNull();
+  });
+
+  it("bentrok dengan versi rekan yang isinya masih disalin", async () => {
+    const v4copy = version("d4", 4, { isHead: true, author: rekanC, received: true, available: false, downloading: true });
+    setup([{ ...kontrak, conflictVersions: [v5, v4copy] }]);
+    render(<DocsScreen />);
+
+    const box = await screen.findByRole("group", { name: "Dua versi tersimpan berdampingan" });
+    const heads = within(box).getAllByRole("listitem");
+    expect(within(heads[1]).getByText("Versi 4 dari Rekan C")).toBeInTheDocument();
+    expect(within(heads[1]).getByText("Isinya sedang disalin dari laptop rekan.")).toBeInTheDocument();
+    expect(within(heads[1]).getByText("Versi ini bisa dipilih setelah isinya ada di laptop ini.")).toBeInTheDocument();
+    expect(within(heads[1]).queryByRole("button")).toBeNull();
+    // Versi di laptop ini tetap bisa dipilih, digabung, dan dibuka.
+    expect(within(heads[0]).getByRole("button", { name: "Pakai versi ini (versi 5)" })).toBeInTheDocument();
+    expect(within(heads[0]).getByRole("button", { name: "Gabung manual dari versi 5" })).toBeInTheDocument();
+    expect(within(heads[0]).getByRole("button", { name: "Buka versi 5" })).toBeInTheDocument();
   });
 });
