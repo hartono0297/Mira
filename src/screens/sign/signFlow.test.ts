@@ -5,6 +5,7 @@ import type { RequestDetail, SignerView, Unlocked } from "../../api/signing";
 import type { PageGeometry } from "../../components/pdf/types";
 import {
   BOX_MIN_WIDTH_PT,
+  auditOrder,
   describeSpot,
   fingerprintOf,
   movePlacement,
@@ -105,6 +106,24 @@ function latin1(bytes: Uint8Array) {
 describe("fingerprintOf", () => {
   it("sama dengan format sidik jari inti Rust", () => {
     expect(fingerprintOf(ME_KEY)).toBe("A1B2 C3D4 E5F6 0718");
+  });
+});
+
+describe("auditOrder (urutan halaman catatan)", () => {
+  const signers = [
+    signer({ position: 1, publicKey: "k1", displayName: "Satu", isMe: false, status: "signed", signedAt: "2026-11-22T05:00:00Z" }),
+    signer({ position: 2, publicKey: "k2", displayName: "Dua", isMe: false, status: "signed", signedAt: "2026-11-21T05:00:00Z" }),
+    signer({ position: 3, publicKey: "k3", displayName: "Tiga (saya)", isMe: true, status: "waiting", signedAt: null }),
+    signer({ position: 4, publicKey: "k4", displayName: "Empat", isMe: false, status: "waiting", signedAt: null }),
+  ];
+  const mine = "2026-11-21T09:00:00Z";
+
+  it("mode bebas: menurut waktu tanda tangan, yang belum tercatat di akhir", () => {
+    expect(auditOrder(signers, "parallel", mine).map((s) => s.displayName)).toEqual(["Dua", "Tiga (saya)", "Satu", "Empat"]);
+  });
+
+  it("mode berurutan: menurut posisi", () => {
+    expect(auditOrder([...signers].reverse(), "sequential", mine).map((s) => s.position)).toEqual([1, 2, 3, 4]);
   });
 });
 

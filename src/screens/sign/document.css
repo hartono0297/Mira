@@ -21,6 +21,26 @@
   overflow-wrap: anywhere;
 }
 
+/* "Berjalan, 0 dari 2 sudah tanda tangan" boleh turun baris di jendela sempit. */
+.sdoc-head-chip {
+  white-space: normal;
+}
+
+/* Tombol yang sedang tidak bisa dipakai tetap bisa difokus (aria-disabled),
+   supaya fokus keyboard tidak jatuh ke body saat tombolnya berubah keadaan. */
+.sdoc .btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.sdoc .btn[aria-disabled="true"]:hover {
+  filter: none;
+}
+
+.sdoc .btn-ghost[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
 .sdoc-pad {
   padding: 20px 24px 0;
 }
@@ -73,6 +93,16 @@
 .sdoc-ok strong {
   display: block;
   font-size: 14px;
+}
+
+.sdoc-ok:focus-visible {
+  outline-offset: 2px;
+}
+
+/* Penanda posisi stempel untuk menggulir; tidak terlihat dan tidak bisa diklik. */
+.sdoc-stamp-mark {
+  position: absolute;
+  pointer-events: none;
 }
 
 /* Isi: kolom penampil lentur, panel lebar tetap yang digulir sendiri. */
@@ -255,6 +285,14 @@
   font-weight: 600;
 }
 
+/* Masa tunggu tanda tangan baru: alasan tombol nonaktif, warna status "menunggu". */
+.sdoc-cooling {
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 700;
+  color: var(--state);
+}
+
 .sdoc-ctl {
   display: flex;
   flex-direction: column;
@@ -365,6 +403,15 @@
   margin-top: 4px;
   font-size: 12px;
   color: var(--text-sec);
+}
+
+.sdoc-chip-ok {
+  gap: 3px;
+}
+
+.sdoc-chip-ok svg {
+  flex: none;
+  color: var(--online);
 }
 
 .sdoc-chip-bad {
@@ -479,6 +526,11 @@
   font-weight: 700;
 }
 
+.audit-count-warn {
+  color: var(--state);
+  font-weight: 700;
+}
+
 .audit-empty {
   color: var(--text-sec);
   font-size: 12px;
@@ -556,6 +608,21 @@
   margin-top: 1px;
 }
 
+/* Tanda tangan dibuat ulang atau dihapus saat permintaan berjalan. */
+.audit-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--state);
+}
+
+.audit-warn svg {
+  flex: none;
+  margin-top: 1px;
+}
+
 /* Jendela sempit (minimal 900px, sidebar 208px): panel dan jarak lebih rapat. */
 
 @media (max-width: 1180px) {
@@ -578,6 +645,31 @@
 @media (max-width: 1000px) {
   .sdoc-body {
     grid-template-columns: minmax(0, 1fr) 248px;
+  }
+}
+
+/* Zoom 200% (jendela 1280x800 jadi 640x400): satu kolom, panel di bawah
+   penampil. Halaman yang menggulir, bukan panel. */
+@media (max-width: 800px) {
+  .sdoc {
+    flex: none;
+  }
+
+  .sdoc-body {
+    flex: none;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .sdoc-viewer {
+    height: max(320px, 80vh);
+  }
+
+  .sdoc-panel {
+    overflow: visible;
+    padding: 0;
   }
 }
 

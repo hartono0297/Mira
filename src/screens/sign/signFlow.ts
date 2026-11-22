@@ -3,7 +3,7 @@
 // lalu kirim ke inti Rust. Dipisah dari layar supaya bisa dites tanpa React.
 
 import { isAppError, type AppError } from "../../api";
-import type { RequestDetail, SignerView, Unlocked } from "../../api/signing";
+import type { RequestDetail, SignMode, SignerView, Unlocked } from "../../api/signing";
 import { clampCss, cssRectToPdf, displaySize, pdfRectToCss } from "../../components/pdf/coords";
 import type { CssRect, PageGeometry } from "../../components/pdf/types";
 import { appendAuditPage, stampSignature, type AuditSigner, type PdfRect } from "./stamp";
@@ -125,9 +125,23 @@ function flowError(code: string, prefix: string, err: unknown): AppError {
   return { code, message: detail ? `${prefix} ${detail}` : prefix };
 }
 
-function auditSigners(signers: SignerView[], mySignedAt: string): AuditSigner[] {
-  return [...signers]
-    .sort((a, b) => a.position - b.position)
+// Urutan baris di halaman catatan: mode berurutan menurut posisi, mode bebas
+// menurut waktu tanda tangan (yang belum tercatat di akhir, lalu posisi).
+export function auditOrder(signers: SignerView[], mode: SignMode, mySignedAt: string): SignerView[] {
+  const byPosition = [...signers].sort((a, b) => a.position - b.position);
+  if (mode === "sequential") return byPosition;
+  const time = (s: SignerView) => {
+    const t = Date.parse((s.isMe ? mySignedAt : s.signedAt) ?? "");
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+  };
+  return byPosition
+    .map((s, i) => ({ s, i, t: time(s) }))
+    .sort((a, b) => (a.t === b.t ? a.i - b.i : a.t < b.t ? -1 : 1))
+    .map(({ s }) => s);
+}
+
+function auditSigners(signers: SignerView[], mode: SignMode, mySignedAt: string): AuditSigner[] {
+  return auditOrder(signers, mode, mySignedAt)
     .map((s) => {
       const signedAt = s.isMe ? mySignedAt : s.signedAt;
       if (!signedAt) {
@@ -166,7 +180,7 @@ export async function runSignFlow({ pin, detail, bytes, placement, me, api, time
 
   let finalBytes = stamped;
   if (detail.isLastPending) {
-    const signers = auditSigners(detail.signers, unlocked.signedAt);
+    const signers = auditSigners(detail.signers, detail.mode, unlocked.signedAt);
     try {
       finalBytes = await appendAuditPage(stamped, {
         title: detail.title,

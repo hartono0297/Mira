@@ -41,6 +41,9 @@ vi.mock("../../components/pdf/PdfViewer", async () => {
   return {
     PdfViewer: (props: {
       page?: number;
+      zoom?: number | "fit";
+      onPageChange?: (n: number) => void;
+      onZoomChange?: (z: number | "fit") => void;
       onLoaded?: (i: { pageCount: number; pages: PageGeometry[] }) => void;
       renderOverlay?: (info: unknown) => unknown;
     }) => {
@@ -50,7 +53,13 @@ vi.mock("../../components/pdf/PdfViewer", async () => {
       const geo = PAGES[(props.page ?? 1) - 1];
       const info = { ...geo, scale: 1, cssWidth: geo.width, cssHeight: geo.height };
       return (
-        <div data-testid="viewer" data-page={props.page}>
+        <div data-testid="viewer" data-page={props.page} data-zoom={String(props.zoom)}>
+          <button type="button" onClick={() => props.onPageChange?.(2)}>
+            Ke halaman 2
+          </button>
+          <button type="button" onClick={() => props.onZoomChange?.(1.5)}>
+            Zoom 150
+          </button>
           {props.renderOverlay?.(info) as never}
         </div>
       );
@@ -121,7 +130,7 @@ function detail(over: Partial<RequestDetail> = {}): RequestDetail {
 
 function overview(over: Partial<SignOverview> = {}): SignOverview {
   return {
-    saved: { width: 400, height: 200, createdAt: "2026-11-01T00:00:00Z", failedAttempts: 0, lockedUntil: null, attemptsLeft: 5 },
+    saved: { width: 400, height: 200, createdAt: "2026-11-01T00:00:00Z", failedAttempts: 0, lockedUntil: null, attemptsLeft: 5, usableAfter: null },
     requests: [],
     canRequest: true,
     me: { publicKey: ME, displayName: "Penanda Uji", kind: "member" },
@@ -173,22 +182,50 @@ describe("SignDocumentView", () => {
     expect(api.getRequest).toHaveBeenCalledTimes(2);
   });
 
-  it("banner bahaya kalau isi file berubah", async () => {
+  it("isi file berubah: banner, tidak bisa ditandatangani, salinan tidak bisa disimpan", async () => {
     setup(detail({ integrity: "changed" }));
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Isi file ini berubah setelah ditandatangani");
+    expect(alert).toHaveTextContent("Isi file tidak cocok dengan catatan Mira");
     expect(alert).toHaveTextContent("Jangan kirim atau cetak file ini.");
+    expect(alert).toHaveTextContent("Minta salinan dari pengirim");
     expect(screen.queryByRole("button", { name: "Tempatkan tanda tangan" })).not.toBeInTheDocument();
-    expect(screen.getByText(/menandatangani dinonaktifkan karena file dokumen bermasalah/)).toBeInTheDocument();
+    expect(screen.queryByText("Giliran Anda")).not.toBeInTheDocument();
+    expect(screen.getByText("Tidak bisa ditandatangani")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Dokumen ini tidak bisa ditandatangani karena filenya berubah atau hilang. Minta pengirim membuat permintaan baru dengan file aslinya.",
+      ),
+    ).toBeInTheDocument();
+    const copy = screen.getByRole("button", { name: "Simpan salinan PDF" });
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    expect(copy).toHaveAccessibleDescription(
+      "Salinan tidak bisa disimpan karena isi file ini tidak cocok dengan catatan Mira.",
+    );
+    await userEvent.setup().click(copy);
+    expect(api.exportFile).not.toHaveBeenCalled();
+  });
+
+  it("isi file berubah dan saya pengirimnya: tidak disuruh meminta salinan dari pengirim", async () => {
+    setup(detail({ integrity: "changed", requestedBy: { publicKey: ME, displayName: "Penanda Uji" } }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).not.toHaveTextContent("Minta salinan dari pengirim");
+    expect(alert).toHaveTextContent("buat permintaan baru dengan file asli yang Anda simpan");
+    expect(
+      screen.getByText(
+        "Dokumen ini tidak bisa ditandatangani karena filenya berubah atau hilang. Buat permintaan baru dengan file asli yang Anda simpan.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("banner bahaya kalau catatan penguncian tidak sah", async () => {
     setup(detail({ status: "completed", sealValid: false }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Catatan penguncian tidak sah");
     expect(screen.queryByText("Terkunci")).not.toBeInTheDocument();
+    expect(screen.getByText("Selesai, kunci tidak sah")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan PDF" })).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("dokumen selesai dan sah ditandai Terkunci dengan 16 karakter awal hash", async () => {
+  it("dokumen selesai dan sah ditandai Terkunci dengan sidik file 16 karakter", async () => {
     const hash = "0123456789abcdef".repeat(4);
     setup(
       detail({
@@ -203,10 +240,18 @@ describe("SignDocumentView", () => {
       }),
     );
     expect(await screen.findByText("Terkunci")).toBeInTheDocument();
-    expect(screen.getByText(/Perubahan sekecil apa pun akan terdeteksi/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Isi file dikunci. Perubahan sekecil apa pun terdeteksi di file Mira dan di salinan yang disimpan lewat Simpan salinan PDF. Salinan lain bisa dicek dengan Periksa file PDF.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Selesai, terkunci")).toBeInTheDocument();
+    expect(screen.getByText("Sidik file akhir")).toBeInTheDocument();
+    expect(screen.getByText("Sidik file asli")).toBeInTheDocument();
     const short = screen.getByTitle(hash);
     expect(short).toHaveTextContent(/^0123456789abcdef$/);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan PDF" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("tombol tempatkan hanya muncul kalau giliran saya", async () => {
@@ -294,8 +339,198 @@ describe("SignDocumentView", () => {
       detail({ exports: [{ path: "C:\\Unduhan\\lama.pdf", exportedAt: "2026-11-21T03:00:00Z", state: "changed" }] }),
     );
     expect(await screen.findByText("Berubah")).toBeInTheDocument();
+    expect(
+      screen.getByText("Satu salinan yang disimpan di luar Mira berubah. Rinciannya ada di bagian Salinan PDF."),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Simpan salinan PDF" }));
     expect(await screen.findByText("C:\\Unduhan\\Kontrak uji (ditandatangani).pdf")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Tampilkan di folder" })).toBeInTheDocument();
+  });
+
+  async function startPlacing(user: ReturnType<typeof userEvent.setup>) {
+    const place = await screen.findByRole("button", { name: "Tempatkan tanda tangan" });
+    await waitFor(() => expect(place).not.toHaveAttribute("aria-disabled"));
+    await user.click(place);
+    return screen.findByRole("group", { name: "Kotak tanda tangan Penanda Uji" });
+  }
+
+  it("fokus ke judul saat memuat, lalu ke judul dokumen", async () => {
+    setup();
+    expect(screen.getByRole("heading", { level: 1, name: "Dokumen tanda tangan" })).toHaveFocus();
+    const title = await screen.findByRole("heading", { level: 1, name: "Kontrak uji" });
+    expect(title).toHaveFocus();
+  });
+
+  it("chip status, catatan jaringan, dan petunjuk keyboard", async () => {
+    const { user } = setup();
+    expect(await screen.findByText("Berjalan, 0 dari 2 sudah tanda tangan")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Mira belum bisa mengirim dokumen lewat jaringan. Rekan di daftar ini baru menerima dokumen setelah pengiriman lewat jaringan tersedia.",
+      ),
+    ).toBeInTheDocument();
+    await startPlacing(user);
+    expect(
+      screen.getByText(
+        "Geser kotak dengan mouse atau tombol panah (tahan Shift untuk lebih jauh). Ubah ukuran dengan menarik sudut kanan bawah, tombol Kecilkan atau Besarkan, atau Alt dan panah.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Kecilkan kotak di ukuran minimum: aria-disabled dan fokus tetap di tombol", async () => {
+    const { user } = setup();
+    const box = await startPlacing(user);
+    const smaller = screen.getByRole("button", { name: "Kecilkan kotak" });
+    for (let i = 0; i < 6; i++) await user.click(smaller);
+    expect(box).toHaveStyle({ width: "60px" });
+    expect(smaller).toHaveAttribute("aria-disabled", "true");
+    expect(smaller).toHaveFocus();
+    await user.click(smaller);
+    expect(box).toHaveStyle({ width: "60px" });
+  });
+
+  it("Pindahkan ke halaman ini dan Lihat halaman N memindah fokus ke kotak", async () => {
+    const { user } = setup();
+    await startPlacing(user);
+    await user.click(screen.getByRole("button", { name: "Ke halaman 2" }));
+    expect(screen.getByTestId("viewer")).toHaveAttribute("data-page", "2");
+
+    await user.click(screen.getByRole("button", { name: "Lihat halaman 1" }));
+    expect(screen.getByTestId("viewer")).toHaveAttribute("data-page", "1");
+    await waitFor(() => expect(screen.getByRole("group", { name: "Kotak tanda tangan Penanda Uji" })).toHaveFocus());
+
+    await user.click(screen.getByRole("button", { name: "Ke halaman 2" }));
+    await user.click(screen.getByRole("button", { name: "Pindahkan ke halaman ini" }));
+    expect(await screen.findByText(/Kotak ada di halaman 2/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("group", { name: "Kotak tanda tangan Penanda Uji" })).toHaveFocus());
+  });
+
+  it("Batal menempatkan mengembalikan fokus ke tombol Tempatkan tanda tangan", async () => {
+    const { user } = setup();
+    await startPlacing(user);
+    await user.click(screen.getByRole("button", { name: "Batal menempatkan" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Tempatkan tanda tangan" })).toHaveFocus());
+  });
+
+  it("Simpan salinan PDF selama menyimpan: aria-disabled, fokus tetap, tidak dikirim dua kali", async () => {
+    let finish: (v: { path: string }) => void = () => {};
+    api.exportFile.mockReturnValue(new Promise((r) => (finish = r)));
+    const { user } = setup();
+    const btn = await screen.findByRole("button", { name: "Simpan salinan PDF" });
+    await user.click(btn);
+    const busy = screen.getByRole("button", { name: "Menyimpan salinan..." });
+    expect(busy).toHaveAttribute("aria-disabled", "true");
+    expect(busy).toHaveFocus();
+    await user.click(busy);
+    expect(api.exportFile).toHaveBeenCalledTimes(1);
+    finish({ path: "C:\\Unduhan\\a.pdf" });
+    expect(await screen.findByText("C:\\Unduhan\\a.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan PDF" })).toHaveFocus();
+  });
+
+  it("setelah PIN benar: fokus ke konfirmasi, halaman stempel dan zoom tetap", async () => {
+    const after = detail({ currentHash: "ef".repeat(32), signedCount: 1 });
+    flow.runSignFlow.mockResolvedValue(after);
+    const { user } = setup();
+    await startPlacing(user);
+    await user.click(screen.getByRole("button", { name: "Zoom 150" }));
+    await user.click(screen.getByRole("button", { name: "Ke halaman 2" }));
+    await user.click(screen.getByRole("button", { name: "Pindahkan ke halaman ini" }));
+    await user.click(screen.getByRole("button", { name: "Selesai dan tanda tangani" }));
+    await user.type(await screen.findByLabelText("PIN tanda tangan"), "135790{Enter}");
+
+    await waitFor(() => expect(flow.runSignFlow).toHaveBeenCalled());
+    expect(flow.runSignFlow.mock.calls[0][0].placement).toMatchObject({ pageIndex: 1 });
+    const ok = await screen.findByText("Tanda tangan tersimpan");
+    await waitFor(() => expect(ok.closest(".sdoc-ok")).toHaveFocus());
+    await waitFor(() => expect(api.readFile).toHaveBeenCalledWith("req-uji", "ef".repeat(32)));
+    const viewer = await screen.findByTestId("viewer");
+    expect(viewer).toHaveAttribute("data-page", "2");
+    expect(viewer).toHaveAttribute("data-zoom", "1.5");
+  });
+
+  it("PIN salah: ringkasan dimuat ulang supaya batas percobaan segar", async () => {
+    flow.runSignFlow.mockRejectedValue({ code: "pin_wrong", message: "PIN salah. Sisa 4 percobaan." });
+    const { user } = setup();
+    await startPlacing(user);
+    await user.click(screen.getByRole("button", { name: "Selesai dan tanda tangani" }));
+    await user.type(await screen.findByLabelText("PIN tanda tangan"), "111111{Enter}");
+    expect(await screen.findByText("PIN salah. Sisa 4 percobaan.")).toBeInTheDocument();
+    await waitFor(() => expect(api.overview).toHaveBeenCalledTimes(2));
+  });
+
+  it("giliran hilang setelah bentrok: dialog PIN ditutup", async () => {
+    flow.runSignFlow.mockRejectedValue({ code: "not_your_turn", message: "Belum giliran Anda." });
+    const { user } = setup();
+    await startPlacing(user);
+    api.getRequest.mockResolvedValue(
+      detail({
+        signers: [
+          signer({ position: 1, publicKey: OTHER, displayName: "Rekan Uji", isMe: false, canSignNow: true }),
+          signer({ position: 2, canSignNow: false }),
+        ],
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Selesai dan tanda tangani" }));
+    await user.type(await screen.findByLabelText("PIN tanda tangan"), "135790{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText(/Belum giliran Anda\. Menunggu Rekan Uji/)).toBeInTheDocument();
+  });
+
+  it("masa tunggu tanda tangan baru: tombol nonaktif dengan alasannya", async () => {
+    const later = new Date(Date.now() + 6 * 3600_000).toISOString();
+    const base = overview().saved!;
+    const { user } = setup(detail(), overview({ saved: { ...base, usableAfter: later } }));
+    const place = await screen.findByRole("button", { name: "Tempatkan tanda tangan" });
+    expect(place).toHaveAttribute("aria-disabled", "true");
+    expect(place).toHaveAccessibleDescription(
+      /^Tanda tangan baru Anda bisa dipakai mulai .+, karena tanda tangan sebelumnya dihapus tanpa PIN\.$/,
+    );
+    await user.click(place);
+    expect(screen.queryByRole("group", { name: "Kotak tanda tangan Penanda Uji" })).not.toBeInTheDocument();
+  });
+
+  it("jejak audit: tanda tangan dihapus saat permintaan berjalan tampil sebagai peringatan", async () => {
+    const base = detail();
+    setup(
+      detail({
+        events: [
+          ...base.events,
+          {
+            kind: "signature_deleted",
+            actorKey: ME,
+            actorName: "Penanda Uji",
+            at: "2026-11-21T01:00:00Z",
+            hashBefore: null,
+            hashAfter: null,
+            detail: "tanpa PIN (lupa PIN)",
+            valid: true,
+          },
+        ],
+      }),
+    );
+    expect(await screen.findByText("Menghapus tanda tangan")).toBeVisible();
+    expect(screen.getByText("tanpa PIN (lupa PIN)")).toBeInTheDocument();
+    expect(screen.getByText(/Terjadi saat permintaan ini berjalan/)).toBeInTheDocument();
+    expect(screen.getByText(/1 perlu diperhatikan/)).toBeInTheDocument();
+  });
+
+  it("salinan utuh memakai chip netral, beberapa salinan berubah disebut jamak", async () => {
+    setup(
+      detail({
+        exports: [
+          { path: "C:\\Unduhan\\a.pdf", exportedAt: "2026-11-21T03:00:00Z", state: "intact" },
+          { path: "C:\\Unduhan\\b.pdf", exportedAt: "2026-11-21T04:00:00Z", state: "changed" },
+          { path: "C:\\Unduhan\\c.pdf", exportedAt: "2026-11-21T05:00:00Z", state: "changed" },
+        ],
+      }),
+    );
+    const intact = await screen.findByText("Utuh");
+    expect(intact).toHaveClass("chip", "sdoc-chip-ok");
+    expect(intact).not.toHaveClass("chip-on");
+    expect(screen.getAllByText("Berubah")[0]).toHaveClass("sdoc-chip-bad");
+    expect(
+      screen.getByText("2 salinan yang disimpan di luar Mira berubah. Rinciannya ada di bagian Salinan PDF."),
+    ).toBeInTheDocument();
   });
 });

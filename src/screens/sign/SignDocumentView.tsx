@@ -1,4 +1,5 @@
 import {
+  IconAlertTriangle,
   IconArrowLeft,
   IconCheck,
   IconCircleCheck,
@@ -11,23 +12,25 @@ import {
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { toAppError, type AppError } from "../../api";
-import {
-  signingApi,
-  type ExportView,
-  type Integrity,
-  type RequestDetail,
-  type SignerView,
-  type SignOverview,
-} from "../../api/signing";
+import { signingApi, type ExportView, type RequestDetail, type SignerView, type SignOverview } from "../../api/signing";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { cssRectToPdf, pdfRectToCss } from "../../components/pdf/coords";
-import { PdfViewer } from "../../components/pdf/PdfViewer";
+import { PdfViewer, type PdfZoom } from "../../components/pdf/PdfViewer";
 import { PlacementBox } from "../../components/pdf/PlacementBox";
 import type { PageGeometry, PageRenderInfo, PdfRect } from "../../components/pdf/types";
 import { PinDialog } from "./pad/PinDialog";
 import { SignatureSetupDialog } from "./pad/SignatureSetupDialog";
-import { AuditTrail, safeSignedAt } from "./AuditTrail";
+import { AuditTrail, HashText } from "./AuditTrail";
+import {
+  coolingText,
+  exportNoticeText,
+  exportStateLabel,
+  formatWhen,
+  headerStatusLabel,
+  integrityLabel,
+  kindLabel,
+} from "./labels";
 import {
   BOX_MIN_WIDTH_PT,
   SIZE_STEP_PT,
@@ -55,16 +58,9 @@ type FileState =
 
 type Done = "mine" | "all";
 
-const STATUS_LABEL: Record<RequestDetail["status"], string> = {
-  in_progress: "Berjalan",
-  completed: "Selesai",
-  cancelled: "Dibatalkan",
-};
-
-const EXPORT_STATE: Record<Integrity, { label: string; note?: string }> = {
-  intact: { label: "Utuh" },
-  changed: { label: "Berubah", note: "Isi salinan ini berbeda dari versi yang ditandatangani. Jangan pakai sebagai dokumen sah." },
-  missing: { label: "Tidak ditemukan", note: "File ini sudah dipindah, diganti nama, atau dihapus." },
+const EXPORT_NOTE: Partial<Record<ExportView["state"], string>> = {
+  changed: "Isi salinan ini berbeda dari versi yang ditandatangani. Jangan pakai sebagai dokumen sah.",
+  missing: "File ini sudah dipindah, diganti nama, atau dihapus.",
 };
 
 const QUICK_SPOTS: { spot: QuickSpot; label: string }[] = [
@@ -76,34 +72,35 @@ const QUICK_SPOTS: { spot: QuickSpot; label: string }[] = [
 // Error yang berarti data di layar sudah usang; layar dimuat ulang di belakang.
 const STALE_CODES = new Set(["version_conflict", "not_your_turn", "request_closed", "already_signed", "not_found"]);
 
-function shortHash(hash: string, n = 16) {
-  return (
-    <span className="mono" title={hash}>
-      {hash.slice(0, n)}
-    </span>
-  );
-}
-
-function signerStatus(s: SignerView, detail: RequestDetail): { text: string; tone: "done" | "now" | "wait" } {
-  if (s.status === "signed") return { text: s.signedAt ? `Sudah, ${safeSignedAt(s.signedAt)}` : "Sudah", tone: "done" };
+function signerStatus(
+  s: SignerView,
+  detail: RequestDetail,
+  fileTrusted: boolean,
+): { text: string; tone: "done" | "now" | "wait" } {
+  if (s.status === "signed") return { text: s.signedAt ? `Sudah, ${formatWhen(s.signedAt)}` : "Sudah", tone: "done" };
   if (detail.status === "cancelled") return { text: "Belum, permintaan dibatalkan", tone: "wait" };
-  if (s.isMe && s.canSignNow) return { text: "Giliran Anda", tone: "now" };
+  if (s.isMe && s.canSignNow) {
+    return fileTrusted ? { text: "Giliran Anda", tone: "now" } : { text: "Tidak bisa ditandatangani", tone: "wait" };
+  }
   return { text: "Menunggu", tone: "wait" };
 }
 
-function integrityProblem(detail: RequestDetail): { title: string; body: ReactNode } | null {
+// Banner bahaya. Langkah lanjutnya beda untuk pengirim: ia sendiri yang
+// memegang file asli, jadi tidak disuruh meminta salinan dari pengirim.
+function integrityProblem(detail: RequestDetail, isRequester: boolean): { title: string; body: ReactNode } | null {
   if (detail.integrity === "changed") {
     return {
-      title: "Isi file ini berubah setelah ditandatangani",
+      title: integrityLabel("changed"),
       body: (
         <>
           <p>
-            File yang disimpan Mira tidak lagi cocok dengan hash yang tercatat, jadi tanda tangan di dalamnya tidak bisa
-            dipercaya.
+            File yang disimpan Mira tidak lagi cocok dengan sidik file yang tercatat. Isinya mungkin diubah di luar Mira, jadi isi
+            dan tanda tangannya tidak bisa dipercaya.
           </p>
           <p>
-            Jangan kirim atau cetak file ini. Minta salinan dari pengirim, lalu periksa salinan itu dengan Periksa file di
-            layar Tanda tangan.
+            {isRequester
+              ? "Jangan kirim atau cetak file ini. Kalau dokumen ini masih perlu ditandatangani, buat permintaan baru dengan file asli yang Anda simpan."
+              : "Jangan kirim atau cetak file ini. Minta salinan dari pengirim, lalu periksa salinan itu dengan Periksa file PDF di layar Tanda tangan."}
           </p>
         </>
       ),
@@ -115,7 +112,7 @@ function integrityProblem(detail: RequestDetail): { title: string; body: ReactNo
       body: (
         <>
           <p>File versi terkini hilang dari folder data Mira, mungkin terhapus atau dipindah. Riwayat tanda tangan tetap ada.</p>
-          <p>Kalau Anda pernah menyimpan salinannya, periksa salinan itu dengan Periksa file di layar Tanda tangan.</p>
+          <p>Kalau Anda pernah menyimpan salinannya, periksa salinan itu dengan Periksa file PDF di layar Tanda tangan.</p>
         </>
       ),
     };
@@ -126,10 +123,14 @@ function integrityProblem(detail: RequestDetail): { title: string; body: ReactNo
       body: (
         <>
           <p>
-            Catatan bahwa dokumen ini selesai dan dikunci tidak cocok dengan kunci laptop pencatatnya atau dengan hash file.
+            Catatan bahwa dokumen ini selesai dan dikunci tidak cocok dengan kunci laptop pencatatnya atau dengan sidik file.
             Data Mira mungkin diubah di luar aplikasi.
           </p>
-          <p>Anggap dokumen ini belum terkunci dan minta salinan dari pengirim.</p>
+          <p>
+            {isRequester
+              ? "Anggap dokumen ini belum terkunci. Kalau perlu, buat permintaan baru dengan file asli yang Anda simpan."
+              : "Anggap dokumen ini belum terkunci dan minta salinan dari pengirim."}
+          </p>
         </>
       ),
     };
@@ -137,19 +138,34 @@ function integrityProblem(detail: RequestDetail): { title: string; body: ReactNo
   return null;
 }
 
+// Tombol yang bisa sedang difokus tidak dibuat disabled (fokus akan jatuh ke
+// body); cukup aria-disabled, dan handler-nya menolak dijalankan.
+function guarded(off: boolean, fn: () => void) {
+  return () => {
+    if (!off) fn();
+  };
+}
+
+type PendingFocus = "box" | "place" | "done" | null;
+
 export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<AppError | null>(null);
   const [file, setFile] = useState<FileState>({ status: "idle" });
   const [pages, setPages] = useState<PageGeometry[]>([]);
+  // Halaman dan zoom dikendalikan di sini supaya tidak kembali ke awal saat
+  // penampil dimuat ulang dengan versi baru setelah menandatangani.
   const [page, setPage] = useState(1);
+  const [zoom, setZoom] = useState<PdfZoom>("fit");
 
   const [placement, setPlacement] = useState<PdfRect | null>(null);
+  const [stampMark, setStampMark] = useState<PdfRect | null>(null);
   const [live, setLive] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [pinOpen, setPinOpen] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
+  const [, setTick] = useState(0);
 
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState<string | null>(null);
@@ -167,21 +183,39 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   const viaKeyboard = useRef(false);
   const liveTimer = useRef<number | undefined>(undefined);
   const viewerRef = useRef<HTMLDivElement>(null);
-  const focusBox = useRef(false);
+  const pendingFocus = useRef<PendingFocus>(null);
+  const scrollToStamp = useRef(false);
+  const titleFocused = useRef(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const placeBtnRef = useRef<HTMLButtonElement>(null);
+  const doneRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const exportHintId = useId();
+  const placeHintId = useId();
+  const signHintId = useId();
 
   useEffect(() => {
     mounted.current = true;
+    // Layar baru: pembaca layar mulai dari judul, juga selama masih memuat.
+    titleRef.current?.focus();
     return () => {
       mounted.current = false;
       window.clearTimeout(liveTimer.current);
     };
   }, []);
 
+  // Data pertama tiba: judul dokumen menggantikan judul sementara, fokus ke sana.
+  useEffect(() => {
+    if (!data || titleFocused.current) return;
+    titleFocused.current = true;
+    titleRef.current?.focus();
+  }, [data]);
+
   // Byte PDF hanya diganti saat hash versi berubah, supaya PdfViewer tidak memuat ulang.
   const loadFile = useCallback(async (detail: RequestDetail, force = false) => {
     if (detail.integrity === "missing") {
+      // Naikkan nomor urut supaya balasan baca file yang masih berjalan diabaikan.
+      ++fileSeq.current;
       fileHash.current = null;
       setFile({ status: "missing" });
       return;
@@ -234,20 +268,63 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   const canSign = !!(detail && detail.status === "in_progress" && mySigner?.canSignNow && fileTrusted);
   const placing = canSign && !!saved && placement !== null;
   const fileReady = file.status === "ready" && !!detail && file.hash === detail.currentHash;
+  const cooling = coolingText(saved?.usableAfter);
 
   // Batal menempatkan kalau giliran hilang (mis. dimuat ulang setelah bentrok).
   useEffect(() => {
     if (!canSign && placement) setPlacement(null);
   }, [canSign, placement]);
 
-  // Setelah "Tempatkan tanda tangan", fokus pindah ke kotak supaya bisa langsung digeser dengan panah.
+  // Dialog PIN tidak boleh tertinggal terbuka tanpa kotak yang ditempatkan.
   useEffect(() => {
-    if (!focusBox.current || !placement) return;
-    const box = viewerRef.current?.querySelector<HTMLElement>(".pdf-place");
-    if (box) {
-      focusBox.current = false;
-      box.focus();
+    if (pinOpen && !placement) setPinOpen(false);
+  }, [pinOpen, placement]);
+
+  // Masa tunggu tanda tangan baru: render ulang saat waktunya lewat.
+  const usableAfter = saved?.usableAfter ?? null;
+  useEffect(() => {
+    const until = usableAfter ? Date.parse(usableAfter) : Number.NaN;
+    if (!Number.isFinite(until) || until <= Date.now()) return;
+    const timer = window.setTimeout(() => setTick((n) => n + 1), Math.min(until - Date.now() + 500, 2 ** 31 - 1));
+    return () => window.clearTimeout(timer);
+  }, [usableAfter]);
+
+  // Fokus yang tertunda sampai elemen tujuannya ada di layar: kotak tanda
+  // tangan, tombol tempatkan, atau kotak konfirmasi sukses.
+  useEffect(() => {
+    const want = pendingFocus.current;
+    if (want === "box") {
+      const box = viewerRef.current?.querySelector<HTMLElement>(".pdf-place");
+      if (box) {
+        pendingFocus.current = null;
+        box.focus();
+      }
+    } else if (want === "place") {
+      if (placeBtnRef.current) {
+        pendingFocus.current = null;
+        placeBtnRef.current.focus();
+      }
+    } else if (want === "done" && !pinOpen && doneRef.current) {
+      pendingFocus.current = null;
+      const el = doneRef.current;
+      // Setelah dialog PIN selesai menutup dan melepas kunci fokusnya.
+      window.setTimeout(() => {
+        if (el.isConnected) el.focus();
+      }, 0);
     }
+  });
+
+  // Setelah menandatangani, area halaman digulir ke stempel begitu versi baru tampil.
+  useEffect(() => {
+    if (!scrollToStamp.current) return;
+    const area = viewerRef.current?.querySelector<HTMLElement>(".pdf-scroll");
+    const mark = viewerRef.current?.querySelector<HTMLElement>(".sdoc-stamp-mark");
+    if (!area || !mark) return;
+    scrollToStamp.current = false;
+    const a = area.getBoundingClientRect();
+    const m = mark.getBoundingClientRect();
+    area.scrollTop += m.top - a.top - Math.max(0, (area.clientHeight - m.height) / 2);
+    area.scrollLeft += m.left - a.left - Math.max(0, (area.clientWidth - m.width) / 2);
   });
 
   function announce(text: string, delay = 400) {
@@ -274,8 +351,14 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
     const geo = pages[page - 1];
     if (!geo) return;
     setDone(null);
-    focusBox.current = true;
+    setStampMark(null);
+    pendingFocus.current = "box";
     updatePlacement(quickPlacement(geo, aspect, "right"));
+  }
+
+  function cancelPlacing() {
+    setPlacement(null);
+    pendingFocus.current = "place";
   }
 
   function quick(spot: QuickSpot) {
@@ -300,24 +383,64 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
     updatePlacement(next);
   }
 
+  // Dua tombol ini hilang setelah dipakai; fokus pindah ke kotak tanda tangan.
   function moveHere() {
     if (!placement) return;
     const from = pages[placement.pageIndex];
     const to = pages[page - 1];
     if (!from || !to) return;
+    pendingFocus.current = "box";
     updatePlacement(movePlacement(placement, from, to, aspect));
   }
 
+  function showBoxPage() {
+    if (!placement) return;
+    pendingFocus.current = "box";
+    setPage(placement.pageIndex + 1);
+  }
+
+  // Ringkasan dimuat ulang tanpa mengganggu layar, supaya lockedUntil dan
+  // usableAfter segar. Kalau gagal, data lama tetap dipakai.
+  async function refreshOverview() {
+    try {
+      const fresh = await signingApi.overview();
+      if (mounted.current) setData((d) => (d ? { ...d, overview: fresh } : d));
+    } catch {
+      // Diabaikan: error PIN sudah tampil di dialog, ringkasan dicoba lagi saat layar dimuat ulang.
+    }
+  }
+
   async function submitPin(pin: string) {
-    if (!detail || !me || !placement || file.status !== "ready") return;
+    if (!detail || !me) {
+      throw { code: "not_ready", message: "Data dokumen belum selesai dimuat. Tutup dialog lalu coba lagi." } satisfies AppError;
+    }
+    if (!placement) {
+      throw {
+        code: "not_ready",
+        message: "Kotak tanda tangan belum ditempatkan. Tutup dialog, tempatkan kotaknya, lalu coba lagi.",
+      } satisfies AppError;
+    }
+    if (file.status !== "ready") {
+      throw { code: "not_ready", message: "File dokumen belum selesai dibuka. Tunggu sebentar lalu coba lagi." } satisfies AppError;
+    }
+    if (file.hash !== detail.currentHash) {
+      void load();
+      throw {
+        code: "version_conflict",
+        message: "Dokumen baru saja berganti versi dan sedang dibuka ulang. Tunggu sebentar lalu coba lagi.",
+      } satisfies AppError;
+    }
     try {
       const result = await runSignFlow({ pin, detail, bytes: file.data, placement, me, api: signingApi });
       if (!mounted.current) return;
-      const stampedPage = placement.pageIndex + 1;
+      const stamped = placement;
       setPlacement(null);
+      setStampMark(stamped);
+      scrollToStamp.current = true;
       setDone(result.status === "completed" ? "all" : "mine");
+      pendingFocus.current = "done";
       setData((d) => (d ? { ...d, detail: result } : d));
-      setPage(stampedPage);
+      setPage(stamped.pageIndex + 1);
       void loadFile(result);
       // Hitungan PIN salah direset di inti Rust; muat ulang ringkasan dan detail.
       void load();
@@ -325,6 +448,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
     } catch (err) {
       const error = toAppError(err);
       if (STALE_CODES.has(error.code)) void load();
+      else if (error.code === "pin_wrong" || error.code === "pin_locked" || error.code === "signature_cooling") {
+        void refreshOverview();
+      }
       throw error;
     }
   }
@@ -398,7 +524,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             <IconArrowLeft size={16} aria-hidden="true" />
             Kembali
           </button>
-          <h1 id={titleId} className="page-title">
+          <h1 id={titleId} ref={titleRef} tabIndex={-1} className="page-title sdoc-title">
             Dokumen tanda tangan
           </h1>
         </header>
@@ -427,47 +553,70 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
 
   const d = data.detail;
   const isRequester = !!me && d.requestedBy.publicKey === me.publicKey;
-  const problem = integrityProblem(d);
+  const problem = integrityProblem(d, isRequester);
   const locked = d.status === "completed" && d.sealValid === true;
   const sortedSigners = [...d.signers].sort((a, b) => a.position - b.position);
   const othersPending = d.status === "in_progress" && d.signers.some((s) => !s.isMe && s.status === "waiting");
   const firstWaiting = sortedSigners.find((s) => s.status === "waiting");
   const boxGeo = placement ? pages[placement.pageIndex] : undefined;
   const boxOnOtherPage = !!placement && placement.pageIndex !== page - 1;
-  const minWidthReached = !!(placement && boxGeo && placementWidthPt(placement, boxGeo) <= BOX_MIN_WIDTH_PT + 0.01);
+  const sizeFixed = (delta: number) =>
+    !!(placement && boxGeo) &&
+    Math.abs(placementWidthPt(resizePlacement(placement, boxGeo, aspect, delta), boxGeo) - placementWidthPt(placement, boxGeo)) <
+      0.01;
+  const minWidthReached = sizeFixed(-SIZE_STEP_PT);
+  const maxWidthReached = sizeFixed(SIZE_STEP_PT);
+  const changedCopies = d.exports.filter((x) => x.state === "changed").length;
+  const exportBlocked = d.integrity !== "intact" || d.sealValid === false;
+  const exportOff = exporting || exportBlocked;
+  const placeOff = !fileReady || pages.length === 0 || !!cooling;
+  const signOff = !fileReady || !!cooling;
 
   const renderOverlay = (info: PageRenderInfo) => {
-    if (!placing || !placement || info.index !== placement.pageIndex || !me) return null;
-    const unit = info.scale * (info.userUnit ?? 1);
-    return (
-      <div
-        className="sdoc-overlay"
-        onKeyDownCapture={() => {
-          viaKeyboard.current = true;
-        }}
-        onPointerDownCapture={() => {
-          viaKeyboard.current = false;
-        }}
-      >
-        <PlacementBox
-          rect={pdfRectToCss(placement, info, info.scale)}
-          bounds={{ width: info.cssWidth, height: info.cssHeight }}
-          onChange={(css) => updatePlacement(cssRectToPdf(css, info, info.scale), viaKeyboard.current)}
-          label={`Kotak tanda tangan ${me.displayName}`}
-          description="Menandai tempat tanda tangan Anda di halaman. Gambar aslinya baru dipakai setelah PIN dimasukkan."
-          aspectRatio={aspect}
-          minWidth={BOX_MIN_WIDTH_PT * unit}
-          step={5 * unit}
+    if (placing && placement && me && info.index === placement.pageIndex) {
+      const unit = info.scale * (info.userUnit ?? 1);
+      return (
+        <div
+          className="sdoc-overlay"
+          onKeyDownCapture={() => {
+            viaKeyboard.current = true;
+          }}
+          onPointerDownCapture={() => {
+            viaKeyboard.current = false;
+          }}
         >
-          <span className="sdoc-ph">
-            <span className="sdoc-ph-tag">
-              <span className="sdoc-ph-name">{me.displayName}</span>
-              <span className="sdoc-ph-sub">Tanda tangan Anda</span>
+          <PlacementBox
+            rect={pdfRectToCss(placement, info, info.scale)}
+            bounds={{ width: info.cssWidth, height: info.cssHeight }}
+            onChange={(css) => updatePlacement(cssRectToPdf(css, info, info.scale), viaKeyboard.current)}
+            label={`Kotak tanda tangan ${me.displayName}`}
+            description="Menandai tempat tanda tangan Anda di halaman. Gambar aslinya baru dipakai setelah PIN dimasukkan."
+            aspectRatio={aspect}
+            minWidth={BOX_MIN_WIDTH_PT * unit}
+            step={5 * unit}
+          >
+            <span className="sdoc-ph">
+              <span className="sdoc-ph-tag">
+                <span className="sdoc-ph-name">{me.displayName}</span>
+                <span className="sdoc-ph-sub">Tanda tangan Anda</span>
+              </span>
             </span>
-          </span>
-        </PlacementBox>
-      </div>
-    );
+          </PlacementBox>
+        </div>
+      );
+    }
+    if (!placing && stampMark && info.index === stampMark.pageIndex) {
+      // Penanda tak terlihat di posisi stempel, hanya untuk menggulir ke sana.
+      const r = pdfRectToCss(stampMark, info, info.scale);
+      return (
+        <div
+          className="sdoc-stamp-mark"
+          aria-hidden="true"
+          style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
+        />
+      );
+    }
+    return null;
   };
 
   // ---- Bagian panel ---------------------------------------------------------
@@ -491,15 +640,27 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
       <div className="sdoc-act">
         <p>Tempatkan kotak tanda tangan di halaman, lalu masukkan PIN untuk memakai tanda tangan tersimpan.</p>
         <button
+          ref={placeBtnRef}
           type="button"
           className="btn sdoc-wide"
-          onClick={startPlacing}
-          disabled={!fileReady || pages.length === 0}
+          onClick={guarded(placeOff, startPlacing)}
+          aria-disabled={placeOff || undefined}
+          aria-describedby={placeOff ? placeHintId : undefined}
         >
           <IconSignature size={18} aria-hidden="true" />
           Tempatkan tanda tangan
         </button>
-        {!fileReady && <p className="hint">Tombol aktif setelah file selesai dibuka.</p>}
+        {cooling ? (
+          <p id={placeHintId} className="sdoc-cooling">
+            {cooling}
+          </p>
+        ) : (
+          placeOff && (
+            <p id={placeHintId} className="hint">
+              Tombol aktif setelah file selesai dibuka.
+            </p>
+          )
+        )}
       </div>
     );
   } else if (placing && placement) {
@@ -514,7 +675,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             <button type="button" className="btn btn-ghost btn-sm" onClick={moveHere}>
               Pindahkan ke halaman ini
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPage(placement.pageIndex + 1)}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={showBoxPage}>
               Lihat halaman {placement.pageIndex + 1}
             </button>
           </div>
@@ -540,37 +701,62 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
               type="button"
               className="btn btn-ghost btn-sm"
               onClick={() => resize(-SIZE_STEP_PT)}
-              disabled={minWidthReached}
+              aria-disabled={minWidthReached || undefined}
             >
               <IconMinus size={15} aria-hidden="true" />
               Kecilkan kotak
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => resize(SIZE_STEP_PT)}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => resize(SIZE_STEP_PT)}
+              aria-disabled={maxWidthReached || undefined}
+            >
               <IconPlus size={15} aria-hidden="true" />
               Besarkan kotak
             </button>
           </div>
         </div>
         <p className="hint">
-          Geser kotak dengan mouse atau tombol panah. Tarik sudut kanan bawah, atau tekan plus dan minus, untuk mengubah ukuran.
+          Geser kotak dengan mouse atau tombol panah (tahan Shift untuk lebih jauh). Ubah ukuran dengan menarik sudut kanan bawah,
+          tombol Kecilkan atau Besarkan, atau Alt dan panah.
         </p>
-        <button type="button" className="btn sdoc-wide" onClick={() => setPinOpen(true)} disabled={!fileReady}>
+        <button
+          type="button"
+          className="btn sdoc-wide"
+          onClick={guarded(signOff, () => setPinOpen(true))}
+          aria-disabled={signOff || undefined}
+          aria-describedby={signOff ? signHintId : undefined}
+        >
           <IconLock size={18} aria-hidden="true" />
           Selesai dan tanda tangani
         </button>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPlacement(null)}>
+        {cooling ? (
+          <p id={signHintId} className="sdoc-cooling">
+            {cooling}
+          </p>
+        ) : (
+          signOff && (
+            <p id={signHintId} className="hint">
+              Tombol aktif setelah file selesai dibuka.
+            </p>
+          )
+        )}
+        <button type="button" className="btn btn-ghost btn-sm" onClick={cancelPlacing}>
           Batal menempatkan
         </button>
         <p className="sdoc-small">
-          Setelah ditandatangani, isi file dikunci. Kalau ada yang mengubahnya, Mira memberi peringatan.
+          Setiap tanda tangan mencatat sidik file versi barunya. Dokumen dikunci setelah semua penanda tangan selesai.
         </p>
       </div>
     );
   } else if (d.status === "in_progress" && mySigner?.canSignNow && !fileTrusted) {
     myPart = (
       <p className="sdoc-text">
-        Giliran Anda, tetapi menandatangani dinonaktifkan karena file dokumen bermasalah. Selesaikan dulu langkah di
-        peringatan di atas.
+        Dokumen ini tidak bisa ditandatangani karena filenya berubah atau hilang.{" "}
+        {isRequester
+          ? "Buat permintaan baru dengan file asli yang Anda simpan."
+          : "Minta pengirim membuat permintaan baru dengan file aslinya."}
       </p>
     );
   } else if (d.status === "in_progress" && mySigner && mySigner.status === "waiting") {
@@ -583,7 +769,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   } else if (mySigner && mySigner.status === "signed") {
     myPart = (
       <p className="sdoc-text">
-        Anda sudah menandatangani{mySigner.signedAt ? ` pada ${safeSignedAt(mySigner.signedAt)}` : ""}.
+        Anda sudah menandatangani{mySigner.signedAt ? ` pada ${formatWhen(mySigner.signedAt)}` : ""}.
       </p>
     );
   } else if (!mySigner) {
@@ -606,6 +792,8 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
         label={d.title}
         page={page}
         onPageChange={setPage}
+        zoom={zoom}
+        onZoomChange={setZoom}
         onLoaded={(info) => setPages(info.pages)}
         renderOverlay={renderOverlay}
       />
@@ -645,10 +833,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
         <h1 id={titleId} ref={titleRef} tabIndex={-1} className="page-title sdoc-title">
           {d.title}
         </h1>
-        <span className={`chip${d.status === "in_progress" ? " chip-on" : ""}`}>
-          {STATUS_LABEL[d.status]}
-          {d.status === "in_progress" ? `, ${d.signedCount} dari ${d.signerCount} sudah` : ""}
-        </span>
+        <span className={`chip sdoc-head-chip${d.status === "in_progress" ? " chip-on" : ""}`}>{headerStatusLabel(d)}</span>
         <span className="page-sub">Diminta oleh {isRequester ? "Anda" : d.requestedBy.displayName}</span>
       </header>
 
@@ -658,9 +843,18 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
         </div>
       )}
 
+      {changedCopies > 0 && (
+        <div className="sdoc-banner">
+          <div className="notice">
+            <IconAlertTriangle size={18} aria-hidden="true" />
+            <p>{exportNoticeText(changedCopies)}</p>
+          </div>
+        </div>
+      )}
+
       <div className="sdoc-live" role="status">
         {done && (
-          <div className="sdoc-ok">
+          <div className="sdoc-ok" ref={doneRef} tabIndex={-1}>
             <IconCircleCheck size={18} aria-hidden="true" />
             <div>
               {done === "all" ? (
@@ -693,7 +887,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             </p>
             <ol className="sdoc-signers">
               {sortedSigners.map((s, i) => {
-                const st = signerStatus(s, d);
+                const st = signerStatus(s, d, fileTrusted);
                 return (
                   <li key={s.publicKey} className="sdoc-signer" data-tone={st.tone}>
                     <span className="sdoc-num" aria-hidden="true">
@@ -703,7 +897,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
                       <p className="sdoc-signer-name">
                         {s.displayName}
                         {s.isMe && <span className="sdoc-you"> (Anda)</span>}
-                        <span className="sdoc-kind">{s.kind === "guest" ? "Tamu" : "Anggota"}</span>
+                        <span className="sdoc-kind">{kindLabel(s.kind)}</span>
                       </p>
                       <p className="sdoc-signer-state">{st.text}</p>
                     </div>
@@ -713,8 +907,8 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             </ol>
             {othersPending && (
               <p className="sdoc-small">
-                Mira belum bisa mengirim dokumen lewat jaringan. Penanda tangan berikutnya baru menerima dokumen ini setelah
-                pengiriman lewat jaringan tersedia.
+                Mira belum bisa mengirim dokumen lewat jaringan. Rekan di daftar ini baru menerima dokumen setelah pengiriman lewat
+                jaringan tersedia.
               </p>
             )}
           </section>
@@ -738,21 +932,28 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
                   <IconLock size={16} aria-hidden="true" />
                   Terkunci
                 </p>
-                <p>Isi file dikunci. Perubahan sekecil apa pun akan terdeteksi, di Mira maupun di salinan yang Anda simpan.</p>
+                <p>
+                  Isi file dikunci. Perubahan sekecil apa pun terdeteksi di file Mira dan di salinan yang disimpan lewat Simpan
+                  salinan PDF. Salinan lain bisa dicek dengan Periksa file PDF.
+                </p>
               </div>
             ) : d.status === "in_progress" ? (
               <p className="sdoc-small">
-                Belum terkunci. Setiap tanda tangan menyimpan versi baru dan mencatat hash-nya. Dokumen dikunci setelah semua
+                Belum terkunci. Setiap tanda tangan menyimpan versi baru dan mencatat sidik filenya. Dokumen dikunci setelah semua
                 penanda tangan selesai.
               </p>
             ) : d.status === "cancelled" ? (
               <p className="sdoc-small">Permintaan dibatalkan, jadi dokumen tidak dikunci.</p>
             ) : null}
             <dl className="sdoc-dl">
-              <dt>{locked ? "Hash akhir" : "Versi terkini"}</dt>
-              <dd>{shortHash(d.currentHash)}</dd>
-              <dt>File asli</dt>
-              <dd>{shortHash(d.originalHash)}</dd>
+              <dt>{locked ? "Sidik file akhir" : "Sidik file terkini"}</dt>
+              <dd>
+                <HashText hash={d.currentHash} />
+              </dd>
+              <dt>Sidik file asli</dt>
+              <dd>
+                <HashText hash={d.originalHash} />
+              </dd>
             </dl>
           </section>
 
@@ -760,16 +961,27 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             <h2 id={`${titleId}-copy`} className="sdoc-h">
               Salinan PDF
             </h2>
-            <p className="sdoc-small">Salinan disimpan ke folder Unduhan tanpa menimpa file lain. Mira tetap memeriksa isinya.</p>
+            <p className="sdoc-small">
+              Salinan disimpan tanpa menimpa file lain, biasanya ke folder Unduhan. Lokasinya tampil setelah tersimpan, dan Mira
+              tetap memeriksa isinya.
+            </p>
             <button
               type="button"
               className={`btn ${d.status === "completed" ? "" : "btn-ghost "}btn-sm sdoc-fit`}
-              onClick={() => void exportCopy()}
-              disabled={exporting || file.status === "missing"}
+              onClick={guarded(exportOff, () => void exportCopy())}
+              aria-disabled={exportOff || undefined}
               aria-busy={exporting || undefined}
+              aria-describedby={exportBlocked ? exportHintId : undefined}
             >
               {exporting ? "Menyimpan salinan..." : "Simpan salinan PDF"}
             </button>
+            {exportBlocked && (
+              <p id={exportHintId} className="sdoc-small">
+                {d.integrity === "missing"
+                  ? "Salinan tidak bisa disimpan karena file dokumen ini tidak ditemukan."
+                  : "Salinan tidak bisa disimpan karena isi file ini tidak cocok dengan catatan Mira."}
+              </p>
+            )}
             <div aria-live="polite">
               {exportError && (
                 <ErrorAlert title="Salinan belum tersimpan">
@@ -813,7 +1025,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
             </section>
           )}
 
-          <AuditTrail events={d.events} />
+          <AuditTrail events={d.events} requestCreatedAt={d.createdAt} />
         </aside>
       </div>
 
@@ -868,17 +1080,18 @@ function ExportList({ exports }: { exports: ExportView[] }) {
       <h3 className="sdoc-h3">Salinan yang pernah disimpan</h3>
       <ul>
         {exports.map((x) => {
-          const st = EXPORT_STATE[x.state];
+          const note = EXPORT_NOTE[x.state];
           return (
             <li key={`${x.path}-${x.exportedAt}`} className="sdoc-export" data-state={x.state}>
               <p className="mono sdoc-path">{x.path}</p>
               <p className="sdoc-export-meta">
-                <span className={`chip${x.state === "intact" ? " chip-on" : x.state === "changed" ? " sdoc-chip-bad" : ""}`}>
-                  {st.label}
+                <span className={`chip${x.state === "changed" ? " sdoc-chip-bad" : x.state === "intact" ? " sdoc-chip-ok" : ""}`}>
+                  {x.state === "intact" && <IconCheck size={13} aria-hidden="true" />}
+                  {exportStateLabel(x.state)}
                 </span>
-                <span>{safeSignedAt(x.exportedAt)}</span>
+                <span>{formatWhen(x.exportedAt)}</span>
               </p>
-              {st.note && <p className="sdoc-export-note">{st.note}</p>}
+              {note && <p className="sdoc-export-note">{note}</p>}
             </li>
           );
         })}
