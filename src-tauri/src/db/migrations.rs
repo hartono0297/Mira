@@ -1,7 +1,13 @@
 //! Numbered schema migrations. Never edit a migration that has shipped; append
 //! a new one instead. Index 0 is schema version 1.
 
-pub const MIGRATIONS: &[&str] = &[V1_FOUNDATION, V2_MEMBERSHIP_LOG];
+pub const MIGRATIONS: &[&str] = &[
+    V1_FOUNDATION,
+    V2_MEMBERSHIP_LOG,
+    // Tahap 4 (dokumen). The final number is decided when the stage branches
+    // are merged; the SQL lives in its own module.
+    crate::documents::schema::MIGRATION,
+];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.
 ///

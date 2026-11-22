@@ -3,9 +3,11 @@
 //! Modules are split by concern so later stages can add `network/`, `sync/`
 //! and `permissions/` next to these without reshaping them.
 
+pub mod blobs;
 pub mod clock;
 pub mod commands;
 pub mod db;
+pub mod documents;
 pub mod error;
 pub mod firewall;
 pub mod identity;
