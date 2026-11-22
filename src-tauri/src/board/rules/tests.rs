@@ -2,7 +2,10 @@ use automerge::transaction::Transactable;
 use automerge::{ObjType, ROOT, ReadDoc, Value};
 
 use super::*;
-use crate::board::doc::{ProjectMeta, Stamp, TaskChanges, TaskInit};
+use crate::board::doc::{
+    MAX_TASK_NUMBER, ProjectMeta, Stamp, TaskChanges, TaskInit, derive_comment_id, derive_task_id,
+    random_id,
+};
 use crate::board::model::ColumnId;
 
 const A: [u8; 32] = [0xaa; 32];
@@ -289,4 +292,280 @@ fn too_many_operations_are_refused() {
     });
     let err = judge(&doc, &c).unwrap_err();
     assert!(err.contains("operasi"), "{err}");
+}
+
+/// Stages a bare task map at `id` in `d` (enough for the rules, not for the
+/// shape check).
+fn raw_task(d: &mut BoardDoc, id: &str, created_by: &str, nonce: Option<&str>) {
+    let am = d.raw();
+    let (_, tasks) = am.get(ROOT, "tasks").unwrap().unwrap();
+    let t = am.put_object(&tasks, id, ObjType::Map).unwrap();
+    if let Some(n) = nonce {
+        am.put(&t, "nonce", n).unwrap();
+    }
+    am.put(&t, "number", 50).unwrap();
+    am.put(&t, "created_by", created_by).unwrap();
+}
+
+/// Stages a bare comment at `cid` on task `id`.
+fn raw_comment(d: &mut BoardDoc, id: &str, cid: &str, author: &str, nonce: Option<&str>) {
+    let t = task_obj(d, id);
+    let am = d.raw();
+    let (_, comments) = am.get(&t, "comments").unwrap().unwrap();
+    let c = am.put_object(&comments, cid, ObjType::Map).unwrap();
+    if let Some(n) = nonce {
+        am.put(&c, "nonce", n).unwrap();
+    }
+    am.put(&c, "author", author).unwrap();
+    am.put(&c, "body", "x").unwrap();
+}
+
+/// Judges, applies and checks `c` like `sync` does.
+fn accept(doc: &mut BoardDoc, c: Change, author: &str) -> Result<Needs, String> {
+    let needs = judge(doc, &c)?;
+    doc.apply(c).unwrap();
+    check_new_authorship(doc, &needs, author)?;
+    Ok(needs)
+}
+
+fn nonce_of(d: &mut BoardDoc, id: &str) -> String {
+    let t = task_obj(d, id);
+    let (v, _) = d.raw().get(&t, "nonce").unwrap().unwrap();
+    v.as_str().unwrap().to_owned()
+}
+
+#[test]
+fn the_local_flow_passes_every_check() {
+    let (mut doc, task_a, _, _) = base();
+    let b = hex32(&B);
+    let s = Stamp { actor: &b, at: "t3" };
+    let mut new_id = String::new();
+    let c = change_by(&mut doc, &B, |d| {
+        new_id = d
+            .create_task(
+                s,
+                TaskInit {
+                    title: "Baru".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    });
+    let needs = accept(&mut doc, c, &b).unwrap();
+    assert_eq!(needs.new_tasks.len(), 1);
+    assert_eq!(needs.new_tasks[0].1, new_id);
+
+    type Step<'a> = Box<dyn Fn(&mut BoardDoc) + 'a>;
+    let steps: Vec<Step> = vec![
+        Box::new(|d| {
+            d.update_task(
+                s,
+                &new_id,
+                &TaskChanges {
+                    title: Some("Ubah".into()),
+                    ..Default::default()
+                },
+                &|_| String::new(),
+            )
+            .unwrap()
+        }),
+        Box::new(|d| d.move_task(s, &new_id, ColumnId::Done, 0).unwrap()),
+        Box::new(|d| {
+            d.add_comment(s, &new_id, "satu").unwrap();
+            d.add_comment(s, &task_a, "dua").unwrap();
+        }),
+        Box::new(|d| {
+            let n = d.fresh_number().unwrap();
+            d.renumber_task(s, &task_a, n, "PA-1").unwrap();
+        }),
+        Box::new(|d| d.rename_project("Nama Baru").unwrap()),
+        Box::new(|d| d.delete_task(s, &new_id).unwrap()),
+    ];
+    for step in steps {
+        let c = change_by(&mut doc, &B, |d| step(d));
+        accept(&mut doc, c, &b).unwrap();
+    }
+    assert!(doc.task(&new_id).unwrap().unwrap().deleted);
+    assert_eq!(doc.project().name, "Nama Baru");
+}
+
+#[test]
+fn a_new_task_must_sit_at_the_id_bound_to_its_creator() {
+    let (mut doc, _, _, _) = base();
+    let b = hex32(&B);
+    let nonce = random_id();
+    let cases: Vec<(&str, String, Option<String>)> = vec![
+        ("id acak", random_id(), Some(nonce.clone())),
+        ("tanpa nonce", derive_task_id(&b, &nonce), None),
+        ("nonce bukan hex", derive_task_id(&b, "zz"), Some("zz".into())),
+        (
+            "id pembuat lain",
+            derive_task_id(&hex32(&A), &nonce),
+            Some(nonce.clone()),
+        ),
+        (
+            "id komentar, bukan task",
+            derive_comment_id(&b, &nonce),
+            Some(nonce.clone()),
+        ),
+    ];
+    for (label, id, n) in cases {
+        let mut d = BoardDoc::load(&doc.save(), &A).unwrap();
+        let c = change_by(&mut d, &B, |x| raw_task(x, &id, &b, n.as_deref()));
+        let err = accept(&mut d, c, &b).expect_err(label);
+        assert!(err.contains("tidak cocok"), "{label}: {err}");
+    }
+    let id = derive_task_id(&b, &nonce);
+    let c = change_by(&mut doc, &B, |x| raw_task(x, &id, &b, Some(&nonce)));
+    accept(&mut doc, c, &b).unwrap();
+}
+
+#[test]
+fn nobody_can_create_a_task_at_someone_elses_id() {
+    let (mut doc, _, _, _) = base();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    // A creates a task that B has not seen yet.
+    let mut task = String::new();
+    let mut nonce = String::new();
+    let ca = change_by(&mut doc, &A, |d| {
+        task = d
+            .create_task(Stamp { actor: &a, at: "t3" }, TaskInit::default())
+            .unwrap();
+        nonce = nonce_of(d, &task);
+    });
+    // B, concurrently, makes the same key, as itself or in A's name.
+    for created_by in [&b, &a] {
+        let cb = change_by(&mut doc, &B, |d| {
+            raw_task(d, &task, created_by, Some(&nonce))
+        });
+        // Refused by a laptop without A's change...
+        let mut without = BoardDoc::load(&doc.save(), &A).unwrap();
+        assert!(accept(&mut without, cb.clone(), &b).is_err());
+        // ...and by one that has it, so A's change is never blocked.
+        let mut with = BoardDoc::load(&doc.save(), &A).unwrap();
+        accept(&mut with, ca.clone(), &a).unwrap();
+        assert!(judge(&with, &cb).is_err());
+    }
+}
+
+#[test]
+fn a_new_comment_must_sit_at_the_id_bound_to_its_author() {
+    let (mut doc, task_a, _, _) = base();
+    let b = hex32(&B);
+    let nonce = random_id();
+    let cases: Vec<(&str, String, Option<String>)> = vec![
+        ("id acak", random_id(), Some(nonce.clone())),
+        ("tanpa nonce", derive_comment_id(&b, &nonce), None),
+        (
+            "id task, bukan komentar",
+            derive_task_id(&b, &nonce),
+            Some(nonce.clone()),
+        ),
+        (
+            "id penulis lain",
+            derive_comment_id(&hex32(&A), &nonce),
+            Some(nonce.clone()),
+        ),
+    ];
+    for (label, cid, n) in cases {
+        let mut d = BoardDoc::load(&doc.save(), &A).unwrap();
+        let c = change_by(&mut d, &B, |x| {
+            raw_comment(x, &task_a, &cid, &b, n.as_deref())
+        });
+        let err = accept(&mut d, c, &b).expect_err(label);
+        assert!(err.contains("tidak cocok"), "{label}: {err}");
+    }
+    let cid = derive_comment_id(&b, &nonce);
+    let c = change_by(&mut doc, &B, |x| {
+        raw_comment(x, &task_a, &cid, &b, Some(&nonce))
+    });
+    let needs = accept(&mut doc, c, &b).unwrap();
+    assert_eq!(needs.new_comments.len(), 1);
+    assert_eq!(needs.new_comments[0].1, cid);
+}
+
+#[test]
+fn the_nonce_is_only_written_with_its_task_or_comment() {
+    let (mut doc, task_a, _, _) = base();
+    let c = change_by(&mut doc, &B, |d| {
+        let t = task_obj(d, &task_a);
+        d.raw().put(&t, "nonce", random_id()).unwrap();
+    });
+    assert!(judge(&doc, &c).is_err(), "nonce task lama");
+    let c = change_by(&mut doc, &B, |d| {
+        let t = task_obj(d, &task_a);
+        let am = d.raw();
+        let (_, comments) = am.get(&t, "comments").unwrap().unwrap();
+        let cid = am.keys(&comments).next().unwrap();
+        let (_, cm) = am.get(&comments, &cid).unwrap().unwrap();
+        am.put(&cm, "nonce", random_id()).unwrap();
+    });
+    assert!(judge(&doc, &c).is_err(), "nonce komentar lama");
+}
+
+#[test]
+fn task_numbers_stay_below_the_ceiling() {
+    let (mut doc, task_a, _, gone) = base();
+    let b = hex32(&B);
+    let fresh = doc.fresh_number().unwrap();
+    let put_number = |doc: &mut BoardDoc, id: &str, n: i64| {
+        change_by(doc, &B, |d| {
+            let t = task_obj(d, id);
+            d.raw().put(&t, "number", n).unwrap();
+        })
+    };
+    for n in [0, -1, fresh + NUMBER_SLACK + 1, MAX_TASK_NUMBER] {
+        let c = put_number(&mut doc, &task_a, n);
+        assert!(judge(&doc, &c).is_err(), "nomor {n} harus ditolak");
+    }
+    let c = change_by(&mut doc, &B, |d| {
+        let t = task_obj(d, &task_a);
+        d.raw().put(&t, "number", "5").unwrap();
+    });
+    assert!(judge(&doc, &c).is_err(), "nomor berupa teks");
+    let c = put_number(&mut doc, &gone, 1);
+    assert!(judge(&doc, &c).is_err(), "nomor task terhapus");
+    let c = change_by(&mut doc, &B, |d| {
+        d.raw().put(ROOT, "next_number", MAX_TASK_NUMBER).unwrap();
+    });
+    assert!(judge(&doc, &c).is_err(), "next_number terlalu besar");
+    let c = change_by(&mut doc, &B, |d| {
+        let id = d
+            .create_task(Stamp { actor: &b, at: "t3" }, TaskInit::default())
+            .unwrap();
+        let t = task_obj(d, &id);
+        d.raw().put(&t, "number", fresh + NUMBER_SLACK + 1).unwrap();
+    });
+    assert!(judge(&doc, &c).is_err(), "nomor task baru terlalu besar");
+
+    let c = put_number(&mut doc, &task_a, fresh + NUMBER_SLACK);
+    judge(&doc, &c).unwrap();
+    let c = change_by(&mut doc, &B, |d| {
+        d.raw()
+            .put(ROOT, "next_number", fresh + NUMBER_SLACK + 1)
+            .unwrap();
+    });
+    judge(&doc, &c).unwrap();
+}
+
+#[test]
+fn renumbering_a_task_deleted_concurrently_is_judged_the_same_everywhere() {
+    let (mut doc, task_a, _, _) = base();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    let del = change_by(&mut doc, &A, |d| {
+        d.delete_task(Stamp { actor: &a, at: "t3" }, &task_a).unwrap()
+    });
+    let ren = change_by(&mut doc, &B, |d| {
+        let n = d.fresh_number().unwrap();
+        d.renumber_task(Stamp { actor: &b, at: "t3" }, &task_a, n, "PA-1")
+            .unwrap();
+    });
+    let mut delete_first = BoardDoc::load(&doc.save(), &A).unwrap();
+    accept(&mut delete_first, del.clone(), &a).unwrap();
+    accept(&mut delete_first, ren.clone(), &b).unwrap();
+    let mut renumber_first = BoardDoc::load(&doc.save(), &A).unwrap();
+    accept(&mut renumber_first, ren, &b).unwrap();
+    accept(&mut renumber_first, del, &a).unwrap();
 }

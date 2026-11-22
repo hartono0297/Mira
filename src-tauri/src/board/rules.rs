@@ -10,31 +10,47 @@
 //!
 //! | Object | Allowed |
 //! |---|---|
-//! | root | put `next_number` (integer) |
+//! | root | put `next_number` (integer up to the number ceiling + 1) |
 //! | `project` | put `name` or `code` (needs the manage right) |
-//! | `tasks` | make a map at a key that is not a task yet (a new task) |
-//! | an existing task | put `column`, `rank`, `assignee`, `due`, `priority`, `updated_at`, `number`; put `deleted = true` (needs the delete right); make `title`/`description` text or `labels` list; make `comments`/`activity` only when missing |
+//! | `tasks` | make a map at a key that is not a task yet (a new task, its id bound to A) |
+//! | an existing task | put `column`, `rank`, `assignee`, `due`, `priority`, `updated_at`; put `number` (integer up to the ceiling) when the task is not deleted; put `deleted = true` (needs the delete right); make `title`/`description` text or `labels` list; make `comments`/`activity` only when missing |
 //! | title, description, labels | anything |
-//! | `comments` of a task | make a map at a new key (a new comment) |
+//! | `comments` of a task | make a map at a new key (a new comment, its id bound to A) |
 //! | `activity` of a task | insert a new map (a new entry) |
 //! | anything created in this change | anything (the shape check and [`check_new_authorship`] follow) |
 //!
 //! Everything else (deleting a task or comment key, replacing `tasks` or
-//! `project`, changing `created_by`, editing someone's comment or an old
-//! activity entry, marks, counters) is refused for good. The first change of
-//! a project (no dependencies) is not judged here; `sync::import_project`
-//! validates it.
+//! `project`, changing `created_by` or `nonce`, editing someone's comment or
+//! an old activity entry, marks, counters) is refused for good.
+//!
+//! A new task or comment must sit at the id bound to A and its nonce
+//! (`doc::derive_task_id`, `doc::derive_comment_id`, checked after applying
+//! in [`check_new_authorship`]), so two authors can never create the same
+//! key and refusing an existing key gives the same answer on every laptop.
+//!
+//! The number ceiling is [`BoardDoc::fresh_number_at`] the change's
+//! dependencies plus [`NUMBER_SLACK`], and "deleted" is read there too, so it
+//! is the same on every laptop. Without it one huge number would pin
+//! `fresh_number` at its maximum and every new task would share it.
+//!
+//! The first change of a project (no dependencies) is not judged here;
+//! `sync::import_project` validates it.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use automerge::legacy::{Key, ObjectId, OpId, OpType};
-use automerge::{ActorId, Change, ObjType, Prop, ReadDoc, ScalarValue};
+use automerge::{ActorId, Change, ChangeHash, ObjType, Prop, ReadDoc, ScalarValue};
 
-use super::doc::BoardDoc;
+use super::doc::{BoardDoc, derive_comment_id, derive_task_id, is_bound_id};
 
 /// Most operations in one change from another laptop. A local change with a
 /// full description stays far below this.
 pub const MAX_CHANGE_OPS: usize = 50_000;
+
+/// How far above the next free number a change may set a task number. One
+/// local change renumbers or creates far fewer tasks than this.
+pub const NUMBER_SLACK: i64 = 10_000;
 
 /// What a change needs besides the write right.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -43,8 +59,11 @@ pub struct Needs {
     pub manage: bool,
     /// Tasks it marks deleted that existed before: `(task id, created_by)`.
     pub delete: Vec<(String, String)>,
-    /// Comment maps it creates, as object ids (`counter@actor`).
-    pub new_comments: Vec<String>,
+    /// Task maps it creates: `(object id, task id)`, object ids as
+    /// `counter@actor`.
+    pub new_tasks: Vec<(String, String)>,
+    /// Comment maps it creates: `(object id, comment id)`.
+    pub new_comments: Vec<(String, String)>,
     /// Activity entries it creates, as object ids.
     pub new_activity: Vec<String>,
 }
@@ -132,6 +151,12 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
     let mut needs = Needs::default();
     let mut new_objs: HashMap<String, Kind> = HashMap::new();
     let mut known: HashMap<String, Kind> = HashMap::new();
+    let deps: Vec<ChangeHash> = change.deps().to_vec();
+    let ceiling = OnceCell::new();
+    let number_ok = |v: &ScalarValue, extra: i64| -> bool {
+        let max = *ceiling.get_or_init(|| before.fresh_number_at(&deps).saturating_add(NUMBER_SLACK));
+        int_of(v).is_some_and(|n| (1..=max.saturating_add(extra)).contains(&n))
+    };
 
     for (i, op) in expanded.operations.iter().enumerate() {
         let this = obj_key(start + i as u64, &actor);
@@ -159,7 +184,12 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
         };
         let new_kind = |k: Kind| -> Option<Kind> { made.map(|_| k) };
         let child: Option<Kind> = match (&target, &op.action, key) {
-            (Kind::Root, OpType::Put(ScalarValue::Int(_) | ScalarValue::Uint(_)), Some("next_number")) => None,
+            (Kind::Root, OpType::Put(v), Some("next_number")) => {
+                if !number_ok(v, 1) {
+                    return refuse("nomor task berikutnya di luar batas");
+                }
+                None
+            }
             (Kind::Root, _, k) => return refuse(format!("mengubah struktur utama dokumen ({})", k.unwrap_or("?"))),
 
             (Kind::Project, OpType::Put(ScalarValue::Str(_)), Some("name" | "code")) => {
@@ -169,9 +199,12 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
             (Kind::Project, _, k) => return refuse(format!("mengubah data proyek ({})", k.unwrap_or("?"))),
 
             (Kind::Tasks, OpType::Make(ObjType::Map), Some(id)) => {
+                // Ids are bound to their creator, so this only meets an
+                // earlier task by the same author.
                 if before.task(id).ok().flatten().is_some() {
                     return refuse(format!("menimpa task {id}"));
                 }
+                needs.new_tasks.push((this.clone(), id.to_owned()));
                 new_kind(Kind::Task {
                     id: id.to_owned(),
                     new: true,
@@ -179,6 +212,12 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
             }
             (Kind::Tasks, _, _) => return refuse("menghapus atau menimpa daftar task"),
 
+            (Kind::Task { id, new: true }, OpType::Put(v), Some("number")) => {
+                if !number_ok(v, 0) {
+                    return refuse(format!("nomor task {id} di luar batas"));
+                }
+                None
+            }
             (Kind::Task { new: true, .. }, _, k) => new_kind(match k {
                 Some("title" | "description" | "labels") => Kind::Free,
                 Some("comments") => Kind::Comments { new: true },
@@ -186,7 +225,16 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
                 _ => Kind::Free,
             }),
             (Kind::Task { id, new: false }, action, Some(k)) => match (k, action) {
-                ("column" | "rank" | "assignee" | "due" | "priority" | "updated_at" | "number", OpType::Put(_)) => None,
+                ("column" | "rank" | "assignee" | "due" | "priority" | "updated_at", OpType::Put(_)) => None,
+                ("number", OpType::Put(v)) => {
+                    if deleted_at(before, &op.obj, &deps) {
+                        return refuse(format!("mengubah nomor task {id} yang sudah dihapus"));
+                    }
+                    if !number_ok(v, 0) {
+                        return refuse(format!("nomor task {id} di luar batas"));
+                    }
+                    None
+                }
                 ("deleted", OpType::Put(ScalarValue::Boolean(true))) => {
                     let created_by = before
                         .task(id)
@@ -237,7 +285,7 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
                 if exists {
                     return refuse("menimpa komentar yang sudah ada");
                 }
-                needs.new_comments.push(this.clone());
+                needs.new_comments.push((this.clone(), cid.to_owned()));
                 Some(Kind::Comment { new: true })
             }
             (Kind::Comments { .. }, _, _) => return refuse("menghapus atau menimpa komentar"),
@@ -265,7 +313,9 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
         // Comments made inside a comments map created in this change are new
         // comments too.
         if let (Kind::Comments { new: true }, Some(ObjType::Map)) = (&target, made) {
-            needs.new_comments.push(this.clone());
+            needs
+                .new_comments
+                .push((this.clone(), key.unwrap_or_default().to_owned()));
         }
         if let Some(kind) = child {
             new_objs.insert(this, kind);
@@ -281,8 +331,28 @@ fn op_key_of_target(obj: &ObjectId) -> String {
     }
 }
 
-/// After applying: every comment and activity entry the change created
-/// names its author as `author` (64 hex).
+fn int_of(v: &ScalarValue) -> Option<i64> {
+    match v {
+        ScalarValue::Int(n) => Some(*n),
+        ScalarValue::Uint(n) => i64::try_from(*n).ok(),
+        _ => None,
+    }
+}
+
+/// Whether the task `obj` was deleted as of `heads`.
+fn deleted_at(doc: &BoardDoc, obj: &ObjectId, heads: &[ChangeHash]) -> bool {
+    let am = doc.automerge();
+    am.import_obj(&op_key_of_target(obj))
+        .ok()
+        .and_then(|t| am.get_at(&t, "deleted", heads).ok().flatten())
+        .and_then(|(v, _)| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// After applying: every task the change created names `author` (64 hex)
+/// as its creator and every comment and activity entry names it as author,
+/// and each new task and comment sits at the id bound to `author` and its
+/// nonce.
 pub fn check_new_authorship(after: &BoardDoc, needs: &Needs, author: &str) -> Result<(), String> {
     let am = after.automerge();
     let field = |key: &str, name: &str| -> Option<String> {
@@ -292,9 +362,20 @@ pub fn check_new_authorship(after: &BoardDoc, needs: &Needs, author: &str) -> Re
             None => None,
         }
     };
-    for c in &needs.new_comments {
-        if field(c, "author").as_deref() != Some(author) {
+    for (obj, id) in &needs.new_tasks {
+        if field(obj, "created_by").as_deref() != Some(author) {
+            return Err("task baru dibuat atas nama orang lain".into());
+        }
+        if !is_bound_id(derive_task_id, id, author, field(obj, "nonce").as_deref()) {
+            return Err(format!("kode task baru {id} tidak cocok dengan pembuatnya"));
+        }
+    }
+    for (obj, id) in &needs.new_comments {
+        if field(obj, "author").as_deref() != Some(author) {
             return Err("komentar baru dibuat atas nama orang lain".into());
+        }
+        if !is_bound_id(derive_comment_id, id, author, field(obj, "nonce").as_deref()) {
+            return Err("kode komentar baru tidak cocok dengan penulisnya".into());
         }
     }
     for e in &needs.new_activity {
