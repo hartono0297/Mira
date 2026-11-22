@@ -197,7 +197,9 @@ try {
     await pa.getByRole("button", { name: "Organisasi", exact: true }).click();
     await sleep(1500);
     await pa.screenshot({ path: join(shots, "organisasi-a.png") });
-    await pa.getByRole("button", { name: "Undang ke tim" }).first().click();
+    await pa.getByRole("button", { name: /Tim Desain/ }).first().click();
+    await sleep(800);
+    await pa.getByRole("button", { name: /^Undang ke/ }).first().click();
     await sleep(800);
     await pa.screenshot({ path: join(shots, "dialog-undangan.png") });
     await pa.keyboard.press("Escape");

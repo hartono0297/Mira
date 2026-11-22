@@ -481,6 +481,18 @@ Kelompok A, B, C, dan D tidak menyentuh file yang sama, jadi dikerjakan paralel 
 | D | `cargo test firewall:: window_theme:: qr:: identity::` lulus |
 | E | Semua tes, tes integrasi tiga node, uji multi-instance, installer terbentuk |
 
+## Perubahan setelah review keamanan
+
+Ditambahkan saat implementasi; kode adalah acuan akhirnya (`src-tauri/src/permissions/`).
+
+- `payload.deps`: id op "kepala" yang sudah dilihat pembuat (maksimal 32, urut, unik, 64 hex). Hanya op ber-scope org yang seluruh masa lalunya tersimpan. Op dengan dep yang lamport-nya ≥ lamport op itu ditolak (`bad_deps`).
+- Pencabutan hak mengalahkan op yang dimundurkan: op yang diurutkan sebelum pencabutan R, memakai hak yang dicabut R, dan tidak ada di masa lalu R, ditolak (`concurrent_with_revocation`). Pencabutan: `member_remove`, `superadmin_remove`, `team_admin_unset`, `team_member_remove` (kalau target admin), `team_delete`, `invite_revoke`. Dua pencabutan yang saling membatalkan dimenangkan superadmin yang lebih senior (pendiri, lalu urutan pengangkatan).
+- `invite_accept` wajib punya `invite_create`-nya di masa lalu (`bad_deps`). Satu orang hanya bisa memakai satu undangan sekali, supaya bukti lama tidak bisa diputar ulang untuk mengembalikan peran.
+- `invite_create.key_sig`: tanda tangan kunci undangan atas `"mira-invite-key-v1\n{org}\n{founder}\n{author}\n{invite}\n{team}\n{role}\n{projects}\n{expires}\n{0|1}\n{tag}"`. Kunci undangan tidak bisa disalin ke undangan atau organisasi lain. Laptop yang bergabung mewajibkan dirinya tercatat di `used_by` undangan dengan kunci dari kodenya.
+- Op yang lamport-nya melompat lebih dari 1.000.000 di atas lamport tertinggi yang diketahui ditolak saat diterima (`lamport_jump`). Waktu di luar 1970 sampai 9000 ditolak.
+- Jaringan: QUIC Retry untuk alamat yang belum terbukti, maksimal 16 koneksi tertunda dan 2 sesi gabung per IP, jendela aliran 1 MiB per stream dan 4 MiB per koneksi, datagram mati, maksimal 4 alamat mDNS per kunci.
+- Laptop yang dikeluarkan tidak bisa bergabung lagi dengan kode undangan (`member_removed`).
+
 ## Di luar Tahap 1
 
 - Halaman Keamanan (Tahap 6). Data dan command `get_rejected_changes` sudah ada.
