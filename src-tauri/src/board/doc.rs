@@ -8,13 +8,19 @@
 //!   project: { id, code, name, team_id (str or null) }
 //!   next_number: int
 //!   tasks: Map<task_id> {
-//!     number, title: Text, description: Text, column, rank,
+//!     nonce, number, title: Text, description: Text, column, rank,
 //!     assignee (str or null), due (str or null), priority, labels: List<str>,
 //!     created_by, created_at, updated_at, deleted,
-//!     comments: Map<comment_id> { author, at, body },
+//!     comments: Map<comment_id> { nonce, author, at, body },
 //!     activity: List<{ at, actor, kind, detail }>
 //!   }
 //! ```
+//!
+//! A task id is bound to its creator and a comment id to its author through
+//! the random `nonce` stored next to it ([`derive_task_id`],
+//! [`derive_comment_id`]), so nobody can create a task or comment at a key
+//! that someone else's task or comment could take. Tasks and comments made
+//! before ids were bound have no nonce; they are still read normally.
 //!
 //! Mutations only stage operations; `store::commit_local` turns them into one
 //! signed change. Reads are lenient: a document merged from other laptops may
@@ -139,6 +145,36 @@ pub fn random_id() -> String {
     let mut b = [0u8; 16];
     OsRng.fill_bytes(&mut b);
     hex::encode(b)
+}
+
+/// A task id bound to its creator: the first 32 hex characters of BLAKE3
+/// over `mira-task-v1`, creator and nonce, separated by newlines.
+pub fn derive_task_id(created_by: &str, nonce: &str) -> String {
+    bound_id("mira-task-v1", created_by, nonce)
+}
+
+/// A comment id bound to its author, like [`derive_task_id`] with
+/// `mira-comment-v1`.
+pub fn derive_comment_id(author: &str, nonce: &str) -> String {
+    bound_id("mira-comment-v1", author, nonce)
+}
+
+fn bound_id(domain: &str, who: &str, nonce: &str) -> String {
+    let input = format!("{domain}
+{who}
+{nonce}");
+    blake3::hash(input.as_bytes()).to_hex()[..32].to_owned()
+}
+
+/// Whether `id` is the bound id of `who` and `nonce` (32 hex) under
+/// `derive` ([`derive_task_id`] or [`derive_comment_id`]).
+pub fn is_bound_id(
+    derive: fn(&str, &str) -> String,
+    id: &str,
+    who: &str,
+    nonce: Option<&str>,
+) -> bool {
+    nonce.is_some_and(|n| crate::org::is_lower_hex(n, 32) && derive(who, n) == id)
 }
 
 fn am(err: AutomergeError) -> AppError {
@@ -353,7 +389,8 @@ impl BoardDoc {
                 && is_str("created_by")
                 && is_str("created_at")
                 && is_str("updated_at")
-                && matches!(f("deleted"), Some(Field::Bool(_)));
+                && matches!(f("deleted"), Some(Field::Bool(_)))
+                && matches!(f("nonce"), None | Some(Field::Str(_)));
             if !fields_ok {
                 return bad("isian wajib hilang atau jenisnya salah");
             }
@@ -364,6 +401,17 @@ impl BoardDoc {
                 Some((_, true)) if !deleted => return bad("task yang dihapus dimunculkan lagi"),
                 None if created_by != author => {
                     return bad("task baru dibuat atas nama laptop lain");
+                }
+                // Also checked by `rules::check_new_authorship`; failing here
+                // lets `apply_remote` restore the document.
+                None if !is_bound_id(
+                    derive_task_id,
+                    &id,
+                    &created_by,
+                    self.str(&t, "nonce").as_deref(),
+                ) =>
+                {
+                    return bad("kode task baru tidak cocok dengan pembuatnya");
                 }
                 _ => {}
             }
@@ -441,12 +489,14 @@ impl BoardDoc {
             .max();
         let rank = rank::between(last_rank, None).unwrap_or_else(|| "V".to_owned());
 
-        let id = random_id();
+        let nonce = random_id();
+        let id = derive_task_id(stamp.actor, &nonce);
         let d = &mut self.doc;
         d.put(ROOT, "next_number", number + 1).map_err(am)?;
         let t = d
             .put_object(&tasks, id.as_str(), ObjType::Map)
             .map_err(am)?;
+        d.put(&t, "nonce", nonce.as_str()).map_err(am)?;
         d.put(&t, "number", number).map_err(am)?;
         let title = d.put_object(&t, "title", ObjType::Text).map_err(am)?;
         d.splice_text(&title, 0, 0, &init.title).map_err(am)?;
@@ -487,6 +537,31 @@ impl BoardDoc {
             .next_number()?
             .max(max_number.saturating_add(1))
             .clamp(1, MAX_TASK_NUMBER))
+    }
+
+    /// [`BoardDoc::fresh_number`] as the document was at `heads` (changes it
+    /// holds), so every laptop computes the same value for a change judged
+    /// against its dependencies.
+    pub fn fresh_number_at(&self, heads: &[ChangeHash]) -> i64 {
+        let d = &self.doc;
+        let int = |obj: &ObjId, key: &str| -> Option<i64> {
+            d.get_at(obj, key, heads).ok().flatten().and_then(|(v, _)| v.as_i64())
+        };
+        let max_number = match d.get_at(ROOT, "tasks", heads) {
+            Ok(Some((Value::Object(ObjType::Map), tasks))) => d
+                .keys_at(&tasks, heads)
+                .filter_map(|id| match d.get_at(&tasks, id.as_str(), heads) {
+                    Ok(Some((Value::Object(_), t))) => int(&t, "number"),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0),
+            _ => 0,
+        };
+        int(&ROOT, "next_number")
+            .unwrap_or(1)
+            .max(max_number.saturating_add(1))
+            .clamp(1, MAX_TASK_NUMBER)
     }
 
     /// Gives a live task `new_number` (chosen by `numbers.rs`), raises
@@ -660,11 +735,13 @@ impl BoardDoc {
                 .put_object(&t, "comments", ObjType::Map)
                 .map_err(am)?,
         };
-        let comment_id = random_id();
+        let nonce = random_id();
+        let comment_id = derive_comment_id(stamp.actor, &nonce);
         let c = self
             .doc
             .put_object(&comments, comment_id.as_str(), ObjType::Map)
             .map_err(am)?;
+        self.doc.put(&c, "nonce", nonce.as_str()).map_err(am)?;
         self.doc.put(&c, "author", stamp.actor).map_err(am)?;
         self.doc.put(&c, "at", stamp.at).map_err(am)?;
         self.doc.put(&c, "body", body).map_err(am)?;
@@ -1217,6 +1294,103 @@ mod tests {
         assert_eq!(a.live_task(&id).unwrap().number, 5);
         assert_eq!(a.project().name, "Proyek Baru");
         assert_eq!(a.fresh_number().unwrap(), 6);
+    }
+
+    fn nonce(d: &BoardDoc, obj: &ObjId) -> Option<String> {
+        d.str(obj, "nonce")
+    }
+
+    #[test]
+    fn task_and_comment_ids_are_bound_to_their_author() {
+        let mut d = new_doc();
+        let id = d.create_task(stamp("t1"), init("a")).unwrap();
+        let cid = d.add_comment(stamp("t2"), &id, "halo").unwrap();
+        let t = d.task_obj(&id).unwrap();
+        let n = nonce(&d, &t).unwrap();
+        assert!(crate::org::is_lower_hex(&n, 32));
+        assert_eq!(id, derive_task_id("aa", &n));
+        let c = d.obj(&d.obj(&t, "comments").unwrap(), &cid).unwrap();
+        let cn = nonce(&d, &c).unwrap();
+        assert_eq!(cid, derive_comment_id("aa", &cn));
+        assert_ne!(n, cn);
+        assert!(is_bound_id(derive_task_id, &id, "aa", Some(&n)));
+        assert!(!is_bound_id(derive_task_id, &id, "bb", Some(&n)));
+        assert!(!is_bound_id(derive_comment_id, &id, "aa", Some(&n)));
+        assert!(!is_bound_id(derive_task_id, &id, "aa", None));
+        // Fixed inputs give a fixed id, on every laptop and version.
+        assert_eq!(derive_task_id("aa", "00"), derive_task_id("aa", "00"));
+        assert_eq!(derive_task_id("aa", "00").len(), 32);
+        assert_ne!(derive_task_id("aa", "00"), derive_comment_id("aa", "00"));
+    }
+
+    #[test]
+    fn a_remote_task_at_an_unbound_id_breaks_the_shape() {
+        let mut a = new_doc();
+        let base = a.heads();
+        let b_hex = hex::encode(B);
+        let wrong: [(&str, Option<ScalarValue>); 3] = [
+            ("nonce lain", Some(random_id().as_str().into())),
+            ("tanpa nonce", None),
+            ("nonce bukan teks", Some(5_i64.into())),
+        ];
+        for (label, value) in wrong {
+            let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+            let id = b
+                .create_task(Stamp { actor: &b_hex, at: "t1" }, init("x"))
+                .unwrap();
+            let t = b.task_obj(&id).unwrap();
+            match value {
+                Some(v) => b.doc.put(&t, "nonce", v).unwrap(),
+                None => b.doc.delete(&t, "nonce").unwrap(),
+            }
+            b.commit(0).unwrap();
+            let c = b.changes_after(&base).remove(0);
+            let err = a.apply_remote(c, &b_hex).unwrap_err();
+            assert_eq!(err.0, "board_invalid_doc", "{label}: {err:?}");
+            assert_eq!(a.task(&id).unwrap(), None, "{label}: restored");
+        }
+        // The bound id is accepted.
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        let id = b
+            .create_task(Stamp { actor: &b_hex, at: "t1" }, init("x"))
+            .unwrap();
+        b.commit(0).unwrap();
+        a.apply_remote(b.changes_after(&base).remove(0), &b_hex)
+            .unwrap();
+        assert!(a.live_task(&id).is_ok());
+    }
+
+    #[test]
+    fn tasks_and_comments_without_a_nonce_are_still_read() {
+        let mut d = new_doc();
+        let id = d.create_task(stamp("t1"), init("lama")).unwrap();
+        let cid = d.add_comment(stamp("t2"), &id, "komentar lama").unwrap();
+        let t = d.task_obj(&id).unwrap();
+        let c = d.obj(&d.obj(&t, "comments").unwrap(), &cid).unwrap();
+        d.doc.delete(&t, "nonce").unwrap();
+        d.doc.delete(&c, "nonce").unwrap();
+        let task = d.live_task(&id).unwrap();
+        assert_eq!(task.title, "lama");
+        assert_eq!(task.comments[0].body, "komentar lama");
+    }
+
+    #[test]
+    fn fresh_number_at_reads_the_past() {
+        let mut d = new_doc();
+        let first = d.heads();
+        assert_eq!(d.fresh_number_at(&first), 1);
+        let a = d.create_task(stamp("t1"), init("a")).unwrap();
+        d.create_task(stamp("t1"), init("b")).unwrap();
+        d.commit(0).unwrap();
+        let second = d.heads();
+        d.renumber_task(stamp("t2"), &a, 40, "PA-1").unwrap();
+        d.doc.put(ROOT, "next_number", 3_i64).unwrap();
+        d.commit(0).unwrap();
+        let third = d.heads();
+        assert_eq!(d.fresh_number_at(&first), 1);
+        assert_eq!(d.fresh_number_at(&second), 3);
+        assert_eq!(d.fresh_number_at(&third), 41);
+        assert_eq!(d.fresh_number_at(&third), d.fresh_number().unwrap());
     }
 
     #[test]
