@@ -1,4 +1,4 @@
-import { IconKeyboard, IconPlus } from "@tabler/icons-react";
+import { IconEye, IconKeyboard, IconPencil, IconPlus } from "@tabler/icons-react";
 import {
   Fragment,
   useCallback,
@@ -13,14 +13,16 @@ import {
   type Ref,
 } from "react";
 import { toAppError, type AppError } from "../../api";
-import { boardApi, type BoardView, type ColumnId, type TaskDetail } from "../../api/board";
+import { boardApi, type BoardView, type ColumnId, type ProjectSummary, type TaskDetail } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { BoardCard } from "./BoardCard";
 import { applyMove, blockedText, locate, neighbourPlace, samePlace, type Direction, type Place } from "./boardMoves";
-import { COLUMN_NAMES } from "./format";
+import { COLUMN_NAMES, teamLabel } from "./format";
 import type { MoveOption } from "./MoveMenu";
 import { QuickAdd } from "./QuickAdd";
+import { RenameProjectDialog } from "./RenameProjectDialog";
 import { useBoardLive } from "./useBoardLive";
+import { useFocusRescue } from "./useFocusRescue";
 
 export type ProjectBoardHandle = {
   // Dipanggil setelah task dihapus dari detail task: umumkan dan siapkan fokus.
@@ -90,6 +92,7 @@ export function ProjectBoard({
   const [adding, setAdding] = useState<ColumnId | null>(null);
   const [drafts, setDrafts] = useState<Record<ColumnId, string>>(EMPTY_DRAFTS);
   const [showKeys, setShowKeys] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const [announce, setAnnounce] = useState({ text: "", n: 0 });
   const [failure, setFailure] = useState<MoveFailure | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -104,6 +107,12 @@ export function ProjectBoard({
   const keysId = useId();
   const titleId = useId();
   const { reload, setData } = live;
+  // Rekan bisa memindah atau menghapus kartu yang sedang difokus; fokus pindah ke kartu terdekat.
+  const rescueFocus = useFocusRescue(rootRef, {
+    spare: "[data-qa-open], [data-qa]",
+    fallback: headingRef,
+    paused: taskOpen,
+  });
 
   useEffect(() => {
     mounted.current = true;
@@ -300,6 +309,14 @@ export function ProjectBoard({
     setDrop((d) => (d && d.columnId === columnId ? null : d));
   }
 
+  function renamed(updated: ProjectSummary) {
+    setRenaming(false);
+    if (data) setData({ ...data, project: { ...data.project, ...updated } });
+    say(`Nama proyek diubah menjadi ${updated.name}.`);
+    void reload();
+    onProjectsChanged();
+  }
+
   async function created(task: TaskDetail) {
     say(`${task.code} dibuat di ${COLUMN_NAMES[task.columnId] ?? task.columnId}.`);
     await reload();
@@ -328,18 +345,29 @@ export function ProjectBoard({
   }
 
   const { project } = view;
+  const readOnly = !view.canCreate;
 
   return (
-    <div className="pb" ref={rootRef}>
+    <div className="pb" ref={rootRef} onFocus={rescueFocus}>
       <header className="pb-head">
         <h2 id={titleId} className="pb-title" ref={headingRef} tabIndex={-1}>
           <span className="pb-code">{project.code}</span>{" "}
           {project.name}
         </h2>
+        <span className="chip pb-team">
+          <span className="sr-only">Terlihat oleh </span>
+          {project.teamName ? teamLabel(project.teamName) : "Seluruh organisasi"}
+        </span>
         <span className="page-sub">
           {project.taskCount} task, {project.openCount} belum selesai
         </span>
         <div className="pb-actions">
+          {project.canManage && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRenaming(true)}>
+              <IconPencil size={16} aria-hidden="true" />
+              Ubah nama proyek
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-ghost btn-sm"
@@ -366,10 +394,19 @@ export function ProjectBoard({
         </div>
       </header>
 
+      {readOnly && (
+        <p className="pb-readonly">
+          <IconEye size={16} aria-hidden="true" />
+          Board ini hanya bisa dilihat. Anda bisa membuka task dan membaca komentarnya, tapi tidak bisa menambah, memindah,
+          atau mengubah apa pun.
+        </p>
+      )}
+
       <div id={keysId} className="pb-keys" hidden={!showKeys}>
         <p>
-          Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya. Alt + panah kiri atau kanan memindah kartu ke kolom
-          sebelah, Alt + panah atas atau bawah mengubah urutannya. Tombol panah empat arah di kartu membuka pilihan yang sama.
+          {readOnly
+            ? "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya."
+            : "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya. Alt + panah kiri atau kanan memindah kartu ke kolom sebelah, Alt + panah atas atau bawah mengubah urutannya. Tombol panah empat arah di kartu membuka pilihan yang sama."}
         </p>
       </div>
 
@@ -399,6 +436,7 @@ export function ProjectBoard({
             return (
               <section
                 key={col.id}
+                data-rescue-group={col.id}
                 className={`pb-col${dropHere !== null ? " pb-col-over" : ""}`}
                 aria-labelledby={`${titleId}-${col.id}`}
                 onDragOver={(e) => onDragOver(e, col.id)}
@@ -421,7 +459,7 @@ export function ProjectBoard({
                     return (
                       <Fragment key={task.id}>
                         {marker && <li className="pb-drop" aria-hidden="true" />}
-                        <li>
+                        <li data-rescue={task.id}>
                           <BoardCard
                             task={task}
                             done={done}
@@ -460,6 +498,10 @@ export function ProjectBoard({
           })}
         </div>
       </div>
+
+      {project.canManage && (
+        <RenameProjectDialog open={renaming} onOpenChange={setRenaming} project={project} onRenamed={renamed} />
+      )}
     </div>
   );
 }

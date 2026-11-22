@@ -1,7 +1,8 @@
 import { IconListCheck, IconPlus } from "@tabler/icons-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { boardApi, type ProjectSummary } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { teamLabel } from "./format";
 import { MyTasks } from "./MyTasks";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { ProjectBoard, type ProjectBoardHandle } from "./ProjectBoard";
@@ -45,13 +46,34 @@ export function BoardScreen() {
   // Proyek yang judul board-nya difokus begitu tampil (setelah proyek dibuat).
   const [focusProject, setFocusProject] = useState<string | null>(null);
   const boardRef = useRef<ProjectBoardHandle>(null);
+  const lostHeadingRef = useRef<HTMLHeadingElement>(null);
   const { reload, setData } = live;
 
-  // Pilihan yang tersimpan bisa menunjuk proyek yang sudah tidak ada.
+  // Proyek yang sedang dibuka lalu hilang dari daftar setelah muat ulang
+  // (misalnya saya dikeluarkan dari timnya). Dicek saat daftar berganti,
+  // sebelum render, supaya board proyek lain tidak tampil sekejap.
+  const [lost, setLost] = useState<ProjectSummary | null>(null);
+  const [seen, setSeen] = useState<ProjectSummary[] | null>(null);
+  if (projects !== seen) {
+    setSeen(projects);
+    if (seen && projects && selected !== MY_TASKS) {
+      const shown = (selected ? seen.find((p) => p.id === selected) : undefined) ?? (lost?.id === selected ? null : seen[0]);
+      if (shown && !projects.some((p) => p.id === shown.id)) {
+        setLost(shown);
+        setSelected(shown.id);
+      }
+    }
+  }
+
+  // Pilihan yang tersimpan bisa menunjuk proyek yang sudah tidak ada; yang
+  // baru saja hilang tetap dipilih supaya penyebabnya bisa dijelaskan.
   const current =
     selected === MY_TASKS
       ? MY_TASKS
-      : projects?.find((p) => p.id === selected)?.id ?? projects?.[0]?.id ?? null;
+      : (projects?.find((p) => p.id === selected)?.id ??
+        (lost && lost.id === selected ? lost.id : null) ??
+        projects?.[0]?.id ??
+        null);
 
   const select = useCallback((value: string) => {
     setSelected(value);
@@ -67,6 +89,15 @@ export function BoardScreen() {
   const headingFocused = useCallback(() => setFocusProject(null), []);
 
   const currentProject = projects?.find((p) => p.id === current) ?? null;
+  const lostShown = projects && lost && current === lost.id && !currentProject ? lost : null;
+  const nextProject = projects?.[0] ?? null;
+
+  // Fokus yang tertinggal di board yang hilang dipindah ke penjelasannya.
+  useEffect(() => {
+    if (!lostShown) return;
+    const active = document.activeElement;
+    if (!active || active === document.body) lostHeadingRef.current?.focus();
+  }, [lostShown]);
 
   return (
     <main className="bd" aria-labelledby="page-title">
@@ -143,7 +174,9 @@ export function BoardScreen() {
             Memuat board...
           </p>
         )}
-        {projects && current === MY_TASKS && <MyTasks onOpenTask={(projectId, taskId) => setOpenTask({ projectId, taskId })} />}
+        {projects && current === MY_TASKS && (
+          <MyTasks taskOpen={!!openTask} onOpenTask={(projectId, taskId) => setOpenTask({ projectId, taskId })} />
+        )}
         {projects && current !== MY_TASKS && currentProject && (
           <ProjectBoard
             key={currentProject.id}
@@ -157,7 +190,29 @@ export function BoardScreen() {
             onProjectsChanged={projectsChanged}
           />
         )}
-        {projects && projects.length === 0 && current !== MY_TASKS && (
+        {lostShown && (
+          <div className="bd-empty">
+            <h2 className="bd-empty-title" ref={lostHeadingRef} tabIndex={-1}>
+              Proyek {lostShown.code} {lostShown.name} tidak tersedia lagi
+            </h2>
+            <p>
+              {lostShown.teamName
+                ? `Proyek ini milik ${teamLabel(lostShown.teamName)} dan tidak ada lagi di daftar Anda. Ini terjadi kalau Anda dikeluarkan dari tim itu, atau akses Tamu Anda ke proyek ini dicabut.`
+                : "Proyek ini tidak ada lagi di daftar Anda. Ini terjadi kalau peran Anda di organisasi berubah, misalnya menjadi Tamu."}
+            </p>
+            <p>
+              {lostShown.teamName
+                ? "Kalau masih perlu, minta admin tim itu menambahkan Anda lagi."
+                : "Kalau masih perlu, tanyakan ke superadmin organisasi."}
+            </p>
+            {nextProject && (
+              <button type="button" className="btn" onClick={() => select(nextProject.id)}>
+                Buka {nextProject.code} {nextProject.name}
+              </button>
+            )}
+          </div>
+        )}
+        {projects && projects.length === 0 && current !== MY_TASKS && !lostShown && (
           <div className="bd-empty">
             <h2 className="bd-empty-title">Belum ada proyek</h2>
             <p>

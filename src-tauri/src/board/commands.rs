@@ -94,6 +94,7 @@ pub fn list_projects(state: &MiraState) -> AppResult<Vec<ProjectSummary>> {
         let c = ctx(core, policy, dir);
         store::projects(&core.db)?
             .iter()
+            .filter(|row| c.can_view(&row.id))
             .map(|row| c.summary(row))
             .collect()
     })
@@ -128,9 +129,22 @@ pub fn create_project(
     Ok(summary)
 }
 
+/// Refuses projects the viewer may not see (for example after leaving the
+/// team): the local copy stays but is not shown.
+fn require_view(core: &Core, policy: &dyn BoardPolicy, project_id: &str) -> AppResult<()> {
+    policy.check(
+        &core.db,
+        core.identity.public_key_hex(),
+        &BoardAction::ViewProject {
+            project_id: project_id.to_owned(),
+        },
+    )
+}
+
 pub fn get_board(state: &MiraState, project_id: &str) -> AppResult<BoardView> {
     with_ctx(state, |core, policy, dir| {
         let row = store::project(&core.db, project_id)?;
+        require_view(core, policy, project_id)?;
         let doc = store::load_doc(&core.db, project_id, &store::actor_of(&core.identity))?;
         ctx(core, policy, dir).board(&row, &doc)
     })
@@ -182,6 +196,7 @@ pub fn create_task(
 pub fn get_task(state: &MiraState, project_id: &str, task_id: &str) -> AppResult<TaskDetail> {
     with_ctx(state, |core, policy, dir| {
         let row = store::project(&core.db, project_id)?;
+        require_view(core, policy, project_id)?;
         let doc = store::load_doc(&core.db, project_id, &store::actor_of(&core.identity))?;
         let task = doc.live_task(task_id)?;
         Ok(ctx(core, policy, dir).detail(&row, &task))

@@ -574,6 +574,35 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Judul kolom Tim saat belum ada select yang bisa diberi label (memuat, error, tanpa izin). */
+.np-label {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* Siapa yang melihat board ini: nama tim atau seluruh organisasi. Teks, bukan warna. */
+.pb-team {
+  font-weight: 600;
+}
+
+/* Board baca-saja (Tamu). Latar --card seperti panel pintasan, teks --text. */
+.pb-readonly {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pb-readonly svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-sec);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bd-link,
   .tc {

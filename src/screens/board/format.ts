@@ -83,3 +83,17 @@ export function suggestCode(name: string): string {
 }
 
 export const PROJECT_CODE_RE = /^[A-Z][A-Z0-9]{1,5}$/;
+
+export const NAME_RULE = "Nama proyek harus 2 sampai 80 karakter.";
+
+// Aturan nama proyek, sama untuk Proyek baru dan Ubah nama proyek. Inti Rust memeriksa ulang.
+export function projectNameProblem(clean: string): string | null {
+  if (!clean) return "Tulis nama proyek dulu.";
+  const length = Array.from(clean).length;
+  return length < 2 || length > 80 ? NAME_RULE : null;
+}
+
+// Nama tim untuk kalimat: "Tim Keuangan". Nama yang sudah diawali "Tim" tidak diberi awalan lagi.
+export function teamLabel(name: string): string {
+  return /^tim\b/i.test(name.trim()) ? name.trim() : `Tim ${name.trim()}`;
+}

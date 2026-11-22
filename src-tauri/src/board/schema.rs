@@ -50,3 +50,42 @@ CREATE TABLE board_reminders_sent (
     PRIMARY KEY (project_id, task_id, kind, due)
 ) STRICT;
 "#;
+
+/// Board sync with other laptops (docs/plans/sinkron-board.md). Appended as
+/// one entry at the end of `db::migrations::MIGRATIONS` (v6 on this branch;
+/// the final number is decided at merge).
+///
+/// - `board_changes.record_id`: BLAKE3 of the change's `FeatureRecord` body,
+///   filled for new rows and backfilled on first use for older rows.
+/// - `board_projects.doc_code`: the code written in the project document.
+///   `code` is the code shown on this laptop, which differs only when two
+///   projects want the same code (see `store::refresh_codes`).
+/// - `board_pending`: received changes not applied yet (missing parent
+///   change, unknown project, or author without the right as far as this
+///   laptop knows). Retried later; never sent on.
+/// - `board_rejected`: ids of records refused for good (bad signature,
+///   format, document shape), so they are not downloaded again.
+pub const BOARD_SYNC_SCHEMA: &str = r#"
+ALTER TABLE board_changes ADD COLUMN record_id TEXT;
+CREATE UNIQUE INDEX board_changes_record ON board_changes (record_id);
+
+ALTER TABLE board_projects ADD COLUMN doc_code TEXT NOT NULL DEFAULT '';
+UPDATE board_projects SET doc_code = code;
+
+CREATE TABLE board_pending (
+    record_id     TEXT PRIMARY KEY CHECK (length(record_id) = 64),
+    project_id    TEXT NOT NULL,
+    hash          TEXT NOT NULL,
+    author        TEXT NOT NULL,
+    body          TEXT NOT NULL,
+    reason        TEXT NOT NULL CHECK (reason IN ('deps', 'project', 'rights')),
+    received_from TEXT,
+    received_at   TEXT NOT NULL
+) STRICT;
+CREATE INDEX board_pending_project ON board_pending (project_id);
+
+CREATE TABLE board_rejected (
+    record_id TEXT PRIMARY KEY CHECK (length(record_id) = 64),
+    at        TEXT NOT NULL
+) STRICT;
+"#;

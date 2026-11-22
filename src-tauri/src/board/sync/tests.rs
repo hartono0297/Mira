@@ -317,10 +317,19 @@ fn bad_signature_and_non_member_are_rejected_and_logged() {
         signed.clone(),
     )
     .unwrap();
-    assert_eq!((r.applied, r.rejected), (0, 1));
-    assert_eq!(rejected(&a.conn), ["board_forbidden"]);
+    // Held, not refused for good: the op that admits the author may still
+    // be on its way. Held changes are not logged here (the caller logs once).
+    assert_eq!((r.applied, r.rejected, r.held), (0, 0, 1));
+    assert!(matches!(
+        r.outcome(&signed[0].hash),
+        Some(ChangeOutcome::Held {
+            code: "board_forbidden",
+            ..
+        })
+    ));
+    assert!(rejected(&a.conn).is_empty());
 
-    // A removed member is refused too; a guest as well.
+    // A removed member is held too; a guest as well.
     add_member(&a.conn, &me, "Orang Luar", "removed");
     let r = apply_remote_changes(
         &mut a.conn,
@@ -330,7 +339,7 @@ fn bad_signature_and_non_member_are_rejected_and_logged() {
         signed.clone(),
     )
     .unwrap();
-    assert_eq!(r.rejected, 1);
+    assert_eq!(r.held, 1);
     add_member(&a.conn, &me, "Orang Luar", "guest");
     let r = apply_remote_changes(
         &mut a.conn,
@@ -340,7 +349,7 @@ fn bad_signature_and_non_member_are_rejected_and_logged() {
         signed.clone(),
     )
     .unwrap();
-    assert_eq!(r.rejected, 1);
+    assert_eq!(r.held, 1);
     // Once a member, the same change is accepted.
     add_member(&a.conn, &me, "Orang Luar", "member");
     let r = apply_remote_changes(&mut a.conn, &LocalRolePolicy, &p.id, Some(&me), signed).unwrap();
@@ -367,17 +376,33 @@ fn import_requires_a_creator_allowed_to_create_projects() {
         .value;
     add_member(&a.conn, &b_admin.pk(), "Budi", "member");
     let changes = stored_changes(&b_admin.conn, &p.id).unwrap();
-    let err = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap_err();
-    assert_eq!(err.code(), "forbidden");
+    let root = changes[0].hash.clone();
+    let r = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap();
+    assert!(matches!(
+        r.outcome(&root),
+        Some(ChangeOutcome::Held {
+            code: "board_forbidden",
+            ..
+        })
+    ));
+    assert_eq!(r.applied, 0);
     assert!(store::project(&a.conn, &p.id).is_err());
-    assert_eq!(rejected(&a.conn), ["board_forbidden"]);
+    assert!(rejected(&a.conn).is_empty());
 
-    // Code already used locally.
-    create_project(&mut a.conn, &a.id, "Lokal", "PG", None).unwrap();
+    // Code already used locally: both projects stay, with distinct codes.
+    let local = create_project(&mut a.conn, &a.id, "Lokal", "PG", None)
+        .unwrap()
+        .value;
     add_member(&a.conn, &b_admin.pk(), "Budi", "superadmin");
     let changes = stored_changes(&b_admin.conn, &p.id).unwrap();
-    let err = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap_err();
-    assert_eq!(err.code(), "invalid_input");
+    let r = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap();
+    assert_eq!(r.applied, 1);
+    let mut codes = vec![
+        store::project(&a.conn, &p.id).unwrap().code,
+        store::project(&a.conn, &local.id).unwrap().code,
+    ];
+    codes.sort();
+    assert_eq!(codes, ["PG", "PG2"]);
 
     // Without the first change the project cannot be imported.
     let p2 = create_project(&mut a.conn, &a.id, "Delta", "PD", None)
@@ -394,8 +419,10 @@ fn import_requires_a_creator_allowed_to_create_projects() {
     });
     let mut changes = stored_changes(&a.conn, &p2.id).unwrap();
     changes.remove(0);
-    let err = import_project(&mut b.conn, &LocalRolePolicy, &p2.id, None, changes).unwrap_err();
-    assert_eq!(err.code(), "not_found");
+    let r = import_project(&mut b.conn, &LocalRolePolicy, &p2.id, None, changes).unwrap();
+    assert_eq!((r.applied, r.missing_deps), (0, 1));
+    assert_eq!(r.outcomes[0].1, ChangeOutcome::NoProject);
+    assert!(store::project(&b.conn, &p2.id).is_err());
 }
 
 #[test]
@@ -669,8 +696,10 @@ fn strangers_are_refused_before_parsing_and_batches_are_capped() {
         bytes: junk,
     };
     let r = apply_remote_changes(&mut b.conn, &LocalRolePolicy, &p.id, None, vec![sc]).unwrap();
-    assert_eq!(r.rejected, 1);
-    assert_eq!(rejected(&b.conn), ["board_forbidden"]);
+    // Held without being parsed (junk bytes would otherwise be rejected as
+    // bad format); held changes are logged by the caller, not here.
+    assert_eq!((r.held, r.rejected), (1, 0));
+    assert!(rejected(&b.conn).is_empty());
 
     // Over the count limit: the rest is deferred, not dropped silently.
     for i in 0..3 {
@@ -836,6 +865,9 @@ proptest! {
         ops_b in proptest::collection::vec(op(), 0..12),
     ) {
         let (mut a, mut b) = pair();
+        // Both may delete any task (superadmins of a project without team).
+        add_member(&a.conn, &b.pk(), "Budi", "superadmin");
+        add_member(&b.conn, &b.pk(), "Budi", "superadmin");
         let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None).unwrap().value;
         run(&mut a, &p.id, &Op::Create(0, 0));
         for o in &shared {

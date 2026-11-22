@@ -1,10 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardView, ColumnId, ProjectSummary, TaskCard, TaskDetail as TaskDetailData } from "../../api/board";
 import { BOARD_SELECTION_KEY, BoardScreen, MY_TASKS } from "./BoardScreen";
+import { directory, member, TEAM_1 } from "../../test/fixtures";
 import { applyMove } from "./boardMoves";
-import { CODE_RULE } from "./NewProjectDialog";
+import { NAME_RULE } from "./format";
+import { CODE_RULE, NO_TEAM_HINT } from "./NewProjectDialog";
 
 const board = vi.hoisted(() => ({
   listProjects: vi.fn(),
@@ -12,13 +14,33 @@ const board = vi.hoisted(() => ({
   getBoard: vi.fn(),
   createTask: vi.fn(),
   moveTask: vi.fn(),
+  updateProject: vi.fn(),
 }));
+
+// Event board (lokal atau dari laptop lain) dipicu sendiri oleh tes lewat boardEvent().
+const listeners = vi.hoisted(() => new Set<() => void>());
 
 vi.mock("../../api/board", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/board")>()),
   boardApi: board,
-  subscribeBoard: () => () => {},
+  subscribeBoard: (handler: () => void) => {
+    listeners.add(handler);
+    return () => listeners.delete(handler);
+  },
 }));
+
+const org = vi.hoisted(() => ({ getDirectory: vi.fn() }));
+
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return { ...actual, api: { ...actual.api, getDirectory: org.getDirectory } };
+});
+
+async function boardEvent() {
+  await act(async () => {
+    listeners.forEach((h) => h());
+  });
+}
 
 // Detail task dan Task saya dibuat terpisah dan punya tes sendiri.
 const fake = vi.hoisted(() => ({ removeTask: (_taskId: string) => {} }));
@@ -65,7 +87,7 @@ const P2 = "2".repeat(32);
 const ME = "a".repeat(64);
 
 function project(id: string, code: string, name: string, extra: Partial<ProjectSummary> = {}): ProjectSummary {
-  return { id, code, name, teamId: null, openCount: 2, taskCount: 3, canManage: true, ...extra };
+  return { id, code, name, teamId: null, teamName: null, openCount: 2, taskCount: 3, canManage: true, ...extra };
 }
 
 const PROJECTS = [project(P1, "PA", "Proyek Alfa"), project(P2, "KB", "Kantor Baru", { openCount: 0, taskCount: 0 })];
@@ -139,6 +161,7 @@ function detail(card: TaskCard): TaskDetailData {
     activity: [],
     canEdit: true,
     canDelete: true,
+    canComment: true,
   };
 }
 
@@ -148,6 +171,9 @@ function emptyBoard(): BoardView {
 
 beforeEach(() => {
   window.localStorage.clear();
+  listeners.clear();
+  org.getDirectory.mockReset().mockResolvedValue(directory());
+  board.updateProject.mockReset();
   current = view();
   fake.removeTask = (id) => {
     current = { ...current, columns: current.columns.map((c) => ({ ...c, tasks: c.tasks.filter((t) => t.id !== id) })) };
@@ -316,7 +342,8 @@ describe("Board: proyek baru", () => {
     await user.type(code, "lku");
     board.listProjects.mockResolvedValue([...PROJECTS, created]);
     await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
-    expect(board.createProject).toHaveBeenCalledWith("Laporan Keuangan Utama", "LKU", null);
+    // Bawaan: tim pertama yang boleh dipilih.
+    expect(board.createProject).toHaveBeenCalledWith("Laporan Keuangan Utama", "LKU", TEAM_1);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(window.localStorage.getItem(BOARD_SELECTION_KEY)).toBe(created.id);
     expect(screen.getByRole("button", { name: /Laporan Keuangan/ })).toHaveAttribute("aria-current", "page");
@@ -554,5 +581,232 @@ describe("Board: pindah task", () => {
     fireEvent.drop(done, { dataTransfer });
     await waitFor(() => expect(board.moveTask).toHaveBeenCalledWith(P1, taskId(2), "done", 1));
     expect(await screen.findByRole("heading", { name: colName("Selesai", 2) })).toBeInTheDocument();
+  });
+});
+
+describe("Board: muat ulang saat board berubah", () => {
+  it("event board memuat ulang tanpa menimpa isian Tambah task yang sedang diketik", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const todo = column("To do");
+    await user.click(within(todo).getByRole("button", { name: "Tambah task" }));
+    const input = within(todo).getByLabelText("Judul task baru di To do");
+    await user.type(input, "Draf dari saya");
+
+    current = {
+      ...current,
+      columns: current.columns.map((c) =>
+        c.id === "doing" ? { ...c, tasks: [...c.tasks, card(9, "doing", { title: "Task dari rekan" })] } : c,
+      ),
+    };
+    const calls = board.getBoard.mock.calls.length;
+    await boardEvent();
+
+    expect(await screen.findByRole("button", { name: "Task dari rekan" })).toBeInTheDocument();
+    expect(board.getBoard.mock.calls.length).toBeGreaterThan(calls);
+    expect(within(column("To do")).getByLabelText("Judul task baru di To do")).toHaveValue("Draf dari saya");
+    expect(within(column("To do")).getByLabelText("Judul task baru di To do")).toHaveFocus();
+    expect(board.createTask).not.toHaveBeenCalled();
+  });
+
+  it("kartu yang difokus dihapus rekan: fokus pindah ke kartu sebelahnya", async () => {
+    await renderBoard();
+    act(() => screen.getByRole("button", { name: "Task nomor 1" }).focus());
+    fake.removeTask(taskId(1));
+    await boardEvent();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Task nomor 1" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Task nomor 2" })).toHaveFocus();
+  });
+
+  it("kartu yang difokus dipindah rekan: fokus ikut ke tempat barunya", async () => {
+    await renderBoard();
+    act(() => screen.getByRole("button", { name: "Task nomor 2" }).focus());
+    current = applyMove(current, taskId(2), { columnId: "done", index: 0 });
+    await boardEvent();
+    await waitFor(() => expect(within(column("Selesai")).getByRole("button", { name: "Task nomor 2" })).toHaveFocus());
+  });
+
+  it("proyek yang dibuka hilang dari daftar: keadaan kosong menjelaskan penyebabnya", async () => {
+    const user = userEvent.setup();
+    const teamProject = project(P1, "PA", "Proyek Alfa", { teamId: TEAM_1, teamName: "Keuangan" });
+    board.listProjects.mockResolvedValue([teamProject, PROJECTS[1]]);
+    current = view({ project: teamProject });
+    await renderBoard();
+
+    board.listProjects.mockResolvedValue([PROJECTS[1]]);
+    await boardEvent();
+
+    expect(await screen.findByRole("heading", { name: "Proyek PA Proyek Alfa tidak tersedia lagi" })).toBeInTheDocument();
+    expect(screen.getByText(/milik Tim Keuangan/)).toBeInTheDocument();
+    expect(screen.getByText(/dikeluarkan dari tim itu/)).toBeInTheDocument();
+    // Board proyek lain tidak dibuka diam-diam.
+    expect(screen.queryByRole("heading", { level: 2, name: /^KB/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Buka KB Kantor Baru" }));
+    expect(await screen.findByRole("heading", { level: 2, name: /Kantor Baru/ })).toBeInTheDocument();
+  });
+
+  it("menampilkan siapa yang melihat board: tim atau seluruh organisasi", async () => {
+    await renderBoard();
+    expect(screen.getByText("Seluruh organisasi")).toBeInTheDocument();
+  });
+});
+
+describe("Board: Tamu hanya melihat", () => {
+  it("tanpa tambah, pindah, seret, atau Alt+panah, dengan satu keterangan", async () => {
+    const user = userEvent.setup();
+    current = view({ canCreate: false, project: { ...PROJECTS[0], canManage: false } });
+    await renderBoard();
+    expect(screen.getByText(/Board ini hanya bisa dilihat/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Task baru" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tambah task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Pindahkan/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ubah nama proyek" })).not.toBeInTheDocument();
+    const art = document.querySelector<HTMLElement>(`[data-card="${taskId(1)}"]`)!;
+    expect(art).toHaveAttribute("draggable", "false");
+
+    screen.getByRole("button", { name: "Task nomor 1" }).focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    expect(board.moveTask).not.toHaveBeenCalled();
+
+    // Kartu tetap bisa dibuka untuk dibaca.
+    await user.click(screen.getByRole("button", { name: "Task nomor 1" }));
+    expect(screen.getByRole("dialog", { name: "Detail task tiruan" })).toBeInTheDocument();
+  });
+});
+
+describe("Board: ubah nama proyek", () => {
+  it("memeriksa panjang nama, lalu menyimpan dan memperbarui judul board", async () => {
+    const user = userEvent.setup();
+    board.updateProject.mockImplementation(async (_id: string, name: string) => {
+      const renamed = { ...PROJECTS[0], name };
+      current = { ...current, project: renamed };
+      board.listProjects.mockResolvedValue([renamed, PROJECTS[1]]);
+      return renamed;
+    });
+    await renderBoard();
+    await user.click(screen.getByRole("button", { name: "Ubah nama proyek" }));
+    const dlg = screen.getByRole("dialog", { name: "Ubah nama proyek" });
+    const input = within(dlg).getByLabelText("Nama proyek");
+    expect(input).toHaveValue("Proyek Alfa");
+
+    await user.clear(input);
+    await user.type(input, "A");
+    await user.click(within(dlg).getByRole("button", { name: "Simpan nama" }));
+    expect(within(dlg).getByText(NAME_RULE)).toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(board.updateProject).not.toHaveBeenCalled();
+
+    await user.clear(input);
+    await user.type(input, "Proyek Alfa Baru");
+    await user.click(within(dlg).getByRole("button", { name: "Simpan nama" }));
+    expect(board.updateProject).toHaveBeenCalledWith(P1, "Proyek Alfa Baru");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByRole("heading", { level: 2, name: /Proyek Alfa Baru/ })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ubah nama proyek" })).toHaveFocus());
+  });
+
+  it("error dari inti Rust ditampilkan di dialog", async () => {
+    const user = userEvent.setup();
+    board.updateProject.mockRejectedValue({ code: "forbidden", message: "Hanya admin tim yang bisa mengubah nama." });
+    await renderBoard();
+    await user.click(screen.getByRole("button", { name: "Ubah nama proyek" }));
+    const dlg = screen.getByRole("dialog", { name: "Ubah nama proyek" });
+    await user.type(within(dlg).getByLabelText("Nama proyek"), " 2");
+    await user.click(within(dlg).getByRole("button", { name: "Simpan nama" }));
+    expect(await within(dlg).findByText("Anda tidak punya izin mengubah nama proyek ini")).toBeInTheDocument();
+    expect(within(dlg).getByText("Hanya admin tim yang bisa mengubah nama.")).toBeInTheDocument();
+  });
+
+  it("tanpa izin mengelola proyek: tombol tidak ada", async () => {
+    current = view({ project: { ...PROJECTS[0], canManage: false } });
+    await renderBoard();
+    expect(screen.queryByRole("button", { name: "Ubah nama proyek" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Board: proyek baru dan tim", () => {
+  async function openNewProject(user: ReturnType<typeof userEvent.setup>) {
+    await renderBoard();
+    await user.click(screen.getByRole("button", { name: "Proyek baru" }));
+    return screen.getByRole("dialog", { name: "Proyek baru" });
+  }
+
+  it("superadmin di satu tim: tim itu jadi bawaan, tanpa tim tetap bisa dipilih", async () => {
+    const user = userEvent.setup();
+    const created = project("3".repeat(32), "RO", "Rencana Organisasi");
+    board.createProject.mockResolvedValue(created);
+    const dlg = await openNewProject(user);
+    const team = await within(dlg).findByRole("combobox", { name: "Tim" });
+    expect(team).toHaveValue(TEAM_1);
+    expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Tim Uji",
+      "Tanpa tim (seluruh organisasi)",
+    ]);
+    expect(within(dlg).getByText(/hanya terlihat dan tersinkron ke anggota Tim Uji dan Tamu yang diundang/)).toBeInTheDocument();
+
+    await user.selectOptions(team, "");
+    expect(within(dlg).getByText(/semua anggota organisasi, kecuali Tamu/)).toBeInTheDocument();
+    await user.type(within(dlg).getByLabelText("Nama proyek"), "Rencana Organisasi");
+    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
+    expect(board.createProject).toHaveBeenCalledWith("Rencana Organisasi", "RO", null);
+  });
+
+  it("superadmin yang belum masuk tim: hanya tanpa tim, dengan petunjuk", async () => {
+    const user = userEvent.setup();
+    org.getDirectory.mockResolvedValue(
+      directory({ teams: [{ id: TEAM_1, name: "Tim Uji", createdAt: "2026-11-22T03:00:00Z", members: [] }] }),
+    );
+    const dlg = await openNewProject(user);
+    const team = await within(dlg).findByRole("combobox", { name: "Tim" });
+    expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual(["Tanpa tim (seluruh organisasi)"]);
+    expect(within(dlg).getByText(NO_TEAM_HINT)).toBeInTheDocument();
+  });
+
+  it("admin tim bukan superadmin: tim yang dia kelola saja", async () => {
+    const user = userEvent.setup();
+    const TEAM_2 = "2".repeat(32);
+    org.getDirectory.mockResolvedValue(
+      directory({
+        me: { publicKey: "a".repeat(64), isSuperadmin: false },
+        teams: [
+          { id: TEAM_1, name: "Tim Uji", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: "a".repeat(64), role: "admin" }] },
+          { id: TEAM_2, name: "Gudang", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: "a".repeat(64), role: "member" }] },
+        ],
+      }),
+    );
+    const dlg = await openNewProject(user);
+    const team = await within(dlg).findByRole("combobox", { name: "Tim" });
+    expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Tim Uji",
+      "Tanpa tim (seluruh organisasi)",
+    ]);
+  });
+
+  it("anggota biasa: dijelaskan siapa yang bisa membuat proyek, tombol buat mati", async () => {
+    const user = userEvent.setup();
+    org.getDirectory.mockResolvedValue(
+      directory({
+        me: { publicKey: "a".repeat(64), isSuperadmin: false },
+        members: [member("a".repeat(64), "Penguji", { teams: [{ teamId: TEAM_1, role: "member" }] })],
+        teams: [
+          { id: TEAM_1, name: "Tim Uji", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: "a".repeat(64), role: "member" }] },
+        ],
+      }),
+    );
+    const dlg = await openNewProject(user);
+    expect(await within(dlg).findByText(/Hanya superadmin atau admin tim yang bisa membuat proyek/)).toBeInTheDocument();
+    expect(within(dlg).getByRole("button", { name: "Buat proyek" })).toBeDisabled();
+  });
+
+  it("daftar tim gagal dibaca: tetap bisa membuat proyek tanpa tim", async () => {
+    const user = userEvent.setup();
+    org.getDirectory.mockRejectedValue({ code: "database", message: "Database terkunci." });
+    board.createProject.mockResolvedValue(project("3".repeat(32), "RIS", "Riset"));
+    const dlg = await openNewProject(user);
+    expect(await within(dlg).findByText(/Daftar tim belum terbaca \(Database terkunci\.\)/)).toBeInTheDocument();
+    await user.type(within(dlg).getByLabelText("Nama proyek"), "Riset");
+    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
+    expect(board.createProject).toHaveBeenCalledWith("Riset", "RIS", null);
   });
 });

@@ -112,6 +112,8 @@ pub struct ProjectSummary {
     pub code: String,
     pub name: String,
     pub team_id: Option<String>,
+    /// Name of the owning team; `None` for a project without team.
+    pub team_name: Option<String>,
     pub open_count: u32,
     pub task_count: u32,
     pub can_manage: bool,
@@ -184,6 +186,8 @@ pub struct TaskDetail {
     pub activity: Vec<Activity>,
     pub can_edit: bool,
     pub can_delete: bool,
+    /// Guests read comments but cannot write them.
+    pub can_comment: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

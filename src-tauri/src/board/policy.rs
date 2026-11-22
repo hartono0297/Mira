@@ -1,22 +1,17 @@
 //! Who may do what on the board.
 //!
-//! `BoardPolicy` is the seam for permission checks. `LocalRolePolicy` follows
-//! the PRD permission table as far as local data allows, reading the tables
-//! the Tahap 1 membership fold maintains (`members`, `teams`, `team_members`):
+//! `BoardPolicy` is the seam for permission checks. `LocalRolePolicy` applies
+//! the rules of `access.rs` (the PRD permission table, guests per project,
+//! superadmins only in teams they joined) to the membership tables the Tahap 1
+//! fold keeps. For changes from other laptops, `check_at` judges the author
+//! against the moment the change was made (`access::RightsHistory`).
 //!
-//! | Action | Allowed |
-//! |---|---|
-//! | create project | superadmin, or team admin (of that team when one is given) |
-//! | manage project | superadmin, admin of the project's team, or the project creator |
-//! | create, edit, move, comment, remote change | active member who is not a guest |
-//! | delete task | task creator, admin of the project's team, or superadmin |
-//!
-//! Every action first requires an active, non-guest member; a removed laptop
-//! gets `AppError::Removed`. Guests per project (F-ROLE-05) come later: a
-//! policy built on `permissions::OrgState` can replace this one.
+//! Every action first requires an active member; a removed laptop gets
+//! `AppError::Removed`. Guests may only read.
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension};
 
+use super::access::{ProjectRef, Rights, RightsHistory};
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,17 +42,35 @@ pub enum BoardAction {
         task_id: String,
         created_by: String,
     },
-    /// Any change from another laptop. Automerge changes are opaque
-    /// operations, so a remote delete is held to the edit rule, not the
-    /// stricter delete rule; a semantic check needs decoding the change.
+    /// Any change from another laptop: the author must be able to write in
+    /// the project. Deletes and project changes inside it are checked
+    /// separately by `sync` with `DeleteTask` and `ManageProject`.
     RemoteChange {
+        project_id: String,
+    },
+    /// Seeing the project at all.
+    ViewProject {
         project_id: String,
     },
 }
 
 pub trait BoardPolicy {
-    /// `Ok(())` when `actor` (64-hex public key) may do `action`.
+    /// `Ok(())` when `actor` (64-hex public key) may do `action` now.
     fn check(&self, conn: &Connection, actor: &str, action: &BoardAction) -> AppResult<()>;
+
+    /// Like `check`, for a change made at `at` (unix seconds, the author's
+    /// clock): also allowed when the author had the right and lost it after
+    /// `at`. The default ignores time.
+    fn check_at(
+        &self,
+        conn: &Connection,
+        actor: &str,
+        action: &BoardAction,
+        at: i64,
+    ) -> AppResult<()> {
+        let _ = at;
+        self.check(conn, actor, action)
+    }
 
     fn allows(&self, conn: &Connection, actor: &str, action: &BoardAction) -> bool {
         self.check(conn, actor, action).is_ok()
@@ -67,158 +80,228 @@ pub trait BoardPolicy {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LocalRolePolicy;
 
-struct MemberRow {
-    removed: bool,
-    guest: bool,
-    superadmin: bool,
-    team_admin_role: bool,
-}
-
 fn forbidden(msg: &str) -> AppError {
     AppError::Forbidden(msg.to_owned())
 }
 
-fn member_row(conn: &Connection, pk: &str) -> AppResult<Option<MemberRow>> {
-    let org: Option<String> = conn
-        .query_row(
-            "SELECT id FROM organizations ORDER BY created_at LIMIT 1",
-            [],
-            |r| r.get(0),
-        )
-        .optional()?;
-    let Some(org) = org else {
-        return Err(forbidden(
-            "Board baru bisa dipakai setelah laptop ini membuat atau bergabung dengan organisasi.",
-        ));
-    };
-    Ok(conn
-        .query_row(
-            "SELECT status, kind, is_superadmin, role FROM members
-             WHERE organization_id = ?1 AND public_key = ?2",
-            params![org, pk],
-            |r| {
-                let status: String = r.get(0)?;
-                let kind: String = r.get(1)?;
-                let is_superadmin: i64 = r.get(2)?;
-                let role: String = r.get(3)?;
-                Ok(MemberRow {
-                    removed: status == "removed",
-                    guest: kind == "guest" || role == "guest",
-                    superadmin: is_superadmin != 0 || role == "superadmin",
-                    team_admin_role: role == "team_admin",
-                })
-            },
-        )
-        .optional()?)
+/// A stored project as the rules need it.
+struct Owner {
+    id: String,
+    team_id: Option<String>,
+    created_by: String,
 }
 
-fn is_team_admin(conn: &Connection, pk: &str, team_id: &str) -> AppResult<bool> {
-    let n: i64 = conn.query_row(
-        "SELECT count(*) FROM team_members tm JOIN teams t ON t.id = tm.team_id
-         WHERE tm.team_id = ?1 AND tm.public_key = ?2 AND tm.role = 'admin' AND t.deleted = 0",
-        params![team_id, pk],
-        |r| r.get(0),
-    )?;
-    Ok(n > 0)
+impl Owner {
+    fn as_ref(&self) -> ProjectRef<'_> {
+        ProjectRef {
+            id: &self.id,
+            team_id: self.team_id.as_deref(),
+            created_by: &self.created_by,
+        }
+    }
 }
 
-fn is_any_team_admin(conn: &Connection, pk: &str) -> AppResult<bool> {
-    let n: i64 = conn.query_row(
-        "SELECT count(*) FROM team_members tm JOIN teams t ON t.id = tm.team_id
-         WHERE tm.public_key = ?1 AND tm.role = 'admin' AND t.deleted = 0",
-        [pk],
-        |r| r.get(0),
-    )?;
-    Ok(n > 0)
-}
-
-/// `(team_id, created_by)` of a stored project.
-fn project_owner(conn: &Connection, project_id: &str) -> AppResult<(Option<String>, String)> {
+fn project_owner(conn: &Connection, project_id: &str) -> AppResult<Owner> {
     conn.query_row(
         "SELECT team_id, created_by FROM board_projects WHERE id = ?1",
         [project_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| {
+            Ok(Owner {
+                id: project_id.to_owned(),
+                team_id: r.get(0)?,
+                created_by: r.get(1)?,
+            })
+        },
     )
     .optional()?
     .ok_or_else(|| AppError::NotFound("Proyek tidak ditemukan.".into()))
 }
 
-impl BoardPolicy for LocalRolePolicy {
-    fn check(&self, conn: &Connection, actor: &str, action: &BoardAction) -> AppResult<()> {
-        let m = member_row(conn, actor)?.ok_or_else(|| {
-            forbidden(
-                "Laptop ini belum menjadi anggota organisasi, jadi belum bisa mengubah board.",
-            )
-        })?;
-        if m.removed {
-            return Err(AppError::Removed);
+fn project_of(action: &BoardAction) -> Option<&str> {
+    match action {
+        BoardAction::CreateProject { .. } => None,
+        BoardAction::ManageProject { project_id }
+        | BoardAction::CreateTask { project_id }
+        | BoardAction::EditTask { project_id, .. }
+        | BoardAction::MoveTask { project_id, .. }
+        | BoardAction::Comment { project_id, .. }
+        | BoardAction::DeleteTask { project_id, .. }
+        | BoardAction::RemoteChange { project_id }
+        | BoardAction::ViewProject { project_id } => Some(project_id),
+    }
+}
+
+/// The rule itself: `Ok` or the message explaining the refusal.
+fn decide(
+    rights: &Rights,
+    actor: &str,
+    action: &BoardAction,
+    owner: Option<&Owner>,
+) -> AppResult<()> {
+    if let BoardAction::CreateProject { team_id } = action {
+        if rights.can_create_project(actor, team_id.as_deref()) {
+            return Ok(());
         }
-        if m.guest {
+        if team_id.is_some() && rights.is_superadmin(actor) {
             return Err(forbidden(
-                "Tamu belum bisa mengubah board. Minta admin tim menjadikan Anda anggota.",
+                "Superadmin perlu masuk ke tim ini dulu sebelum membuat proyek untuk tim itu. Tambahkan diri Anda ke tim di halaman Organisasi.",
             ));
         }
-        match action {
-            BoardAction::CreateProject { team_id } => {
-                if m.superadmin {
-                    return Ok(());
-                }
-                let admin = match team_id {
-                    Some(team) => is_team_admin(conn, actor, team)?,
-                    None => m.team_admin_role || is_any_team_admin(conn, actor)?,
-                };
-                if admin {
-                    Ok(())
-                } else {
-                    Err(forbidden(
-                        "Hanya superadmin atau admin tim yang bisa membuat proyek. Minta admin tim membuatkannya.",
-                    ))
-                }
+        return Err(forbidden(
+            "Hanya superadmin atau admin tim yang bisa membuat proyek. Minta admin tim membuatkannya.",
+        ));
+    }
+    let Some(owner) = owner else {
+        return Err(AppError::NotFound("Proyek tidak ditemukan.".into()));
+    };
+    let p = owner.as_ref();
+    if !rights.can_read(actor, p) {
+        return Err(forbidden(
+            "Anda bukan anggota tim proyek ini. Minta admin tim menambahkan Anda.",
+        ));
+    }
+    match action {
+        BoardAction::ViewProject { .. } => Ok(()),
+        _ if rights.is_guest(actor) => Err(forbidden(
+            "Tamu hanya bisa melihat board dan komentar. Minta admin tim kalau perlu mengubah task.",
+        )),
+        BoardAction::CreateTask { .. }
+        | BoardAction::EditTask { .. }
+        | BoardAction::MoveTask { .. }
+        | BoardAction::Comment { .. }
+        | BoardAction::RemoteChange { .. } => {
+            if rights.can_write(actor, p) {
+                Ok(())
+            } else {
+                Err(forbidden("Anda tidak bisa mengubah board proyek ini."))
             }
-            BoardAction::ManageProject { project_id } => {
-                let (team, creator) = project_owner(conn, project_id)?;
-                let team_admin = match &team {
-                    Some(t) => is_team_admin(conn, actor, t)?,
-                    None => false,
-                };
-                if m.superadmin || creator == actor || team_admin {
-                    Ok(())
-                } else {
-                    Err(forbidden(
-                        "Hanya superadmin, admin tim proyek ini, atau pembuat proyek yang bisa mengatur proyek ini.",
-                    ))
-                }
+        }
+        BoardAction::ManageProject { .. } => {
+            if rights.can_manage(actor, p) {
+                Ok(())
+            } else {
+                Err(forbidden(
+                    "Hanya superadmin, admin tim proyek ini, atau pembuat proyek yang bisa mengatur proyek ini.",
+                ))
             }
-            BoardAction::CreateTask { .. }
-            | BoardAction::EditTask { .. }
-            | BoardAction::MoveTask { .. }
-            | BoardAction::Comment { .. }
-            | BoardAction::RemoteChange { .. } => Ok(()),
-            BoardAction::DeleteTask {
-                project_id,
-                created_by,
-                ..
-            } => {
-                if m.superadmin || created_by == actor {
-                    return Ok(());
-                }
-                let (team, _) = project_owner(conn, project_id)?;
-                if let Some(team) = team
-                    && is_team_admin(conn, actor, &team)?
-                {
-                    return Ok(());
-                }
+        }
+        BoardAction::DeleteTask { created_by, .. } => {
+            if rights.can_delete_task(actor, p, created_by) {
+                Ok(())
+            } else {
                 Err(forbidden(
                     "Task ini hanya bisa dihapus oleh pembuatnya, admin tim proyek, atau superadmin.",
                 ))
             }
         }
+        BoardAction::CreateProject { .. } => Ok(()),
+    }
+}
+
+/// Checks that need no project: an organization exists and the actor is an
+/// active member.
+fn require_member(conn: &Connection, rights: &Rights, actor: &str) -> AppResult<()> {
+    if !rights.has_org() {
+        return Err(forbidden(
+            "Board baru bisa dipakai setelah laptop ini membuat atau bergabung dengan organisasi.",
+        ));
+    }
+    if rights.is_active(actor) {
+        return Ok(());
+    }
+    let removed: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM members WHERE public_key = ?1 AND status = 'removed' LIMIT 1",
+            [actor],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if removed.is_some() {
+        Err(AppError::Removed)
+    } else {
+        Err(forbidden(
+            "Laptop ini belum menjadi anggota organisasi, jadi belum bisa mengubah board.",
+        ))
+    }
+}
+
+fn owner_for(conn: &Connection, action: &BoardAction) -> AppResult<Option<Owner>> {
+    project_of(action)
+        .map(|id| project_owner(conn, id))
+        .transpose()
+}
+
+impl BoardPolicy for LocalRolePolicy {
+    fn check(&self, conn: &Connection, actor: &str, action: &BoardAction) -> AppResult<()> {
+        let rights = Rights::load(conn)?;
+        require_member(conn, &rights, actor)?;
+        let owner = owner_for(conn, action)?;
+        decide(&rights, actor, action, owner.as_ref())
+    }
+
+    fn check_at(
+        &self,
+        conn: &Connection,
+        actor: &str,
+        action: &BoardAction,
+        at: i64,
+    ) -> AppResult<()> {
+        BatchPolicy::new().check_at(conn, actor, action, at)
+    }
+}
+
+/// `LocalRolePolicy` with the membership history loaded at most once, for
+/// one batch of changes from other laptops (loading the history replays the
+/// whole membership log). Make a new one per batch: it does not notice
+/// membership changes after the first `check_at` that needed the history.
+#[derive(Debug, Default)]
+pub struct BatchPolicy {
+    history: std::cell::OnceCell<RightsHistory>,
+}
+
+impl BatchPolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl BoardPolicy for BatchPolicy {
+    fn check(&self, conn: &Connection, actor: &str, action: &BoardAction) -> AppResult<()> {
+        LocalRolePolicy.check(conn, actor, action)
+    }
+
+    fn check_at(
+        &self,
+        conn: &Connection,
+        actor: &str,
+        action: &BoardAction,
+        at: i64,
+    ) -> AppResult<()> {
+        let Err(err) = self.check(conn, actor, action) else {
+            return Ok(());
+        };
+        if matches!(err, AppError::NotFound(_)) {
+            return Err(err);
+        }
+        let owner = owner_for(conn, action)?;
+        if self.history.get().is_none() {
+            let loaded = RightsHistory::load(conn)?;
+            let _ = self.history.set(loaded);
+        }
+        let Some(history) = self.history.get() else {
+            return Err(err);
+        };
+        let allowed = history.allowed_at(at, |r| {
+            r.is_active(actor) && decide(r, actor, action, owner.as_ref()).is_ok()
+        });
+        if allowed { Ok(()) } else { Err(err) }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
     use crate::board::testutil::{Laptop, add_member, add_team};
 
     fn pk(n: u8) -> String {
@@ -234,8 +317,8 @@ mod tests {
     fn insert_project(l: &Laptop, id: &str, team: Option<&str>, creator: &str) {
         l.conn
             .execute(
-                "INSERT INTO board_projects (id, code, name, team_id, created_by, created_at, doc, updated_at)
-                 VALUES (?1, ?2, 'P', ?3, ?4, 't', x'00', 't')",
+                "INSERT INTO board_projects (id, code, doc_code, name, team_id, created_by, created_at, doc, updated_at)
+                 VALUES (?1, ?2, ?2, 'P', ?3, ?4, 't', x'00', 't')",
                 params![id, format!("P{}", &id[..2].to_uppercase()), team, creator],
             )
             .unwrap();
@@ -264,7 +347,13 @@ mod tests {
         let other_team = add_team(&l.conn, "Lain", &[]);
 
         assert!(p.allows(&l.conn, &l.pk(), &create(None)), "superadmin");
-        assert!(p.allows(&l.conn, &l.pk(), &create(Some(&other_team))));
+        let err = p
+            .check(&l.conn, &l.pk(), &create(Some(&other_team)))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("masuk ke tim"),
+            "superadmin outside the team: {err}"
+        );
         assert!(p.allows(&l.conn, &admin, &create(Some(&team))));
         assert!(
             p.allows(&l.conn, &admin, &create(None)),
@@ -303,7 +392,11 @@ mod tests {
         add_member(&l.conn, &other, "Citra", "member");
         add_member(&l.conn, &guest, "Tamu", "guest");
         add_member(&l.conn, &removed, "Lama", "removed");
-        let team = add_team(&l.conn, "Desain", &[(&admin, "admin")]);
+        let team = add_team(
+            &l.conn,
+            "Desain",
+            &[(&admin, "admin"), (&member, "member"), (&other, "member")],
+        );
         let proj = "ab".repeat(16);
         insert_project(&l, &proj, Some(&team), &l.pk());
         let pid = proj.clone();
@@ -340,7 +433,10 @@ mod tests {
         };
         assert!(p.allows(&l.conn, &member, &delete), "creator");
         assert!(p.allows(&l.conn, &admin, &delete), "team admin");
-        assert!(p.allows(&l.conn, &l.pk(), &delete), "superadmin");
+        assert!(
+            !p.allows(&l.conn, &l.pk(), &delete),
+            "superadmin outside the team"
+        );
         assert_eq!(
             p.check(&l.conn, &other, &delete).unwrap_err().code(),
             "forbidden"
@@ -349,9 +445,25 @@ mod tests {
         let manage = BoardAction::ManageProject {
             project_id: pid.clone(),
         };
-        assert!(p.allows(&l.conn, &l.pk(), &manage));
+        assert!(!p.allows(&l.conn, &l.pk(), &manage));
         assert!(p.allows(&l.conn, &admin, &manage));
         assert!(!p.allows(&l.conn, &member, &manage));
+        // A superadmin who joins the team may manage and delete there.
+        l.conn
+            .execute(
+                "INSERT INTO team_members (team_id, public_key, role, added_at) VALUES (?1, ?2, 'member', 't')",
+                params![team, l.pk()],
+            )
+            .unwrap();
+        assert!(p.allows(&l.conn, &l.pk(), &manage));
+        assert!(p.allows(&l.conn, &l.pk(), &delete), "superadmin in the team");
+        // Members outside the team see nothing.
+        let outsider = pk(6);
+        add_member(&l.conn, &outsider, "Eko", "member");
+        assert_eq!(
+            p.check(&l.conn, &outsider, &edits[0]).unwrap_err().code(),
+            "forbidden"
+        );
 
         // Project without team: only creator and superadmin may manage/delete others' tasks.
         let solo = "cd".repeat(16);

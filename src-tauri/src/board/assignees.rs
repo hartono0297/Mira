@@ -3,8 +3,9 @@
 //! `AssigneeDirectory` is the seam; `LocalMembers` reads the `members` and
 //! `team_members` tables kept by the Tahap 1 membership fold.
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension};
 
+use super::access::{ProjectRef, Rights};
 use super::model::Person;
 use super::store::ProjectRow;
 use crate::error::AppResult;
@@ -24,8 +25,10 @@ pub trait AssigneeDirectory {
     }
 }
 
-/// This laptop plus active non-guest members. When the project has a team
-/// with members, only that team (plus this laptop).
+/// Everyone who may write in the project (`access::Rights::writers`): the
+/// team's non-guest members plus members of other teams invited to the
+/// project; for a project without team, every active non-guest member. This
+/// laptop comes first when it may write.
 #[derive(Debug, Clone)]
 pub struct LocalMembers {
     me: String,
@@ -43,34 +46,23 @@ impl LocalMembers {
 
 impl AssigneeDirectory for LocalMembers {
     fn assignable(&self, conn: &Connection, project: &ProjectRow) -> AppResult<Vec<Person>> {
-        let team_size: i64 = match &project.team_id {
-            Some(team) => conn.query_row(
-                "SELECT count(*) FROM team_members WHERE team_id = ?1",
-                [team],
-                |r| r.get(0),
-            )?,
-            None => 0,
-        };
-        let mut stmt = conn.prepare(
-            "SELECT m.public_key, m.display_name FROM members m
-             WHERE m.status = 'active' AND m.kind = 'member' AND m.role <> 'guest'
-               AND (?1 IS NULL OR m.public_key IN
-                    (SELECT public_key FROM team_members WHERE team_id = ?1))",
-        )?;
-        let team_filter = project.team_id.as_deref().filter(|_| team_size > 0);
-        let mut people: Vec<Person> = stmt
-            .query_map(params![team_filter], |r| {
-                Ok(Person {
-                    public_key: r.get(0)?,
-                    name: r.get(1)?,
-                })
-            })?
-            .collect::<Result<_, _>>()?;
-        people.retain(|p| p.public_key != self.me);
+        let rights = Rights::load(conn)?;
+        let writers = rights.writers(ProjectRef {
+            id: &project.id,
+            team_id: project.team_id.as_deref(),
+            created_by: &project.created_by,
+        });
+        let mut people: Vec<Person> = writers
+            .iter()
+            .filter(|pk| **pk != self.me)
+            .map(|pk| self.person(conn, pk))
+            .collect();
         people.sort_by(|a, b| {
             (a.name.to_lowercase(), &a.public_key).cmp(&(b.name.to_lowercase(), &b.public_key))
         });
-        people.insert(0, self.person(conn, &self.me));
+        if writers.contains(&self.me) {
+            people.insert(0, self.person(conn, &self.me));
+        }
         Ok(people)
     }
 
@@ -147,12 +139,14 @@ mod tests {
         let dir = LocalMembers::new(&l.id);
         assert_eq!(
             keys(&dir.assignable(&l.conn, &project(Some(team))).unwrap()),
-            ["Sari", "Budi"]
+            ["Budi"],
+            "the superadmin outside the team is not offered"
         );
-        assert_eq!(
-            keys(&dir.assignable(&l.conn, &project(Some(empty))).unwrap()),
-            ["Sari", "Ani", "Budi"],
-            "team without members falls back to everyone"
+        assert!(
+            dir.assignable(&l.conn, &project(Some(empty)))
+                .unwrap()
+                .is_empty(),
+            "team without members has nobody to assign"
         );
     }
 

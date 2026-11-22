@@ -38,6 +38,86 @@ pub struct SignedChange {
     pub sig: String,
 }
 
+/// Version of the record body sent to other laptops.
+pub const RECORD_VERSION: u32 = 1;
+
+/// The body of the `FeatureRecord` that carries a change to other laptops:
+/// `{"v":1,"project_id","hash","author","seq","bytes","sig"}` with `bytes`
+/// as hex, fields in this order. Every laptop builds the same body from the
+/// same change, so the record id (BLAKE3 of the body) is the same everywhere.
+#[derive(Serialize)]
+struct RecordBodyRef<'a> {
+    v: u32,
+    project_id: &'a str,
+    hash: &'a str,
+    author: &'a str,
+    seq: u64,
+    bytes: String,
+    sig: &'a str,
+}
+
+/// Parsed record body; unknown fields are refused.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordBody {
+    v: u32,
+    project_id: String,
+    hash: String,
+    author: String,
+    seq: u64,
+    bytes: String,
+    sig: String,
+}
+
+impl SignedChange {
+    pub fn record_body(&self) -> String {
+        let body = RecordBodyRef {
+            v: RECORD_VERSION,
+            project_id: &self.project_id,
+            hash: &self.hash,
+            author: &self.author,
+            seq: self.seq,
+            bytes: hex::encode(&self.bytes),
+            sig: &self.sig,
+        };
+        serde_json::to_string(&body).unwrap_or_default()
+    }
+
+    /// BLAKE3 of [`SignedChange::record_body`], 64 lowercase hex.
+    pub fn record_id(&self) -> String {
+        blake3::hash(self.record_body().as_bytes())
+            .to_hex()
+            .to_string()
+    }
+
+    /// Parses a record body. Only the shape is checked here (version, hex
+    /// bytes, canonical form so the id is stable); signature and content are
+    /// checked by `verify_envelope` and `parse_change`.
+    pub fn from_record_body(body: &str) -> Result<SignedChange, ChangeRejection> {
+        let bad = |d: &str| ChangeRejection::new("board_bad_format", d.to_owned());
+        let r: RecordBody = serde_json::from_str(body).map_err(|_| bad("isi record board tidak bisa dibaca"))?;
+        if r.v != RECORD_VERSION {
+            return Err(bad("versi record board tidak dikenal"));
+        }
+        if r.bytes.len() > MAX_CHANGE_BYTES * 2 {
+            return Err(bad("record board terlalu besar"));
+        }
+        let bytes = hex::decode(&r.bytes).map_err(|_| bad("isi perubahan bukan hex"))?;
+        let sc = SignedChange {
+            project_id: r.project_id,
+            hash: r.hash,
+            author: r.author,
+            seq: r.seq,
+            bytes,
+            sig: r.sig,
+        };
+        if sc.record_body() != body {
+            return Err(bad("record board tidak dalam bentuk baku"));
+        }
+        Ok(sc)
+    }
+}
+
 /// Bytes stay compact in JSON as hex rather than a number array.
 mod serde_bytes_hex {
     use serde::{Deserialize, Deserializer, Serializer};

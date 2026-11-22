@@ -216,7 +216,7 @@ fn board_flow_and_json_shape() {
 }
 
 #[test]
-fn removed_laptop_cannot_change_but_can_read() {
+fn removed_laptop_cannot_change_or_read() {
     let (_t, state) = app();
     crate::commands::organization(&state, "CV Maju Jaya").unwrap();
     let project = create_project(&state, &NoopSync, "Alfa", "PA", None).unwrap();
@@ -241,9 +241,12 @@ fn removed_laptop_cannot_change_but_can_read() {
             .code(),
         "removed"
     );
-    let board = get_board(&state, &project.id).unwrap();
-    assert!(!board.can_create);
-    assert!(!board.project.can_manage);
-    let detail = get_task(&state, &project.id, &t.card.id).unwrap();
-    assert!(!detail.can_edit && !detail.can_delete);
+    // A removed laptop stops seeing the project (the app shows the removed
+    // screen instead); the local copy is kept, nothing is deleted.
+    assert_eq!(get_board(&state, &project.id).unwrap_err().code(), "removed");
+    assert_eq!(
+        get_task(&state, &project.id, &t.card.id).unwrap_err().code(),
+        "removed"
+    );
+    assert!(list_projects(&state).unwrap().is_empty());
 }

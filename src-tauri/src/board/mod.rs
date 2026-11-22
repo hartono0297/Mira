@@ -7,10 +7,12 @@
 //! sync (`sync`) are traits so later stages can swap them. `commands` holds
 //! the Tauri commands; `reminder` the deadline reminders.
 
+pub mod access;
 pub mod assignees;
 pub mod commands;
 pub mod doc;
 pub mod model;
+pub mod numbers;
 pub mod policy;
 pub mod rank;
 pub mod reminder;

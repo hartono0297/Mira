@@ -32,6 +32,13 @@ impl Ctx<'_> {
             code: row.code.clone(),
             name: row.name.clone(),
             team_id: row.team_id.clone(),
+            team_name: match &row.team_id {
+                Some(t) => self
+                    .conn
+                    .query_row("SELECT name FROM teams WHERE id = ?1", [t], |r| r.get(0))
+                    .ok(),
+                None => None,
+            },
             open_count: open,
             task_count: total,
             can_manage: self.allows(BoardAction::ManageProject {
@@ -121,7 +128,18 @@ impl Ctx<'_> {
                 task_id: t.id.clone(),
                 created_by: t.created_by.clone(),
             }),
+            can_comment: self.allows(BoardAction::Comment {
+                project_id: project.id.clone(),
+                task_id: t.id.clone(),
+            }),
         }
+    }
+
+    /// Whether the viewer may see the project at all.
+    pub fn can_view(&self, project_id: &str) -> bool {
+        self.allows(BoardAction::ViewProject {
+            project_id: project_id.to_owned(),
+        })
     }
 
     /// Live tasks assigned to the viewer across projects, by due date (none
@@ -139,6 +157,9 @@ impl Ctx<'_> {
                 .collect();
             i += ids.len();
             let project = store::project(self.conn, &project_id)?;
+            if !self.can_view(&project_id) {
+                continue;
+            }
             let doc = store::load_doc(self.conn, &project_id, actor)?;
             for t in doc.tasks()? {
                 if t.deleted || !ids.contains(&t.id.as_str()) {

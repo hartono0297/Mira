@@ -114,3 +114,75 @@ pub fn add_team(conn: &Connection, name: &str, members: &[(&str, &str)]) -> Stri
     }
     id
 }
+
+/// Real membership log helpers (signed ops, folded by Tahap 1), generic over
+/// the connection and identity so tests can use `Laptop` or a `MiraState`.
+#[allow(dead_code)]
+pub mod org_ops {
+    use rusqlite::Connection;
+    use time::OffsetDateTime;
+
+    use crate::identity::Identity;
+    use crate::permissions::{self as p, InviteRole, Validity};
+
+    pub fn now() -> OffsetDateTime {
+        OffsetDateTime::now_utc()
+    }
+
+    pub fn create_team(conn: &mut Connection, id: &Identity, name: &str) -> String {
+        p::create_team(conn, id, name, now()).unwrap().id
+    }
+
+    /// `inviter` creates an invite (guest invites carry `projects`) and
+    /// `joiner` (a laptop without organization) joins through it.
+    pub fn join(
+        inviter: (&mut Connection, &Identity),
+        joiner: (&mut Connection, &Identity),
+        team: &str,
+        role: InviteRole,
+        projects: Vec<String>,
+    ) {
+        let (iconn, iid) = inviter;
+        let (jconn, jid) = joiner;
+        let at = now();
+        let code = p::create_invite(iconn, iid, team, role, projects, Validity::H24, at)
+            .unwrap()
+            .1;
+        let code = p::normalize_code(&code).unwrap();
+        let (org, invite) = p::join_lookup(iconn, code.tag(), at).unwrap();
+        let proof = p::build_join_proof(&code, &org, &invite, jid).unwrap();
+        let accepted = p::join_accept(iconn, iid, jid.public_key_hex(), &invite, &proof, at)
+            .unwrap_or_else(|c| panic!("join_accept: {c:?}"));
+        p::install_joined_org(jconn, jid, accepted.org, accepted.ops, &code, at).unwrap();
+    }
+
+    /// An existing member accepts another invite (for example a guest invite
+    /// to a project of another team): same flow without a new organization.
+    pub fn accept_more(
+        inviter: (&mut Connection, &Identity),
+        joiner_id: &Identity,
+        team: &str,
+        role: InviteRole,
+        projects: Vec<String>,
+    ) {
+        let (iconn, iid) = inviter;
+        let at = now();
+        let code = p::create_invite(iconn, iid, team, role, projects, Validity::H24, at)
+            .unwrap()
+            .1;
+        let code = p::normalize_code(&code).unwrap();
+        let (org, invite) = p::join_lookup(iconn, code.tag(), at).unwrap();
+        let proof = p::build_join_proof(&code, &org, &invite, joiner_id).unwrap();
+        p::join_accept(iconn, iid, joiner_id.public_key_hex(), &invite, &proof, at)
+            .unwrap_or_else(|c| panic!("join_accept: {c:?}"));
+    }
+
+    /// Sends `from` every op `to` may receive, as the Tahap 1 sync does.
+    pub fn sync(from: &Connection, to: &mut Connection, to_pk: &str, from_pk: &str) -> usize {
+        let state = p::load_state(from).unwrap().unwrap();
+        let ids = p::op_ids_for(from, &state, to_pk).unwrap();
+        let missing = p::missing_op_ids(to, &ids).unwrap();
+        let ops = p::ops_for(from, &state, to_pk, &missing).unwrap();
+        p::ingest(to, Some(from_pk), ops, now()).unwrap().new_ops
+    }
+}

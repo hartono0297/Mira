@@ -121,6 +121,38 @@ pub(crate) fn ensure_code_free(conn: &Connection, code: &str, except_id: &str) -
     }
 }
 
+/// The code this laptop shows for a project received from another laptop
+/// whose document says `wanted`. Placeholder rule until `refresh_codes`
+/// exists: the wanted code when free, otherwise the first free `wanted2`,
+/// `wanted3`, and so on.
+pub(crate) fn claim_code(
+    conn: &Connection,
+    wanted: &str,
+    project_id: &str,
+    _created_at: &str,
+) -> AppResult<String> {
+    let taken = |code: &str| -> AppResult<bool> {
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM board_projects WHERE code = ?1 AND id <> ?2",
+                params![code, project_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some())
+    };
+    if !taken(wanted)? {
+        return Ok(wanted.to_owned());
+    }
+    for n in 2.. {
+        let code = format!("{wanted}{n}");
+        if !taken(&code)? {
+            return Ok(code);
+        }
+    }
+    unreachable!("an unused code always exists")
+}
+
 /// Creates a project and its document. Permission is checked by the caller.
 pub fn create_project(
     conn: &mut Connection,
@@ -162,8 +194,8 @@ pub fn create_project(
     };
     let mut doc = BoardDoc::create(&actor_of(identity), &meta)?;
     tx.execute(
-        "INSERT INTO board_projects (id, code, name, team_id, created_by, created_at, doc, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, x'', ?7)",
+        "INSERT INTO board_projects (id, code, doc_code, name, team_id, created_by, created_at, doc, updated_at)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, x'', ?7)",
         params![
             row.id,
             row.code,
@@ -270,8 +302,8 @@ pub(crate) fn insert_change(
         .map_err(|_| AppError::InvalidInput("Nomor urut perubahan board terlalu besar.".into()))?;
     let n = conn.execute(
         "INSERT OR IGNORE INTO board_changes
-           (hash, project_id, author, seq, bytes, sig, created_at, received_at, received_from)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+           (hash, project_id, author, seq, bytes, sig, created_at, received_at, received_from, record_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             sc.hash,
             sc.project_id,
@@ -281,7 +313,8 @@ pub(crate) fn insert_change(
             sc.sig,
             created_at,
             clock::format_rfc3339(now),
-            received_from
+            received_from,
+            sc.record_id()
         ],
     )?;
     Ok(n == 1)

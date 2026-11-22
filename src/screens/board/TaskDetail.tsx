@@ -1,5 +1,5 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
-import { IconGitMerge, IconTrash, IconX } from "@tabler/icons-react";
+import { IconAlertTriangle, IconGitMerge, IconTrash, IconX } from "@tabler/icons-react";
 import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { toAppError, type AppError } from "../../api";
 import {
@@ -17,6 +17,7 @@ import { FieldError } from "../../components/FieldError";
 import { initials } from "../../components/initials";
 import { COLUMN_NAMES, COLUMN_ORDER, daysUntil, dueLabel, formatDateTime, formatDue, PRIORITY_LABELS } from "./format";
 import { activitySentence } from "./taskActivity";
+import { useHeld } from "./useHeld";
 import "./task.css";
 
 type Field = "title" | "description" | "status" | "assignee" | "due" | "priority" | "labels" | "comment";
@@ -47,6 +48,11 @@ type Props = {
 };
 
 type SelectField = "status" | "assignee" | "priority";
+
+// Task atau proyeknya hilang saat muat ulang, biasanya karena perubahan dari laptop lain.
+type Gone = "task" | "project";
+
+const NOT_MEMBER = "(bukan anggota proyek lagi)";
 
 function errorTitle(field: Field, error: AppError): string {
   if (error.code === "forbidden") return "Anda tidak punya izin untuk ini";
@@ -85,6 +91,14 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [allActivity, setAllActivity] = useState(false);
   const [selDraft, setSelDraft] = useState<Partial<Record<SelectField, string>>>({});
+  const [gone, setGone] = useState<Gone | null>(null);
+  // Nilai server saat ketikan dimulai. Kalau server berubah selama draf belum
+  // disimpan, pengguna diberi tahu sebelum ketikannya menimpa perubahan rekan.
+  const [titleBase, setTitleBase] = useState<string | null>(null);
+  const [descBase, setDescBase] = useState<string | null>(null);
+  const titleHeld = useHeld(task?.title ?? "");
+  const descHeld = useHeld(task?.description ?? "");
+  const dueHeld = useHeld(task?.due ?? "");
 
   const ids = useId();
   // Pilihan lewat mouse langsung disimpan. Lewat keyboard, panah di select yang
@@ -94,6 +108,10 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   const titleRef = useRef<HTMLInputElement>(null);
   const dueRef = useRef<HTMLInputElement>(null);
   const labelRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const goneCloseRef = useRef<HTMLButtonElement>(null);
+  const hasTask = useRef(false);
+  hasTask.current = task !== null;
   const alive = useRef(true);
   const seq = useRef(0);
   const applied = useRef(0);
@@ -112,19 +130,27 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     setTask(next);
   }, []);
 
+  // Muat ulang tidak menyentuh draf (judul, deskripsi, label, komentar):
+  // semuanya state terpisah yang hanya dikosongkan setelah disimpan atau dibatalkan.
   const load = useCallback(async () => {
     const mine = ++seq.current;
-    try {
-      const [t, b] = await Promise.all([boardApi.getTask(projectId, taskId), boardApi.getBoard(projectId)]);
-      if (!alive.current) return;
-      apply(mine, t);
-      setBoard(b);
+    const [t, b] = await Promise.allSettled([boardApi.getTask(projectId, taskId), boardApi.getBoard(projectId)]);
+    if (!alive.current || deleted.current) return;
+    if (t.status === "fulfilled") apply(mine, t.value);
+    if (b.status === "fulfilled") setBoard(b.value);
+    const boardErr = b.status === "rejected" ? toAppError(b.reason) : null;
+    const taskErr = t.status === "rejected" ? toAppError(t.reason) : null;
+    if (!boardErr && !taskErr) {
+      setGone(null);
       setLoadError(null);
-    } catch (err) {
-      if (alive.current) setLoadError(toAppError(err));
-    } finally {
-      if (alive.current) setLoading(false);
+    } else if (hasTask.current && boardErr && (boardErr.code === "not_found" || boardErr.code === "forbidden")) {
+      setGone("project");
+    } else if (hasTask.current && taskErr?.code === "not_found") {
+      setGone("task");
+    } else {
+      setLoadError(taskErr ?? boardErr);
     }
+    setLoading(false);
   }, [projectId, taskId, apply]);
 
   useEffect(() => {
@@ -179,6 +205,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       const value = titleDraft.trim();
       if (value === task.title) {
         setTitleDraft(null);
+        titleHeld.settle(task.title);
         setTitleProblem(null);
         return true;
       }
@@ -193,7 +220,10 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       }
       setTitleProblem(null);
       const ok = await update("title", { title: value });
-      if (ok && alive.current) setTitleDraft(null);
+      if (ok && alive.current) {
+        setTitleDraft(null);
+        titleHeld.settle(value);
+      }
       return ok;
     });
   }
@@ -203,10 +233,14 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       if (!task || descDraft === null) return true;
       if (descDraft === task.description) {
         setDescDraft(null);
+        descHeld.settle(task.description);
         return true;
       }
       const ok = await update("description", { description: descDraft });
-      if (ok && alive.current) setDescDraft(null);
+      if (ok && alive.current) {
+        setDescDraft(null);
+        descHeld.settle(descDraft);
+      }
       return ok;
     });
   }
@@ -222,16 +256,37 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       const value = dueDraft === "" ? null : dueDraft;
       if (value === task.due) {
         setDueDraft(null);
+        dueHeld.settle(task.due ?? "");
         return true;
       }
       const ok = await update("due", { due: value });
-      if (ok && alive.current) setDueDraft(null);
+      if (ok && alive.current) {
+        setDueDraft(null);
+        dueHeld.settle(value ?? "");
+      }
       return ok;
     });
   }
 
+  // Elemen yang difokus bisa lepas saat tampilan berganti ke mode hilang.
+  // Fokus dipindah ke tombol Tutup di keterangan supaya tetap di dalam dialog.
+  useEffect(() => {
+    if (!gone) return;
+    const timer = window.setTimeout(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body || active === contentRef.current) goneCloseRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [gone]);
+
   async function requestClose() {
     if (!task) {
+      onClose();
+      return;
+    }
+    // Task yang sudah hilang tidak bisa disimpan lagi. Draf yang belum
+    // tersimpan sudah ditampilkan untuk disalin, jadi dialog ditutup langsung.
+    if (gone) {
       onClose();
       return;
     }
@@ -407,6 +462,10 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   const me = board?.me ?? "";
   const people: Person[] = board?.assignees ?? [];
   const nameOf = (p: Person) => (p.publicKey === me ? `${p.name} (Anda)` : p.name);
+  // Penanggung jawab yang sudah tidak ada di daftar (misalnya dikeluarkan dari
+  // tim) tetap tampil dengan keterangan, supaya tidak hilang diam-diam.
+  const isFormer = (p: Person | null) => !!p && !!board && !people.some((x) => x.publicKey === p.publicKey);
+  const assigneeName = (p: Person) => (isFormer(p) ? `${nameOf(p)} ${NOT_MEMBER}` : nameOf(p));
 
   function body() {
     if (loading && !task) {
@@ -448,6 +507,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
         </div>
       );
     }
+    if (gone) return readOnly(task, true);
     return task.canEdit ? editable(task) : readOnly(task);
   }
 
@@ -479,11 +539,13 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   }
 
   function editable(t: Task) {
-    const titleValue = titleDraft ?? t.title;
-    const descValue = descDraft ?? t.description;
+    const titleValue = titleDraft ?? titleHeld.value;
+    const descValue = descDraft ?? descHeld.value;
     const descDirty = descDraft !== null && descDraft !== t.description;
-    const dueValue = dueDraft ?? t.due ?? "";
-    const assigneeKnown = t.assignee === null || people.some((p) => p.publicKey === t.assignee?.publicKey);
+    const dueValue = dueDraft ?? dueHeld.value;
+    const assigneeListed = t.assignee === null || people.some((p) => p.publicKey === t.assignee?.publicKey);
+    const titleMoved = titleDraft !== null && titleBase !== null && t.title !== titleBase && titleDraft.trim() !== t.title;
+    const descMoved = descDirty && descBase !== null && t.description !== descBase;
     return (
       <div className="td-grid">
         <div className="td-top">
@@ -500,11 +562,16 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               maxLength={200}
               aria-invalid={titleProblem ? true : undefined}
               aria-describedby={titleProblem ? `${ids}-title-err` : undefined}
+              onFocus={titleHeld.hold}
               onChange={(e) => {
+                if (titleDraft === null) setTitleBase(titleValue);
                 setTitleDraft(e.target.value);
                 setTitleProblem(null);
               }}
-              onBlur={() => void commitTitle()}
+              onBlur={() => {
+                titleHeld.release();
+                void commitTitle();
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -513,6 +580,14 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               }}
             />
             {problem(`${ids}-title-err`, titleProblem)}
+            <div className="td-live" aria-live="polite">
+              {titleMoved && (
+                <p className="td-moved">
+                  Judul ini baru diubah di laptop lain menjadi "{t.title}". Enter menyimpan ketikan Anda dan menggantinya,
+                  Escape memakai judul itu.
+                </p>
+              )}
+            </div>
             {fieldError("title", true)}
           </div>
 
@@ -526,7 +601,12 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               rows={5}
               value={descValue}
               placeholder="Apa yang perlu dikerjakan, dan seperti apa hasilnya"
-              onChange={(e) => setDescDraft(e.target.value)}
+              onFocus={descHeld.hold}
+              onBlur={descHeld.release}
+              onChange={(e) => {
+                if (descDraft === null) setDescBase(descValue);
+                setDescDraft(e.target.value);
+              }}
               onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
                 if (e.key === "Enter" && e.ctrlKey) {
                   e.preventDefault();
@@ -534,6 +614,14 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                 }
               }}
             />
+            <div className="td-live" aria-live="polite">
+              {descMoved && (
+                <p className="td-moved">
+                  Deskripsi ini baru diubah di laptop lain. Simpan deskripsi untuk menggantinya dengan ketikan Anda, atau
+                  batalkan perubahan untuk memakai versi terbaru.
+                </p>
+              )}
+            </div>
             {descDirty && (
               <div className="td-row-actions">
                 <button
@@ -549,7 +637,10 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                   type="button"
                   className="btn btn-ghost btn-sm"
                   disabled={pending === "description"}
-                  onClick={() => setDescDraft(null)}
+                  onClick={() => {
+                    setDescDraft(null);
+                    descHeld.settle(t.description);
+                  }}
                 >
                   Batalkan perubahan
                 </button>
@@ -583,7 +674,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
             </label>
             <select id={`${ids}-assignee`} className="td-input" {...selectProps("assignee", t)}>
               <option value="">Belum ada</option>
-              {!assigneeKnown && t.assignee && <option value={t.assignee.publicKey}>{nameOf(t.assignee)}</option>}
+              {!assigneeListed && t.assignee && <option value={t.assignee.publicKey}>{assigneeName(t.assignee)}</option>}
               {people.map((p) => (
                 <option key={p.publicKey} value={p.publicKey}>
                   {nameOf(p)}
@@ -605,11 +696,15 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               value={dueValue}
               aria-invalid={dueProblem ? true : undefined}
               aria-describedby={dueProblem ? `${ids}-due-err` : undefined}
+              onFocus={dueHeld.hold}
               onChange={(e) => {
                 setDueDraft(e.target.value);
                 setDueProblem(null);
               }}
-              onBlur={() => void commitDue()}
+              onBlur={() => {
+                dueHeld.release();
+                void commitDue();
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -715,15 +810,53 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     );
   }
 
-  function readOnly(t: Task) {
+  // Isian yang belum tersimpan saat task hilang. Ditampilkan sebagai teks yang
+  // bisa dipilih dan disalin, karena tidak ada lagi tempat untuk menyimpannya.
+  function keptDrafts(t: Task): { key: string; label: string; text: string }[] {
+    const list = [
+      { key: "title", label: "Judul", text: titleDraft !== null && titleDraft.trim() !== t.title ? titleDraft : "" },
+      { key: "desc", label: "Deskripsi", text: descDraft !== null && descDraft !== t.description ? descDraft : "" },
+      { key: "label", label: "Label baru", text: labelDraft.trim() },
+      { key: "comment", label: "Komentar", text: comment.trim() ? comment : "" },
+    ];
+    return list.filter((d) => d.text !== "");
+  }
+
+  function readOnlyNote(t: Task) {
+    if (t.canComment)
+      return "Anda bisa membaca dan mengomentari task ini, tapi tidak bisa mengubah isinya.";
+    return "Anda hanya bisa melihat task ini. Mengubah dan mengomentari task tidak tersedia untuk peran Anda di proyek ini.";
+  }
+
+  function readOnly(t: Task, isGone = false) {
+    const kept = isGone ? keptDrafts(t) : [];
     return (
       <div className="td-grid">
         <div className="td-top">
-          {topNotes(t)}
-          <p className="td-readonly-note">
-            Anda hanya bisa melihat task ini. Mengubah dan mengomentari task butuh peran anggota aktif di organisasi,
-            bukan tamu.
-          </p>
+          {!isGone && topNotes(t)}
+          {!isGone && <p className="td-readonly-note">{readOnlyNote(t)}</p>}
+          {kept.length > 0 && (
+            <section className="td-kept" aria-labelledby={`${ids}-kept`}>
+              <h3 id={`${ids}-kept`} className="td-sh">
+                Isian Anda yang belum tersimpan
+              </h3>
+              <p className="hint">Isian ini hilang setelah dialog ditutup. Salin dulu kalau masih perlu.</p>
+              {kept.map((d) => (
+                <div key={d.key} className="td-field">
+                  <label htmlFor={`${ids}-kept-${d.key}`} className="td-label">
+                    {d.label}
+                  </label>
+                  <textarea
+                    id={`${ids}-kept-${d.key}`}
+                    className="td-textarea"
+                    rows={d.key === "title" || d.key === "label" ? 1 : 3}
+                    readOnly
+                    value={d.text}
+                  />
+                </div>
+              ))}
+            </section>
+          )}
           <p className="td-title-text">{t.title}</p>
           <div className="td-field">
             <span className="td-label">Deskripsi</span>
@@ -738,7 +871,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
             </div>
             <div>
               <dt>Penanggung jawab</dt>
-              <dd>{t.assignee ? nameOf(t.assignee) : "Belum ada"}</dd>
+              <dd>{t.assignee ? assigneeName(t.assignee) : "Belum ada"}</dd>
             </div>
             <div>
               <dt>Tenggat</dt>
@@ -775,23 +908,23 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               </dd>
             </div>
           </dl>
-          {sideFooter(t)}
+          {sideFooter(t, !isGone)}
         </aside>
         <div className="td-bottom">
-          {comments(t)}
+          {comments(t, !isGone)}
           {activity(t)}
         </div>
       </div>
     );
   }
 
-  function sideFooter(t: Task) {
+  function sideFooter(t: Task, live = true) {
     return (
       <div className="td-side-foot">
         <p className="hint">
           Dibuat oleh {t.createdBy.publicKey === me ? "Anda" : t.createdBy.name}, {formatDateTime(t.createdAt)}
         </p>
-        {t.canDelete && (
+        {live && t.canDelete && (
           <button
             type="button"
             className="btn btn-ghost btn-sm td-delete"
@@ -816,15 +949,16 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     );
   }
 
-  function comments(t: Task) {
+  function comments(t: Task, live = true) {
     const sending = pending === "comment";
+    const canWrite = live && t.canComment === true;
     return (
       <section className="td-section" aria-labelledby={`${ids}-comments`}>
         <h3 id={`${ids}-comments`} className="td-sh">
           Komentar {t.comments.length > 0 && <span className="td-count">{t.comments.length}</span>}
         </h3>
         {t.comments.length === 0 ? (
-          <p className="hint">{t.canEdit ? "Belum ada komentar. Tulis yang pertama di bawah." : "Belum ada komentar."}</p>
+          <p className="hint">{canWrite ? "Belum ada komentar. Tulis yang pertama di bawah." : "Belum ada komentar."}</p>
         ) : (
           <ul className="td-list">
             {t.comments.map((c) => (
@@ -841,7 +975,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
             ))}
           </ul>
         )}
-        {t.canEdit && (
+        {canWrite && (
           <div className="td-composer">
             <label htmlFor={`${ids}-comment`} className="sr-only">
               Tulis komentar
@@ -930,6 +1064,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="dlg-overlay" />
         <RadixDialog.Content
+          ref={contentRef}
           className="td-dlg"
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
@@ -937,6 +1072,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
             if (active === titleRef.current && titleDraft !== null && titleDraft !== task?.title) {
               e.preventDefault();
               setTitleDraft(null);
+              titleHeld.settle(task?.title ?? "");
               setTitleProblem(null);
             } else if (active === labelRef.current && labelDraft) {
               e.preventDefault();
@@ -985,7 +1121,30 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
           </div>
 
           <div aria-live="polite">
-            {unsaved && (
+            {gone && task && (
+              <div className="notice td-gone">
+                <IconAlertTriangle size={18} aria-hidden="true" />
+                <div>
+                  <strong>
+                    {gone === "task" ? "Task ini dihapus di laptop lain." : "Proyek task ini tidak bisa dibuka lagi."}
+                  </strong>
+                  {gone === "project" && (
+                    <p>Anda tidak punya akses lagi ke proyek ini, misalnya karena dikeluarkan dari timnya.</p>
+                  )}
+                  <p>
+                    {keptDrafts(task).length > 0
+                      ? "Isian Anda yang belum tersimpan masih ada di bawah. Salin dulu kalau masih perlu."
+                      : "Yang tampil di bawah adalah isi terakhirnya. Perubahan tidak bisa disimpan lagi."}
+                  </p>
+                  <div className="td-row-actions">
+                    <button ref={goneCloseRef} type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+                      Tutup
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {unsaved && !gone && (
               <div className="notice td-unsaved">
                 <div>
                   <strong>{unsaved}</strong>

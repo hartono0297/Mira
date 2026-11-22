@@ -250,6 +250,15 @@ impl BoardDoc {
         Ok(())
     }
 
+    /// A copy with the same actor and history, to restore after a change
+    /// that `sync` refuses once applied (for example a delete without right).
+    pub fn fork(&mut self) -> BoardDoc {
+        let actor = self.doc.get_actor().clone();
+        BoardDoc {
+            doc: self.doc.fork().with_actor(actor),
+        }
+    }
+
     /// What a remote change may not alter about existing tasks:
     /// task id -> (created_by, deleted).
     fn shape_guard(&self) -> HashMap<String, (String, bool)> {
