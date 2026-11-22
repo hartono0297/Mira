@@ -65,7 +65,8 @@ describe("App", () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === "get_app_state" ? ready : null));
     renderApp();
 
-    expect(await screen.findByText("Chat belum ada di versi ini")).toBeInTheDocument();
+    // Tahap 2: layar Chat sungguhan menggantikan keadaan kosong Tahap 0.
+    expect(await screen.findByRole("heading", { name: "Chat", level: 1 })).toBeInTheDocument();
     expect(screen.getByText("Kantor Contoh", { exact: false })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Pengaturan" }));

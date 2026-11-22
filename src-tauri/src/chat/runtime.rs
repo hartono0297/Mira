@@ -169,6 +169,8 @@ impl ChatRuntime {
         let Ok(chat) = self.chat() else { return };
         let jobs = match tauri::async_runtime::spawn_blocking(move || chat.fetch_jobs()).await {
             Ok(Ok(jobs)) => jobs,
+            // No organization yet (or removed): nothing to download, not an error.
+            Ok(Err(err)) if matches!(err.code(), "forbidden" | "removed") => return,
             Ok(Err(err)) => {
                 eprintln!(
                     "Mira: antrean unduhan chat tidak terbaca [{}]: {err}",

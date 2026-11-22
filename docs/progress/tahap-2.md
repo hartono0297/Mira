@@ -6,7 +6,7 @@ Tanggal: 22 November 2026. Branch `claude/tahap-2-chat-f36a9d`, dari `main` 63eb
 
 Chat sudah bisa dipakai di satu laptop: channel #umum, channel tim, channel proyek, channel baru, chat pribadi, balas, mention, lampiran, status pesan, hapus pesan, arsip dan hapus channel, serta pengaturan notifikasi. Pengiriman ke laptop rekan memakai kontrak sinkron fitur (`network/feature.rs`). Karena transport sungguhan dikerjakan sesi lain, perpindahan data antarlaptop di branch ini dibuktikan dengan tes in-memory tiga laptop, termasuk titipan yang diteruskan laptop ketiga setelah laptop pengirim dimatikan.
 
-HASIL_RINGKAS
+Semua tes lulus: `cargo test` 615 (83 di antaranya tes chat), Vitest 453, clippy tanpa peringatan, dan uji ujung ke ujung satu laptop 19 dari 19. Yang belum: uji di beberapa laptop sungguhan, karena transport jaringan untuk fitur belum digabung. Rinciannya ada di bawah.
 
 ## Yang dibuat
 
@@ -53,11 +53,55 @@ HASIL_RINGKAS
 | Pesan di channel yang hanya berisi saya dianggap "Diterima laptopnya" dan statusnya tidak ditampilkan. | Tidak ada penerima lain. |
 | Notifikasi tidak muncul kalau jendela Mira sedang di depan. | Pesannya sudah terlihat atau tinggal satu klik. |
 
-KEPUTUSAN_TAMBAHAN
+| Record yang belum bisa dinilai (pembuat belum tercatat di tim menurut laptop ini, channel belum dikenal) ditunda, tidak ditolak. Balasan ke percakapan lain, hapus dengan pembuat salah, dan tanda serah dari bukan penerima disimpan tapi tidak berefek. | Supaya semua laptop menyimpan himpunan record yang sama dan log `rejected_changes` tidak penuh oleh record yang terus ditawarkan ulang. |
+| Arsip channel memakai aturan "yang terakhir menang" dan hanya membatasi pengiriman dari laptop sendiri. Pesan yang masuk ke channel yang diarsipkan tetap diterima. | Kalau ditolak saat diterima, laptop yang belum tahu arsipnya akan berbeda isi selamanya. |
+| Status "Diterima laptopnya" lewat titipan dihitung dari tanda serah penerima, kecuali penerima melaporkan titipan gagal dibuka. | Pengirim yang sudah mati lalu menyala lagi tetap tahu pesannya sampai. |
 
 ## Hasil uji (apa adanya)
 
-HASIL_UJI
+| Pemeriksaan | Hasil |
+|---|---|
+| `cargo test` (di `src-tauri`) | 615 lulus, 0 gagal, 7 diabaikan (sama dengan sebelumnya: keyring sungguhan, firewall, mDNS) |
+| Tes chat saja (`cargo test --lib chat::`) | 83 lulus |
+| `cargo clippy --all-targets` | 0 peringatan |
+| `rustfmt --check` file chat | bersih |
+| `npx tsc --noEmit` | tanpa error |
+| Vitest (`npx vitest run --maxWorkers=1`) | 34 file, 453 tes lulus (75 tes layar chat) |
+| Uji ujung ke ujung chat (`scripts/chat-e2e.mjs`, build debug, satu laptop) | 19 dari 19 lulus |
+
+Catatan Vitest: saat mesin sibuk build Rust, worker Vitest kadang gagal mulai (batas 60 detik) dan satu tes `NetworkPanel` sempat gagal karena waktu. Dijalankan ulang dengan `--maxWorkers=1`, semuanya lulus.
+
+Tes konvergensi dan pembatasan tiga laptop (in-memory lewat `network::feature::testing`), semuanya lulus:
+- Tiga laptop di #umum mendapat pesan dan tanda terima yang sama, dan status dihitung benar.
+- Isi channel tim tidak pernah sampai ke laptop di luar tim, walaupun anggota tim ikut meneruskan.
+- **Titipan:** A mengirim chat pribadi ke C yang offline. Hanya A dan B yang tersambung, lalu A dimatikan. B dan C tersambung: C menerima dan membaca pesan, B tidak pernah punya teks atau file aslinya (diperiksa sampai ke file database dan WAL). C menerbitkan tanda serah, B menghapus titipan. A menyala lagi, sinkron dengan B, dan melihat "Diterima laptopnya".
+- Titipan dengan lampiran kecil: file sandi lewat B, dibuka di C, lalu dihapus dari B setelah tanda serah.
+- Tamu hanya menerima channel proyek yang diizinkan, tidak bisa chat pribadi atau dikirimi chat pribadi, dan boleh memegang titipan tersegel.
+- Anggota yang dikeluarkan tidak mendapat apa pun. Record buatannya setelah dikeluarkan ditolak, sebelum dikeluarkan diterima.
+- Record palsu, tanda tangan salah, organisasi lain, dan body yang di-encode ulang ditolak dan dicatat. Menerima batch yang sama dua kali tidak mengubah apa pun.
+- Hapus pesan sampai ke semua laptop sebagai "Pesan dihapus", termasuk kalau hapusnya datang lebih dulu. Hapus palsu sebelum pesannya datang tidak menghapus pesan.
+- Hak arsip dan hapus channel diperiksa. #umum tidak bisa diarsip atau dihapus.
+- Laptop tidak menyajikan file dokumen atau file tim ke orang yang tidak berhak, walaupun hash-nya disebut di pesan atau titipan.
+- Proptest: urutan tarik acak di antara tiga laptop selalu berakhir dengan pesan dan status yang sama.
+- Segel: vektor uji resmi libsodium untuk konversi kunci cocok byte demi byte, kunci berorde kecil ditolak, dan setiap byte yang diubah membuat segel tidak bisa dibuka.
+
+Uji ujung ke ujung (satu laptop, aplikasi sungguhan lewat DevTools Protocol, `MIRA_DATA_DIR` dan `MIRA_PORT=47870` di folder sementara, mDNS dimatikan):
+- #umum terpilih otomatis.
+- Kirim dengan Enter, Shift+Enter untuk baris baru, dan balasan dengan kutipan.
+- `chat_send` dengan path yang tidak dipilih lewat dialog ditolak.
+- Buat channel `#proyek-a`, lalu hapus pesan sampai muncul "Pesan dihapus".
+- Arsip channel mengunci kolom pesan, lalu channel dikembalikan.
+- Pengaturan notifikasi tersimpan.
+- Setelah restart semuanya tetap ada.
+- Kunci uji di Credential Manager dan folder data dihapus di akhir.
+
+Review dilakukan empat subagent terpisah:
+- **Keamanan desain:** satu temuan kritis (laptop perantara bisa memberi id baru pada record yang sama) dan tujuh tinggi (id channel bisa ditabrakkan, hapus palsu sebelum pesan datang, tanda serah palsu, file dari fitur lain bisa ikut terhapus, membuka file bisa menjalankan program, path dari webview dipercaya). Semuanya sudah diperbaiki kecuali yang dicatat di bawah.
+- **Segel:** dua bug nyata diperbaiki. Kunci penerima yang tidak aman (orde kecil) diterima, dan kunci rahasia tidak di-clamp seperti libsodium.
+- **Kode inti setelah digabung:** dua temuan tinggi diperbaiki (blob yang bukan milik chat ikut disajikan, cabang titipan menyajikan blob sembarang) beserta temuan sedang dan rendah.
+- **Tampilan:** istilah diseragamkan ("chat pribadi"), navigasi panah di daftar, pengumuman pesan baru untuk pembaca layar, dan kontras AA di terang dan gelap.
+
+Screenshot (data uji, nama "Rina Uji"): `docs/progress/screenshots/t2-01-chat-kosong-terang.png` sampai `t2-06-daftar-gelap.png`.
 
 ## Titik sambung
 
@@ -80,4 +124,21 @@ HASIL_UJI
 
 ## Belum dicek atau masih terbatas
 
-BELUM
+- **Belum diuji antarlaptop sungguhan.** Transport fitur dikerjakan sesi lain; di branch ini `FeatureHub` memakai `OfflineLink`. Akibatnya di aplikasi yang berjalan sekarang semua rekan dianggap offline, sehingga setiap pesan ke rekan membuat titipan.
+- **Screenshot hanya satu laptop,** jadi status pesan, kartu file, dan chat pribadi tidak terlihat di screenshot. Semuanya diuji lewat Vitest dan tes Rust.
+- **Kirim lampiran lewat dialog Windows tidak diotomasi** di uji ujung ke ujung, karena dialog asli berada di luar WebView2. Notifikasi Windows juga tidak muncul di uji; yang diuji adalah keputusan kapan notifikasi dikirim.
+- **Hak dinilai menurut peran sekarang, bukan saat record dibuat.** Contoh: A menulis di channel tim lalu keluar dari tim. Laptop yang baru sinkron sesudahnya menunda pesan A selamanya, sedangkan laptop yang sudah sinkron sebelumnya tetap menampilkannya. Hal yang sama berlaku untuk arsip atau hapus dari admin yang dicopot. Perbaikannya butuh riwayat keanggotaan tim di log keanggotaan.
+- **Data terus bertambah.** Tanda terima dibuat per pesan per orang, dan sinkron menawarkan semua id setiap 30 detik. Untuk 10 sampai 30 orang ini masih ringan, tapi perlu dipadatkan (misalnya "sudah dibaca sampai sini") sebelum pilot panjang.
+- **Belum ada kuota.** Tidak ada batas jumlah titipan per orang, batas unduhan otomatis per hari, atau batas sisa disk.
+- **Metadata titipan terlihat** oleh laptop yang memegangnya, termasuk Tamu: siapa menulis ke siapa, kapan, dan berapa besar.
+- **"Dititipkan"** berarti titipan sudah diserahkan ke laptop lain, belum tentu sudah tersimpan di sana. Kontrak sekarang tidak memberi tahu hal itu.
+- **Kunci sementara di segel tidak diperiksa** (`crypto_box` 0.9). Paling banyak 3 bit kunci penerima bisa bocor ke anggota yang melihat apakah titipan diserahkan. Ini tidak melemahkan kunci secara berarti.
+- **Pesan bertanggal mundur.** Kunci anggota yang sudah dikeluarkan masih bisa menandatangani pesan bertanggal sebelum ia dikeluarkan. Pesan itu hanya bisa masuk kalau diteruskan laptop anggota.
+- **File yang sudah dimiliki untuk satu percakapan** bisa diunduh lagi untuk percakapan lain kalau hash-nya disebut di sana. Menutupnya butuh perubahan kontrak transport.
+- **Notifikasi** belum dikelompokkan dan belum dibatasi jumlahnya.
+- **Aksesibilitas:** saran mention memakai `role="combobox"` di textarea (didukung pembaca layar, tapi tidak sesuai aturan HTML-ARIA). Setiap pesan menambah dua atau tiga perhentian Tab. Popover status bisa terpotong di bawah area gulir.
+- **File sedikit di atas 600 baris:** `chat/audience.rs` dan `chat/service.rs`.
+
+## Commit
+
+Branch `claude/tahap-2-chat-f36a9d`, tanpa push dan tanpa merge ke `main`. Lihat `git log 63eb72b..HEAD`.

@@ -36,9 +36,9 @@ pub mod sync;
 pub mod view;
 
 #[cfg(test)]
-mod testutil;
-#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod testutil;
 
 pub use audience::{BoardTeamAudience, ProjectAudience, ProjectInfo};
 pub use fetch::{FetchJob, FetchKind};

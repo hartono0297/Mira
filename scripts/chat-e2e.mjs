@@ -214,10 +214,11 @@ try {
   const sent = (await messagesIn(page, umumId)).find((m) => m.text === TEXT.first);
   const statusUi = await sel.statusBtn(firstMsg).count();
   const statusText = statusUi ? await sel.statusBtn(firstMsg).getAttribute("aria-label") : "";
-  // Di channel tanpa penerima lain (total 0) baris status disembunyikan (deliveryLine).
+  // Organisasi baru hanya berisi satu orang: tidak ada penerima (total 0), jadi
+  // status tidak ditampilkan. Kalau ada penerima yang offline, statusnya Menunggu.
   check(
-    "Status pesan Menunggu karena tidak ada rekan online",
-    sent?.status?.state === "pending" && (statusUi ? /Menunggu/.test(statusText) : sent.status.total === 0),
+    "Status pesan sesuai penerima: tanpa penerima tidak ditampilkan, dengan penerima offline Menunggu",
+    sent?.status?.total === 0 ? statusUi === 0 : sent?.status?.state === "pending" && /Menunggu/.test(statusText),
     statusUi ? statusText : `state=${sent?.status?.state}, total=${sent?.status?.total}, baris status tidak tampil`,
   );
 
