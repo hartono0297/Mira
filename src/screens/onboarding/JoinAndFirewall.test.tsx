@@ -104,7 +104,8 @@ describe("Onboarding gabung dengan kode", () => {
     ["invite_expired", "Kode sudah kedaluwarsa"],
     ["invite_used", "Kode sudah dipakai"],
     ["invite_revoked", "Kode sudah dicabut"],
-    ["peer_unreachable", "Laptop rekan tidak menjawab"],
+    ["peer_unreachable", "Laptop rekan tidak bisa memeriksa kode"],
+    ["removed", "Laptop ini sudah dikeluarkan dari organisasi"],
   ])("menjelaskan error %s", async (code, title) => {
     const user = userEvent.setup();
     invoke.mockImplementation(router({ get_firewall_status: firewall(), join_with_code: rustError(code, "pesan Rust") }));

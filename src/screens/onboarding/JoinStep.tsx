@@ -174,7 +174,7 @@ export function JoinStep({ onBack, onFirewall, onJoined, onReload }: Props) {
                 Periksa Windows Firewall
               </button>
             )}
-            {errors.server.code === "already_in_org" && (
+            {(errors.server.code === "already_in_org" || errors.server.code === "name_required") && (
               <button type="button" className="btn btn-ghost onb-inline-btn" onClick={onReload}>
                 Muat ulang data laptop ini
               </button>

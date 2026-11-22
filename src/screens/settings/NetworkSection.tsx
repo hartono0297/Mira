@@ -73,7 +73,6 @@ function ThisLaptop({ status }: { status: NetworkStatus }) {
           </ul>
           <p className="hint">
             Kalau laptop rekan tidak menemukan laptop ini otomatis, rekan bisa mengisi salah satu alamat ini.
-            {status.listenPort !== null && ` Mira memakai port UDP ${status.listenPort}.`}
           </p>
         </>
       )}
@@ -100,16 +99,18 @@ function ThisLaptop({ status }: { status: NetworkStatus }) {
   );
 }
 
+// Rust mengosongkan lastError saat percobaan berhasil, tapi publicKey tetap
+// tersimpan saat percobaan berikutnya gagal. Jadi error dicek lebih dulu.
 function attemptText(m: ManualAddress, status: NetworkStatus): string {
-  if (m.publicKey) {
-    const peer = status.peers.find((p) => p.publicKey === m.publicKey);
-    const who = peer ? peer.displayName : "laptop rekan";
-    return m.lastTriedAt ? `Tersambung ke ${who}, ${relativeTime(m.lastTriedAt)}.` : `Terkait dengan ${who}.`;
-  }
+  const peer = m.publicKey ? status.peers.find((p) => p.publicKey === m.publicKey) : undefined;
+  const who = peer ? peer.displayName : "laptop rekan";
   if (m.lastError) {
     return m.lastTriedAt
       ? `Percobaan terakhir ${relativeTime(m.lastTriedAt)} gagal: ${m.lastError}`
       : `Percobaan terakhir gagal: ${m.lastError}`;
+  }
+  if (m.publicKey) {
+    return m.lastTriedAt ? `Tersambung ke ${who}, ${relativeTime(m.lastTriedAt)}.` : `Alamat milik ${who}, belum dicoba.`;
   }
   if (m.lastTriedAt) return `Dicoba ${relativeTime(m.lastTriedAt)}, belum ada jawaban.`;
   return "Belum dicoba. Mira mencoba alamat ini secara berkala.";
@@ -188,7 +189,7 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
             <li key={m.address}>
               <div className="manual-text">
                 <span className="mono selectable">{m.address}</span>
-                <span className={m.lastError && !m.publicKey ? "manual-sub manual-bad" : "manual-sub"}>
+                <span className={m.lastError ? "manual-sub manual-bad" : "manual-sub"}>
                   {attemptText(m, status)}
                 </span>
               </div>

@@ -114,6 +114,8 @@ describe("Pengaturan > Jaringan", () => {
     let list = [
       manual("10.8.0.5:47800", { lastTriedAt: recent, lastError: "Waktu habis menunggu jawaban." }),
       manual("10.8.0.6", { lastTriedAt: recent, publicKey: PK_B }),
+      // Rust tetap menyimpan publicKey saat percobaan berikutnya gagal.
+      manual("10.8.0.7", { lastTriedAt: recent, publicKey: PK_B, lastError: "Laptop rekan tidak menjawab." }),
     ];
     invoke.mockImplementation(
       router({
@@ -128,6 +130,8 @@ describe("Pengaturan > Jaringan", () => {
 
     expect(await screen.findByText("Percobaan terakhir 2 menit lalu gagal: Waktu habis menunggu jawaban.")).toBeInTheDocument();
     expect(screen.getByText("Tersambung ke Budi, 2 menit lalu.")).toBeInTheDocument();
+    expect(screen.getByText("Percobaan terakhir 2 menit lalu gagal: Laptop rekan tidak menjawab.")).toBeInTheDocument();
+    expect(screen.queryAllByText(/^Tersambung ke Budi/)).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "Hapus alamat 10.8.0.5:47800" }));
     expect(invoke).toHaveBeenCalledWith("remove_manual_address", { address: "10.8.0.5:47800" });

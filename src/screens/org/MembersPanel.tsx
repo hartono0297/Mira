@@ -28,7 +28,8 @@ export function MembersPanel({ ctx }: { ctx: OrgCtx }) {
     const teams = m.teams.map((t) => `${teamName.get(t.teamId) ?? "Tim lain"}${t.role === "admin" ? " (admin)" : ""}`);
     const seen = m.status === "active" ? presence(m) : null;
     const canPromote = dir.can.manageSuperadmins && m.status === "active" && !m.isSuperadmin && m.orgRole !== "guest";
-    const canDemote = dir.can.manageSuperadmins && m.status === "active" && m.isSuperadmin;
+    // Superadmin terakhir tidak bisa dilepas (Rust menolak dengan last_superadmin).
+    const canDemote = dir.can.manageSuperadmins && m.status === "active" && m.isSuperadmin && dir.superadminCount > 1;
     const canRemove = dir.can.removeMembers && m.status === "active" && !self;
     return (
       <li key={m.publicKey} className={`row member${m.status === "removed" ? " member-off" : ""}`}>
@@ -160,7 +161,10 @@ export function MembersPanel({ ctx }: { ctx: OrgCtx }) {
               Data yang sudah ada di laptop {removing.displayName} tetap ada di sana. Mira tidak bisa menghapusnya dari
               jauh.
             </p>
-            <p>Untuk masuk lagi, {removing.displayName} perlu kode undangan baru.</p>
+            <p>
+              Laptop itu tidak bisa bergabung lagi ke organisasi ini, juga dengan kode undangan baru. Langkah ini tidak
+              bisa dibatalkan.
+            </p>
           </>
         )}
       </ConfirmDialog>

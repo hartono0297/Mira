@@ -52,10 +52,17 @@ export function inviteErrorText(error: AppError): ErrorText {
           "Minta rekan membuka Pengaturan > Jaringan di Mira, lalu isi alamat laptopnya di kolom Alamat laptop rekan.",
         ],
       };
+    // Rust memakai kode ini saat laptop rekan menolak dengan alasan yang tidak
+    // dikenal; pesannya membawa keterangan dari laptop rekan.
     case "peer_unreachable":
       return {
-        title: "Laptop rekan tidak menjawab",
-        body: "Mira tidak bisa tersambung ke alamat itu. Periksa alamatnya, pastikan Mira di laptop rekan sedang terbuka, dan pastikan kedua laptop di jaringan yang sama.",
+        title: "Laptop rekan tidak bisa memeriksa kode",
+        body: `${error.message} Coba lagi sebentar lagi. Kalau tetap gagal, minta kode baru ke admin tim.`,
+      };
+    case "name_required":
+      return {
+        title: "Nama tampilan belum tersimpan",
+        body: "Laptop ini belum punya nama tampilan. Muat ulang data laptop ini, lalu isi nama sebelum bergabung.",
       };
     case "already_in_org":
       return {
@@ -65,7 +72,7 @@ export function inviteErrorText(error: AppError): ErrorText {
     case "removed":
       return {
         title: "Laptop ini sudah dikeluarkan dari organisasi",
-        body: "Minta admin organisasi membuat kode undangan baru untuk Anda.",
+        body: "Laptop yang sudah dikeluarkan tidak bisa bergabung lagi, juga dengan kode undangan baru. Kalau ini keliru, hubungi superadmin organisasi.",
       };
     case "forbidden":
       return { title: "Anda tidak punya izin untuk ini", body: error.message };
