@@ -137,7 +137,8 @@ mod tests {
                 "DROP TABLE board_pending; DROP TABLE board_rejected;
                  DROP INDEX board_changes_record;
                  ALTER TABLE board_changes DROP COLUMN record_id;
-                 ALTER TABLE board_projects DROP COLUMN doc_code;",
+                 ALTER TABLE board_projects DROP COLUMN doc_code;
+                 ALTER TABLE board_projects DROP COLUMN bound;",
             )
             .unwrap();
             for t in SIGNING_TABLES_AFTER_DOCUMENTS {

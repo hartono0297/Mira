@@ -10,7 +10,7 @@ use time::Duration;
 
 use super::*;
 use crate::board::commands;
-use crate::board::doc::{BoardDoc, Stamp, TaskData, TaskInit};
+use crate::board::doc::{BoardDoc, ProjectMeta, Stamp, TaskData, TaskInit};
 use crate::board::model::{ColumnId, NewTask, TaskPatch};
 use crate::board::sign::{sign_change, signing_message};
 use crate::board::store;
@@ -223,7 +223,12 @@ fn project_of(r: &FeatureRecord) -> String {
 
 /// `author` edits a copy of `source`'s document directly (no permission
 /// check) and signs the change: what a modified app could send.
-fn forge_task(author: &Lap, source: &Lap, pid: &str, title: &str) -> SignedChange {
+fn forge(
+    author: &Lap,
+    source: &Lap,
+    pid: &str,
+    edit: impl FnOnce(&mut BoardDoc, &str) -> AppResult<()>,
+) -> SignedChange {
     let snapshot: Vec<u8> = source.core(|c| {
         Ok(c.db.query_row("SELECT doc FROM board_projects WHERE id = ?1", [pid], |r| r.get(0))?)
     });
@@ -231,9 +236,18 @@ fn forge_task(author: &Lap, source: &Lap, pid: &str, title: &str) -> SignedChang
         let mut doc = BoardDoc::load(&snapshot, &store::actor_of(&c.identity))?;
         let before = doc.heads();
         let me = c.identity.public_key_hex().to_owned();
+        edit(&mut doc, &me)?;
+        doc.commit(clock::now().unix_timestamp());
+        let change = doc.changes_after(&before).pop().unwrap();
+        Ok(sign_change(&c.identity, pid, &change))
+    })
+}
+
+fn forge_task(author: &Lap, source: &Lap, pid: &str, title: &str) -> SignedChange {
+    forge(author, source, pid, |doc, me| {
         let at = clock::now_rfc3339();
         doc.create_task(
-            Stamp { actor: &me, at: &at },
+            Stamp { actor: me, at: &at },
             TaskInit {
                 title: title.into(),
                 description: String::new(),
@@ -243,10 +257,8 @@ fn forge_task(author: &Lap, source: &Lap, pid: &str, title: &str) -> SignedChang
                 priority: Default::default(),
                 labels: vec![],
             },
-        )?;
-        doc.commit(clock::now().unix_timestamp());
-        let change = doc.changes_after(&before).pop().unwrap();
-        Ok(sign_change(&c.identity, pid, &change))
+        )
+        .map(|_| ())
     })
 }
 
@@ -439,14 +451,17 @@ fn records_stay_with_people_who_may_read_the_project() {
     assert!(tamu.has_project(&pa));
     assert!(!tamu.has_project(&pb));
 
-    // A guest may not write: a change signed by the guest is refused for
-    // good, not kept as pending.
+    // A guest may not write: a change signed by the guest is not applied
+    // and not kept. It is not refused for good either (the op making the
+    // guest a member may still be on its way), so it is asked for again.
     let by_guest = record(&forge_task(&tamu, &tamu, &pa, "Dari tamu"));
     let got = ingest(&o.budi, &tamu, vec![by_guest.clone()]);
-    assert_eq!(got.rejected, 1);
+    assert_eq!(got, FeatureIngest::default());
     assert_eq!(o.budi.count("SELECT count(*) FROM board_pending"), 0);
-    assert_eq!(o.budi.count("SELECT count(*) FROM board_rejected"), 1);
-    assert!(o.budi.f.unknown_ids(&[by_guest.id]).unwrap().is_empty());
+    assert_eq!(o.budi.count("SELECT count(*) FROM board_rejected"), 0);
+    assert!(o.budi.rejections().is_empty());
+    assert_eq!(o.budi.f.unknown_ids(std::slice::from_ref(&by_guest.id)).unwrap(), vec![by_guest.id]);
+    assert_eq!(o.budi.tasks(&pa).len(), 1);
 
     // Citra leaves the team: new changes are no longer offered to her.
     let citra_pk = o.citra.pk.clone();
@@ -556,6 +571,42 @@ fn change_from_new_member_waits_for_the_membership_op() {
 }
 
 #[test]
+fn change_from_promoted_guest_waits_for_the_promotion_op() {
+    let o = office();
+    let pid = project(&o.budi, &o.team, "PL");
+    let tamu = Lap::new("Klien");
+    join(&o.sari, &tamu, &o.team, InviteRole::Guest, vec![pid.clone()]);
+    sync_ops(&[&o.sari, &o.budi, &o.citra, &tamu]);
+    pull(o.budi.me(), tamu.me()).unwrap();
+    assert!(tamu.has_project(&pid));
+
+    // Sari makes the guest a member of Desain; only Sari and the client
+    // know so far.
+    let team = o.team.clone();
+    both(&o.sari, &tamu, |s, t| {
+        org_ops::accept_more((&mut s.db, &s.identity), &t.identity, &team, InviteRole::Member, vec![])
+    });
+    sync_ops(&[&o.sari, &tamu]);
+    new_task(&tamu, &pid, "Dari klien", None);
+
+    // Budi still sees a guest: nothing is kept, refused or logged.
+    let got = pull(tamu.me(), o.budi.me()).unwrap().0;
+    assert_eq!(got, FeatureIngest::default());
+    assert_eq!(o.budi.count("SELECT count(*) FROM board_pending"), 0);
+    assert_eq!(o.budi.count("SELECT count(*) FROM board_rejected"), 0);
+    assert!(o.budi.rejections().is_empty());
+    assert!(o.budi.tasks(&pid).is_empty());
+
+    // The op arrives: the change is asked for again and applied.
+    sync_ops(&[&o.sari, &o.budi]);
+    let got = pull(tamu.me(), o.budi.me()).unwrap().0;
+    assert_eq!(got.accepted, 1);
+    assert!(got.changed);
+    assert_eq!(o.budi.tasks(&pid)[0].title, "Dari klien");
+    assert_eq!(o.budi.heads(&pid), tamu.heads(&pid));
+}
+
+#[test]
 fn change_made_before_removal_is_accepted_after_it() {
     let o = office();
     let pid = project(&o.budi, &o.team, "PL");
@@ -616,13 +667,200 @@ fn pending_quota_per_sender() {
 #[test]
 fn old_waiting_rows_are_dropped() {
     let o = office();
-    let month_ago = clock::format_rfc3339(clock::now() - Duration::days(31));
-    fill_pending(&o.sari, 2, &o.budi.pk, "deps", &month_ago);
-    fill_pending(&o.sari, 1, &o.budi.pk, "project", &month_ago);
+    let ago = |days| clock::format_rfc3339(clock::now() - Duration::days(days));
+    fill_pending(&o.sari, 2, &o.budi.pk, "deps", &ago(31));
+    fill_pending(&o.sari, 1, &o.budi.pk, "project", &ago(31));
     fill_pending(&o.sari, 1, &o.budi.pk, "deps", &clock::now_rfc3339());
-    o.sari.f.ingest(&o.budi.pk, Vec::new()).unwrap();
+    // Held changes get longer, but not forever.
+    fill_pending(&o.sari, 1, &o.budi.pk, "rights", &ago(31));
+    fill_pending(&o.sari, 2, &o.budi.pk, "rights", &ago(91));
+    // Directly: `ingest` would also retry the held dummy rows and drop them
+    // as unreadable.
+    o.sari.core(|c| drop_stale_pending(&c.db, clock::now()));
     assert_eq!(o.sari.pending("deps"), 1);
     assert_eq!(o.sari.pending("project"), 0);
+    assert_eq!(o.sari.pending("rights"), 1);
+}
+
+#[test]
+fn pending_bytes_quota_per_sender() {
+    let o = office();
+    let pid = project(&o.budi, &o.team, "PL");
+    new_task(&o.budi, &pid, "Satu", None);
+    // One huge row from Budi: few rows, but his byte quota is used up.
+    let big = "x".repeat(usize::try_from(MAX_PENDING_BYTES_PER_SENDER).unwrap() - 100);
+    o.sari.core(|c| {
+        c.db.execute(
+            "INSERT INTO board_pending
+               (record_id, project_id, hash, author, body, reason, received_from, received_at)
+             VALUES (?1, ?2, ?1, ?1, ?3, 'deps', ?4, ?5)",
+            params!["ab".repeat(32), "00".repeat(16), big, o.budi.pk, clock::now_rfc3339()],
+        )?;
+        Ok(())
+    });
+    let records = records_from(&o.budi, &o.sari);
+    let waiting = records[1..].to_vec();
+    assert_eq!(ingest(&o.sari, &o.budi, waiting.clone()), FeatureIngest::default());
+    assert_eq!(o.sari.pending("project"), 0);
+    // The same record from someone else still fits.
+    assert_eq!(ingest(&o.sari, &o.citra, waiting).accepted, 1);
+    assert_eq!(o.sari.pending("project"), 1);
+}
+
+#[test]
+fn waiting_changes_of_unknown_authors_are_not_kept() {
+    let o = office();
+    let pid = project(&o.budi, &o.team, "PL");
+    new_task(&o.budi, &pid, "Satu", None);
+    // Eko is not in the organization; Sari does not know the project yet.
+    let eko = Lap::new("Eko");
+    let by_eko = record(&forge_task(&eko, &o.budi, &pid, "Iklan gelap"));
+    let got = ingest(&o.sari, &o.budi, vec![by_eko.clone()]);
+    assert_eq!(got, FeatureIngest::default());
+    assert_eq!(o.sari.count("SELECT count(*) FROM board_pending"), 0);
+    assert!(o.sari.rejections().is_empty());
+    assert_eq!(o.sari.f.unknown_ids(std::slice::from_ref(&by_eko.id)).unwrap(), vec![by_eko.id.clone()]);
+
+    // A row kept earlier for such an author is dropped when it comes up
+    // again; Budi's own waiting change is kept.
+    let sc = SignedChange::from_record_body(&by_eko.body).unwrap();
+    o.sari.core(|c| {
+        c.db.execute(
+            "INSERT INTO board_pending
+               (record_id, project_id, hash, author, body, reason, received_from, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'deps', ?6, ?7)",
+            params![by_eko.id, pid, sc.hash, sc.author, by_eko.body, o.citra.pk, clock::now_rfc3339()],
+        )?;
+        Ok(())
+    });
+    let records = records_from(&o.budi, &o.sari);
+    let got = ingest(&o.sari, &o.budi, records[1..].to_vec());
+    assert_eq!(got.accepted, 1);
+    assert_eq!(o.sari.pending("project"), 1);
+    assert_eq!(o.sari.count("SELECT count(*) FROM board_pending"), 1);
+    assert_eq!(o.sari.f.unknown_ids(std::slice::from_ref(&by_eko.id)).unwrap(), vec![by_eko.id]);
+}
+
+#[test]
+fn one_reply_holds_at_most_the_byte_budget() {
+    let o = office();
+    let pid = project(&o.budi, &o.team, "PL");
+    // Rows shaped like large stored changes (about 200 KiB of body each).
+    let author = o.budi.pk.clone();
+    o.budi.core(|c| {
+        for n in 0..50u8 {
+            let sc = SignedChange {
+                project_id: pid.clone(),
+                hash: format!("{n:02x}").repeat(32),
+                author: author.clone(),
+                seq: u64::from(n) + 100,
+                bytes: vec![n; 100 * 1024],
+                sig: "0".repeat(128),
+            };
+            c.db.execute(
+                "INSERT INTO board_changes
+                   (hash, project_id, author, seq, bytes, sig, created_at, received_at, record_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 't', 't', ?7)",
+                params![sc.hash, sc.project_id, sc.author, sc.seq as i64, sc.bytes, sc.sig, sc.record_id()],
+            )?;
+        }
+        Ok(())
+    });
+    let ids = o.budi.f.record_ids_for(&o.citra.pk).unwrap();
+    assert_eq!(ids.len(), 51);
+    let size = |rs: &[FeatureRecord]| rs.iter().map(|r| r.body.len()).sum::<usize>();
+
+    let mut asked = ids.clone();
+    asked.reverse();
+    let first = o.budi.f.records_for(&o.citra.pk, &asked).unwrap();
+    assert!(!first.is_empty() && first.len() < ids.len(), "{}", first.len());
+    assert!(size(&first) <= MAX_RECORDS_FOR_BYTES);
+    // Stored order, from the start: the project's first change leads.
+    let got: Vec<String> = first.iter().map(|r| r.id.clone()).collect();
+    assert_eq!(got, ids[..first.len()].to_vec());
+
+    // The next round asks for what is still missing and gets the rest.
+    let rest = o.budi.f.records_for(&o.citra.pk, &ids[first.len()..]).unwrap();
+    assert_eq!(first.len() + rest.len(), ids.len());
+    assert!(size(&rest) <= MAX_RECORDS_FOR_BYTES);
+}
+
+fn bound(l: &Lap, pid: &str) -> Option<i64> {
+    l.core(|c| Ok(c.db.query_row("SELECT bound FROM board_projects WHERE id = ?1", [pid], |r| r.get(0))?))
+}
+
+#[test]
+fn bound_ids_are_checked_once_then_read_from_the_table() {
+    let o = office();
+    let pid = project(&o.budi, &o.team, "PL");
+    new_task(&o.budi, &pid, "Satu", None);
+    assert_eq!(bound(&o.budi, &pid), None);
+    assert_eq!(o.budi.f.record_ids_for(&o.citra.pk).unwrap().len(), 2);
+    assert_eq!(bound(&o.budi, &pid), Some(1));
+
+    // Afterwards the stored value decides; the document is not read.
+    o.budi.core(|c| Ok(c.db.execute("UPDATE board_projects SET bound = 0", [])?));
+    assert!(o.budi.f.record_ids_for(&o.citra.pk).unwrap().is_empty());
+    let all = o.budi.core(|c| store::stored_changes(&c.db, &pid));
+    let ids: Vec<String> = all.iter().map(SignedChange::record_id).collect();
+    assert!(o.budi.f.records_for(&o.citra.pk, &ids).unwrap().is_empty());
+    o.budi.core(|c| Ok(c.db.execute("UPDATE board_projects SET bound = NULL", [])?));
+    assert_eq!(o.budi.f.records_for(&o.citra.pk, &ids).unwrap().len(), 2);
+    assert_eq!(bound(&o.budi, &pid), Some(1));
+
+    // A project made before ids were bound (no nonce) is stored as 0.
+    let old = "ef".repeat(16);
+    let budi_pk = o.budi.pk.clone();
+    o.budi.core(|c| {
+        let meta = ProjectMeta {
+            id: old.clone(),
+            code: "LM".into(),
+            name: "Proyek lama".into(),
+            team_id: None,
+        };
+        let mut doc = BoardDoc::create(&store::actor_of(&c.identity), &meta)?;
+        doc.commit(1);
+        c.db.execute(
+            "INSERT INTO board_projects (id, code, doc_code, name, team_id, created_by, created_at, doc, updated_at)
+             VALUES (?1, 'LM', 'LM', 'Proyek lama', NULL, ?2, 't', ?3, 't')",
+            params![old, budi_pk, doc.save()],
+        )?;
+        Ok(())
+    });
+    assert!(!o.budi.core(|c| store::is_syncable(&c.db, &old)));
+    assert_eq!(bound(&o.budi, &old), Some(0));
+    assert!(o.budi.core(|c| Ok(store::is_syncable(&c.db, &"00".repeat(16)).is_err())));
+}
+
+#[test]
+fn refusals_of_waiting_changes_name_the_peer_that_sent_them() {
+    let o = office();
+    let pid = project(&o.budi, &o.team, "PL");
+    new_task(&o.budi, &pid, "Satu", None);
+    pull(o.budi.me(), o.citra.me()).unwrap();
+    // Citra (a member) sends Sari a change that rewrites the project's
+    // nonce. Sari does not know the project yet, so it waits.
+    let bad = record(&forge(&o.citra, &o.citra, &pid, |doc, _| doc.set_project_nonce(&"cd".repeat(16))));
+    assert_eq!(ingest(&o.sari, &o.citra, vec![bad]).accepted, 1);
+    assert_eq!(o.sari.pending("project"), 1);
+
+    // Budi, honest, sends the project; Citra's change is refused then.
+    let got = ingest(&o.sari, &o.budi, records_from(&o.budi, &o.sari));
+    assert!(got.changed);
+    assert_eq!(o.sari.count("SELECT count(*) FROM board_pending"), 0);
+    let logged: Vec<(Option<String>, String)> = o.sari.core(|c| {
+        let mut stmt = c.db.prepare("SELECT peer, code FROM rejected_changes ORDER BY id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+        Ok(rows)
+    });
+    assert_eq!(logged, vec![(Some(o.citra.pk.clone()), "board_not_allowed".to_owned())]);
+    // Applied changes record who sent them.
+    let from: Vec<Option<String>> = o.sari.core(|c| {
+        let mut stmt = c.db.prepare("SELECT received_from FROM board_changes WHERE project_id = ?1")?;
+        let rows = stmt.query_map([&pid], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        Ok(rows)
+    });
+    assert_eq!(from, vec![Some(o.budi.pk.clone()); 2]);
 }
 
 #[test]

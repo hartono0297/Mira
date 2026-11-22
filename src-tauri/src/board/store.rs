@@ -277,10 +277,28 @@ pub fn project_id_matches(doc: &BoardDoc, creator: &str) -> bool {
 }
 
 /// Whether a stored project may be offered to other laptops (bound id).
+/// Computed from the document once, then read from `board_projects.bound`:
+/// the id, creator, team and nonce never change.
 pub fn is_syncable(conn: &Connection, project_id: &str) -> AppResult<bool> {
+    let bound: Option<i64> = conn
+        .query_row(
+            "SELECT bound FROM board_projects WHERE id = ?1",
+            [project_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(project_not_found)?;
+    if let Some(bound) = bound {
+        return Ok(bound == 1);
+    }
     let row = project(conn, project_id)?;
     let doc = load_doc(conn, project_id, &[0; 32])?;
-    Ok(project_id_matches(&doc, &row.created_by))
+    let bound = project_id_matches(&doc, &row.created_by);
+    conn.execute(
+        "UPDATE board_projects SET bound = ?2 WHERE id = ?1",
+        params![project_id, bound],
+    )?;
+    Ok(bound)
 }
 
 /// Creates a project and its document. Permission is checked by the caller.

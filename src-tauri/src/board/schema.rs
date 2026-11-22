@@ -60,6 +60,9 @@ CREATE TABLE board_reminders_sent (
 /// - `board_projects.doc_code`: the code written in the project document.
 ///   `code` is the code shown on this laptop, which differs only when two
 ///   projects want the same code (see `store::refresh_codes`).
+/// - `board_projects.bound`: whether the project id is bound to its creator
+///   and team (`store::is_syncable`), 1 or 0; NULL until first computed. Id,
+///   creator, team and nonce never change, so the value never goes stale.
 /// - `board_pending`: received changes not applied yet (missing parent
 ///   change, unknown project, or author without the right as far as this
 ///   laptop knows). Retried later; never sent on.
@@ -71,6 +74,7 @@ CREATE UNIQUE INDEX board_changes_record ON board_changes (record_id);
 
 ALTER TABLE board_projects ADD COLUMN doc_code TEXT NOT NULL DEFAULT '';
 UPDATE board_projects SET doc_code = code;
+ALTER TABLE board_projects ADD COLUMN bound INTEGER CHECK (bound IN (0, 1));
 
 CREATE TABLE board_pending (
     record_id     TEXT PRIMARY KEY CHECK (length(record_id) = 64),
