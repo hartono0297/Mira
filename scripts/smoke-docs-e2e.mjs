@@ -152,10 +152,10 @@ try {
   const skipFirewall = page.getByRole("button", { name: /Lewati, atur nanti/ });
   await Promise.race([
     skipFirewall.waitFor({ timeout: 10000 }).then(() => skipFirewall.click()),
-    page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 10000 }),
+    page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 }),
   ]).catch(() => {});
-  await page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 10000 });
-  await page.getByRole("button", { name: "Pengaturan" }).click();
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 });
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Terang").check();
   await page.getByRole("button", { name: "Dokumen", exact: true }).click();
   await page.getByText(/masih kosong/).waitFor({ timeout: 10000 });
@@ -299,7 +299,7 @@ try {
   check("Sesi Word selesai setelah kunci ~$ hilang", wordDone.versionCount === 2);
 
   // Mode gelap
-  await page.getByRole("button", { name: "Pengaturan" }).click();
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(300);
   await page.getByRole("button", { name: "Dokumen", exact: true }).click();
@@ -318,7 +318,7 @@ try {
   writeFileSync(xlsxWorking, Buffer.concat([readFileSync(xlsxWorking), Buffer.from("simpan saat Mira tertutup")]));
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
   const recovered = await waitFor(
     async () => {
       const d = await docByName(page, XLSX);

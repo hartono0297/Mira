@@ -138,7 +138,7 @@ try {
   await page.getByRole("button", { name: "Buat organisasi" }).click();
   // Panduan firewall (Tahap 1): dilewati tanpa mengubah pengaturan Windows.
   await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
-  await page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 10000 });
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 });
   const body1 = await page.locator("body").innerText();
   check(
     "Organisasi dibuat, masuk kerangka utama sebagai Superadmin",
@@ -150,7 +150,7 @@ try {
   // Jalankan 2: setelah restart langsung masuk kerangka utama.
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
   const body2 = await page.locator("body").innerText();
   check(
     "Setelah restart langsung ke kerangka utama, nama dan organisasi tetap",
@@ -163,7 +163,7 @@ try {
     await page.getByRole("button", { name: menu, exact: true }).click();
     await page.screenshot({ path: join(shots, file) });
   }
-  await page.getByRole("button", { name: "Pengaturan" }).click();
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(300);
   check("Mode Gelap diterapkan", (await theme(page)) === "dark");
@@ -195,7 +195,7 @@ try {
   // Jalankan 3: pilihan Gelap tersimpan setelah restart.
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
   check("Mode Gelap tetap setelah restart", (await theme(page)) === "dark");
   await page.screenshot({ path: join(shots, "11-chat-gelap-setelah-restart.png") });
   await stop(app);
