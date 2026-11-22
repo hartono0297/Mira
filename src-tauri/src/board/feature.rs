@@ -386,10 +386,12 @@ fn process_project(
             .filter(|&i| hashes.insert(items[i].sc.hash.clone()))
             .collect();
         let mut deferred = Vec::new();
-        // One import per sending peer, so `sync` logs refusals and stores
-        // `received_from` under the peer that sent each change. Records
-        // received now come first.
-        for group in by_sender(&items, &batch) {
+        // One import for all of them: `sync` needs the whole batch to see
+        // which held change a current writer has built on ("didukung").
+        // Refusals and `received_from` are logged under the sender of the
+        // first record (records received now come first).
+        {
+            let group = batch.clone();
             let from = items[group[0]].from.clone();
             let changes = group.iter().map(|&i| items[i].sc.clone()).collect();
             let report = sync::import_project(&mut core.db, policy, project_id, from.as_deref(), changes)?;
@@ -637,19 +639,6 @@ fn drop_stale_pending(conn: &Connection, now: OffsetDateTime) -> AppResult<()> {
         ],
     )?;
     Ok(())
-}
-
-/// Splits `batch` by sending peer, in order of first appearance.
-fn by_sender(items: &[Item], batch: &[usize]) -> Vec<Vec<usize>> {
-    let mut groups: Vec<(Option<&str>, Vec<usize>)> = Vec::new();
-    for &i in batch {
-        let from = items[i].from.as_deref();
-        match groups.iter_mut().find(|(f, _)| *f == from) {
-            Some((_, group)) => group.push(i),
-            None => groups.push((from, vec![i])),
-        }
-    }
-    groups.into_iter().map(|(_, group)| group).collect()
 }
 
 /// Whether `pk` has a row in `members` (active or removed).

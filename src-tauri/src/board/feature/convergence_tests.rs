@@ -1091,7 +1091,6 @@ fn two_projects_with_the_same_code_show_the_same_codes_everywhere() {
 /// applies it. Budi never asks for it again, so he misses it and everything
 /// built on it.
 #[test]
-#[ignore = "bug: perubahan dari tamu ditolak permanen (board/feature.rs process_project, cabang rights.is_guest), padahal op yang menjadikannya anggota bisa datang belakangan"]
 fn guest_promoted_to_member_converges_whatever_arrives_first() {
     let o = office();
     let pa = shared_project(&o, &o.budi, "Untuk klien", "PA");
@@ -1135,7 +1134,6 @@ fn guest_promoted_to_member_converges_whatever_arrives_first() {
 /// it saw first and refuses the other for good, so Sari and Dewi end with
 /// different documents, and Dewi refuses Budi's real change.
 #[test]
-#[ignore = "bug: change yang membuat task dengan id yang sudah ada ditolak permanen menurut urutan kedatangan (board/rules.rs judge, cabang Kind::Tasks \"menimpa task\"), jadi laptop berbeda menolak change yang berbeda"]
 fn concurrent_task_with_the_same_id_does_not_split_the_laptops() {
     let o = office();
     let pid = shared_project(&o, &o.budi, "Peluncuran produk", "PL");

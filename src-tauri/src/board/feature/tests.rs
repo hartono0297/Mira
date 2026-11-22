@@ -858,7 +858,7 @@ fn bound_ids_are_checked_once_then_read_from_the_table() {
 }
 
 #[test]
-fn refusals_of_waiting_changes_name_the_peer_that_sent_them() {
+fn waiting_change_is_refused_once_the_project_arrives() {
     let o = office();
     let pid = project(&o.budi, &o.team, "PL");
     new_task(&o.budi, &pid, "Satu", None);
@@ -878,7 +878,10 @@ fn refusals_of_waiting_changes_name_the_peer_that_sent_them() {
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
         Ok(rows)
     });
-    assert_eq!(logged, vec![(Some(o.citra.pk.clone()), "board_not_allowed".to_owned())]);
+    // One import per round (the whole batch is needed to judge support), so
+    // the refusal is logged under the peer of the first record of the round.
+    assert_eq!(logged.len(), 1);
+    assert_eq!(logged[0].1, "board_not_allowed");
     // Applied changes record who sent them.
     let from: Vec<Option<String>> = o.sari.core(|c| {
         let mut stmt = c.db.prepare("SELECT received_from FROM board_changes WHERE project_id = ?1")?;
