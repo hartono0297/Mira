@@ -13,11 +13,18 @@
 //!   inbound `apply_remote_*` functions).
 //! - `office`  Office file-name patterns and the save debounce (pure).
 //! - `watch`   folder watcher for working copies (notify).
+//! - `session` the edit flow: working copies, versions from saves, finishing,
+//!   read-only copies, recovery at start (no Tauri types).
+//! - `runtime` Tauri managed state: launcher, event emitter, watcher.
+//! - `commands` Tauri commands for the Dokumen screen.
 
 pub mod access;
+pub mod commands;
 pub mod kinds;
 pub mod office;
+pub mod runtime;
 pub mod schema;
+pub mod session;
 pub mod store;
 pub mod sync;
 pub mod view;

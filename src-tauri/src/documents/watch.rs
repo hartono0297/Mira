@@ -320,7 +320,13 @@ impl Worker {
                 Some(Msg::Shutdown) => break,
                 Some(Msg::Event(event)) => self.on_event(event),
                 Some(Msg::Watched(id)) => {
+                    // Watching an id again ("Buka lagi", recovery) must not drop a save that
+                    // is still settling; an extra settle is harmless (same hash, no version).
+                    let pending = self.files.is_pending(&id);
                     self.reset(&id);
+                    if pending {
+                        self.files.touch(&id, Instant::now());
+                    }
                     // A lock that already exists (Office still open after Mira restarted) is
                     // reported right away.
                     self.check_lock(&id);

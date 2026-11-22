@@ -30,6 +30,7 @@ use crate::state::MiraState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = paths::resolve_data_dir(app.handle());
             let state = MiraState::new(
@@ -50,6 +51,15 @@ pub fn run() {
                 .with_core(|core| Ok(window_theme::initial_background(Some(&core.db))))
                 .unwrap_or_else(|_| window_theme::initial_background(None));
             app.manage(state);
+            // Document library: managed even when the data folder is missing
+            // (its commands then return the error). Edit sessions left from
+            // the last run are recovered in the background.
+            let documents = documents::runtime::DocumentsRuntime::new(
+                app.handle(),
+                app.state::<MiraState>().inner().clone(),
+            );
+            app.manage(documents.clone());
+            documents.spawn_recovery();
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
                 Ok(d) => d.from_env.then(|| d.path.clone()),
@@ -67,6 +77,15 @@ pub fn run() {
             commands::create_organization,
             commands::get_setting,
             commands::set_setting,
+            documents::commands::list_documents,
+            documents::commands::get_document,
+            documents::commands::add_documents,
+            documents::commands::start_edit,
+            documents::commands::finish_edit,
+            documents::commands::open_read_only,
+            documents::commands::restore_version,
+            documents::commands::resolve_conflict,
+            documents::commands::export_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
