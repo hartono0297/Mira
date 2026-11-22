@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, ImportedPdf, RequestDetail } from "../../api/signing";
-import { NewRequestDialog, titleFromFileName } from "./NewRequestDialog";
+import { NewRequestDialog, SIGNERS_MAX, titleFromFileName } from "./NewRequestDialog";
 
 const api = vi.hoisted(() => ({ listCandidates: vi.fn(), createRequest: vi.fn() }));
 vi.mock("../../api/signing", async (orig) => ({
@@ -100,17 +100,46 @@ describe("NewRequestDialog", () => {
   it("judul kosong dan tanpa penanda tangan ditolak sebelum memanggil inti", async () => {
     const { user } = setup();
     const me = await screen.findByRole("checkbox", { name: "Penguji (Anda)" });
+    // Wadah alert sudah ada sebelum error muncul, supaya pembaca layar membacakan isinya.
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts.every((a) => a.textContent === "")).toBe(true);
     await user.clear(screen.getByLabelText("Judul dokumen"));
     await user.click(screen.getByRole("button", { name: "Buat permintaan" }));
-    expect(screen.getByText("Isi judul dokumen.")).toBeInTheDocument();
+    expect(alerts.some((a) => a.textContent === "Isi judul dokumen.")).toBe(true);
     expect(screen.getByLabelText("Judul dokumen")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText("Judul dokumen")).toHaveFocus();
 
     await user.type(screen.getByLabelText("Judul dokumen"), "Judul Uji");
     await user.click(me);
     await user.click(screen.getByRole("button", { name: "Buat permintaan" }));
-    expect(screen.getByText("Pilih minimal satu penanda tangan.")).toBeInTheDocument();
+    expect(alerts.some((a) => a.textContent === "Pilih minimal satu penanda tangan.")).toBe(true);
     expect(api.createRequest).not.toHaveBeenCalled();
+  });
+
+  it("paling banyak 20 penanda tangan: centang ke-21 ditolak dengan pesan", async () => {
+    const many: Candidate[] = Array.from({ length: SIGNERS_MAX + 1 }, (_, i) => ({
+      publicKey: String(i).padStart(64, "0"),
+      displayName: `Anggota Uji ${String(i).padStart(2, "0")}`,
+      kind: "member",
+      isMe: false,
+    }));
+    api.listCandidates.mockResolvedValueOnce(many);
+    const { user } = setup();
+    await screen.findByRole("checkbox", { name: "Anggota Uji 00" });
+    expect(screen.getByText(`Paling banyak ${SIGNERS_MAX} orang. Dipilih 0.`)).toBeInTheDocument();
+    for (let i = 0; i < SIGNERS_MAX; i++) {
+      await user.click(screen.getByRole("checkbox", { name: `Anggota Uji ${String(i).padStart(2, "0")}` }));
+    }
+    expect(screen.getByText(`Paling banyak ${SIGNERS_MAX} orang. Dipilih ${SIGNERS_MAX}.`)).toBeInTheDocument();
+    const last = screen.getByRole("checkbox", { name: "Anggota Uji 20" });
+    await user.click(last);
+    expect(last).not.toBeChecked();
+    expect(screen.getByText(/Paling banyak 20 penanda tangan per permintaan/).closest("[role=alert]")).not.toBeNull();
+    // Melepas satu centang menghapus pesan dan membuka tempat.
+    await user.click(screen.getByRole("checkbox", { name: "Anggota Uji 00" }));
+    expect(screen.queryByText(/Paling banyak 20 penanda tangan per permintaan/)).not.toBeInTheDocument();
+    await user.click(last);
+    expect(last).toBeChecked();
   });
 
   it("error dari inti ditampilkan dan dialog tetap terbuka", async () => {

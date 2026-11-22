@@ -1,4 +1,4 @@
-import type { CssRect, PageGeometry, PdfRect, Size } from "./types";
+import type { CssRect, PageGeometry, PageRotation, PdfRect, Size } from "./types";
 
 // Konversi antara userspace PDF dan px CSS halaman yang tampil. Rumusnya sama
 // dengan matriks PageViewport pdf.js (scale dikali userUnit, offset 0):
@@ -7,6 +7,13 @@ import type { CssRect, PageGeometry, PdfRect, Size } from "./types";
 //   rotasi 180: u = (x1 - x)s, v = (y - y0)s
 //   rotasi 270: u = (y1 - y)s, v = (x1 - x)s
 // Jadi hasilnya cocok dengan viewport.convertToViewportPoint dan convertToPdfPoint.
+
+// Sama dengan Page.rotate di pdf.js: /Rotate yang bukan kelipatan 90 dianggap 0,
+// selain itu dinormalkan ke 0, 90, 180, atau 270.
+export function normalizeRotation(r: number): PageRotation {
+  if (!Number.isFinite(r) || r % 90 !== 0) return 0;
+  return (((r % 360) + 360) % 360) as PageRotation;
+}
 
 function unitScale(page: PageGeometry, scale: number): number {
   return scale * (page.userUnit ?? 1);

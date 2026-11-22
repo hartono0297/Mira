@@ -50,6 +50,33 @@ export function resizeRect(
   return { left: rect.left, top: rect.top, width: w, height: h };
 }
 
+// Ubah ukuran dengan titik tengah tetap (untuk keyboard, sama dengan tombol
+// Kecilkan/Besarkan di layar dokumen). Ukuran dibatasi bounds dan ukuran
+// minimum, lalu posisi digeser masuk kalau kotak keluar dari bounds.
+export function resizeAroundCenter(
+  rect: CssRect,
+  width: number,
+  height: number,
+  bounds: Size,
+  opts: { aspectRatio?: number; minWidth?: number } = {},
+): CssRect {
+  const { aspectRatio } = opts;
+  const minW = opts.minWidth ?? 24;
+  let w: number;
+  let h: number;
+  if (aspectRatio && aspectRatio > 0) {
+    const limit = Math.min(bounds.width, bounds.height * aspectRatio);
+    w = Math.max(Math.min(width, limit), Math.min(minW, limit));
+    h = w / aspectRatio;
+  } else {
+    w = Math.max(Math.min(width, bounds.width), Math.min(minW, bounds.width));
+    h = Math.max(Math.min(height, bounds.height), Math.min(minW, bounds.height));
+  }
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  return clampCss({ left: cx - w / 2, top: cy - h / 2, width: w, height: h }, bounds);
+}
+
 // Kotak yang bisa dipindah dan diubah ukurannya di atas halaman PDF, dengan
 // mouse, pena, sentuhan, dan keyboard. Posisi selalu di dalam bounds.
 export function PlacementBox({
@@ -82,6 +109,7 @@ export function PlacementBox({
     }
   }
 
+  // Hanya dipakai keyboard; pegangan sudut (mouse) memakai resizeRect dari kiri atas.
   function grow(delta: number, axis: "both" | "x" | "y", fromKeyboard = true) {
     let w = rect.width;
     let h = rect.height;
@@ -92,13 +120,14 @@ export function PlacementBox({
       if (axis !== "y") w += delta;
       if (axis !== "x") h += delta;
     }
-    const wanted = { left: rect.left, top: rect.top, width: w, height: h };
-    const next = resizeRect(rect, w, h, bounds, sizeOpts);
+    const next = resizeAroundCenter(rect, w, h, bounds, sizeOpts);
     if (fromKeyboard) {
-      const blocked = Math.abs(next.width - wanted.width) > 0.001 || Math.abs(next.height - wanted.height) > 0.001;
-      setEdgeNote(blocked ? (delta > 0 ? "Sudah ukuran terbesar di posisi ini." : "Sudah ukuran terkecil.") : "");
+      const blocked = Math.abs(next.width - w) > 0.001 || Math.abs(next.height - h) > 0.001;
+      setEdgeNote(blocked ? (delta > 0 ? "Sudah ukuran terbesar di halaman ini." : "Sudah ukuran terkecil.") : "");
     }
-    if (next.width !== rect.width || next.height !== rect.height) onChange(next);
+    if (next.left !== rect.left || next.top !== rect.top || next.width !== rect.width || next.height !== rect.height) {
+      onChange(next);
+    }
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {

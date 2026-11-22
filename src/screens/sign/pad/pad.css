@@ -248,3 +248,14 @@
   flex: none;
   margin-top: 1px;
 }
+
+/* Aksi tambahan dialog PIN (mis. "Lupa PIN?") di kiri, terpisah dari Batal dan kirim. */
+.pin-extra {
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+}
+
+.pin-extra .link-btn {
+  min-height: 40px;
+}

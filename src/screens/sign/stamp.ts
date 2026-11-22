@@ -24,6 +24,7 @@ import {
   pushGraphicsState,
   rgb,
 } from "pdf-lib";
+import type { AppError } from "../../api";
 
 export type PdfRect = {
   pageIndex: number;
@@ -192,7 +193,10 @@ function looksLikePdf(bytes: Uint8Array): boolean {
 }
 
 const ENCRYPTED_MESSAGE =
-  "PDF ini terkunci kata sandi. Buka kuncinya di aplikasi lain, simpan ulang, lalu coba lagi.";
+  "PDF ini dilindungi kata sandi pemilik, jadi Mira tidak bisa menambahkan tanda tangan. Simpan ulang tanpa perlindungan di aplikasi asalnya, lalu coba lagi.";
+const NOT_PDF_MESSAGE = "File ini bukan PDF atau rusak, jadi tidak bisa ditandatangani.";
+const BROKEN_MESSAGE =
+  "PDF ini rusak atau formatnya tidak didukung, jadi Mira tidak bisa menambahkan tanda tangan. Simpan ulang dari aplikasi asalnya, lalu coba lagi.";
 
 function mentionsEncrypt(bytes: Uint8Array): boolean {
   // Kamus /Encrypt ada di trailer, dekat akhir file.
@@ -201,9 +205,7 @@ function mentionsEncrypt(bytes: Uint8Array): boolean {
 }
 
 async function loadPdf(bytes: Uint8Array): Promise<PDFDocument> {
-  if (!looksLikePdf(bytes)) {
-    throw new Error("File ini bukan PDF atau rusak, jadi tidak bisa ditandatangani.");
-  }
+  if (!looksLikePdf(bytes)) throw new Error(NOT_PDF_MESSAGE);
   let doc: PDFDocument;
   try {
     // ignoreEncryption hanya agar enkripsi bisa dideteksi sendiri lalu ditolak di bawah.
@@ -211,10 +213,25 @@ async function loadPdf(bytes: Uint8Array): Promise<PDFDocument> {
     doc.getPageCount(); // memastikan katalog dan pohon halaman terbaca
   } catch {
     if (mentionsEncrypt(bytes)) throw new Error(ENCRYPTED_MESSAGE);
-    throw new Error("PDF ini rusak atau formatnya tidak didukung, jadi tidak bisa dibuka.");
+    throw new Error(BROKEN_MESSAGE);
   }
   if (doc.isEncrypted) throw new Error(ENCRYPTED_MESSAGE);
   return doc;
+}
+
+/**
+ * Pemeriksaan sebelum permintaan dibuat: PDF harus bisa dimuat pdf-lib dan
+ * tidak terenkripsi, karena stempel nanti dikerjakan pdf-lib. Tanpa ini,
+ * kegagalan baru ketahuan setelah PIN dimasukkan. Melempar AppError
+ * `pdf_invalid` berpesan Indonesia.
+ */
+export async function checkSignablePdf(bytes: Uint8Array): Promise<void> {
+  try {
+    await loadPdf(bytes);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : BROKEN_MESSAGE;
+    throw { code: "pdf_invalid", message } satisfies AppError;
+  }
 }
 
 function assertDocTag(docTag: string): void {
@@ -283,9 +300,10 @@ type Frame = {
   height: number;
 };
 
-function normalizeAngle(angle: number): 0 | 90 | 180 | 270 {
-  const a = (((Math.round(angle / 90) * 90) % 360) + 360) % 360;
-  return a as 0 | 90 | 180 | 270;
+/** Sama dengan pdf.js: /Rotate yang bukan kelipatan 90 dianggap 0. */
+export function normalizeAngle(angle: number): 0 | 90 | 180 | 270 {
+  if (!Number.isFinite(angle) || angle % 90 !== 0) return 0;
+  return (((angle % 360) + 360) % 360) as 0 | 90 | 180 | 270;
 }
 
 function frameFor(rect: PdfRect, angle: 0 | 90 | 180 | 270): Frame {

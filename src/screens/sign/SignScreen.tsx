@@ -1,6 +1,7 @@
 import {
   IconAlertTriangle,
   IconChevronRight,
+  IconClockHour4,
   IconFileSearch,
   IconFileTypePdf,
   IconFileUpload,
@@ -19,6 +20,7 @@ import {
 } from "../../api/signing";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { PinDialog } from "./pad/PinDialog";
 import { SignatureSetupDialog } from "./pad/SignatureSetupDialog";
 import { SignDocumentView } from "./SignDocumentView";
 import { NewRequestDialog } from "./NewRequestDialog";
@@ -28,10 +30,12 @@ import {
   exportWarningLabel,
   formatWhen,
   integrityLabel,
+  isActionable,
   modeLabel,
   readFileBytes,
   requestStateLabel,
 } from "./labels";
+import { checkSignablePdf } from "./stamp";
 import "./sign.css";
 
 type Feedback = { kind: "ok"; text: string } | { kind: "error"; title: string; error: AppError } | null;
@@ -40,9 +44,10 @@ function validOverview(data: SignOverview | null): SignOverview | null {
   return data && typeof data === "object" && Array.isArray(data.requests) && data.me ? data : null;
 }
 
-// Giliran Anda paling atas, lalu yang masih berjalan, lalu selesai, lalu dibatalkan.
+// Yang bisa Anda tanda tangani sekarang (giliran Anda dan file utuh) paling atas,
+// lalu yang masih berjalan, lalu selesai, lalu dibatalkan.
 function rank(r: RequestSummary): number {
-  if (r.status === "in_progress") return r.myState === "your_turn" ? 0 : 1;
+  if (r.status === "in_progress") return isActionable(r) ? 0 : 1;
   return r.status === "completed" ? 2 : 3;
 }
 
@@ -54,10 +59,18 @@ function hasWarning(r: RequestSummary): boolean {
   return r.integrity !== "intact" || r.exportWarnings > 0;
 }
 
-function lockedUntil(saved: SavedSignatureInfo | null, now: number): number | null {
-  if (!saved?.lockedUntil) return null;
-  const t = new Date(saved.lockedUntil).getTime();
+function futureTime(iso: string | null | undefined, now: number): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
   return Number.isFinite(t) && t > now ? t : null;
+}
+
+function lockedUntil(saved: SavedSignatureInfo | null, now: number): number | null {
+  return futureTime(saved?.lockedUntil, now);
+}
+
+function usableAfter(saved: SavedSignatureInfo | null, now: number): number | null {
+  return futureTime(saved?.usableAfter, now);
 }
 
 function useOverview() {
@@ -109,6 +122,7 @@ function MySignature({
 }) {
   const now = Date.now();
   const lock = lockedUntil(saved, now);
+  const cooling = usableAfter(saved, now);
 
   return (
     <section className="sign-section" aria-labelledby="sign-mine-title">
@@ -122,6 +136,13 @@ function MySignature({
         {saved ? (
           <div className="sign-mine-text">
             <p className="sign-mine-main">Tersimpan sejak {formatWhen(saved.createdAt)}, dipakai dengan PIN</p>
+            {cooling !== null && (
+              <p className="sign-mine-wait">
+                <IconClockHour4 size={16} aria-hidden="true" />
+                Bisa dipakai mulai {formatWhen(saved.usableAfter ?? "")}, 24 jam setelah tanda tangan sebelumnya dihapus
+                tanpa PIN.
+              </p>
+            )}
             {lock !== null ? (
               <p className="sign-mine-lock">
                 <IconLock size={16} aria-hidden="true" />
@@ -162,7 +183,7 @@ function MySignature({
 }
 
 function RequestRow({ r, onOpen }: { r: RequestSummary; onOpen: (id: string) => void }) {
-  const mine = r.status === "in_progress" && r.myState === "your_turn";
+  const mine = isActionable(r);
   const warn = hasWarning(r);
   const when = r.completedAt ?? r.updatedAt;
   return (
@@ -214,7 +235,10 @@ export function SignScreen() {
   const overview = data;
   const [openId, setOpenId] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Hapus dengan PIN (tanda tangan baru langsung bisa dipakai) atau tanpa PIN
+  // karena lupa (tanda tangan baru baru bisa dipakai 24 jam kemudian).
+  const [pinDeleteOpen, setPinDeleteOpen] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [verifyOpen, setVerifyOpen] = useState(false);
@@ -228,15 +252,21 @@ export function SignScreen() {
   // Baris yang difokus lagi saat kembali dari layar dokumen.
   const returnTo = useRef<string | null>(null);
   const savedNow = useRef(false);
+  // "Lupa PIN?" menutup dialog PIN lalu membuka konfirmasi; fokus jangan dipindah di antaranya.
+  const forgotNext = useRef(false);
 
-  // Kunci PIN berakhir sendiri; muat ulang tepat saat itu supaya statusnya hilang.
-  const lockAt = lockedUntil(overview?.saved ?? null, Date.now());
+  // Kunci PIN dan masa tunggu berakhir sendiri; muat ulang tepat saat itu supaya statusnya hilang.
+  const nowMs = Date.now();
+  const ends = [lockedUntil(overview?.saved ?? null, nowMs), usableAfter(overview?.saved ?? null, nowMs)].filter(
+    (t): t is number => t !== null,
+  );
+  const nextEnd = ends.length ? Math.min(...ends) : null;
   useEffect(() => {
-    if (lockAt === null) return;
-    const ms = Math.min(lockAt - Date.now() + 500, 2 ** 31 - 1);
+    if (nextEnd === null) return;
+    const ms = Math.min(nextEnd - Date.now() + 500, 2 ** 31 - 1);
     const timer = window.setTimeout(() => void reload(), Math.max(ms, 0));
     return () => window.clearTimeout(timer);
-  }, [lockAt, reload]);
+  }, [nextEnd, reload]);
 
   useLayoutEffect(() => {
     if (openId !== null || !returnTo.current) return;
@@ -281,13 +311,26 @@ export function SignScreen() {
     await reload();
   }
 
-  async function deleteSignature() {
+  // Jalur PIN: error (PIN salah, terkunci) ditangani PinDialog, yang menutup dirinya setelah berhasil.
+  async function deleteWithPin(pin: string) {
+    await signingApi.deleteSignature(pin);
+    setFeedback({
+      kind: "ok",
+      text: "Tanda tangan tersimpan sudah dihapus. Tanda tangan baru bisa langsung dibuat dan dipakai.",
+    });
+    await reload();
+  }
+
+  async function deleteWithoutPin() {
     setDeleting(true);
     setDeleteError(null);
     try {
       await signingApi.deleteSignature();
-      setDeleteOpen(false);
-      setFeedback({ kind: "ok", text: "Tanda tangan tersimpan sudah dihapus. Anda bisa membuat yang baru kapan saja." });
+      setForgotOpen(false);
+      setFeedback({
+        kind: "ok",
+        text: "Tanda tangan tersimpan sudah dihapus. Tanda tangan baru bisa dibuat sekarang dan dipakai 24 jam setelah penghapusan ini.",
+      });
       await reload();
       focusMineAction();
     } catch (err) {
@@ -310,7 +353,11 @@ export function SignScreen() {
     }
     setImporting(true);
     try {
-      const result = await signingApi.importPdf(await readFileBytes(file), file.name);
+      const bytes = await readFileBytes(file);
+      // Stempel nanti dikerjakan pdf-lib; PDF yang tidak bisa dibukanya ditolak
+      // sekarang, bukan setelah permintaan dibuat dan PIN dimasukkan.
+      await checkSignablePdf(bytes);
+      const result = await signingApi.importPdf(bytes, file.name);
       setImported(result);
       setNewOpen(true);
     } catch (err) {
@@ -329,7 +376,7 @@ export function SignScreen() {
   }
 
   const requests = overview ? sortRequests(overview.requests) : [];
-  const yourTurn = requests.filter((r) => r.status === "in_progress" && r.myState === "your_turn").length;
+  const yourTurn = requests.filter(isActionable).length;
   const warned = requests.filter(hasWarning).length;
 
   return (
@@ -381,8 +428,8 @@ export function SignScreen() {
               setSetupOpen(true);
             }}
             onDelete={() => {
-              setDeleteError(null);
-              setDeleteOpen(true);
+              setFeedback(null);
+              setPinDeleteOpen(true);
             }}
           />
 
@@ -410,7 +457,8 @@ export function SignScreen() {
                     <button
                       ref={pickRef}
                       type="button"
-                      className="btn"
+                      // Tanpa tanda tangan tersimpan, "Buat tanda tangan" yang jadi tombol utama.
+                      className={overview.saved ? "btn" : "btn btn-ghost"}
                       onClick={() => fileRef.current?.click()}
                       disabled={importing}
                       aria-busy={importing || undefined}
@@ -425,7 +473,8 @@ export function SignScreen() {
 
             {!overview.canRequest && (
               <p className="sign-guest">
-                Tamu tidak bisa meminta tanda tangan. Anda tetap bisa menandatangani dokumen yang dikirim kepada Anda.
+                Tamu tidak bisa meminta tanda tangan. Dokumen yang meminta tanda tangan Anda muncul di sini setelah
+                pengiriman lewat jaringan tersedia.
               </p>
             )}
 
@@ -476,14 +525,46 @@ export function SignScreen() {
         onSave={({ png, pin }) => saveSignature(png, pin)}
       />
 
-      <ConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
+      <PinDialog
+        open={pinDeleteOpen}
+        onOpenChange={(next) => {
+          setPinDeleteOpen(next);
+          if (!next && !forgotNext.current) focusMineAction();
+          forgotNext.current = false;
+        }}
         title="Hapus tanda tangan tersimpan?"
-        confirmLabel="Hapus tanda tangan"
+        description="Masukkan PIN tanda tangan Anda. Gambar tanda tangan dan PIN-nya dihapus dari laptop ini, dokumen yang sudah Anda tanda tangani tidak berubah. Tanda tangan baru bisa langsung dibuat dan dipakai."
+        submitLabel="Hapus tanda tangan"
+        danger
+        lockedUntil={overview?.saved?.lockedUntil ?? null}
+        onSubmit={deleteWithPin}
+        extraAction={
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => {
+              forgotNext.current = true;
+              setPinDeleteOpen(false);
+              setDeleteError(null);
+              setForgotOpen(true);
+            }}
+          >
+            Lupa PIN?
+          </button>
+        }
+      />
+
+      <ConfirmDialog
+        open={forgotOpen}
+        onOpenChange={(next) => {
+          setForgotOpen(next);
+          if (!next) focusMineAction();
+        }}
+        title="Hapus tanda tangan tanpa PIN?"
+        confirmLabel="Hapus tanpa PIN"
         busyLabel="Menghapus..."
         busy={deleting}
-        onConfirm={() => void deleteSignature()}
+        onConfirm={() => void deleteWithoutPin()}
         error={
           deleteError && (
             <ErrorAlert title="Tanda tangan belum terhapus">
@@ -496,8 +577,11 @@ export function SignScreen() {
           Gambar tanda tangan dan PIN-nya dihapus dari laptop ini. Dokumen yang sudah Anda tanda tangani tidak berubah.
         </p>
         <p className="sign-confirm-p">
-          Setelah itu Anda bisa membuat tanda tangan baru dengan PIN baru. Ini juga jalan keluarnya kalau Anda lupa PIN.
+          Tanda tangan baru yang Anda buat setelah ini baru bisa dipakai 24 jam setelah penghapusan. Masa tunggu ini
+          mencegah orang lain yang memakai laptop Anda saat tidak terkunci menghapus tanda tangan Anda, lalu
+          menandatangani dengan PIN buatannya sendiri.
         </p>
+        <p className="sign-confirm-p">Penghapusan ini tercatat di jejak audit.</p>
       </ConfirmDialog>
 
       <NewRequestDialog

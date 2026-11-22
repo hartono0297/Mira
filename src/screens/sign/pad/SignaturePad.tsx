@@ -275,7 +275,7 @@ export function SignaturePad({ ref, onChange, describedBy }: Props) {
           </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={clear} disabled={count === 0}>
             <IconEraser size={16} aria-hidden="true" />
-            Ulangi
+            Kosongkan
           </button>
         </div>
       </div>

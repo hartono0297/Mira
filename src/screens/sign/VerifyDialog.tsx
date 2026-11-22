@@ -52,14 +52,26 @@ function Result({ checked }: { checked: Checked }) {
     );
   }
   if (result.state === "match_version") {
+    // Inti Rust hanya mengirim penanda tangan yang sudah menandatangani sampai versi ini.
     return (
       <div className="sign-verify sign-verify-mid">
         <IconInfoCircle size={22} aria-hidden="true" />
         <div>
-          <strong>File ini sama dengan salah satu versi yang tercatat, tetapi belum versi final</strong>
+          <strong>File ini sama dengan salah satu versi yang tercatat</strong>
           {result.title && <p className="sign-verify-title">{result.title}</p>}
-          <p>Versi ini belum memuat semua tanda tangan. Untuk versi terakhir, buka dokumennya di Mira.</p>
-          <Signers signers={result.signers} />
+          <p>
+            {result.completedAt
+              ? `Dokumen ini selesai ditandatangani ${formatWhen(result.completedAt)}, tetapi file ini versi sebelum semua tanda tangan lengkap. Versi final ada di Mira.`
+              : "Penandatanganan dokumen ini belum selesai. File ini hanya memuat tanda tangan yang sudah ada saat versi ini dibuat."}
+          </p>
+          {result.signers.length > 0 ? (
+            <>
+              <p className="sign-verify-sub">Sudah menandatangani di versi ini:</p>
+              <Signers signers={result.signers} />
+            </>
+          ) : (
+            <p>Versi ini belum memuat tanda tangan siapa pun.</p>
+          )}
           {hash}
         </div>
       </div>
@@ -85,10 +97,10 @@ function Result({ checked }: { checked: Checked }) {
     <div className="sign-verify sign-verify-unknown">
       <IconFileSearch size={22} aria-hidden="true" />
       <div>
-        <strong>Mira di laptop ini tidak mengenali file ini</strong>
+        <strong>Mira tidak mengenali file ini</strong>
         <p>
-          File ini belum pernah ditandatangani lewat Mira di laptop ini. Catatan dari laptop rekan belum tersimpan di
-          sini karena pengiriman lewat jaringan belum tersedia.
+          Tidak ada catatan untuk file ini di laptop ini. Bisa jadi file ini dari laptop lain, belum pernah
+          ditandatangani di Mira, atau sudah diubah sampai tidak dikenali lagi.
         </p>
         {hash}
       </div>

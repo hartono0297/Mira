@@ -64,17 +64,37 @@ describe("VerifyDialog", () => {
     expect(onOpenRequest).toHaveBeenCalledWith("r1");
   });
 
-  it("match_version: versi tercatat, belum final", async () => {
+  it("match_version belum selesai: hanya penanda tangan versi itu, tanpa waktu selesai", async () => {
     await check(
       result({
         state: "match_version",
         requestId: "r1",
         title: "Dokumen Uji",
-        signers: [{ displayName: "Anggota Uji", signedAt: null }],
+        signers: [{ displayName: "Penguji", signedAt: "2026-11-22T07:00:00Z" }],
       }),
     );
-    expect(await screen.findByText(/sama dengan salah satu versi yang tercatat, tetapi belum versi final/)).toBeInTheDocument();
-    expect(screen.getByText("Belum menandatangani")).toBeInTheDocument();
+    expect(await screen.findByText("File ini sama dengan salah satu versi yang tercatat")).toBeInTheDocument();
+    expect(screen.getByText(/Penandatanganan dokumen ini belum selesai/)).toBeInTheDocument();
+    expect(screen.getByText("Sudah menandatangani di versi ini:")).toBeInTheDocument();
+    expect(screen.getByText("Penguji")).toBeInTheDocument();
+    expect(screen.queryByText(/^Selesai/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/selesai ditandatangani/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/final/)).not.toBeInTheDocument();
+  });
+
+  it("match_version dokumen yang sudah selesai: waktu selesai, versi final ada di Mira", async () => {
+    await check(
+      result({
+        state: "match_version",
+        requestId: "r1",
+        title: "Dokumen Uji",
+        completedAt: "2026-11-22T08:00:00Z",
+        signers: [],
+      }),
+    );
+    expect(await screen.findByText(/Dokumen ini selesai ditandatangani 22 November 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/Versi final ada di Mira/)).toBeInTheDocument();
+    expect(screen.getByText("Versi ini belum memuat tanda tangan siapa pun.")).toBeInTheDocument();
   });
 
   it("changed: peringatan, judul dokumen asli, saran salinan Mira", async () => {
@@ -86,8 +106,12 @@ describe("VerifyDialog", () => {
 
   it("unknown: tidak dikenali, tanpa tombol buka dokumen", async () => {
     await check(result({ state: "unknown" }));
-    expect(await screen.findByText("Mira di laptop ini tidak mengenali file ini")).toBeInTheDocument();
-    expect(screen.getByText(/pengiriman lewat jaringan belum tersedia/)).toBeInTheDocument();
+    expect(await screen.findByText("Mira tidak mengenali file ini")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Tidak ada catatan untuk file ini di laptop ini. Bisa jadi file ini dari laptop lain, belum pernah ditandatangani di Mira, atau sudah diubah sampai tidak dikenali lagi.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Buka dokumen" })).not.toBeInTheDocument();
   });
 

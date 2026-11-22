@@ -1,7 +1,7 @@
 // @vitest-environment node
-import { PDFDocument, degrees } from "pdf-lib";
-import { describe, expect, it } from "vitest";
-import { clampCss, cssRectToPdf, displaySize, pdfRectToCss } from "./coords";
+import { PDFDocument, PDFName, PDFNumber, degrees } from "pdf-lib";
+import { beforeAll, describe, expect, it } from "vitest";
+import { clampCss, cssRectToPdf, displaySize, normalizeRotation, pdfRectToCss } from "./coords";
 import type { PageGeometry, PageRotation, PdfRect } from "./types";
 
 const ROTATIONS: PageRotation[] = [0, 90, 180, 270];
@@ -65,6 +65,19 @@ describe("displaySize", () => {
   });
 });
 
+describe("normalizeRotation", () => {
+  it("sama dengan pdf.js: bukan kelipatan 90 jadi 0, sisanya dinormalkan", () => {
+    expect(normalizeRotation(0)).toBe(0);
+    expect(normalizeRotation(270)).toBe(270);
+    expect(normalizeRotation(360)).toBe(0);
+    expect(normalizeRotation(-90)).toBe(270);
+    expect(normalizeRotation(450)).toBe(90);
+    expect(normalizeRotation(45)).toBe(0);
+    expect(normalizeRotation(135)).toBe(0);
+    expect(normalizeRotation(Number.NaN)).toBe(0);
+  });
+});
+
 describe("clampCss", () => {
   const bounds = { width: 300, height: 200 };
   it("menggeser masuk kotak yang keluar di kanan bawah", () => {
@@ -93,9 +106,31 @@ describe("clampCss", () => {
   });
 });
 
+type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+
 // Pembanding dengan pdf.js sungguhan: PDF buatan pdf-lib dengan CropBox
-// bergeser, dirender lewat build legacy (untuk Node).
+// bergeser, dirender lewat build legacy (untuk Node). Impor pertama pdf.js
+// bisa makan waktu lebih dari 5 detik (batas bawaan per tes), jadi dimuat
+// sekali di beforeAll dengan batas waktu sendiri.
 describe("konsisten dengan PageViewport pdf.js", () => {
+  let pdfjs: PdfJs;
+  beforeAll(async () => {
+    pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  }, 30_000);
+
+  it("/Rotate 45 dianggap 0 oleh pdf.js, sama dengan normalizeRotation", async () => {
+    const doc = await PDFDocument.create();
+    const p = doc.addPage([600, 800]);
+    p.node.set(PDFName.of("Rotate"), PDFNumber.of(45));
+    const task = pdfjs.getDocument({ data: await doc.save(), verbosity: 0 });
+    try {
+      const page = await (await task.promise).getPage(1);
+      expect(page.rotate).toBe(normalizeRotation(45));
+    } finally {
+      await task.destroy();
+    }
+  });
+
   it.each(ROTATIONS)("rotasi %i", async (rotation) => {
     const doc = await PDFDocument.create();
     const p = doc.addPage([700, 900]);
@@ -103,7 +138,6 @@ describe("konsisten dengan PageViewport pdf.js", () => {
     p.setRotation(degrees(rotation));
     const bytes = await doc.save();
 
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const task = pdfjs.getDocument({ data: bytes, verbosity: 0 });
     const pdf = await task.promise;
     try {

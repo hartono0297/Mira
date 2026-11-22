@@ -1,8 +1,10 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PDFDocument } from "pdf-lib";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, RequestDetail, RequestSummary, SignOverview } from "../../api/signing";
 import { SignScreen, sortRequests } from "./SignScreen";
+import { integrityLabel } from "./labels";
 
 const api = vi.hoisted(() => ({
   overview: vi.fn(),
@@ -92,7 +94,24 @@ const saved = {
   failedAttempts: 0,
   lockedUntil: null,
   attemptsLeft: 5,
+  usableAfter: null,
 };
+
+// PDF sungguhan buatan pdf-lib, karena layar memeriksa PDF sebelum mengimpor.
+let PDF_BYTES: Uint8Array;
+let ENCRYPTED_BYTES: Uint8Array;
+beforeAll(async () => {
+  const doc = await PDFDocument.create();
+  doc.addPage([595, 842]);
+  PDF_BYTES = await doc.save();
+  const enc = await PDFDocument.load(PDF_BYTES);
+  enc.context.trailerInfo.Encrypt = enc.context.obj({ Filter: "Standard", V: 1, R: 2 });
+  ENCRYPTED_BYTES = await enc.save({ useObjectStreams: false });
+});
+
+function pdfFile(bytes: Uint8Array, name: string): File {
+  return new File([bytes as BlobPart], name, { type: "application/pdf" });
+}
 
 const candidates: Candidate[] = [
   { publicKey: ME_KEY, displayName: "Penguji", kind: "member", isMe: true },
@@ -110,8 +129,9 @@ describe("SignScreen: keadaan dasar", () => {
     render(<SignScreen />);
     expect(screen.getByText("Memuat tanda tangan dan daftar dokumen...")).toBeInTheDocument();
     expect(await screen.findByText(/Belum ada dokumen. Pilih PDF/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Pilih PDF untuk ditandatangani" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Buat tanda tangan" })).toBeInTheDocument();
+    // Tanpa tanda tangan tersimpan hanya ada satu tombol utama: Buat tanda tangan.
+    expect(screen.getByRole("button", { name: "Pilih PDF untuk ditandatangani" })).toHaveClass("btn-ghost");
+    expect(screen.getByRole("button", { name: "Buat tanda tangan" })).not.toHaveClass("btn-ghost");
     expect(screen.getByText("Belum ada tanda tangan tersimpan")).toBeInTheDocument();
   });
 
@@ -131,7 +151,11 @@ describe("SignScreen: keadaan dasar", () => {
       overview({ canRequest: false, me: { publicKey: ME_KEY, displayName: "Penguji", kind: "guest" } }),
     );
     render(<SignScreen />);
-    expect(await screen.findByText(/Tamu tidak bisa meminta tanda tangan/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Tamu tidak bisa meminta tanda tangan. Dokumen yang meminta tanda tangan Anda muncul di sini setelah pengiriman lewat jaringan tersedia.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pilih PDF untuk ditandatangani" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Periksa file PDF" })).toBeInTheDocument();
     expect(screen.getByText(/Belum ada dokumen untuk Anda tanda tangani/)).toBeInTheDocument();
@@ -164,33 +188,84 @@ describe("SignScreen: tanda tangan saya", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Hapus tanda tangan" })).toHaveFocus());
   });
 
-  it("menghapus tanda tangan dengan konfirmasi yang menjelaskan jalan keluar lupa PIN", async () => {
+  it("menghapus dengan PIN: dialog PIN, lalu tanda tangan baru langsung bisa dibuat", async () => {
+    api.overview.mockResolvedValueOnce(overview({ saved }));
+    api.overview.mockResolvedValue(overview());
+    api.deleteSignature.mockResolvedValue(null);
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    // Dengan tanda tangan tersimpan, Pilih PDF kembali jadi tombol utama.
+    expect(await screen.findByRole("button", { name: "Pilih PDF untuk ditandatangani" })).not.toHaveClass("btn-ghost");
+    await user.click(screen.getByRole("button", { name: "Hapus tanda tangan" }));
+    const dialog = screen.getByRole("dialog", { name: "Hapus tanda tangan tersimpan?" });
+    expect(within(dialog).getByText(/Tanda tangan baru bisa langsung dibuat dan dipakai/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("PIN tanda tangan")).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: "Hapus tanda tangan" })).toHaveClass("btn-danger");
+    await user.type(within(dialog).getByLabelText("PIN tanda tangan"), "135790{Enter}");
+    expect(api.deleteSignature).toHaveBeenCalledWith("135790");
+    expect(await screen.findByText(/Tanda tangan baru bisa langsung dibuat dan dipakai/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Buat tanda tangan" })).toHaveFocus());
+  });
+
+  it("PIN salah saat menghapus: pesan di dialog, tidak terhapus", async () => {
+    api.overview.mockResolvedValue(overview({ saved }));
+    api.deleteSignature.mockRejectedValue({ code: "pin_wrong", message: "PIN salah. Sisa 4 kali lagi sebelum dikunci sementara." });
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    await user.click(await screen.findByRole("button", { name: "Hapus tanda tangan" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText("PIN tanda tangan"), "111111{Enter}");
+    expect(await within(dialog).findByText(/Sisa 4 kali lagi/)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Hapus tanda tangan tersimpan?" })).toBeInTheDocument();
+  });
+
+  it("Lupa PIN: konfirmasi menjelaskan masa tunggu 24 jam, lalu hapus tanpa PIN", async () => {
     api.overview.mockResolvedValueOnce(overview({ saved }));
     api.overview.mockResolvedValue(overview());
     api.deleteSignature.mockResolvedValue(null);
     const user = userEvent.setup();
     render(<SignScreen />);
     await user.click(await screen.findByRole("button", { name: "Hapus tanda tangan" }));
-    const dialog = screen.getByRole("dialog", { name: "Hapus tanda tangan tersimpan?" });
-    expect(within(dialog).getByText(/Gambar tanda tangan dan PIN-nya dihapus/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/kalau Anda lupa PIN/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Batal" })).toHaveFocus();
-    await user.click(within(dialog).getByRole("button", { name: "Hapus tanda tangan" }));
+    await user.click(screen.getByRole("button", { name: "Lupa PIN?" }));
+    const dialog = await screen.findByRole("dialog", { name: "Hapus tanda tangan tanpa PIN?" });
+    expect(screen.queryByRole("dialog", { name: "Hapus tanda tangan tersimpan?" })).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/baru bisa dipakai 24 jam setelah penghapusan/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/menandatangani dengan PIN buatannya sendiri/)).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Batal" })).toHaveFocus());
+    await user.click(within(dialog).getByRole("button", { name: "Hapus tanpa PIN" }));
     expect(api.deleteSignature).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole("button", { name: "Buat tanda tangan" })).toBeInTheDocument();
+    expect(api.deleteSignature).toHaveBeenCalledWith();
+    expect(await screen.findByText(/dipakai 24 jam setelah penghapusan ini/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Buat tanda tangan" })).toHaveFocus());
   });
 
-  it("gagal menghapus: error tampil di dialog", async () => {
+  it("Lupa PIN gagal: error tampil di dialog konfirmasi", async () => {
     api.overview.mockResolvedValue(overview({ saved }));
     api.deleteSignature.mockRejectedValue({ code: "database", message: "Database terkunci." });
     const user = userEvent.setup();
     render(<SignScreen />);
     await user.click(await screen.findByRole("button", { name: "Hapus tanda tangan" }));
-    const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Hapus tanda tangan" }));
+    await user.click(screen.getByRole("button", { name: "Lupa PIN?" }));
+    const dialog = await screen.findByRole("dialog", { name: "Hapus tanda tangan tanpa PIN?" });
+    await user.click(within(dialog).getByRole("button", { name: "Hapus tanpa PIN" }));
     expect(await within(dialog).findByText("Database terkunci.")).toBeInTheDocument();
+  });
+
+  it("masa tunggu: tampil kapan tanda tangan bisa dipakai", async () => {
+    const usableAfter = "2099-11-23T08:04:00Z";
+    api.overview.mockResolvedValue(overview({ saved: { ...saved, usableAfter } }));
+    render(<SignScreen />);
+    expect(await screen.findByText(/^Bisa dipakai mulai 23 November 2099, \d{2}\.\d{2}/)).toBeInTheDocument();
+    expect(screen.getByText(/24 jam setelah tanda tangan sebelumnya dihapus tanpa PIN/)).toBeInTheDocument();
+  });
+
+  it("masa tunggu yang sudah lewat tidak ditampilkan", async () => {
+    api.overview.mockResolvedValue(overview({ saved: { ...saved, usableAfter: "2020-01-01T00:00:00Z" } }));
+    render(<SignScreen />);
+    await screen.findByText(/Tersimpan sejak/);
+    expect(screen.queryByText(/Bisa dipakai mulai/)).not.toBeInTheDocument();
   });
 
   it("status terkunci sementara kalau lockedUntil di masa depan", async () => {
@@ -223,6 +298,26 @@ describe("SignScreen: daftar dokumen", () => {
     expect(screen.getByText("1 dokumen menunggu tanda tangan Anda")).toBeInTheDocument();
   });
 
+  it("giliran Anda atas file yang berubah tidak dihitung dan tidak di atas", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [
+          summary({ id: "b1", title: "Menunggu Uji", updatedAt: "2026-11-22T06:00:00Z" }),
+          summary({ id: "b2", title: "Berubah Uji", myState: "your_turn", integrity: "changed", updatedAt: "2026-11-21T01:00:00Z" }),
+          summary({ id: "b3", title: "Giliran Uji", myState: "your_turn", updatedAt: "2026-11-20T01:00:00Z" }),
+        ],
+      }),
+    );
+    render(<SignScreen />);
+    await screen.findByText("Berubah Uji");
+    const titles = Array.from(document.querySelectorAll(".sign-row-title")).map((el) => el.textContent);
+    expect(titles).toEqual(["Giliran Uji", "Menunggu Uji", "Berubah Uji"]);
+    expect(screen.getByText("1 dokumen menunggu tanda tangan Anda")).toBeInTheDocument();
+    const changed = screen.getByRole("button", { name: /Berubah Uji/ });
+    expect(changed.querySelector(".chip")).not.toHaveClass("chip-on");
+    expect(changed.querySelector(".chip")).not.toHaveTextContent("Giliran Anda");
+  });
+
   it("peringatan integritas dan salinan luar tampil", async () => {
     api.overview.mockResolvedValue(
       overview({
@@ -235,8 +330,8 @@ describe("SignScreen: daftar dokumen", () => {
       }),
     );
     render(<SignScreen />);
-    expect(await screen.findByText("Isi file berubah sejak ditandatangani")).toBeInTheDocument();
-    expect(screen.getByText("File hilang dari penyimpanan Mira")).toBeInTheDocument();
+    expect(await screen.findByText(integrityLabel("changed"))).toBeInTheDocument();
+    expect(screen.getByText(integrityLabel("missing"))).toBeInTheDocument();
     expect(screen.getByText("Salinan PDF yang disimpan di luar Mira berubah")).toBeInTheDocument();
     expect(screen.getByText("3 dokumen perlu diperiksa")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Utuh Uji/ })).not.toHaveClass("sign-row-warn");
@@ -264,8 +359,8 @@ describe("SignScreen: daftar dokumen", () => {
     render(<SignScreen />);
     await screen.findByRole("button", { name: "Pilih PDF untuk ditandatangani" });
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
-    await user.upload(input, new File(["%PDF-1.7 uji"], "Kontrak Uji.pdf", { type: "application/pdf" }));
-    expect(api.importPdf).toHaveBeenCalledWith(expect.any(Uint8Array), "Kontrak Uji.pdf");
+    await user.upload(input, pdfFile(PDF_BYTES, "Kontrak Uji.pdf"));
+    await waitFor(() => expect(api.importPdf).toHaveBeenCalledWith(expect.any(Uint8Array), "Kontrak Uji.pdf"));
     const dialog = await screen.findByRole("dialog", { name: "Minta tanda tangan" });
     expect(within(dialog).getByLabelText("Judul dokumen")).toHaveValue("Kontrak Uji");
     await within(dialog).findByRole("checkbox", { name: "Penguji (Anda)" });
@@ -280,9 +375,32 @@ describe("SignScreen: daftar dokumen", () => {
     render(<SignScreen />);
     await screen.findByRole("button", { name: "Pilih PDF untuk ditandatangani" });
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
-    await user.upload(input, new File(["bukan"], "Rusak Uji.pdf", { type: "application/pdf" }));
+    await user.upload(input, pdfFile(PDF_BYTES, "Rusak Uji.pdf"));
     expect(await screen.findByText("Isi file bukan PDF yang bisa dibaca.")).toBeInTheDocument();
     expect(screen.getByText("PDF belum bisa dibuka")).toBeInTheDocument();
+  });
+
+  it("PDF berkata sandi pemilik ditolak sebelum diimpor", async () => {
+    api.overview.mockResolvedValue(overview());
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    await screen.findByRole("button", { name: "Pilih PDF untuk ditandatangani" });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(input, pdfFile(ENCRYPTED_BYTES, "Terkunci Uji.pdf"));
+    expect(await screen.findByText(/PDF ini dilindungi kata sandi pemilik/)).toBeInTheDocument();
+    expect(screen.getByText("PDF belum bisa dibuka")).toBeInTheDocument();
+    expect(api.importPdf).not.toHaveBeenCalled();
+  });
+
+  it("PDF rusak ditolak sebelum diimpor", async () => {
+    api.overview.mockResolvedValue(overview());
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    await screen.findByRole("button", { name: "Pilih PDF untuk ditandatangani" });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(input, new File(["%PDF-1.7 sampah"], "Rusak Uji.pdf", { type: "application/pdf" }));
+    expect(await screen.findByText(/PDF ini rusak atau formatnya tidak didukung/)).toBeInTheDocument();
+    expect(api.importPdf).not.toHaveBeenCalled();
   });
 
   it("tombol Periksa file PDF membuka dialog periksa", async () => {

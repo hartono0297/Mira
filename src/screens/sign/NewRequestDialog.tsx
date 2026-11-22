@@ -8,6 +8,9 @@ import { FieldError } from "../../components/FieldError";
 import { formatSize, kindLabel, modeHint, modeLabel } from "./labels";
 
 export const TITLE_MAX = 200;
+// Sama dengan MAX_SIGNERS di inti Rust (signing/request.rs).
+export const SIGNERS_MAX = 20;
+const SIGNERS_MAX_MESSAGE = `Paling banyak ${SIGNERS_MAX} penanda tangan per permintaan. Hapus centang satu nama dulu untuk memilih yang lain.`;
 
 type Props = {
   open: boolean;
@@ -59,6 +62,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
     titleHint: useId(),
     titleError: useId(),
     signers: useId(),
+    signersHint: useId(),
     signersError: useId(),
     mode: useId(),
     order: useId(),
@@ -113,6 +117,11 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
   const hasOthers = chosen.some((c) => !c.isMe);
 
   function toggle(key: string, checked: boolean) {
+    if (checked && !order.includes(key) && order.length >= SIGNERS_MAX) {
+      // Centang ditolak; pesan dibacakan lewat wadah role="alert" di bawah daftar.
+      setSignersError(SIGNERS_MAX_MESSAGE);
+      return;
+    }
     setSignersError(null);
     setOrder((prev) => (checked ? (prev.includes(key) ? prev : [...prev, key]) : prev.filter((k) => k !== key)));
   }
@@ -134,7 +143,12 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
     if (saving || !imported) return;
     const clean = title.trim();
     const tErr = clean.length === 0 ? "Isi judul dokumen." : clean.length > TITLE_MAX ? `Judul paling panjang ${TITLE_MAX} karakter.` : null;
-    const sErr = chosen.length === 0 ? "Pilih minimal satu penanda tangan." : null;
+    const sErr =
+      chosen.length === 0
+        ? "Pilih minimal satu penanda tangan."
+        : chosen.length > SIGNERS_MAX
+          ? SIGNERS_MAX_MESSAGE
+          : null;
     setTitleError(tErr);
     setSignersError(sErr);
     setSaveError(null);
@@ -200,20 +214,22 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
           <p id={ids.titleHint} className="hint">
             Tampil di daftar dan di halaman catatan PDF. Paling panjang {TITLE_MAX} karakter.
           </p>
-          {titleError && (
-            <div id={ids.titleError}>
-              <FieldError text={titleError} />
-            </div>
-          )}
+          {/* Wadah alert selalu ada, supaya pesan yang muncul belakangan tetap dibacakan. */}
+          <div id={ids.titleError} role="alert">
+            {titleError && <FieldError text={titleError} />}
+          </div>
         </div>
 
         <fieldset
           id={ids.signers}
           className="sign-set"
-          aria-describedby={signersError ? ids.signersError : undefined}
+          aria-describedby={signersError ? `${ids.signersHint} ${ids.signersError}` : ids.signersHint}
           disabled={saving}
         >
           <legend className="sign-legend">Penanda tangan</legend>
+          <p id={ids.signersHint} className="hint">
+            Paling banyak {SIGNERS_MAX} orang. Dipilih {chosen.length}.
+          </p>
           {!candidates && !loadError && (
             <p className="hint" role="status">
               Memuat daftar anggota...
@@ -252,11 +268,9 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
               })}
             </ul>
           )}
-          {signersError && (
-            <div id={ids.signersError}>
-              <FieldError text={signersError} />
-            </div>
-          )}
+          <div id={ids.signersError} role="alert">
+            {signersError && <FieldError text={signersError} />}
+          </div>
         </fieldset>
 
         <fieldset className="sign-set" disabled={saving}>

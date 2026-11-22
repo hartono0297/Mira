@@ -89,8 +89,14 @@ select {
 }
 
 .btn:disabled {
-  cursor: progress;
   opacity: 0.75;
+}
+
+/* Nonaktif karena keadaan (belum ada isi, sudah di batas): kursor dilarang.
+   Tombol yang sedang memproses (aria-busy) tetap memakai kursor progress di bawah. */
+.btn:disabled:not([aria-busy="true"]),
+.btn[aria-disabled="true"] {
+  cursor: not-allowed;
 }
 
 .btn-ghost {

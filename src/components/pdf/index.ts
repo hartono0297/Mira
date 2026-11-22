@@ -1,6 +1,6 @@
 export { PdfViewer, type PdfZoom } from "./PdfViewer";
-export { PlacementBox, resizeRect } from "./PlacementBox";
-export { clampCss, cssRectToPdf, displaySize, pdfRectToCss } from "./coords";
+export { PlacementBox, resizeAroundCenter, resizeRect } from "./PlacementBox";
+export { clampCss, cssRectToPdf, displaySize, normalizeRotation, pdfRectToCss } from "./coords";
 export {
   describePdfError,
   loadPdf,

@@ -2,9 +2,9 @@ import { IconChevronLeft, IconChevronRight, IconMinus, IconPlus } from "@tabler/
 import type { PDFPageProxy, RenderTask } from "pdfjs-dist";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ErrorAlert } from "../ErrorAlert";
-import { displaySize } from "./coords";
+import { displaySize, normalizeRotation } from "./coords";
 import { describePdfError, isRenderCancelled, loadPdf, type LoadedPdf, type PdfErrorText } from "./pdfjs";
-import type { PageGeometry, PageRenderInfo, PageRotation } from "./types";
+import type { PageGeometry, PageRenderInfo } from "./types";
 import "./pdf.css";
 
 export type PdfZoom = number | "fit";
@@ -40,11 +40,6 @@ type Doc =
   | { status: "error"; error: PdfErrorText }
   | { status: "empty" }
   | { status: "ready"; pdf: LoadedPdf; pages: PageGeometry[]; proxies: PDFPageProxy[] };
-
-function normRotation(r: number): PageRotation {
-  const n = ((Math.round(r / 90) * 90) % 360 + 360) % 360;
-  return n as PageRotation;
-}
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.min(Math.max(n, lo), hi);
@@ -101,7 +96,7 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
             view: [x0, y0, x1, y1],
             width: x1 - x0,
             height: y1 - y0,
-            rotation: normRotation(p.rotate),
+            rotation: normalizeRotation(p.rotate),
             userUnit: p.userUnit,
           };
         });
@@ -162,7 +157,13 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
     onZoomChange?.(z);
   }
 
+  const atFirst = pageNumber <= 1;
+  const atLast = pageNumber >= pageCount;
+  const atMinZoom = scale <= MIN_SCALE + 0.001;
+  const atMaxZoom = scale >= MAX_SCALE - 0.001;
+
   function zoomBy(dir: 1 | -1) {
+    if (dir > 0 ? atMaxZoom : atMinZoom) return;
     const eps = 0.001;
     const next = dir > 0 ? ZOOM_STEPS.find((s) => s > scale + eps) : [...ZOOM_STEPS].reverse().find((s) => s < scale - eps);
     if (next !== undefined) setZoom(next);
@@ -234,73 +235,87 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
   return (
     <div className="pdf-viewer">
       <div className="pdf-toolbar" role="toolbar" aria-label={`Kontrol tampilan ${label}`}>
-        <div className="pdf-tool-group">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => goTo(pageNumber - 1)}
-            disabled={!ready || pageNumber <= 1}
-          >
-            <IconChevronLeft size={16} aria-hidden="true" />
-            Sebelumnya
-          </button>
-          <PageField
-            id={pageInputId}
-            page={pageNumber}
-            count={pageCount}
-            disabled={!ready}
-            onCommit={goTo}
-          />
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => goTo(pageNumber + 1)}
-            disabled={!ready || pageNumber >= pageCount}
-          >
-            Berikutnya
-            <IconChevronRight size={16} aria-hidden="true" />
-          </button>
-        </div>
-        <div className="pdf-tool-group">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm pdf-icon-btn"
-            onClick={() => zoomBy(-1)}
-            disabled={!ready || scale <= MIN_SCALE + 0.001}
-            aria-label="Perkecil"
-            title="Perkecil"
-          >
-            <IconMinus size={16} aria-hidden="true" />
-          </button>
-          {ready ? (
-            <span className="pdf-zoom-value" aria-label={`Perbesaran ${Math.round(scale * 100)} persen`}>
-              {Math.round(scale * 100)}%
-            </span>
-          ) : (
-            <span className="pdf-zoom-value" aria-hidden="true">
-              -
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm pdf-icon-btn"
-            onClick={() => zoomBy(1)}
-            disabled={!ready || scale >= MAX_SCALE - 0.001}
-            aria-label="Perbesar"
-            title="Perbesar"
-          >
-            <IconPlus size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            aria-pressed={currentZoom === "fit"}
-            onClick={() => setZoom("fit")}
-            disabled={!ready}
-          >
-            Sesuai lebar
-          </button>
-          {toolbarExtra}
+        <div className="pdf-toolbar-row">
+          <div className="pdf-tool-group">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm pdf-nav-btn"
+              onClick={() => {
+                if (!atFirst) goTo(pageNumber - 1);
+              }}
+              disabled={!ready}
+              aria-disabled={ready && atFirst ? true : undefined}
+              aria-label="Sebelumnya"
+              title="Halaman sebelumnya"
+            >
+              <IconChevronLeft size={16} aria-hidden="true" />
+              <span className="pdf-btn-text">Sebelumnya</span>
+            </button>
+            <PageField
+              id={pageInputId}
+              page={pageNumber}
+              count={pageCount}
+              disabled={!ready}
+              onCommit={goTo}
+            />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm pdf-nav-btn"
+              onClick={() => {
+                if (!atLast) goTo(pageNumber + 1);
+              }}
+              disabled={!ready}
+              aria-disabled={ready && atLast ? true : undefined}
+              aria-label="Berikutnya"
+              title="Halaman berikutnya"
+            >
+              <span className="pdf-btn-text">Berikutnya</span>
+              <IconChevronRight size={16} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="pdf-tool-group">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm pdf-icon-btn"
+              onClick={() => zoomBy(-1)}
+              disabled={!ready}
+              aria-disabled={ready && atMinZoom ? true : undefined}
+              aria-label="Perkecil"
+              title="Perkecil"
+            >
+              <IconMinus size={16} aria-hidden="true" />
+            </button>
+            {ready ? (
+              <span className="pdf-zoom-value" aria-label={`Perbesaran ${Math.round(scale * 100)} persen`}>
+                {Math.round(scale * 100)}%
+              </span>
+            ) : (
+              <span className="pdf-zoom-value" aria-hidden="true">
+                -
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm pdf-icon-btn"
+              onClick={() => zoomBy(1)}
+              disabled={!ready}
+              aria-disabled={ready && atMaxZoom ? true : undefined}
+              aria-label="Perbesar"
+              title="Perbesar"
+            >
+              <IconPlus size={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              aria-pressed={currentZoom === "fit"}
+              onClick={() => setZoom("fit")}
+              disabled={!ready}
+            >
+              Sesuai lebar
+            </button>
+            {toolbarExtra}
+          </div>
         </div>
       </div>
 
@@ -380,7 +395,9 @@ function PageField({ id, page, count, disabled, onCommit }: PageFieldProps) {
 
   return (
     <span className="pdf-page-field">
-      <label htmlFor={id}>Halaman</label>
+      <label htmlFor={id} className="pdf-page-label">
+        Halaman
+      </label>
       <input
         id={id}
         type="text"

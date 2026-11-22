@@ -5,6 +5,7 @@ import {
   PDFDict,
   PDFDocument,
   PDFName,
+  PDFNumber,
   PDFRawStream,
   PDFRef,
   PDFStream,
@@ -16,7 +17,9 @@ import {
 import {
   appendAuditPage,
   captionFontSize,
+  checkSignablePdf,
   formatSignedAt,
+  normalizeAngle,
   stampSignature,
   toWinAnsiSafe,
   type PdfRect,
@@ -433,7 +436,24 @@ describe("stampSignature", () => {
     const bytes = await doc.save({ useObjectStreams: false });
     await expect(
       stampSignature(bytes, { ...baseOpts, placement: { pageIndex: 0, x: 0, y: 0, width: 10, height: 10 } }),
-    ).rejects.toThrow("PDF ini terkunci kata sandi");
+    ).rejects.toThrow("PDF ini dilindungi kata sandi pemilik, jadi Mira tidak bisa menambahkan tanda tangan.");
+  });
+
+  it("/Rotate yang bukan kelipatan 90 dianggap 0, sama dengan pdf.js", async () => {
+    const src = await PDFDocument.load(await makePdf());
+    // pdf-lib menolak setRotation(45), jadi nilai ditulis langsung ke kamus halaman.
+    src.getPage(0).node.set(PDFName.of("Rotate"), PDFNumber.of(45));
+    const placement: PdfRect = { pageIndex: 0, x: 350, y: 120, width: 160, height: 60 };
+    const doc = await PDFDocument.load(await stampSignature(await src.save(), { ...baseOpts, placement }), {
+      updateMetadata: false,
+    });
+    const { images } = stampDraws(doc, 0);
+    expect(images).toHaveLength(1);
+    const b = unitSquareBounds(images[0].ctm);
+    expectInside(b, placement);
+    expect(b.x0).toBeCloseTo(370, 3);
+    expect(images[0].ctm[0]).toBeGreaterThan(0);
+    expect(Math.abs(images[0].ctm[1])).toBeLessThan(EPS);
   });
 
   it("menolak halaman di luar jangkauan dan ukuran nol", async () => {
@@ -444,6 +464,48 @@ describe("stampSignature", () => {
     await expect(
       stampSignature(pdf, { ...baseOpts, placement: { pageIndex: 0, x: 0, y: 0, width: 0, height: 10 } }),
     ).rejects.toThrow("Posisi tanda tangan tidak valid.");
+  });
+});
+
+describe("normalizeAngle", () => {
+  it("mengikuti pdf.js: kelipatan 90 dinormalkan, selain itu 0", () => {
+    expect(normalizeAngle(0)).toBe(0);
+    expect(normalizeAngle(90)).toBe(90);
+    expect(normalizeAngle(450)).toBe(90);
+    expect(normalizeAngle(-90)).toBe(270);
+    expect(normalizeAngle(-180)).toBe(180);
+    expect(normalizeAngle(45)).toBe(0);
+    expect(normalizeAngle(100)).toBe(0);
+    expect(normalizeAngle(Number.NaN)).toBe(0);
+  });
+});
+
+describe("checkSignablePdf", () => {
+  it("menerima PDF biasa", async () => {
+    await expect(checkSignablePdf(await makePdf())).resolves.toBeUndefined();
+  });
+
+  it("menolak PDF berkata sandi pemilik dengan AppError pdf_invalid", async () => {
+    const doc = await PDFDocument.load(await makePdf());
+    doc.context.trailerInfo.Encrypt = doc.context.obj({ Filter: "Standard", V: 1, R: 2 });
+    const bytes = await doc.save({ useObjectStreams: false });
+    await expect(checkSignablePdf(bytes)).rejects.toEqual({
+      code: "pdf_invalid",
+      message:
+        "PDF ini dilindungi kata sandi pemilik, jadi Mira tidak bisa menambahkan tanda tangan. Simpan ulang tanpa perlindungan di aplikasi asalnya, lalu coba lagi.",
+    });
+  });
+
+  it("menolak PDF rusak dan file bukan PDF", async () => {
+    const broken = new TextEncoder().encode("%PDF-1.7 sampah tanpa objek");
+    await expect(checkSignablePdf(broken)).rejects.toMatchObject({
+      code: "pdf_invalid",
+      message: expect.stringMatching(/^PDF ini rusak atau formatnya tidak didukung/),
+    });
+    await expect(checkSignablePdf(new TextEncoder().encode("bukan PDF"))).rejects.toMatchObject({
+      code: "pdf_invalid",
+      message: expect.stringMatching(/^File ini bukan PDF/),
+    });
   });
 });
 

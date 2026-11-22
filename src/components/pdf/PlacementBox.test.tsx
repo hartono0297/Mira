@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { PlacementBox, resizeRect } from "./PlacementBox";
+import { PlacementBox, resizeAroundCenter, resizeRect } from "./PlacementBox";
 import type { CssRect } from "./types";
 
 const BOUNDS = { width: 400, height: 300 };
@@ -77,37 +77,41 @@ describe("PlacementBox", () => {
     expect(current()).toEqual({ left: 0, top: 0, width: 100, height: 50 });
   });
 
-  it("Alt+panah mengubah lebar dan tinggi tanpa rasio", async () => {
-    render(<Harness initial={{ left: 10, top: 10, width: 100, height: 50 }} />);
+  it("Alt+panah mengubah lebar dan tinggi tanpa rasio, dari titik tengah", async () => {
+    render(<Harness initial={{ left: 100, top: 100, width: 100, height: 50 }} />);
     box().focus();
     await userEvent.keyboard("{Alt>}{ArrowRight}{/Alt}");
-    expect(current()).toEqual({ left: 10, top: 10, width: 105, height: 50 });
+    expect(current()).toEqual({ left: 97.5, top: 100, width: 105, height: 50 });
     await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
-    expect(current()).toEqual({ left: 10, top: 10, width: 105, height: 55 });
+    expect(current()).toEqual({ left: 97.5, top: 97.5, width: 105, height: 55 });
     await userEvent.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
-    expect(current()).toEqual({ left: 10, top: 10, width: 85, height: 55 });
+    expect(current()).toEqual({ left: 107.5, top: 97.5, width: 85, height: 55 });
   });
 
-  it("plus dan minus mengubah ukuran dengan menjaga rasio", async () => {
-    render(<Harness initial={{ left: 10, top: 10, width: 100, height: 50 }} aspectRatio={2} />);
+  it("plus dan minus mengubah ukuran dengan menjaga rasio, titik tengah tetap", async () => {
+    render(<Harness initial={{ left: 100, top: 100, width: 100, height: 50 }} aspectRatio={2} />);
     box().focus();
     await userEvent.keyboard("+");
-    expect(current()).toEqual({ left: 10, top: 10, width: 105, height: 52.5 });
+    expect(current()).toEqual({ left: 97.5, top: 98.75, width: 105, height: 52.5 });
     await userEvent.keyboard("--");
-    expect(current()).toEqual({ left: 10, top: 10, width: 95, height: 47.5 });
+    expect(current()).toEqual({ left: 102.5, top: 101.25, width: 95, height: 47.5 });
     await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
-    expect(current()).toEqual({ left: 10, top: 10, width: 100, height: 50 });
+    expect(current()).toEqual({ left: 100, top: 100, width: 100, height: 50 });
   });
 
-  it("ukuran dijepit ke bounds dan ke lebar minimum", async () => {
-    render(<Harness initial={{ left: 300, top: 200, width: 80, height: 40 }} aspectRatio={2} />);
+  it("membesar di dekat tepi: digeser masuk, dijepit ke halaman dan lebar minimum", async () => {
+    render(<Harness initial={{ left: 320, top: 200, width: 80, height: 40 }} aspectRatio={2} />);
     box().focus();
-    for (let i = 0; i < 10; i++) fireEvent.keyDown(box(), { key: "+", shiftKey: true });
-    // Sisa ruang: lebar 100, tinggi 100 (rasio 2 => lebar maksimal 100).
-    expect(current()).toEqual({ left: 300, top: 200, width: 100, height: 50 });
-    expect(screen.getByText("Sudah ukuran terbesar di posisi ini.")).toBeInTheDocument();
-    for (let i = 0; i < 20; i++) fireEvent.keyDown(box(), { key: "-", shiftKey: true });
-    expect(current()).toEqual({ left: 300, top: 200, width: 24, height: 12 });
+    fireEvent.keyDown(box(), { key: "+", shiftKey: true });
+    // Lebar 100 dari tengah (360, 220) keluar 10 px di kanan, jadi digeser ke kiri.
+    expect(current()).toEqual({ left: 300, top: 195, width: 100, height: 50 });
+    for (let i = 0; i < 30; i++) fireEvent.keyDown(box(), { key: "+", shiftKey: true });
+    // Rasio 2 di halaman 400 x 300: lebar terbesar 400.
+    expect(current()).toEqual({ left: 0, top: 100, width: 400, height: 200 });
+    expect(screen.getByText("Sudah ukuran terbesar di halaman ini.")).toBeInTheDocument();
+    for (let i = 0; i < 30; i++) fireEvent.keyDown(box(), { key: "-", shiftKey: true });
+    expect(current()).toEqual({ left: 188, top: 194, width: 24, height: 12 });
+    expect(screen.getByText("Sudah ukuran terkecil.")).toBeInTheDocument();
   });
 
   it("menyeret dengan pointer memindah kotak dan tetap di dalam bounds", () => {
@@ -142,6 +146,21 @@ describe("PlacementBox", () => {
     expect(current().left).toBe(100);
     fireEvent.keyDown(el, { key: "Escape" });
     expect(current()).toEqual({ left: 50, top: 50, width: 100, height: 50 });
+  });
+});
+
+describe("resizeAroundCenter", () => {
+  it("menjaga titik tengah selama masih muat", () => {
+    expect(resizeAroundCenter({ left: 100, top: 100, width: 100, height: 50 }, 140, 70, BOUNDS, { aspectRatio: 2 })).toEqual({
+      left: 80,
+      top: 90,
+      width: 140,
+      height: 70,
+    });
+  });
+  it("tidak pernah keluar dari bounds", () => {
+    const r = resizeAroundCenter({ left: 380, top: 290, width: 20, height: 10 }, 120, 60, BOUNDS, { aspectRatio: 2 });
+    expect(r).toEqual({ left: 280, top: 240, width: 120, height: 60 });
   });
 });
 
