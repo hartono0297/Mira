@@ -88,15 +88,19 @@ async function stop({ child, browser }) {
   await new Promise((r) => setTimeout(r, 1500));
 }
 
+// Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi",
+// jadi tombol menu dicari di dalam nav "Menu utama".
+const mainNav = (page, name) =>
+  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name, exact: true });
 const column = (page, name) => page.locator("section.pb-col").filter({ has: page.getByRole("heading", { name }) });
 const cardTitles = async (page, name) =>
   (await column(page, name).locator("[data-open-task]").allInnerTexts()).map((s) => s.trim());
 
 async function setTheme(page, label) {
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel(label, { exact: true }).check();
   await page.waitForTimeout(300);
-  await page.getByRole("button", { name: "Board", exact: true }).click();
+  await mainNav(page, "Board").click();
 }
 
 async function openProject(page) {
@@ -118,10 +122,10 @@ try {
   await page.getByRole("button", { name: "Buat organisasi" }).click();
   // Panduan firewall: dilewati tanpa mengubah pengaturan Windows.
   await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
-  await page.getByRole("button", { name: "Board", exact: true }).waitFor({ timeout: 10000 });
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
+  await mainNav(page, "Board").waitFor({ timeout: 10000 });
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Terang", { exact: true }).check();
-  await page.getByRole("button", { name: "Board", exact: true }).click();
+  await mainNav(page, "Board").click();
 
   // Board kosong, lalu proyek pertama.
   await page.getByRole("button", { name: "Buat proyek pertama" }).waitFor({ timeout: 10000 });
@@ -131,6 +135,17 @@ try {
   await page.getByLabel("Nama proyek").fill("Proyek A");
   const code = await page.getByLabel("Kode proyek").inputValue();
   check("Kode proyek diusulkan dari nama", code === "PA", code);
+  // Pendiri belum punya tim: satu-satunya pilihan Tim adalah proyek seluruh organisasi.
+  // Label "Tim" baru terhubung ke select setelah daftar tim terbaca.
+  const teamSelect = page.getByRole("dialog").getByLabel("Tim", { exact: true });
+  await teamSelect.waitFor({ timeout: 10000 });
+  const teamOptions = (await teamSelect.locator("option").allInnerTexts()).map((s) => s.trim());
+  await teamSelect.selectOption({ label: "Tanpa tim (seluruh organisasi)" });
+  check(
+    "Pilihan Tim untuk pendiri tanpa tim hanya Tanpa tim",
+    teamOptions.length === 1 && teamOptions[0] === "Tanpa tim (seluruh organisasi)",
+    teamOptions.join(" | "),
+  );
   await page.screenshot({ path: join(shots, "t3-02-proyek-baru-terang.png") });
   await page.getByRole("button", { name: "Buat proyek" }).click();
   await page.getByRole("button", { name: "Task baru" }).waitFor({ timeout: 10000 });
@@ -245,7 +260,7 @@ try {
   // Restart: data tetap.
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Board", exact: true }).click({ timeout: 20000 });
+  await mainNav(page, "Board").click({ timeout: 20000 });
   await openProject(page);
   const after = {
     todo: await cardTitles(page, "To do"),

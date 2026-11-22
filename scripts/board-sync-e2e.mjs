@@ -142,18 +142,22 @@ async function must(page, cmd, args) {
 const emitFeature = (page, topic) =>
   call(page, "plugin:event|emit", { event: "mira://feature", payload: { topic } });
 
+// Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi"
+// (tautan undangan saat belum ada rekan), jadi pencarian dibatasi ke nav ini.
+const mainNav = (page, name) =>
+  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name, exact: true });
 const projectNav = (page) => page.getByRole("navigation", { name: "Task saya dan proyek" });
 const card = (page, title) => page.locator("[data-open-task]", { hasText: title });
 
 async function goBoard(page) {
-  await page.getByRole("button", { name: "Board", exact: true }).click();
+  await mainNav(page, "Board").click();
 }
 async function goOrg(page) {
-  await page.getByRole("button", { name: "Organisasi", exact: true }).click();
+  await mainNav(page, "Organisasi").click();
   await page.getByRole("navigation", { name: "Bagian organisasi" }).waitFor({ timeout: 10000 });
 }
 async function setTheme(page, label) {
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel(label, { exact: true }).check();
   await page.waitForTimeout(300);
   await goBoard(page);
@@ -183,8 +187,8 @@ try {
   await page.getByRole("button", { name: "Buat organisasi" }).click();
   // Panduan firewall: dilewati tanpa mengubah pengaturan Windows.
   await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
-  await page.getByRole("button", { name: "Board", exact: true }).waitFor({ timeout: 10000 });
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
+  await mainNav(page, "Board").waitFor({ timeout: 10000 });
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Terang", { exact: true }).check();
   check("Onboarding selesai: nama, organisasi, firewall dilewati", true);
 
@@ -372,7 +376,7 @@ try {
   // 8. Restart dengan folder data yang sama.
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Board", exact: true }).click({ timeout: 20000 });
+  await mainNav(page, "Board").click({ timeout: 20000 });
   await projectNav(page).getByRole("button", { name: new RegExp(PROJECT_RENAMED) }).waitFor({ timeout: 10000 });
   await openProject(page, PROJECT_RENAMED);
   const chipAfter = await page.locator(".pb-head .pb-team").innerText();
