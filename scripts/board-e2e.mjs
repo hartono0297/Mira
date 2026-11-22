@@ -104,8 +104,9 @@ async function openProject(page) {
   await page.getByRole("button", { name: "Task baru" }).waitFor();
 }
 
+let app = null;
 try {
-  let app = await launch();
+  app = await launch();
   let { page } = app;
 
   // Onboarding.
@@ -115,6 +116,8 @@ try {
   await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
   await page.getByLabel("Nama organisasi").fill("Kantor Uji");
   await page.getByRole("button", { name: "Buat organisasi" }).click();
+  // Panduan firewall: dilewati tanpa mengubah pengaturan Windows.
+  await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
   await page.getByRole("button", { name: "Board", exact: true }).waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Terang", { exact: true }).check();
@@ -237,6 +240,7 @@ try {
   await page.screenshot({ path: join(shots, "t3-07-detail-task-gelap.png") });
   await dlg.getByRole("button", { name: "Tutup detail task" }).click();
   await stop(app);
+  app = null;
 
   // Restart: data tetap.
   app = await launch();
@@ -256,8 +260,13 @@ try {
     JSON.stringify(after),
   );
   await stop(app);
+  app = null;
 } catch (err) {
   check("Skrip berjalan tanpa error", false, String(err?.message ?? err).slice(0, 300));
+  if (app) {
+    await app.page.screenshot({ path: join(shots, "gagal.png") }).catch(() => {});
+    await stop(app);
+  }
 }
 
 for (const target of miraCredentials()) {
