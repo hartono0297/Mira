@@ -5,31 +5,39 @@
 //! exactly `size` raw bytes and the end of the stream, or
 //! `BlobRefused { code }` (`busy` or `unavailable`).
 //!
-//! Server: at most `BLOB_GETS_PER_SECOND` requests per peer, `MAX_SERVES`
-//! serves at once and `MAX_SERVES_PER_PEER` per peer; over a limit it answers
-//! `busy` before looking at membership or files, so `busy` says nothing about
-//! whether a blob exists. Then it asks `is_member` and
-//! `FeatureHub::blob_path_for(peer, hash)`; a blob that does not exist and
-//! one the peer may not have both get `unavailable`. During a long transfer it
+//! Server, in this order: more than `BLOB_GETS_PER_SECOND` requests from the
+//! peer in the last second: `busy`. Hash not 64 hex: `unavailable` (format
+//! only). No free serve slot (`MAX_SERVES` at once, `MAX_SERVES_PER_PEER` per
+//! peer): `busy`. Only then `is_member` and
+//! `FeatureHub::blob_path_for(peer, hash)` on the blocking pool; a blob that
+//! does not exist and one the peer may not have both get `unavailable`. So
+//! `busy` says nothing about whether a blob exists. During a long transfer it
 //! asks again every `RECHECK_EVERY` bytes and resets the stream when access
 //! was revoked, and resets it when the file turns out shorter or longer than
 //! announced.
 //!
-//! Requester: one fetch per (hash, dest) at a time; a `dest` that already
-//! holds the blob is returned without the network. At most `MAX_DOWNLOADS`
-//! downloads at once and `MAX_DOWNLOADS_PER_PEER` per peer. Preferred
-//! connected peers first, then the other connected peers. It refuses more
-//! than `max_size` bytes, reads exactly `size` bytes and then requires the end
-//! of the stream, writes to a temporary file next to `dest` ([`BlobWriter`],
-//! on the blocking pool), checks BLAKE3, and only then moves the file to
-//! `dest`. When every peer fails, `dest` is removed unless it already holds
-//! the blob.
+//! Requester: `dest` must be an absolute path to a file in an existing
+//! folder. One fetch per `dest` at a time; a `dest` that already holds the
+//! blob is returned without the network. At most `MAX_DOWNLOADS` downloads at
+//! once and `MAX_DOWNLOADS_PER_PEER` per peer, at most one `BlobGet` per
+//! `CLIENT_GET_GAP` to the same peer (below the server's rate limit).
+//! Preferred connected peers first, then the other connected peers; a peer
+//! that answers `busy` is asked again after 1 to 2 seconds, a few times,
+//! within `DOWNLOAD_QUEUE_TIMEOUT`. It refuses more than `max_size` bytes,
+//! reads exactly `size` bytes and then requires the end of the stream, writes
+//! to a temporary file next to `dest` ([`BlobWriter`], on the blocking pool),
+//! checks BLAKE3, and only then moves the file to `dest`. A local failure
+//! (disk, rename) ends the fetch without asking other peers. On any error
+//! `dest` is removed unless it already holds the blob.
 //!
 //! Both sides limit a transfer to `transfer_limit(size)` and require at least
 //! `WINDOW_MIN_BYTES` per `THROUGHPUT_WINDOW` ([`Throughput`]), so a peer
 //! that trickles bytes cannot hold a slot for long.
+//!
+//! A crash during a download can leave a `*.part-*` file next to `dest`;
+//! the feature that owns the folder may sweep those at startup.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -51,18 +59,30 @@ const MAX_SERVES_PER_PEER: usize = 2;
 /// `BlobGet` requests per peer per `RATE_WINDOW`; more get `busy`.
 const BLOB_GETS_PER_SECOND: u32 = 10;
 const RATE_WINDOW: Duration = Duration::from_secs(1);
+/// Requester side: least time between two `BlobGet` to one peer (8 per
+/// second, below `BLOB_GETS_PER_SECOND`).
+const CLIENT_GET_GAP: Duration = Duration::from_millis(125);
 /// Downloads at once on this laptop.
 const MAX_DOWNLOADS: usize = 4;
 /// Downloads at once from one peer (a connection has 8 stream slots).
 const MAX_DOWNLOADS_PER_PEER: usize = 2;
-/// How long a download waits for a free slot.
+/// How long a download waits for a free slot, and the overall limit for
+/// retrying busy peers.
 const DOWNLOAD_QUEUE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Attempts per peer that answers `busy`.
+const MAX_BUSY_TRIES: u32 = 4;
+/// Next look at a peer whose local download slots are all taken.
+const LOCAL_BUSY_RETRY: Duration = Duration::from_millis(250);
 /// Raw bytes per read or write.
 const CHUNK: usize = 64 * 1024;
 /// Chunks buffered between the network and the disk, each direction.
 const CHUNK_QUEUE: usize = 8;
-/// One read of blob bytes; longer means the sender stalled.
+/// One read of blob bytes, or one hand-over to the disk writer; longer
+/// means the other side stalled.
 const STALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long the requester waits for the disk writer to finish (sync and
+/// rename) after the last byte.
+const WRITER_WAIT: Duration = Duration::from_secs(120);
 /// Transfer time limit: `TRANSFER_BASE` plus the size at `MIN_AVG_RATE`
 /// bytes per second, at most `TRANSFER_MAX`.
 const TRANSFER_BASE: Duration = Duration::from_secs(60);
@@ -76,6 +96,16 @@ const WINDOW_MIN_BYTES: u64 = 32 * 1024;
 const RECHECK_EVERY: u64 = 4 * 1024 * 1024;
 /// Largest header frame (`BlobHeader` or `BlobRefused`).
 const MAX_HEADER_FRAME: usize = 1024;
+/// Longest `dest` file name (bytes) used in the temporary name; longer names
+/// get `TMP_FALLBACK_NAME` so the path stays within limits.
+const MAX_TMP_BASE: usize = 64;
+const TMP_FALLBACK_NAME: &str = "mira-blob";
+/// Rename attempts when the target is locked (Windows: virus scanner or an
+/// open handle).
+const RENAME_TRIES: u32 = 5;
+const RENAME_BACKOFF: Duration = Duration::from_millis(100);
+
+const STOPPING: &str = "Jaringan Mira sedang berhenti.";
 
 /// Limits for blob transfers, held by `Inner`.
 pub(crate) struct BlobState {
@@ -83,6 +113,7 @@ pub(crate) struct BlobState {
     serve_rate: PeerRate,
     downloads: Semaphore,
     peer_downloads: PeerSemaphores,
+    pacer: Pacer,
     fetches: FetchLocks,
 }
 
@@ -93,7 +124,27 @@ impl BlobState {
             serve_rate: PeerRate::new(BLOB_GETS_PER_SECOND, RATE_WINDOW),
             downloads: Semaphore::new(MAX_DOWNLOADS),
             peer_downloads: PeerSemaphores::new(MAX_DOWNLOADS_PER_PEER),
+            pacer: Pacer::new(CLIENT_GET_GAP),
             fetches: FetchLocks::default(),
+        }
+    }
+}
+
+/// Why one download attempt failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FetchError {
+    /// The peer answered `busy`: ask it again later.
+    Busy(String),
+    /// Something about this peer or its data: try the next peer.
+    Peer(String),
+    /// Something on this laptop (disk, rename, shutdown): stop.
+    Local(String),
+}
+
+impl FetchError {
+    fn into_message(self) -> String {
+        match self {
+            FetchError::Busy(m) | FetchError::Peer(m) | FetchError::Local(m) => m,
         }
     }
 }
@@ -189,6 +240,30 @@ impl PeerRate {
     }
 }
 
+/// Requester side: spaces `BlobGet` to one peer at least `gap` apart.
+struct Pacer {
+    gap: Duration,
+    next: Mutex<HashMap<String, Instant>>,
+}
+
+impl Pacer {
+    fn new(gap: Duration) -> Self {
+        Self {
+            gap,
+            next: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Reserves the next send time for `pk` (`now` or later).
+    fn reserve(&self, pk: &str, now: Instant) -> Instant {
+        let mut map = lock(&self.next);
+        map.retain(|_, t| *t > now);
+        let at = map.get(pk).copied().unwrap_or(now).max(now);
+        map.insert(pk.to_owned(), at + self.gap);
+        at
+    }
+}
+
 /// One semaphore per peer for downloads. Entries no permit refers to are
 /// dropped on the next lookup.
 struct PeerSemaphores {
@@ -204,56 +279,48 @@ impl PeerSemaphores {
         }
     }
 
-    fn semaphore(&self, pk: &str) -> Arc<Semaphore> {
-        let mut map = lock(&self.map);
-        map.retain(|_, s| Arc::strong_count(s) > 1);
-        map.entry(pk.to_owned())
-            .or_insert_with(|| Arc::new(Semaphore::new(self.per_peer)))
-            .clone()
-    }
-
     fn try_acquire(&self, pk: &str) -> Option<OwnedSemaphorePermit> {
-        self.semaphore(pk).try_acquire_owned().ok()
-    }
-
-    async fn acquire(&self, pk: &str, limit: Duration) -> Option<OwnedSemaphorePermit> {
-        let sem = self.semaphore(pk);
-        tokio::time::timeout(limit, sem.acquire_owned())
-            .await
-            .ok()?
-            .ok()
+        let sem = {
+            let mut map = lock(&self.map);
+            map.retain(|_, s| Arc::strong_count(s) > 1);
+            map.entry(pk.to_owned())
+                .or_insert_with(|| Arc::new(Semaphore::new(self.per_peer)))
+                .clone()
+        };
+        sem.try_acquire_owned().ok()
     }
 }
 
-type FetchKey = (String, PathBuf);
-type FetchMap = Arc<Mutex<HashMap<FetchKey, Arc<AsyncMutex<()>>>>>;
+type FetchMap = Arc<Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>>;
 
-/// Serializes fetches of the same (hash, dest).
+/// Serializes fetches to the same `dest`.
 #[derive(Default)]
 struct FetchLocks {
     map: FetchMap,
 }
 
-/// The turn of one fetch; the next fetch of the same key starts on drop.
+/// The turn of one fetch; the next fetch to the same `dest` starts when the
+/// last clone is dropped. The blocking writer holds a clone, so a writer that
+/// is still finishing keeps the turn even after the fetch returned.
 struct FetchTurn {
     guard: Option<OwnedMutexGuard<()>>,
-    key: FetchKey,
+    key: PathBuf,
     map: FetchMap,
 }
 
 impl FetchLocks {
-    async fn turn(&self, key: FetchKey) -> FetchTurn {
+    async fn turn(&self, key: PathBuf) -> Arc<FetchTurn> {
         let m = {
             let mut map = lock(&self.map);
             map.retain(|_, m| Arc::strong_count(m) > 1);
             map.entry(key.clone()).or_default().clone()
         };
         let guard = m.lock_owned().await;
-        FetchTurn {
+        Arc::new(FetchTurn {
             guard: Some(guard),
             key,
             map: self.map.clone(),
-        }
+        })
     }
 }
 
@@ -270,10 +337,26 @@ impl Drop for FetchTurn {
     }
 }
 
+/// Key for the per-`dest` lock: `dest` without `.` parts or doubled
+/// separators, lowercase on Windows (case-insensitive file names).
+fn dest_key(dest: &Path) -> PathBuf {
+    let clean: PathBuf = dest.components().collect();
+    if cfg!(windows) {
+        PathBuf::from(clean.to_string_lossy().to_lowercase())
+    } else {
+        clean
+    }
+}
+
 /// Time limit for transferring `size` bytes.
 fn transfer_limit(size: u64) -> Duration {
     let secs = TRANSFER_BASE.as_secs().saturating_add(size / MIN_AVG_RATE);
     Duration::from_secs(secs).min(TRANSFER_MAX)
+}
+
+/// Wait before asking a busy peer again: 1 to 2 seconds from `rand`.
+fn busy_backoff(rand: u32) -> Duration {
+    Duration::from_millis(1000 + u64::from(rand % 1000))
 }
 
 /// Rolling throughput floor for one transfer of `total` bytes.
@@ -348,7 +431,95 @@ fn order_candidates(me: &str, prefer: &[String], connected: &[String]) -> Vec<St
     out
 }
 
+/// One peer waiting in the [`CandidateQueue`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Attempt {
+    pk: String,
+    busy_tries: u32,
+    not_before: Instant,
+}
+
+/// What to do next with the [`CandidateQueue`].
+#[derive(Debug, PartialEq, Eq)]
+enum Next {
+    Ready(Attempt),
+    WaitUntil(Instant),
+    Done,
+}
+
+/// Peers to try in order, with retries for busy peers, all before one
+/// overall `deadline`.
+struct CandidateQueue {
+    items: VecDeque<Attempt>,
+    deadline: Instant,
+}
+
+impl CandidateQueue {
+    fn new(pks: Vec<String>, now: Instant, deadline: Instant) -> Self {
+        let items = pks
+            .into_iter()
+            .map(|pk| Attempt {
+                pk,
+                busy_tries: 0,
+                not_before: now,
+            })
+            .collect();
+        Self { items, deadline }
+    }
+
+    /// The first peer that may be tried at `now`, else when to look again.
+    fn next(&mut self, now: Instant) -> Next {
+        let deadline = self.deadline;
+        self.items.retain(|a| a.not_before <= deadline);
+        if let Some(i) = self.items.iter().position(|a| a.not_before <= now) {
+            return self.items.remove(i).map_or(Next::Done, Next::Ready);
+        }
+        match self.items.iter().map(|a| a.not_before).min() {
+            Some(t) => Next::WaitUntil(t),
+            None => Next::Done,
+        }
+    }
+
+    /// Puts `a` back to be tried at `at`, unless that is past the deadline.
+    fn retry_at(&mut self, mut a: Attempt, at: Instant) {
+        if at <= self.deadline {
+            a.not_before = at;
+            self.items.push_back(a);
+        }
+    }
+}
+
 // ----- Files (blocking) ---------------------------------------------------------
+
+/// Temporary file for `dest`: `<dest file name>.part-<16 hex>` in `dest`'s
+/// folder, with a short fixed base when the name is long.
+fn temp_path(dest: &Path, rand: u64) -> Option<PathBuf> {
+    let name = dest.file_name()?;
+    let mut tmp_name = if name.len() <= MAX_TMP_BASE {
+        name.to_os_string()
+    } else {
+        TMP_FALLBACK_NAME.into()
+    };
+    tmp_name.push(format!(".part-{rand:016x}"));
+    Some(match dest.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.join(tmp_name),
+        _ => PathBuf::from(tmp_name),
+    })
+}
+
+/// Renames, retrying a few times when the target is locked.
+fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries = 1;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && tries < RENAME_TRIES => {
+                tries += 1;
+                std::thread::sleep(RENAME_BACKOFF);
+            }
+            other => return other,
+        }
+    }
+}
 
 /// Requester's file side: receives the bytes of one blob into a temporary
 /// file next to `dest`, enforces the announced size and the BLAKE3 hash, and
@@ -365,22 +536,14 @@ struct BlobWriter {
 }
 
 impl BlobWriter {
-    /// Creates `<dest file name>.part-<16 hex>` in `dest`'s folder.
-    fn create(dest: &Path, size: u64, hash: &str) -> Result<Self, String> {
-        let name = dest
-            .file_name()
-            .ok_or_else(|| "Lokasi tujuan berkas tidak valid.".to_owned())?;
-        let mut tmp_name = name.to_os_string();
-        tmp_name.push(format!(".part-{:016x}", OsRng.next_u64()));
-        let tmp = match dest.parent() {
-            Some(p) if !p.as_os_str().is_empty() => p.join(tmp_name),
-            _ => PathBuf::from(tmp_name),
-        };
+    fn create(dest: &Path, size: u64, hash: &str) -> Result<Self, FetchError> {
+        let tmp = temp_path(dest, OsRng.next_u64())
+            .ok_or_else(|| FetchError::Local("Lokasi tujuan berkas tidak valid.".to_owned()))?;
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&tmp)
-            .map_err(|e| format!("File sementara tidak bisa dibuat: {e}"))?;
+            .map_err(|e| FetchError::Local(format!("File sementara tidak bisa dibuat: {e}")))?;
         Ok(Self {
             file: Some(file),
             tmp,
@@ -392,17 +555,19 @@ impl BlobWriter {
         })
     }
 
-    fn write(&mut self, chunk: &[u8]) -> Result<(), String> {
+    fn write(&mut self, chunk: &[u8]) -> Result<(), FetchError> {
         let len = chunk.len() as u64;
         if self.size - self.written < len {
-            return Err("Laptop rekan mengirim lebih banyak byte dari ukuran berkas.".to_owned());
+            return Err(FetchError::Peer(
+                "Laptop rekan mengirim lebih banyak byte dari ukuran berkas.".to_owned(),
+            ));
         }
         let file = self
             .file
             .as_mut()
-            .ok_or_else(|| "File sementara sudah ditutup.".to_owned())?;
+            .ok_or_else(|| FetchError::Local("File sementara sudah ditutup.".to_owned()))?;
         file.write_all(chunk)
-            .map_err(|e| format!("Gagal menulis file sementara: {e}"))?;
+            .map_err(|e| FetchError::Local(format!("Gagal menulis file sementara: {e}")))?;
         self.hasher.update(chunk);
         self.written += len;
         Ok(())
@@ -410,25 +575,27 @@ impl BlobWriter {
 
     /// Checks size and hash, syncs the file and renames it to `dest`
     /// (replacing an existing file). On error the temporary file is removed.
-    fn finish(mut self) -> Result<u64, String> {
+    fn finish(mut self) -> Result<u64, FetchError> {
         if self.written != self.size {
-            return Err(format!(
+            return Err(FetchError::Peer(format!(
                 "Berkas tidak lengkap: {} dari {} byte.",
                 self.written, self.size
-            ));
+            )));
         }
         if self.hasher.finalize().to_hex().as_str() != self.hash {
-            return Err("Isi berkas tidak cocok dengan hash BLAKE3-nya.".to_owned());
+            return Err(FetchError::Peer(
+                "Isi berkas tidak cocok dengan hash BLAKE3-nya.".to_owned(),
+            ));
         }
         let file = self
             .file
             .take()
-            .ok_or_else(|| "File sementara sudah ditutup.".to_owned())?;
+            .ok_or_else(|| FetchError::Local("File sementara sudah ditutup.".to_owned()))?;
         file.sync_all()
-            .map_err(|e| format!("Gagal menyimpan file sementara: {e}"))?;
+            .map_err(|e| FetchError::Local(format!("Gagal menyimpan file sementara: {e}")))?;
         drop(file);
-        std::fs::rename(&self.tmp, &self.dest)
-            .map_err(|e| format!("Berkas tidak bisa dipindah ke tujuan: {e}"))?;
+        rename_with_retry(&self.tmp, &self.dest)
+            .map_err(|e| FetchError::Local(format!("Berkas tidak bisa dipindah ke tujuan: {e}")))?;
         // Renamed: nothing left for `drop` to clean up.
         self.tmp = PathBuf::new();
         Ok(self.size)
@@ -444,6 +611,18 @@ impl Drop for BlobWriter {
     }
 }
 
+/// Checks `dest` before any network work: a file path (not a folder) in an
+/// existing folder. `dest` is already known to be absolute. Blocking.
+fn check_dest(dest: &Path) -> Result<(), String> {
+    if dest.is_dir() {
+        return Err("Lokasi tujuan berkas adalah folder.".to_owned());
+    }
+    match dest.parent() {
+        Some(p) if p.is_dir() => Ok(()),
+        _ => Err("Folder tujuan berkas tidak ada.".to_owned()),
+    }
+}
+
 /// Size of `dest` when it is a file holding exactly blob `hash` of at most
 /// `max_size` bytes. Blocking.
 fn existing_blob(dest: &Path, hash: &str, max_size: u64) -> Option<u64> {
@@ -456,7 +635,7 @@ fn existing_blob(dest: &Path, hash: &str, max_size: u64) -> Option<u64> {
     (n <= max_size && hasher.finalize().to_hex().as_str() == hash).then_some(n)
 }
 
-/// After every peer failed: removes `dest` unless it holds blob `hash`.
+/// After a failed fetch: removes `dest` unless it holds blob `hash`.
 /// Blocking.
 fn remove_invalid_dest(dest: &Path, hash: &str) {
     if dest.is_file() && existing_blob(dest, hash, u64::MAX).is_none() {
@@ -544,7 +723,7 @@ impl Inner {
         let me = self.clone();
         let peer = pk.to_owned();
         let h = hash.clone();
-        let opened = tokio::task::spawn_blocking(move || -> Option<(File, u64)> {
+        let lookup = tokio::task::spawn_blocking(move || -> Option<(File, u64)> {
             if !me.is_member(&peer) {
                 return None;
             }
@@ -552,10 +731,11 @@ impl Inner {
             let file = File::open(path).ok()?;
             let meta = file.metadata().ok()?;
             meta.is_file().then_some((file, meta.len()))
-        })
-        .await
-        .ok()
-        .flatten();
+        });
+        let opened = match tokio::time::timeout(READ_TIMEOUT, lookup).await {
+            Ok(Ok(found)) => found,
+            _ => None,
+        };
         let Some((file, size)) = opened else {
             refuse(send, "unavailable").await;
             return;
@@ -580,11 +760,13 @@ impl Inner {
     async fn may_serve(self: &Arc<Self>, pk: &str, hash: &str) -> bool {
         let me = self.clone();
         let (pk, hash) = (pk.to_owned(), hash.to_owned());
-        tokio::task::spawn_blocking(move || {
+        let check = tokio::task::spawn_blocking(move || {
             me.is_member(&pk) && me.features.hub.blob_path_for(&pk, &hash).is_some()
-        })
-        .await
-        .unwrap_or(false)
+        });
+        matches!(
+            tokio::time::timeout(READ_TIMEOUT, check).await,
+            Ok(Ok(true))
+        )
     }
 
     /// Sends the `size` bytes of `file` on `send`. `Err` when the file
@@ -653,7 +835,7 @@ fn run_writer(
     dest: &Path,
     size: u64,
     hash: &str,
-) -> Result<u64, String> {
+) -> Result<u64, FetchError> {
     let mut w = BlobWriter::create(dest, size, hash)?;
     while let Some(msg) = rx.blocking_recv() {
         match msg {
@@ -661,37 +843,48 @@ fn run_writer(
             WriterMsg::Done => return w.finish(),
         }
     }
-    Err("Unduhan dibatalkan.".to_owned())
+    Err(FetchError::Peer("Unduhan dibatalkan.".to_owned()))
 }
 
 /// Receives exactly `size` bytes from `recv`, then the end of the stream,
-/// into `dest` through a [`BlobWriter`] on the blocking pool.
+/// into `dest` through a [`BlobWriter`] on the blocking pool. The writer
+/// holds `turn` until it is done.
 async fn receive_blob_body(
     recv: &mut RecvStream,
     size: u64,
     hash: String,
     dest: PathBuf,
-) -> Result<u64, String> {
+    turn: Arc<FetchTurn>,
+    is_closing: impl Fn() -> bool,
+) -> Result<u64, FetchError> {
     let end = Instant::now() + transfer_limit(size);
     let mut rate = Throughput::new(size, Instant::now());
     let (tx, rx) = mpsc::channel::<WriterMsg>(CHUNK_QUEUE);
-    let writer = tokio::task::spawn_blocking(move || run_writer(rx, &dest, size, &hash));
+    let writer = tokio::task::spawn_blocking(move || {
+        let res = run_writer(rx, &dest, size, &hash);
+        drop(turn);
+        res
+    });
 
-    let timed_out = |rate: &Throughput| -> String {
+    let timed_out = |rate: &Throughput| -> FetchError {
         let now = Instant::now();
-        if now >= end {
+        FetchError::Peer(if now >= end {
             "Unduhan melewati batas waktu.".into()
         } else if rate.too_slow(now) {
             "Unduhan terlalu lambat.".into()
         } else {
             "Laptop rekan berhenti mengirim data.".into()
-        }
+        })
     };
 
     let mut buf = vec![0u8; CHUNK];
     let mut got: u64 = 0;
-    let mut net_err: Option<String> = None;
+    let mut net_err: Option<FetchError> = None;
     while got < size {
+        if is_closing() {
+            net_err = Some(FetchError::Local(STOPPING.into()));
+            break;
+        }
         let want = (CHUNK as u64).min(size - got) as usize;
         let read = tokio::time::timeout_at(
             rate.step_deadline(STALL_TIMEOUT, end),
@@ -704,45 +897,66 @@ async fn receive_blob_body(
                 break;
             }
             Ok(Err(e)) => {
-                net_err = Some(format!("Unduhan terputus: {e}"));
+                net_err = Some(FetchError::Peer(format!("Unduhan terputus: {e}")));
                 break;
             }
             Ok(Ok(None)) => {
-                net_err = Some("Unduhan berakhir sebelum berkas lengkap.".into());
+                net_err = Some(FetchError::Peer(
+                    "Unduhan berakhir sebelum berkas lengkap.".into(),
+                ));
                 break;
             }
             Ok(Ok(Some(n))) => n,
         };
         got += n as u64;
         if rate.record(n as u64, Instant::now()).is_err() {
-            net_err = Some("Unduhan terlalu lambat.".into());
+            net_err = Some(FetchError::Peer("Unduhan terlalu lambat.".into()));
             break;
         }
-        if tx.send(WriterMsg::Chunk(buf[..n].to_vec())).await.is_err() {
+        let chunk = WriterMsg::Chunk(buf[..n].to_vec());
+        match tokio::time::timeout(STALL_TIMEOUT, tx.send(chunk)).await {
+            Ok(Ok(())) => {}
             // The writer stopped; its result carries the reason.
-            break;
+            Ok(Err(_)) => break,
+            Err(_) => {
+                net_err = Some(FetchError::Local(
+                    "Penyimpanan terlalu lambat menulis berkas.".into(),
+                ));
+                break;
+            }
         }
     }
     if net_err.is_none() && got == size {
         let mut probe = [0u8; 1];
-        let after =
-            tokio::time::timeout_at(Instant::now() + READ_TIMEOUT, recv.read(&mut probe)).await;
-        match after {
+        let after = tokio::time::timeout(READ_TIMEOUT, recv.read(&mut probe)).await;
+        net_err = match after {
             Ok(Ok(None)) => {
-                let _ = tx.send(WriterMsg::Done).await;
+                match tokio::time::timeout(STALL_TIMEOUT, tx.send(WriterMsg::Done)).await {
+                    Ok(_) => None,
+                    Err(_) => Some(FetchError::Local(
+                        "Penyimpanan terlalu lambat menulis berkas.".into(),
+                    )),
+                }
             }
-            Ok(Ok(Some(_))) => {
-                net_err =
-                    Some("Laptop rekan mengirim lebih banyak byte dari ukuran berkas.".into());
-            }
-            Ok(Err(e)) => net_err = Some(format!("Unduhan terputus: {e}")),
-            Err(_) => net_err = Some("Laptop rekan tidak menutup transfer.".into()),
-        }
+            Ok(Ok(Some(_))) => Some(FetchError::Peer(
+                "Laptop rekan mengirim lebih banyak byte dari ukuran berkas.".into(),
+            )),
+            Ok(Err(e)) => Some(FetchError::Peer(format!("Unduhan terputus: {e}"))),
+            Err(_) => Some(FetchError::Peer(
+                "Laptop rekan tidak menutup transfer.".into(),
+            )),
+        };
     }
     drop(tx);
-    let written = writer
-        .await
-        .unwrap_or_else(|_| Err("Penulis berkas berhenti mendadak.".to_owned()));
+    let written = match tokio::time::timeout(WRITER_WAIT, writer).await {
+        Ok(Ok(res)) => res,
+        Ok(Err(_)) => Err(FetchError::Local(
+            "Penulis berkas berhenti mendadak.".into(),
+        )),
+        Err(_) => Err(FetchError::Local(
+            "Penyimpanan tidak selesai menulis berkas.".into(),
+        )),
+    };
     match net_err {
         Some(e) => Err(e),
         None => written,
@@ -755,17 +969,20 @@ async fn fetch_from(
     hash: &str,
     max_size: u64,
     dest: &Path,
-) -> Result<u64, String> {
+    turn: Arc<FetchTurn>,
+    is_closing: impl Fn() -> bool,
+) -> Result<u64, FetchError> {
+    let peer = FetchError::Peer;
     let (mut send, mut recv) = tokio::time::timeout(READ_TIMEOUT, conn.open_bi())
         .await
-        .map_err(|_| "Laptop rekan tidak menjawab.".to_owned())?
-        .map_err(|e| format!("Stream ke laptop rekan gagal dibuka: {e}"))?;
+        .map_err(|_| peer("Laptop rekan tidak menjawab.".to_owned()))?
+        .map_err(|e| peer(format!("Stream ke laptop rekan gagal dibuka: {e}")))?;
     let get = Msg::BlobGet {
         hash: hash.to_owned(),
     };
     if let Err(e) = wire::write_msg_timeout(&mut send, &get, WRITE_TIMEOUT).await {
         let _ = recv.stop(VarInt::from_u32(code::NORMAL));
-        return Err(format!("Permintaan berkas gagal dikirim: {e}"));
+        return Err(peer(format!("Permintaan berkas gagal dikirim: {e}")));
     }
     let _ = send.finish();
     let header = wire::read_msg_timeout(&mut recv, MAX_HEADER_FRAME, READ_TIMEOUT).await;
@@ -775,27 +992,33 @@ async fn fetch_from(
             let _ = recv.stop(VarInt::from_u32(code::NORMAL));
             return Err(match other {
                 Ok(Some(Msg::BlobHeader { .. })) => {
-                    "Berkas lebih besar dari batas yang diizinkan.".to_owned()
+                    peer("Berkas lebih besar dari batas yang diizinkan.".to_owned())
                 }
                 Ok(Some(Msg::BlobRefused { code: c })) if c == "busy" => {
-                    "Laptop rekan sedang sibuk.".to_owned()
+                    FetchError::Busy("Laptop rekan sedang sibuk.".to_owned())
                 }
                 Ok(Some(Msg::BlobRefused { .. })) => {
-                    "Laptop rekan tidak menyediakan berkas ini.".to_owned()
+                    peer("Laptop rekan tidak menyediakan berkas ini.".to_owned())
                 }
-                Ok(_) => "Jawaban laptop rekan tidak dikenal.".to_owned(),
-                Err(e) => format!("Jawaban laptop rekan tidak terbaca: {e}"),
+                Ok(_) => peer("Jawaban laptop rekan tidak dikenal.".to_owned()),
+                Err(e) => peer(format!("Jawaban laptop rekan tidak terbaca: {e}")),
             });
         }
     };
-    let res = receive_blob_body(&mut recv, size, hash.to_owned(), dest.to_path_buf()).await;
+    let res = receive_blob_body(
+        &mut recv,
+        size,
+        hash.to_owned(),
+        dest.to_path_buf(),
+        turn,
+        is_closing,
+    )
+    .await;
     if res.is_err() {
         let _ = recv.stop(VarInt::from_u32(code::PROTOCOL));
     }
     res
 }
-
-const STOPPING: &str = "Jaringan Mira sedang berhenti.";
 
 impl Inner {
     /// Requester side, behind `FeatureLink::fetch_blob`.
@@ -809,16 +1032,45 @@ impl Inner {
         if !wire::is_hex64(&hash) {
             return Err("Kode berkas tidak valid.".to_owned());
         }
+        if !dest.is_absolute() {
+            return Err("Lokasi tujuan berkas harus path lengkap.".to_owned());
+        }
         if self.is_closing() {
             return Err(STOPPING.to_owned());
         }
-        let _turn = self.blobs.fetches.turn((hash.clone(), dest.clone())).await;
+        let turn = self.blobs.fetches.turn(dest_key(&dest)).await;
         let (d, h) = (dest.clone(), hash.clone());
-        if let Ok(Some(size)) =
-            tokio::task::spawn_blocking(move || existing_blob(&d, &h, max_size)).await
-        {
-            return Ok(size);
+        let checked = tokio::task::spawn_blocking(move || {
+            check_dest(&d).map(|()| existing_blob(&d, &h, max_size))
+        })
+        .await
+        .unwrap_or_else(|_| Err("Lokasi tujuan berkas tidak bisa diperiksa.".to_owned()));
+        match checked {
+            Err(e) => return Err(e),
+            Ok(Some(size)) => return Ok(size),
+            Ok(None) => {}
         }
+        match self.download(&hash, max_size, &prefer, &dest, &turn).await {
+            Ok(size) => Ok(size),
+            Err(e) => {
+                // Contract: on error `dest` is removed (unless it holds the
+                // blob). Not on cancellation, where this never runs.
+                let h = hash.clone();
+                let _ = tokio::task::spawn_blocking(move || remove_invalid_dest(&dest, &h)).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// The network part of `fetch_blob`: slots, candidates, retries.
+    async fn download(
+        &self,
+        hash: &str,
+        max_size: u64,
+        prefer: &[String],
+        dest: &Path,
+        turn: &Arc<FetchTurn>,
+    ) -> Result<u64, String> {
         let _permit = match tokio::time::timeout(
             DOWNLOAD_QUEUE_TIMEOUT,
             self.blobs.downloads.acquire(),
@@ -831,70 +1083,58 @@ impl Inner {
                 return Err("Terlalu banyak unduhan berjalan. Coba lagi sebentar lagi.".to_owned());
             }
         };
-        let candidates = order_candidates(&self.me, &prefer, &self.connected_peers());
+        let candidates = order_candidates(&self.me, prefer, &self.connected_peers());
         if candidates.is_empty() {
             return Err("Tidak ada laptop rekan yang tersambung.".to_owned());
         }
-
+        let now = Instant::now();
+        let mut queue = CandidateQueue::new(candidates, now, now + DOWNLOAD_QUEUE_TIMEOUT);
         let mut last = String::new();
-        // First pass: peers with a free download slot. Second pass: wait for
-        // a slot at the peers that were busy.
-        let mut busy = Vec::new();
-        for pk in candidates {
+        loop {
             if self.is_closing() {
                 return Err(STOPPING.to_owned());
             }
-            let Some(slot) = self.blobs.peer_downloads.try_acquire(&pk) else {
-                busy.push(pk);
-                continue;
+            let now = Instant::now();
+            let attempt = match queue.next(now) {
+                Next::Done => break,
+                Next::WaitUntil(t) => {
+                    tokio::time::sleep_until(t).await;
+                    continue;
+                }
+                Next::Ready(a) => a,
             };
-            match self.fetch_from_peer(&pk, &hash, max_size, &dest).await {
-                Ok(size) => return Ok(size),
-                Err(reason) => last = reason,
-            }
-            drop(slot);
-        }
-        for pk in busy {
-            if self.is_closing() {
-                return Err(STOPPING.to_owned());
-            }
-            let Some(slot) = self
-                .blobs
-                .peer_downloads
-                .acquire(&pk, DOWNLOAD_QUEUE_TIMEOUT)
-                .await
-            else {
+            let Some(_slot) = self.blobs.peer_downloads.try_acquire(&attempt.pk) else {
                 last = "Laptop rekan sedang melayani unduhan lain.".to_owned();
+                queue.retry_at(attempt, now + LOCAL_BUSY_RETRY);
                 continue;
             };
-            match self.fetch_from_peer(&pk, &hash, max_size, &dest).await {
+            let Some(conn) = self.peer_conn(&attempt.pk) else {
+                last = "Laptop rekan sudah tidak tersambung.".to_owned();
+                continue;
+            };
+            tokio::time::sleep_until(self.blobs.pacer.reserve(&attempt.pk, Instant::now())).await;
+            let res = fetch_from(&conn, hash, max_size, dest, turn.clone(), || {
+                self.is_closing()
+            })
+            .await;
+            match res {
                 Ok(size) => return Ok(size),
-                Err(reason) => last = reason,
+                Err(FetchError::Busy(m)) => {
+                    last = m;
+                    let mut a = attempt;
+                    a.busy_tries += 1;
+                    if a.busy_tries < MAX_BUSY_TRIES {
+                        let at = Instant::now() + busy_backoff(OsRng.next_u32());
+                        queue.retry_at(a, at);
+                    }
+                }
+                Err(FetchError::Peer(m)) => last = m,
+                Err(e @ FetchError::Local(_)) => return Err(e.into_message()),
             }
-            drop(slot);
         }
-
-        let h = hash.clone();
-        let _ = tokio::task::spawn_blocking(move || remove_invalid_dest(&dest, &h)).await;
         Err(format!(
             "Berkas tidak bisa diunduh dari laptop rekan. Alasan terakhir: {last}"
         ))
-    }
-
-    async fn fetch_from_peer(
-        &self,
-        pk: &str,
-        hash: &str,
-        max_size: u64,
-        dest: &Path,
-    ) -> Result<u64, String> {
-        if self.is_closing() {
-            return Err(STOPPING.to_owned());
-        }
-        let conn = self
-            .peer_conn(pk)
-            .ok_or_else(|| "Laptop rekan sudah tidak tersambung.".to_owned())?;
-        fetch_from(&conn, hash, max_size, dest).await
     }
 }
 
@@ -913,7 +1153,7 @@ mod tests {
             .collect()
     }
 
-    fn write_all(dest: &Path, data: &[u8], announced: u64, hash: &str) -> Result<u64, String> {
+    fn write_all(dest: &Path, data: &[u8], announced: u64, hash: &str) -> Result<u64, FetchError> {
         let mut w = BlobWriter::create(dest, announced, hash)?;
         for chunk in data.chunks(7) {
             w.write(chunk)?;
@@ -948,12 +1188,27 @@ mod tests {
     }
 
     #[test]
-    fn hash_mismatch_leaves_nothing() {
+    fn long_dest_names_get_a_short_temp_name() {
+        let dir = Path::new("/data");
+        let long = "x".repeat(MAX_TMP_BASE + 1);
+        let tmp = temp_path(&dir.join(&long), 0xab).unwrap();
+        assert_eq!(tmp, dir.join("mira-blob.part-00000000000000ab"));
+        let ok = "y".repeat(MAX_TMP_BASE);
+        let tmp = temp_path(&dir.join(&ok), 1).unwrap();
+        assert_eq!(tmp, dir.join(format!("{ok}.part-0000000000000001")));
+        assert!(temp_path(Path::new("/"), 1).is_none());
+    }
+
+    #[test]
+    fn hash_mismatch_leaves_nothing_and_is_the_peers_fault() {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("b.bin");
         let data = b"isi asli";
         let err = write_all(&dest, b"isi lain", data.len() as u64, &hash_of(data)).unwrap_err();
-        assert!(err.contains("BLAKE3"), "{err}");
+        assert!(
+            matches!(&err, FetchError::Peer(m) if m.contains("BLAKE3")),
+            "{err:?}"
+        );
         assert!(leftovers(dir.path()).is_empty());
     }
 
@@ -963,7 +1218,7 @@ mod tests {
         let dest = dir.path().join("c.bin");
         let data = b"tiga belas b";
         let err = write_all(&dest, &data[..5], data.len() as u64, &hash_of(data)).unwrap_err();
-        assert!(err.contains("tidak lengkap"), "{err}");
+        assert!(matches!(&err, FetchError::Peer(m) if m.contains("tidak lengkap")));
         assert!(leftovers(dir.path()).is_empty());
     }
 
@@ -973,7 +1228,7 @@ mod tests {
         let dest = dir.path().join("d.bin");
         let data = b"lima!";
         let mut w = BlobWriter::create(&dest, 3, &hash_of(data)).unwrap();
-        assert!(w.write(data).is_err());
+        assert!(matches!(w.write(data), Err(FetchError::Peer(_))));
         drop(w);
         assert!(leftovers(dir.path()).is_empty());
     }
@@ -987,6 +1242,44 @@ mod tests {
         write_all(&dest, data, data.len() as u64, &hash_of(data)).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), data);
         assert_eq!(leftovers(dir.path()), vec!["e.bin".to_owned()]);
+    }
+
+    #[test]
+    fn local_failures_are_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = b"isi";
+        // Missing folder: the temp file cannot be created.
+        let missing = dir.path().join("tidak-ada").join("f.bin");
+        let err = write_all(&missing, data, 3, &hash_of(data)).unwrap_err();
+        assert!(matches!(err, FetchError::Local(_)), "{err:?}");
+        // `dest` is a non-empty folder: the rename fails after the checks.
+        let folder = dir.path().join("folder");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("isi.txt"), b"x").unwrap();
+        let err = write_all(&folder, data, 3, &hash_of(data)).unwrap_err();
+        assert!(matches!(err, FetchError::Local(_)), "{err:?}");
+        let mut left = leftovers(dir.path());
+        left.sort();
+        assert_eq!(left, vec!["folder".to_owned()], "no temp file left");
+    }
+
+    #[test]
+    fn dest_checks_before_the_network() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(check_dest(&dir.path().join("baru.bin")).is_ok());
+        assert!(check_dest(dir.path()).is_err(), "folder");
+        assert!(check_dest(&dir.path().join("tidak-ada").join("x.bin")).is_err());
+    }
+
+    #[test]
+    fn rename_retry_gives_up_on_other_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("a");
+        std::fs::write(&from, b"1").unwrap();
+        let to = dir.path().join("b");
+        rename_with_retry(&from, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"1");
+        assert!(rename_with_retry(&from, &to).is_err(), "source is gone");
     }
 
     #[test]
@@ -1081,6 +1374,50 @@ mod tests {
     }
 
     #[test]
+    fn paced_client_never_hits_the_server_rate_limit() {
+        let pacer = Pacer::new(CLIENT_GET_GAP);
+        let server = PeerRate::new(BLOB_GETS_PER_SECOND, RATE_WINDOW);
+        let t0 = Instant::now();
+        // 30 thumbnails asked for at the same moment from one peer.
+        let times: Vec<Instant> = (0..30).map(|_| pacer.reserve("a", t0)).collect();
+        assert_eq!(times[0], t0);
+        assert_eq!(times[1], t0 + CLIENT_GET_GAP);
+        for t in times {
+            assert!(server.check("a", t), "refused at {:?}", t - t0);
+        }
+        assert_eq!(pacer.reserve("b", t0), t0, "other peers are separate");
+        let later = t0 + Duration::from_secs(60);
+        assert_eq!(pacer.reserve("c", later), later);
+        assert_eq!(lock(&pacer.next).len(), 1, "old entries are dropped");
+    }
+
+    #[test]
+    fn busy_backoff_is_one_to_two_seconds() {
+        assert_eq!(busy_backoff(0), Duration::from_millis(1000));
+        assert_eq!(busy_backoff(999), Duration::from_millis(1999));
+        assert_eq!(busy_backoff(u32::MAX), Duration::from_millis(1295));
+    }
+
+    #[test]
+    fn candidate_queue_retries_within_the_deadline() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut q = CandidateQueue::new(vec!["a".into(), "b".into()], t0, t0 + s(10));
+        let Next::Ready(a) = q.next(t0) else { panic!() };
+        assert_eq!(a.pk, "a");
+        q.retry_at(a, t0 + s(2));
+        let Next::Ready(b) = q.next(t0) else { panic!() };
+        assert_eq!(b.pk, "b");
+        assert_eq!(q.next(t0), Next::WaitUntil(t0 + s(2)));
+        let Next::Ready(a) = q.next(t0 + s(2)) else {
+            panic!()
+        };
+        assert_eq!(a.pk, "a");
+        q.retry_at(a, t0 + s(11));
+        assert_eq!(q.next(t0 + s(3)), Next::Done, "past the deadline");
+    }
+
+    #[test]
     fn peer_download_slots_limit_and_prune() {
         let p = PeerSemaphores::new(2);
         let a1 = p.try_acquire("a").unwrap();
@@ -1094,25 +1431,31 @@ mod tests {
         assert_eq!(lock(&p.map).len(), 1, "unused peers are pruned");
     }
 
-    #[tokio::test]
-    async fn peer_download_slot_waits_then_times_out() {
-        let p = PeerSemaphores::new(1);
-        let held = p.try_acquire("a").unwrap();
-        assert!(p.acquire("a", Duration::from_millis(20)).await.is_none());
-        drop(held);
-        assert!(p.acquire("a", Duration::from_millis(20)).await.is_some());
+    #[test]
+    fn dest_key_normalizes() {
+        let a = dest_key(Path::new("/data/./unduhan//Foto.JPG"));
+        let b = dest_key(Path::new("/data/unduhan/Foto.JPG"));
+        assert_eq!(a, b);
+        let upper = dest_key(Path::new("/data/unduhan/FOTO.jpg"));
+        assert_eq!(upper == b, cfg!(windows), "case folds on Windows only");
     }
 
     #[tokio::test]
-    async fn fetches_of_the_same_key_take_turns() {
+    async fn fetches_of_the_same_dest_take_turns() {
         let locks = FetchLocks::default();
-        let key = ("h".to_owned(), PathBuf::from("x"));
+        let key = PathBuf::from("/x");
         let first = locks.turn(key.clone()).await;
-        let other = locks.turn(("h".to_owned(), PathBuf::from("y"))).await;
+        let other = locks.turn(PathBuf::from("/y")).await;
         let waiting =
             tokio::time::timeout(Duration::from_millis(20), locks.turn(key.clone())).await;
-        assert!(waiting.is_err(), "same key waits");
+        assert!(waiting.is_err(), "same dest waits");
+        // A clone held by a writer keeps the turn.
+        let writer_clone = first.clone();
         drop((first, other));
+        let waiting =
+            tokio::time::timeout(Duration::from_millis(20), locks.turn(key.clone())).await;
+        assert!(waiting.is_err(), "writer still holds the turn");
+        drop(writer_clone);
         let again = locks.turn(key.clone()).await;
         drop(again);
         assert!(lock(&locks.map).is_empty(), "entries go away after use");
