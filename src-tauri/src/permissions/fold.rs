@@ -12,7 +12,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use super::format::{format_time, parse_time};
-use super::invite::redeem_message;
+use super::invite::{invite_key_message, redeem_message};
 use super::op::{Body, CLOCK_SLACK, InviteRole, Scope, VerifiedOp};
 use crate::org::{Organization, Role};
 
@@ -230,7 +230,7 @@ impl Reason {
             Reason::InviteNotYetValid => {
                 "Undangan belum berlaku menurut jam laptop ini. Periksa jam laptop."
             }
-            Reason::InviteUsed => "Undangan sekali pakai ini sudah dipakai.",
+            Reason::InviteUsed => "Undangan ini sudah dipakai.",
             Reason::InviterNotAuthorized => {
                 "Pembuat undangan sudah tidak berhak mengundang ke tim ini."
             }
@@ -639,6 +639,7 @@ impl OrgState {
                 single_use,
                 tag,
                 key,
+                key_sig,
             } => {
                 if self.live_team(team).is_none() {
                     return Err(Reason::TeamNotFound);
@@ -648,6 +649,21 @@ impl OrgState {
                 }
                 if self.invites.contains_key(invite) {
                     return Err(Reason::IdInUse);
+                }
+                let key_msg = invite_key_message(
+                    &self.org.id,
+                    &self.org.founder_public_key,
+                    &author,
+                    invite,
+                    team,
+                    *role,
+                    projects,
+                    expires,
+                    *single_use,
+                    tag,
+                );
+                if !verify_sig(key, &key_msg, key_sig) {
+                    return Err(Reason::BadInviteSignature);
                 }
                 let (Some(exp), Some(created)) = (parse_time(expires), parse_time(&at)) else {
                     return Err(Reason::NotAuthorized);
@@ -699,6 +715,13 @@ impl OrgState {
                 }
                 let inv = self.invites.get(invite).ok_or(Reason::InviteNotFound)?;
                 self.invite_usable(inv, op.at)?;
+                // Each person can use an invite once. Accept proofs are in the
+                // log and `at` is chosen by the author, so without this anyone
+                // could replay an old proof (even after expiry) to put that
+                // person back into the team or restore a team admin role.
+                if inv.used_by.contains(member) {
+                    return Err(Reason::InviteUsed);
+                }
                 let msg = redeem_message(&self.org.id, invite, member, name);
                 if !verify_sig(&inv.key, &msg, invite_sig) {
                     return Err(Reason::BadInviteSignature);

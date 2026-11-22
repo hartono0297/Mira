@@ -445,6 +445,116 @@ async fn status_states() {
     assert!(st.local_addresses.iter().all(|a| !a.ip().is_loopback()));
 }
 
+// ----- Handshake floods ----------------------------------------------------
+
+/// UDP relay between a QUIC client and `server`: forwards every client packet,
+/// but only the server packets `pass` lets through. Its server-facing socket
+/// is bound on `ip`, which is the address the server sees.
+async fn lossy_relay(ip: Ipv4Addr, server: SocketAddr, pass: fn(&[u8]) -> bool) -> SocketAddr {
+    let front = Arc::new(
+        tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap(),
+    );
+    let back = Arc::new(tokio::net::UdpSocket::bind((ip, 0)).await.unwrap());
+    let front_addr = front.local_addr().unwrap();
+    let client: Arc<Mutex<Option<SocketAddr>>> = Arc::default();
+    {
+        let (front, back, client) = (front.clone(), back.clone(), client.clone());
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 65536];
+            loop {
+                // Windows reports ICMP errors as recv errors: keep going.
+                let Ok((n, from)) = front.recv_from(&mut buf).await else {
+                    continue;
+                };
+                *client.lock().unwrap() = Some(from);
+                let _ = back.send_to(&buf[..n], server).await;
+            }
+        });
+    }
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 65536];
+        loop {
+            let Ok((n, _)) = back.recv_from(&mut buf).await else {
+                continue;
+            };
+            let to = *client.lock().unwrap();
+            if let Some(to) = to
+                && pass(&buf[..n])
+            {
+                let _ = front.send_to(&buf[..n], to).await;
+            }
+        }
+    });
+    front_addr
+}
+
+/// QUIC v1 long header of type Retry.
+fn is_retry_packet(p: &[u8]) -> bool {
+    p.first()
+        .is_some_and(|b| b & 0x80 != 0 && (b >> 4) & 0x03 == 0x03)
+}
+
+/// Starts new handshakes through `relay` without end (about 200 per second);
+/// none of them can complete because the relay drops the server's answers.
+fn handshake_flood(relay: SocketAddr) -> tokio::task::JoinHandle<()> {
+    let id = super::tls::TlsIdentity::new(&[99; 32]).unwrap();
+    let cfg = super::tls::client_config(&id, super::tls::ALPN_MEMBER).unwrap();
+    let ep = quinn::Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    tokio::spawn(async move {
+        loop {
+            for _ in 0..20 {
+                if let Ok(c) = ep.connect_with(cfg.clone(), relay, super::tls::SERVER_NAME) {
+                    tokio::spawn(async move {
+                        let _ = c.await;
+                    });
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+}
+
+/// A device that sends handshake packets (from spoofed or real addresses)
+/// and never finishes them must not use up the connection slots: a member
+/// still gets in.
+async fn member_connects_during_flood(attacker_ip: Ipv4Addr, pass: fn(&[u8]) -> bool) {
+    let (a, b) = pair_seeds_for_flood(attacker_ip).await;
+    let relay = lossy_relay(attacker_ip, a.addr, pass).await;
+    let flood = handshake_flood(relay);
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    b.backend.know(Some(&a.pk), a.addr);
+    b.net.refresh();
+    wait_for("member connects despite the flood", || {
+        b.connected_to(&a) && a.connected_to(&b)
+    })
+    .await;
+    flood.abort();
+}
+
+async fn pair_seeds_for_flood(attacker_ip: Ipv4Addr) -> (Node, Node) {
+    if attacker_ip == Ipv4Addr::LOCALHOST {
+        pair(121, 122).await
+    } else {
+        pair(123, 124).await
+    }
+}
+
+/// Spoofed handshakes: the server's answers never reach the sender. Answered
+/// with a stateless Retry, they cost no slot.
+#[tokio::test(flavor = "multi_thread")]
+async fn unanswered_handshakes_do_not_lock_out_members() {
+    member_connects_during_flood(Ipv4Addr::LOCALHOST, |_| false).await;
+}
+
+/// Handshakes from one real address that pass the Retry and then stall are
+/// capped per address. The attacker uses 127.0.0.2, the member 127.0.0.1.
+#[tokio::test(flavor = "multi_thread")]
+async fn stalled_handshakes_from_one_address_do_not_lock_out_members() {
+    member_connects_during_flood(Ipv4Addr::new(127, 0, 0, 2), is_retry_packet).await;
+}
+
 // ----- Join --------------------------------------------------------------
 
 fn invite() -> JoinChallenge {
@@ -552,6 +662,119 @@ async fn join_tries_the_next_peer_after_not_found() {
         .await
         .expect("second peer accepts");
     assert_eq!(accepted.org.id, ORG);
+}
+
+/// One device cannot hold the join slots with sessions it never starts: the
+/// connection over the per-address limit is closed at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_join_connections_are_capped_per_address() {
+    let a = node(126, Some(ORG)).await;
+    let id = super::tls::TlsIdentity::new(&[98; 32]).unwrap();
+    let cfg = super::tls::client_config(&id, super::tls::ALPN_JOIN).unwrap();
+    let ep = quinn::Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let limit = super::join::MAX_JOINS_PER_IP;
+    let mut conns = Vec::new();
+    for _ in 0..=limit {
+        let c = ep
+            .connect_with(cfg.clone(), a.addr, super::tls::SERVER_NAME)
+            .unwrap()
+            .await
+            .unwrap();
+        conns.push(c);
+    }
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let closed = conns.iter().filter(|c| c.close_reason().is_some()).count();
+    assert_eq!(
+        closed,
+        1,
+        "{closed} of {} idle join connections closed",
+        limit + 1
+    );
+}
+
+/// Any device on the LAN can be a join candidate (mDNS is unauthenticated)
+/// and answer what it likes. A lie from one candidate must not end the join
+/// while an honest member is still to be tried.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lying_candidate_does_not_stop_the_join() {
+    // The liar claims the invite expired before any proof is sent.
+    let liar = node(127, Some(ORG)).await;
+    liar.backend
+        .with(|s| s.lookup_reject = Some(JoinReject::new("invite_expired", "bohong")));
+    let honest = node(128, Some(ORG)).await;
+    honest
+        .backend
+        .with(|s| s.invites.insert(TAG.into(), invite()));
+    let j = node(129, None).await;
+    let accepted = j
+        .net
+        .join(TAG, vec![liar.addr, honest.addr], good_prove(j.pk.clone()))
+        .await
+        .expect("the honest member accepts");
+    assert_eq!(accepted.org.id, ORG);
+}
+
+/// A candidate that relays the real challenge, takes the proof and then
+/// refuses must not use up the only proof: the same challenge from an honest
+/// member gets the same proof.
+#[tokio::test(flavor = "multi_thread")]
+async fn proof_is_reused_for_the_same_challenge_after_a_refusal() {
+    let liar = node(130, Some(ORG)).await;
+    liar.backend.with(|s| {
+        s.invites.insert(TAG.into(), invite());
+        s.accept_reject = Some(JoinReject::new("invalid_proof", "bohong"));
+    });
+    let honest = node(131, Some(ORG)).await;
+    honest
+        .backend
+        .with(|s| s.invites.insert(TAG.into(), invite()));
+    let j = node(132, None).await;
+    let accepted = j
+        .net
+        .join(TAG, vec![liar.addr, honest.addr], good_prove(j.pk.clone()))
+        .await
+        .expect("the honest member accepts the same proof");
+    assert_eq!(accepted.org.id, ORG);
+    assert!(
+        honest
+            .backend
+            .with(|s| s.join_accepts.iter().any(|(k, _)| *k == j.pk))
+    );
+}
+
+/// The only honest answer is still reported when every candidate refuses.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refusal_is_reported_when_no_candidate_accepts() {
+    let a = node(133, Some(ORG)).await;
+    a.backend
+        .with(|s| s.lookup_reject = Some(JoinReject::new("invite_used", "sudah dipakai")));
+    let b = node(134, Some(ORG)).await; // does not know the invite
+    let j = node(135, None).await;
+    let err = j
+        .net
+        .join(TAG, vec![a.addr, b.addr], good_prove(j.pk.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "invite_used");
+}
+
+/// A member may list a loopback address in `Hello` only when it is itself
+/// on this machine; otherwise colleagues would dial their own local ports.
+#[test]
+fn hello_addresses_drop_loopback_from_remote_peers() {
+    let addrs: Vec<String> = vec![
+        "127.0.0.1:47801".into(),
+        "192.168.1.5:47800".into(),
+        "0.0.0.0:47800".into(),
+        "nonsense".into(),
+    ];
+    let remote: SocketAddr = "192.168.1.5:47800".parse().unwrap();
+    assert_eq!(
+        super::node::hello_addresses(&addrs, remote),
+        vec!["192.168.1.5:47800".parse::<SocketAddr>().unwrap()]
+    );
+    let local: SocketAddr = "127.0.0.1:47805".parse().unwrap();
+    assert_eq!(super::node::hello_addresses(&addrs, local).len(), 2);
 }
 
 #[tokio::test(flavor = "multi_thread")]

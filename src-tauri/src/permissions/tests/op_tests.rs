@@ -184,7 +184,7 @@ fn field_formats_are_validated() {
         code_of(verify_op(&Sim::sign(&f, &p), &sim.org.id, sim.now))
     };
     let org = || Scope::Org;
-    let (_, good_invite) = sim.invite_body(&team, InviteRole::Member, false, 24, &code);
+    let (_, good_invite) = sim.invite_body(&f, &team, InviteRole::Member, false, 24, &code);
     assert_eq!(check(1, org(), good_invite.clone()), "ok");
 
     let invite_with = |edit: &dyn Fn(&mut Body)| {

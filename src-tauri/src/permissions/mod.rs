@@ -34,8 +34,8 @@ pub use fold::{
     umum_channel_id,
 };
 pub use invite::{
-    JoinProofData, NormalizedCode, build_join_proof, generate_invite_code, invite_public_key,
-    invite_signing_key, normalize_code, redeem_message,
+    JoinProofData, NormalizedCode, build_join_proof, generate_invite_code, invite_key_message,
+    invite_public_key, invite_signing_key, normalize_code, redeem_message, sign_invite_key,
 };
 pub use op::{
     Body, InviteRole, MAX_PAYLOAD_BYTES, OP_DOMAIN, Payload, Rejection, Scope, SignedOp,

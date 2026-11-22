@@ -9,7 +9,7 @@ use time::OffsetDateTime;
 
 use super::fold::{MemberStatus, OrgState, fold};
 use super::format::format_time;
-use super::op::{SignedOp, VerifiedOp, parse_op, verify_op};
+use super::op::{MAX_LAMPORT_JUMP, SignedOp, VerifiedOp, parse_op, verify_op};
 use crate::error::{AppError, AppResult};
 use crate::identity::{self, Identity};
 use crate::org::{self, Organization};
@@ -170,18 +170,33 @@ pub(crate) fn ingest_in(
     now: OffsetDateTime,
 ) -> AppResult<IngestReport> {
     let mut report = IngestReport::default();
+    let mut verified = Vec::with_capacity(ops.len());
     for op in ops {
         match verify_op(&op, &org.id, now) {
-            Ok(v) => {
-                if insert_op(conn, &v, from, now)? {
-                    report.new_ops += 1;
-                }
-            }
+            Ok(v) => verified.push(v),
             Err(rej) => {
                 report.invalid += 1;
                 log_rejection(conn, from, None, rej.code, &rej.detail, now)?;
             }
         }
+    }
+    // In lamport order, so the jump limit does not depend on batch order.
+    verified.sort_by(|a, b| a.order_key().cmp(&b.order_key()));
+    let mut known_max = max_lamport(conn)?;
+    for v in verified {
+        if v.lamport() > known_max.saturating_add(MAX_LAMPORT_JUMP) {
+            report.invalid += 1;
+            let detail = format!(
+                "lamport {} terlalu jauh di atas lamport tertinggi yang diketahui ({known_max})",
+                v.lamport()
+            );
+            log_rejection(conn, from, None, "lamport_jump", &detail, now)?;
+            continue;
+        }
+        if insert_op(conn, &v, from, now)? {
+            report.new_ops += 1;
+        }
+        known_max = known_max.max(v.lamport());
     }
     if report.new_ops > 0 {
         recompute_in(conn, org)?;
@@ -414,8 +429,10 @@ pub fn ops_for(
 pub fn missing_op_ids(conn: &Connection, ids: &[String]) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare("SELECT 1 FROM org_ops WHERE id = ?1")?;
     let mut missing = Vec::new();
+    // A set, not `missing.contains`: a peer can send tens of thousands of ids.
+    let mut seen = std::collections::HashSet::with_capacity(ids.len());
     for id in ids {
-        if !stmt.exists([id])? && !missing.contains(id) {
+        if seen.insert(id) && !stmt.exists([id])? {
             missing.push(id.clone());
         }
     }

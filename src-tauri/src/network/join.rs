@@ -16,10 +16,13 @@ use super::node::{HANDSHAKE_TIMEOUT, Inner, READ_TIMEOUT, WRITE_TIMEOUT, code, l
 use super::route;
 use super::tls::{self, SERVER_NAME};
 use super::wire::{self, MAX_FRAME, MAX_JOIN_FRAME, Msg};
-use super::{JoinAccepted, JoinChallenge, JoinReject, ProveFn};
+use super::{JoinAccepted, JoinChallenge, JoinProof, JoinReject, ProveFn};
 
 pub(crate) const JOIN_ATTEMPTS_PER_MINUTE: usize = 10;
 pub(crate) const MAX_CONCURRENT_JOINS: usize = 16;
+/// Join sessions from one IP at once, so one device cannot hold all
+/// `MAX_CONCURRENT_JOINS` slots with sessions it never finishes.
+pub(crate) const MAX_JOINS_PER_IP: usize = 2;
 /// Whole `Network::join` call.
 const JOIN_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long to wait for mDNS to find someone when no address is known.
@@ -89,11 +92,15 @@ pub(crate) async fn serve(inner: &Arc<Inner>, conn: Connection) {
         conn.close(VarInt::from_u32(code::PROTOCOL), b"no identity");
         return;
     };
+    let remote = conn.remote_address();
+    let Some(_per_ip) = inner.joins_by_ip.try_acquire(remote.ip()) else {
+        conn.close(VarInt::from_u32(code::PROTOCOL), b"busy");
+        return;
+    };
     let Ok(_slot) = inner.join_slots.clone().try_acquire_owned() else {
         conn.close(VarInt::from_u32(code::PROTOCOL), b"busy");
         return;
     };
-    let remote = conn.remote_address();
     if let Some(mut send) = serve_session(inner, &conn, &client_pk, remote).await {
         let _ = send.finish();
         let _ = tokio::time::timeout(FINAL_LINGER, conn.closed()).await;
@@ -202,11 +209,37 @@ async fn serve_proof(
 
 enum Outcome {
     Accepted(JoinAccepted),
-    /// Stop and report this.
+    /// A local failure (making the proof): stop and report this.
     Final(JoinReject),
+    /// A candidate refused. Not final: any device on the LAN can be a
+    /// candidate and say anything, so the others are still tried.
+    Refused(JoinReject),
     NotFound,
     RateLimited,
     Unreachable,
+}
+
+/// Makes the proof once, for the first challenge, and hands the same proof
+/// to later candidates that send the same challenge. A candidate that only
+/// took the proof and refused therefore does not end the join.
+struct Prover {
+    make: Option<ProveFn>,
+    made: Option<(JoinChallenge, JoinProof)>,
+}
+
+impl Prover {
+    /// `Ok(None)`: the proof was already made for a different challenge.
+    fn proof_for(&mut self, challenge: &JoinChallenge) -> Result<Option<JoinProof>, String> {
+        if let Some((c, p)) = &self.made {
+            return Ok((c == challenge).then(|| p.clone()));
+        }
+        let Some(make) = self.make.take() else {
+            return Ok(None);
+        };
+        let proof = make(challenge)?;
+        self.made = Some((challenge.clone(), proof.clone()));
+        Ok(Some(proof))
+    }
 }
 
 fn local_message(code: &str) -> &'static str {
@@ -274,10 +307,14 @@ async fn join_inner(
     extra: Vec<SocketAddr>,
     prove: ProveFn,
 ) -> Result<JoinAccepted, JoinReject> {
-    let mut prove = Some(prove);
+    let mut prover = Prover {
+        make: Some(prove),
+        made: None,
+    };
     let mut tried: HashSet<SocketAddr> = HashSet::new();
     let own = inner.own_addresses();
     let mdns_deadline = Instant::now() + MDNS_WAIT;
+    let mut refused: Option<JoinReject> = None;
     let mut saw_not_found = false;
     let mut saw_rate_limited = false;
 
@@ -297,14 +334,22 @@ async fn join_inner(
         }
         for addr in candidates {
             tried.insert(addr);
-            match attempt(inner, addr, tag, &mut prove).await {
+            match attempt(inner, addr, tag, &mut prover).await {
                 Outcome::Accepted(a) => return Ok(a),
                 Outcome::Final(r) => return Err(r),
+                Outcome::Refused(r) => {
+                    refused.get_or_insert(r);
+                }
                 Outcome::NotFound => saw_not_found = true,
                 Outcome::RateLimited => saw_rate_limited = true,
                 Outcome::Unreachable => {}
             }
         }
+    }
+    // A refusal names a specific reason (expired, used, bad proof): it beats
+    // "not found" from laptops that do not know the invite.
+    if let Some(r) = refused {
+        return Err(r);
     }
     let code = if saw_not_found {
         "invite_not_found"
@@ -316,12 +361,7 @@ async fn join_inner(
     Err(JoinReject::new(code, local_message(code)))
 }
 
-async fn attempt(
-    inner: &Arc<Inner>,
-    addr: SocketAddr,
-    tag: &str,
-    prove: &mut Option<ProveFn>,
-) -> Outcome {
+async fn attempt(inner: &Arc<Inner>, addr: SocketAddr, tag: &str, prover: &mut Prover) -> Outcome {
     let Ok(connecting) = inner
         .endpoint
         .connect_with(inner.join_client.clone(), addr, SERVER_NAME)
@@ -334,14 +374,14 @@ async fn attempt(
         _ => return Outcome::Unreachable,
     };
     let outcome = match tls::peer_public_key(&conn) {
-        Some(pk) if pk != inner.me => session(&conn, tag, prove).await,
+        Some(pk) if pk != inner.me => session(&conn, tag, prover).await,
         _ => Outcome::Unreachable,
     };
     conn.close(VarInt::from_u32(code::NORMAL), b"done");
     outcome
 }
 
-async fn session(conn: &Connection, tag: &str, prove: &mut Option<ProveFn>) -> Outcome {
+async fn session(conn: &Connection, tag: &str, prover: &mut Prover) -> Outcome {
     let Ok(Ok((mut send, mut recv))) = tokio::time::timeout(READ_TIMEOUT, conn.open_bi()).await
     else {
         return Outcome::Unreachable;
@@ -366,35 +406,34 @@ async fn session(conn: &Connection, tag: &str, prove: &mut Option<ProveFn>) -> O
             return match code.as_str() {
                 "invite_not_found" => Outcome::NotFound,
                 "rate_limited" => Outcome::RateLimited,
-                _ => Outcome::Final(final_reject(&code, &message)),
+                _ => Outcome::Refused(final_reject(&code, &message)),
             };
         }
         _ => return Outcome::Unreachable,
     };
-    let Some(prove) = prove.take() else {
-        return Outcome::Final(JoinReject::new(
-            "invalid_proof",
-            local_message("invalid_proof"),
-        ));
-    };
-    let proof = match prove(&challenge) {
-        Ok(p) => p,
+    let proof = match prover.proof_for(&challenge) {
+        Ok(Some(p)) => p,
+        // Another candidate sent a different challenge for the same tag:
+        // one of them is lying.
+        Ok(None) => {
+            return Outcome::Refused(JoinReject::new(
+                "invalid_proof",
+                local_message("invalid_proof"),
+            ));
+        }
         Err(e) => return Outcome::Final(JoinReject::new("invalid_proof", &e)),
     };
     if wire::write_msg_timeout(&mut send, &Msg::JoinProof { proof }, WRITE_TIMEOUT)
         .await
         .is_err()
     {
-        return Outcome::Final(JoinReject::new(
-            "no_peer_found",
-            local_message("no_peer_found"),
-        ));
+        return Outcome::Unreachable;
     }
     let _ = send.finish();
     match wire::read_msg_timeout(&mut recv, MAX_FRAME, READ_TIMEOUT).await {
         Ok(Some(Msg::JoinAccepted { accepted })) => {
             if accepted.org.id != challenge.org {
-                return Outcome::Final(JoinReject::new(
+                return Outcome::Refused(JoinReject::new(
                     "invalid_proof",
                     "Laptop rekan mengirim organisasi yang berbeda dari undangan.",
                 ));
@@ -402,12 +441,9 @@ async fn session(conn: &Connection, tag: &str, prove: &mut Option<ProveFn>) -> O
             Outcome::Accepted(accepted)
         }
         Ok(Some(Msg::JoinRejected { code, message })) => {
-            Outcome::Final(final_reject(&code, &message))
+            Outcome::Refused(final_reject(&code, &message))
         }
-        _ => Outcome::Final(JoinReject::new(
-            "no_peer_found",
-            local_message("no_peer_found"),
-        )),
+        _ => Outcome::Unreachable,
     }
 }
 

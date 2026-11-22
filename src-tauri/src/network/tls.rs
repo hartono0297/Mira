@@ -40,6 +40,12 @@ pub const MAX_BIDI_STREAMS: u32 = 8;
 pub const MAX_UNI_STREAMS: u32 = 4;
 /// Incoming connection attempts quinn buffers before refusing new ones.
 pub const MAX_INCOMING: usize = 256;
+/// Flow-control window per stream and for the whole connection. The
+/// connection window bounds what a peer can park in memory on streams the
+/// application never reads (it is replenished as data is read, so it limits
+/// throughput, not frame size).
+pub const STREAM_WINDOW: u32 = 1024 * 1024;
+pub const CONNECTION_WINDOW: u32 = 4 * 1024 * 1024;
 
 /// DER prefix of an Ed25519 SubjectPublicKeyInfo (RFC 8410): SEQUENCE,
 /// AlgorithmIdentifier { id-Ed25519 } with no parameters, BIT STRING of 32
@@ -321,6 +327,11 @@ pub(crate) fn transport_config() -> Result<quinn::TransportConfig, String> {
     ));
     t.max_concurrent_bidi_streams(MAX_BIDI_STREAMS.into());
     t.max_concurrent_uni_streams(MAX_UNI_STREAMS.into());
+    // Mira never uses datagrams; quinn would otherwise buffer about 1.25 MB
+    // of them per connection for anyone who completes a handshake.
+    t.datagram_receive_buffer_size(None);
+    t.stream_receive_window(STREAM_WINDOW.into());
+    t.receive_window(CONNECTION_WINDOW.into());
     Ok(t)
 }
 
@@ -487,6 +498,61 @@ pub(crate) mod tests {
                 .unwrap();
             let _ = reason;
         }
+    }
+
+    /// Writes on `s` until the peer's flow control stops it; bytes accepted.
+    async fn push_until_blocked(s: &mut quinn::SendStream) -> usize {
+        let chunk = vec![0u8; 64 * 1024];
+        let mut total = 0;
+        while let Ok(Ok(n)) =
+            tokio::time::timeout(Duration::from_millis(300), s.write(&chunk)).await
+        {
+            total += n;
+        }
+        total
+    }
+
+    /// Any laptop that completes a handshake (on the join ALPN it stays
+    /// connected for a while) must not be able to park more than a few MiB
+    /// in this laptop's memory: no datagrams, and a connection-wide window
+    /// over all streams the application never reads.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unread_data_from_a_peer_is_bounded() {
+        let a = TlsIdentity::new(&secret(1)).unwrap();
+        let stranger = TlsIdentity::new(&secret(5)).unwrap();
+        let srv = server(&a);
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, srv.local_addr().unwrap().port()));
+        let cli = client();
+        // The server completes the handshake and then never reads a stream.
+        let accept = tokio::spawn(async move {
+            let conn = srv.accept().await.unwrap().await.unwrap();
+            (srv, conn)
+        });
+        let conn = cli
+            .connect_with(
+                client_config(&stranger, ALPN_JOIN).unwrap(),
+                addr,
+                SERVER_NAME,
+            )
+            .unwrap()
+            .await
+            .unwrap();
+        let _held = accept.await.unwrap();
+        assert_eq!(conn.max_datagram_size(), None, "datagrams must be off");
+
+        let mut total = 0;
+        for _ in 0..MAX_UNI_STREAMS {
+            let mut s = conn.open_uni().await.unwrap();
+            total += push_until_blocked(&mut s).await;
+        }
+        for _ in 0..MAX_BIDI_STREAMS {
+            let (mut s, _r) = conn.open_bi().await.unwrap();
+            total += push_until_blocked(&mut s).await;
+        }
+        assert!(
+            total <= CONNECTION_WINDOW as usize + 64 * 1024,
+            "peer could buffer {total} bytes"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

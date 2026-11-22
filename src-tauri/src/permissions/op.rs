@@ -18,6 +18,12 @@ pub const OP_VERSION: u32 = 1;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 /// Largest accepted lamport value (safe integer in JavaScript, fits SQLite).
 pub const MAX_LAMPORT: u64 = (1 << 53) - 1;
+/// A received op may be at most this far above the highest lamport this
+/// laptop holds. Otherwise one op near `MAX_LAMPORT` would make every later
+/// op (`max + 1`) invalid and freeze the organization. Reaching the limit
+/// in steps would take billions of ops. Refused ops are not stored and can
+/// be accepted later, once the ops in between have arrived.
+pub const MAX_LAMPORT_JUMP: u64 = 1_000_000;
 /// Ops dated further than this in the receiver's future are refused.
 pub const MAX_CLOCK_AHEAD: Duration = Duration::minutes(10);
 /// Longest invite validity, plus slack for clock differences.
@@ -183,6 +189,8 @@ pub enum Body {
         single_use: bool,
         tag: String,
         key: String,
+        /// Signature of the invite key over `invite_key_message`.
+        key_sig: String,
     },
     InviteRevoke {
         invite: String,
@@ -446,9 +454,11 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
             single_use: _,
             tag,
             key,
+            key_sig,
         } => {
             org_scope(p)?;
             id32(invite, "invite")?;
+            need(is_lower_hex(key_sig, 128), "key_sig harus 128 karakter hex")?;
             id32(team, "team")?;
             match role {
                 InviteRole::Guest => {

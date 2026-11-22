@@ -26,6 +26,8 @@ const BACKOFF_MAX: Duration = Duration::from_secs(300);
 /// mDNS candidates not seen again for this long are forgotten.
 const CANDIDATE_TTL: Duration = Duration::from_secs(600);
 const MAX_CANDIDATES: usize = 256;
+/// mDNS addresses kept per announced key.
+const MAX_CANDIDATES_PER_KEY: usize = 4;
 /// Peers dialed at the same time.
 const MAX_CONCURRENT_DIALS: usize = 8;
 
@@ -99,7 +101,21 @@ impl Discovery {
         let mut map = lock(&self.candidates);
         let now = Instant::now();
         map.retain(|_, v| now.duration_since(v.seen) < CANDIDATE_TTL);
+        let pk = c.pk.clone();
         map.insert(addr, c);
+        // Keep only the newest few addresses announced for this key.
+        let mut same: Vec<(SocketAddr, Instant)> = map
+            .iter()
+            .filter(|(a, v)| v.pk == pk && **a != addr)
+            .map(|(a, v)| (*a, v.seen))
+            .collect();
+        if same.len() >= MAX_CANDIDATES_PER_KEY {
+            same.sort_by_key(|x| x.1);
+            let excess = same.len() + 1 - MAX_CANDIDATES_PER_KEY;
+            for (a, _) in same.into_iter().take(excess) {
+                map.remove(&a);
+            }
+        }
         while map.len() > MAX_CANDIDATES {
             let Some(oldest) = map.iter().min_by_key(|(_, v)| v.seen).map(|(a, _)| *a) else {
                 break;
@@ -442,5 +458,51 @@ async fn dial_target(inner: &Arc<Inner>, attempts: Vec<Attempt>) {
         if result.is_ok() {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// mDNS is unauthenticated: anyone can announce a member's key at many
+    /// addresses. Only the newest few per key are kept, so one key's dial
+    /// round stays short and other keys' candidates are not pushed out.
+    #[test]
+    fn candidates_per_key_are_capped_to_the_newest() {
+        let d = Discovery::new();
+        let t0 = Instant::now();
+        let pk = "a".repeat(64);
+        for i in 0..10u8 {
+            d.add_candidate(
+                SocketAddr::from(([10, 0, 0, i], 47800)),
+                Candidate {
+                    pk: pk.clone(),
+                    org: Some("0".repeat(32)),
+                    seen: t0 + Duration::from_millis(u64::from(i)),
+                },
+            );
+        }
+        d.add_candidate(
+            SocketAddr::from(([10, 0, 1, 1], 47800)),
+            Candidate {
+                pk: "b".repeat(64),
+                org: Some("0".repeat(32)),
+                seen: t0,
+            },
+        );
+        let map = lock(&d.candidates);
+        let mut kept: Vec<u8> = map
+            .iter()
+            .filter(|(_, c)| c.pk == pk)
+            .map(|(a, _)| match a {
+                SocketAddr::V4(v4) => v4.ip().octets()[3],
+                SocketAddr::V6(_) => unreachable!(),
+            })
+            .collect();
+        kept.sort();
+        let newest: Vec<u8> = (10 - MAX_CANDIDATES_PER_KEY as u8..10).collect();
+        assert_eq!(kept, newest);
+        assert_eq!(map.len(), MAX_CANDIDATES_PER_KEY + 1);
     }
 }

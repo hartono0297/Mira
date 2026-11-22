@@ -2,7 +2,7 @@
 //! sync sessions and gossip (plan 2.1 to 2.3).
 
 use std::collections::{HashMap, HashSet};
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
@@ -46,6 +46,11 @@ const STARTING_PERIOD: Duration = Duration::from_secs(5);
 const REMOVED_LINGER: Duration = Duration::from_secs(3);
 /// Connections (established plus handshaking) at once.
 const MAX_CONNECTIONS: usize = 128;
+/// Incoming connections from one IP that are not (yet) registered members:
+/// handshaking, being checked, or on the join ALPN. Keeps one device from
+/// holding all `MAX_CONNECTIONS` slots with handshakes it never finishes.
+/// Registered members do not count, so many members behind one NAT are fine.
+pub(crate) const MAX_PENDING_PER_IP: usize = 16;
 /// Op ids per `SyncHave` frame (about 670 KB of JSON).
 const SYNC_ID_CHUNK: usize = 10_000;
 /// Ops per `SyncOps` frame are batched up to this many bytes of JSON.
@@ -63,6 +68,60 @@ pub(crate) const PORT_RANGE: std::ops::RangeInclusive<u16> = 47800..=47809;
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Live items per remote IP, at most `max` each. Entries disappear when
+/// their count drops to zero, so the map is bounded by the live items.
+pub(crate) struct IpCounter {
+    max: usize,
+    counts: Arc<Mutex<HashMap<IpAddr, usize>>>,
+}
+
+/// One counted item; releases itself on drop.
+pub(crate) struct IpSlot {
+    ip: IpAddr,
+    counts: Arc<Mutex<HashMap<IpAddr, usize>>>,
+}
+
+impl IpCounter {
+    pub(crate) fn new(max: usize) -> Self {
+        Self {
+            max,
+            counts: Arc::default(),
+        }
+    }
+
+    pub(crate) fn try_acquire(&self, ip: IpAddr) -> Option<IpSlot> {
+        let mut map = lock(&self.counts);
+        let n = map.entry(ip).or_insert(0);
+        if *n >= self.max {
+            return None;
+        }
+        *n += 1;
+        Some(IpSlot {
+            ip,
+            counts: self.counts.clone(),
+        })
+    }
+}
+
+impl Drop for IpSlot {
+    fn drop(&mut self) {
+        let mut map = lock(&self.counts);
+        if let Some(n) = map.get_mut(&self.ip) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                map.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// What a connection holds while it lives: a global slot, and for incoming
+/// connections a per-IP slot until it is registered as a member.
+pub(crate) struct ConnSlot {
+    _permit: OwnedSemaphorePermit,
+    pending: Option<IpSlot>,
 }
 
 struct PeerEntry {
@@ -108,6 +167,10 @@ pub(crate) struct Inner {
     pub(crate) join_slots: Arc<Semaphore>,
     /// Incoming connections (handshaking or established).
     conn_slots: Arc<Semaphore>,
+    /// Incoming connections per IP that are not registered members yet.
+    pending_by_ip: IpCounter,
+    /// Join sessions per IP.
+    pub(crate) joins_by_ip: IpCounter,
     /// Outgoing connections, separate so a flood of incoming handshakes
     /// cannot stop this laptop from dialing its colleagues.
     out_slots: Arc<Semaphore>,
@@ -186,6 +249,8 @@ impl Inner {
             )),
             join_slots: Arc::new(Semaphore::new(join::MAX_CONCURRENT_JOINS)),
             conn_slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
+            pending_by_ip: IpCounter::new(MAX_PENDING_PER_IP),
+            joins_by_ip: IpCounter::new(join::MAX_JOINS_PER_IP),
             out_slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
             tasks: Mutex::new(Vec::new()),
         });
@@ -356,11 +421,7 @@ impl Inner {
 
     // ----- Connections -----------------------------------------------------
 
-    async fn handle_incoming(
-        self: Arc<Self>,
-        incoming: quinn::Incoming,
-        permit: OwnedSemaphorePermit,
-    ) {
+    async fn handle_incoming(self: Arc<Self>, incoming: quinn::Incoming, slot: ConnSlot) {
         let Ok(connecting) = incoming.accept() else {
             return;
         };
@@ -370,11 +431,11 @@ impl Inner {
         };
         match tls::negotiated_alpn(&conn).as_deref() {
             Some(ALPN_MEMBER) => {
-                let _ = self.establish(conn, None, permit).await;
+                let _ = self.establish(conn, None, slot).await;
             }
             Some(ALPN_JOIN) => {
                 join::serve(&self, conn).await;
-                drop(permit);
+                drop(slot);
             }
             _ => conn.close(VarInt::from_u32(code::PROTOCOL), b"alpn"),
         }
@@ -398,7 +459,11 @@ impl Inner {
             Ok(Err(e)) => return Err(describe_connection_error(&e)),
             Err(_) => return Err("Tidak ada jawaban dari alamat ini.".into()),
         };
-        match self.establish(conn.clone(), Some(ctx), permit).await {
+        let slot = ConnSlot {
+            _permit: permit,
+            pending: None,
+        };
+        match self.establish(conn.clone(), Some(ctx), slot).await {
             Ok(pk) => Ok(pk),
             Err(local) => Err(conn
                 .close_reason()
@@ -413,7 +478,7 @@ impl Inner {
         self: &Arc<Self>,
         conn: Connection,
         dial: Option<&DialCtx>,
-        permit: OwnedSemaphorePermit,
+        mut slot: ConnSlot,
     ) -> Result<String, String> {
         let remote = conn.remote_address();
         let close = |c: u32, why: &'static [u8]| conn.close(VarInt::from_u32(c), why);
@@ -487,8 +552,10 @@ impl Inner {
         if !self.register(&pk, &conn, opener, route) {
             return Ok(pk);
         }
+        // A registered member no longer counts against its IP.
+        slot.pending = None;
         self.emit(NetEvent::StatusChanged);
-        tokio::spawn(self.clone().drive(conn, pk.clone(), permit));
+        tokio::spawn(self.clone().drive(conn, pk.clone(), slot));
         self.schedule_sync(&pk);
         Ok(pk)
     }
@@ -612,12 +679,7 @@ impl Inner {
             conn.close(VarInt::from_u32(code::ORG_MISMATCH), b"org mismatch");
             return Err("Laptop rekan berada di organisasi lain.".into());
         }
-        let addrs = addrs
-            .iter()
-            .take(MAX_HELLO_ADDRS)
-            .filter_map(|a| a.parse::<SocketAddr>().ok())
-            .filter(route::is_dialable)
-            .collect();
+        let addrs = hello_addresses(&addrs, conn.remote_address());
         Ok(HelloInfo { listen_port, addrs })
     }
 
@@ -668,7 +730,7 @@ impl Inner {
     }
 
     /// Serves the peer's streams until the connection ends.
-    async fn drive(self: Arc<Self>, conn: Connection, pk: String, permit: OwnedSemaphorePermit) {
+    async fn drive(self: Arc<Self>, conn: Connection, pk: String, slot: ConnSlot) {
         let streams = Arc::new(Semaphore::new(tls::MAX_BIDI_STREAMS as usize));
         while let Ok((mut send, mut recv)) = conn.accept_bi().await {
             let Ok(slot) = streams.clone().try_acquire_owned() else {
@@ -686,7 +748,7 @@ impl Inner {
         if self.unregister(&pk, conn.stable_id()) {
             self.emit(NetEvent::StatusChanged);
         }
-        drop(permit);
+        drop(slot);
     }
 
     /// Uni streams from the peer. The only push is `Removed`, accepted once.
@@ -984,6 +1046,20 @@ impl Inner {
     }
 }
 
+/// Dialable addresses from a peer's `Hello`. Loopback addresses count only
+/// when the peer itself connected over loopback (same machine); from anyone
+/// else they would make this laptop dial its own local ports.
+pub(crate) fn hello_addresses(addrs: &[String], remote: SocketAddr) -> Vec<SocketAddr> {
+    let remote_is_local = remote.ip().is_loopback();
+    addrs
+        .iter()
+        .take(MAX_HELLO_ADDRS)
+        .filter_map(|a| a.parse::<SocketAddr>().ok())
+        .filter(route::is_dialable)
+        .filter(|a| remote_is_local || !a.ip().is_loopback())
+        .collect()
+}
+
 struct HelloInfo {
     listen_port: u16,
     addrs: Vec<SocketAddr>,
@@ -1014,16 +1090,34 @@ async fn accept_loop(weak: Weak<Inner>, endpoint: Endpoint) {
             incoming.refuse();
             break;
         }
+        // Make the sender prove it receives packets at its address before
+        // any state is kept. A Retry is stateless, so handshakes from spoofed
+        // addresses (or ones that are never answered) cost no slot.
+        if !incoming.remote_address_validated() {
+            let _ = incoming.retry();
+            continue;
+        }
         // A laptop without an organization serves nobody.
         if inner.backend.org_id().is_none() {
             incoming.refuse();
             continue;
         }
+        let Some(pending) = inner
+            .pending_by_ip
+            .try_acquire(incoming.remote_address().ip())
+        else {
+            incoming.refuse();
+            continue;
+        };
         let Ok(permit) = inner.conn_slots.clone().try_acquire_owned() else {
             incoming.refuse();
             continue;
         };
-        tokio::spawn(inner.handle_incoming(incoming, permit));
+        let slot = ConnSlot {
+            _permit: permit,
+            pending: Some(pending),
+        };
+        tokio::spawn(inner.handle_incoming(incoming, slot));
     }
 }
 

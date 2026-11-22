@@ -16,8 +16,18 @@ pub const TEAM_NAME_MAX_CHARS: usize = 60;
 pub const CHANNEL_NAME_MAX_CHARS: usize = 120;
 pub const TAG_LEN: usize = 8;
 
+/// Earliest and latest accepted instants (1970-01-01 and 9000-01-01 UTC).
+/// Times come from other laptops; keeping them far from the limits of
+/// `time` means adding days, subtracting minutes or converting to UTC can
+/// never overflow (which would panic).
+const MIN_UNIX: i64 = 0;
+const MAX_UNIX: i64 = 221_845_392_000;
+
+/// RFC 3339 time between 1970 and 9000 (UTC).
 pub fn parse_time(s: &str) -> Option<OffsetDateTime> {
-    OffsetDateTime::parse(s, &Rfc3339).ok()
+    OffsetDateTime::parse(s, &Rfc3339)
+        .ok()
+        .filter(|t| (MIN_UNIX..MAX_UNIX).contains(&t.unix_timestamp()))
 }
 
 /// UTC, whole seconds, e.g. `2026-11-22T08:15:00Z`.
@@ -88,6 +98,12 @@ mod tests {
         assert_eq!(format_time(t), "2026-11-22T08:15:00Z");
         assert!(parse_time("2026-11-22 08:15:00").is_none());
         assert!(parse_time("kemarin").is_none());
+        assert!(parse_time("1970-01-01T00:00:00Z").is_some());
+        assert!(parse_time("1969-12-31T23:59:59Z").is_none());
+        assert!(parse_time("8999-12-31T23:59:59Z").is_some());
+        assert!(parse_time("9000-01-01T00:00:00Z").is_none());
+        assert!(parse_time("8999-12-31T20:00:00-05:00").is_none());
+        assert!(parse_time("0000-01-01T00:00:00Z").is_none());
     }
 
     #[test]

@@ -11,7 +11,8 @@ use super::format::{
     channel_name_for, format_time, is_canonical_display_name, is_lower_hex, validate_team_name,
 };
 use super::invite::{
-    JoinProofData, NormalizedCode, build_join_proof, invite_public_key, redeem_message,
+    JoinProofData, NormalizedCode, build_join_proof, invite_key_message, invite_public_key,
+    redeem_message, sign_invite_key,
 };
 use super::op::{Body, InviteRole, OP_VERSION, Payload, Scope, SignedOp, sign_payload, verify_op};
 use super::store::{
@@ -375,6 +376,23 @@ pub fn create_invite(
         return Err(AppError::NotFound("Proyek tidak ditemukan.".into()));
     }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let org = require_org(&tx)?;
+    let tag = normalized.tag().to_owned();
+    let key_sig = sign_invite_key(
+        &normalized,
+        &invite_key_message(
+            &org.id,
+            &org.founder_public_key,
+            identity.public_key_hex(),
+            &invite,
+            team,
+            role,
+            &projects,
+            &expires,
+            validity.single_use(),
+            &tag,
+        ),
+    );
     author_in(
         &tx,
         identity,
@@ -386,8 +404,9 @@ pub fn create_invite(
             projects,
             expires,
             single_use: validity.single_use(),
-            tag: normalized.tag().to_owned(),
+            tag,
             key: invite_public_key(&normalized),
+            key_sig,
         },
         now,
     )?;
@@ -564,19 +583,24 @@ pub fn join_accept(
     {
         return Err(JoinRejectCode::Removed);
     }
-    let body = Body::InviteAccept {
-        invite: invite.to_owned(),
-        member: proof.member.clone(),
-        name: proof.name.clone(),
-        invite_sig: proof.invite_sig.clone(),
-        member_sig: proof.member_sig.clone(),
-    };
-    author_in(&tx, identity, Scope::Org, body, now).map_err(|e| match e {
-        AppError::InviteExpired => JoinRejectCode::InviteExpired,
-        AppError::InviteUsed => JoinRejectCode::InviteUsed,
-        AppError::InviteRevoked => JoinRejectCode::InviteRevoked,
-        _ => JoinRejectCode::Internal,
-    })?;
+    // A retry after a lost answer: this laptop was already admitted through
+    // this invite (each person uses an invite once), so only resend the ops.
+    let already_admitted = inv.used_by.contains(&proof.member) && state.is_active(&proof.member);
+    if !already_admitted {
+        let body = Body::InviteAccept {
+            invite: invite.to_owned(),
+            member: proof.member.clone(),
+            name: proof.name.clone(),
+            invite_sig: proof.invite_sig.clone(),
+            member_sig: proof.member_sig.clone(),
+        };
+        author_in(&tx, identity, Scope::Org, body, now).map_err(|e| match e {
+            AppError::InviteExpired => JoinRejectCode::InviteExpired,
+            AppError::InviteUsed => JoinRejectCode::InviteUsed,
+            AppError::InviteRevoked => JoinRejectCode::InviteRevoked,
+            _ => JoinRejectCode::Internal,
+        })?;
+    }
     let state = state_in(&tx, &org).map_err(internal)?;
     let ids = op_ids_for(&tx, &state, &proof.member).map_err(internal)?;
     let ops = ops_for(&tx, &state, &proof.member, &ids).map_err(internal)?;
@@ -637,7 +661,13 @@ pub fn install_joined_org(
             "Laptop rekan tidak mengirim undangan yang cocok dengan kode ini.".into(),
         ));
     }
-    if !state.is_active(&me) {
+    // Admitted through the invite of this code, not through another invite
+    // (another team or role) that the responding laptop chose.
+    let admitted_by_code = state
+        .invites
+        .values()
+        .any(|i| i.key == key && i.used_by.contains(&me));
+    if !admitted_by_code || !state.is_active(&me) {
         return Err(AppError::Network(
             "Laptop rekan tidak menambahkan laptop ini sebagai anggota. Coba lagi.".into(),
         ));
@@ -681,6 +711,11 @@ pub fn redeem_as_member(
         .find(|i| i.tag == code.tag() && i.key == key)
         .ok_or(AppError::InviteNotFound)?;
     state.invite_usable(inv, now).map_err(reason_error)?;
+    if inv.used_by.iter().any(|m| m == me) {
+        return Err(AppError::Forbidden(
+            "Anda sudah pernah memakai kode undangan ini.".into(),
+        ));
+    }
     if !state.accept_changes_anything(inv, me) {
         return Err(AppError::Forbidden(
             "Anda sudah tergabung di tim itu dengan peran yang sama atau lebih tinggi.".into(),

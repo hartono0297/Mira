@@ -37,6 +37,10 @@ pub struct MemState {
     /// tag -> challenge
     pub invites: HashMap<String, JoinChallenge>,
     pub join_accepts: Vec<(String, JoinProof)>,
+    /// Answer every `join_lookup` with this (a peer that lies).
+    pub lookup_reject: Option<JoinReject>,
+    /// Answer every `join_accept` with this (a peer that lies).
+    pub accept_reject: Option<JoinReject>,
     /// Every (from, op ids) given to `ingest`.
     pub ingested: Vec<(String, Vec<String>)>,
     /// Every (peer, ids) answered by `ops_for`, with the ids returned.
@@ -187,6 +191,9 @@ impl SyncBackend for MemoryBackend {
 
     fn join_lookup(&self, tag: &str) -> Result<JoinChallenge, JoinReject> {
         self.with(|s| {
+            if let Some(r) = &s.lookup_reject {
+                return Err(r.clone());
+            }
             s.invites
                 .get(tag)
                 .cloned()
@@ -201,6 +208,9 @@ impl SyncBackend for MemoryBackend {
         proof: JoinProof,
     ) -> Result<JoinAccepted, JoinReject> {
         self.with(|s| {
+            if let Some(r) = &s.accept_reject {
+                return Err(r.clone());
+            }
             if proof.member != tls_key || proof.invite_sig != "good" {
                 return Err(JoinReject::new("invalid_proof", "Bukti salah."));
             }

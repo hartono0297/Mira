@@ -11,7 +11,7 @@ use crate::permissions::invite::sign_proof;
 use crate::permissions::op::{OP_VERSION, sign_payload};
 use crate::permissions::{
     Body, InviteRole, NormalizedCode, OrgState, Outcome, Payload, Scope, SignedOp, VerifiedOp,
-    fold, invite_public_key, normalize_code, verify_op,
+    fold, invite_key_message, invite_public_key, normalize_code, sign_invite_key, verify_op,
 };
 
 pub fn rand_hex16() -> String {
@@ -154,8 +154,10 @@ impl Sim {
         }
     }
 
+    /// `invite_create` body made by `by`, with a valid `key_sig`.
     pub fn invite_body(
         &self,
+        by: &Actor,
         team: &str,
         role: InviteRole,
         single_use: bool,
@@ -168,6 +170,8 @@ impl Sim {
         } else {
             vec![]
         };
+        let expires = format_time(self.now + time::Duration::hours(hours));
+        let key_sig = self.key_sig(by, &id, team, role, &projects, &expires, single_use, code);
         (
             id.clone(),
             Body::InviteCreate {
@@ -175,17 +179,47 @@ impl Sim {
                 team: team.into(),
                 role,
                 projects,
-                expires: format_time(self.now + time::Duration::hours(hours)),
+                expires,
                 single_use,
                 tag: code.tag().into(),
                 key: invite_public_key(code),
+                key_sig,
             },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn key_sig(
+        &self,
+        by: &Actor,
+        invite: &str,
+        team: &str,
+        role: InviteRole,
+        projects: &[String],
+        expires: &str,
+        single_use: bool,
+        code: &NormalizedCode,
+    ) -> String {
+        sign_invite_key(
+            code,
+            &invite_key_message(
+                &self.org.id,
+                &self.org.founder_public_key,
+                &by.pk,
+                invite,
+                team,
+                role,
+                projects,
+                expires,
+                single_use,
+                code.tag(),
+            ),
         )
     }
 
     pub fn invite(&mut self, by: &Actor, team: &str, role: InviteRole, single_use: bool) -> Invite {
         let code = new_code();
-        let (id, body) = self.invite_body(team, role, single_use, 24, &code);
+        let (id, body) = self.invite_body(by, team, role, single_use, 24, &code);
         let outcome = self.push(by, body);
         Invite { id, code, outcome }
     }

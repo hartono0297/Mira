@@ -672,7 +672,7 @@ fn invite_create_row() {
     let code = new_code();
     let (id, body) = w
         .sim
-        .invite_body(&w.team_a, InviteRole::Member, false, 24, &code);
+        .invite_body(&f, &w.team_a, InviteRole::Member, false, 24, &code);
     assert_eq!(w.sim.push(&f, body.clone()), Ok(()));
     assert_eq!(w.sim.push(&f, body), Err(R::IdInUse));
     let inv = &w.sim.state().invites[&id];

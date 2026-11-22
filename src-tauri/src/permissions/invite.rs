@@ -5,6 +5,7 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use super::format::CROCKFORD;
+use super::op::InviteRole;
 use crate::error::{AppError, AppResult};
 use crate::identity::Identity;
 
@@ -100,6 +101,53 @@ pub fn redeem_message(org: &str, invite: &str, member: &str, name: &str) -> Vec<
     [REDEEM_DOMAIN, org, invite, member, name]
         .join("\n")
         .into_bytes()
+}
+
+pub const INVITE_KEY_DOMAIN: &str = "mira-invite-key-v1";
+
+/// What the invite key signs when the invite is created (`key_sig`):
+/// `"mira-invite-key-v1\n{org}\n{founder}\n{author}\n{invite}\n{team}\n{role}\n{projects, comma separated}\n{expires}\n{single_use}\n{tag}"`.
+///
+/// Only someone holding the code can make it, so the public key of an
+/// invite cannot be copied into another invite (another team or role) or
+/// into a look-alike organization made by someone who saw the log. The
+/// joining laptop relies on this: the invite that admitted it is bound to
+/// the organization it is shown.
+#[allow(clippy::too_many_arguments)]
+pub fn invite_key_message(
+    org: &str,
+    founder: &str,
+    author: &str,
+    invite: &str,
+    team: &str,
+    role: InviteRole,
+    projects: &[String],
+    expires: &str,
+    single_use: bool,
+    tag: &str,
+) -> Vec<u8> {
+    let projects = projects.join(",");
+    let single_use = if single_use { "1" } else { "0" };
+    [
+        INVITE_KEY_DOMAIN,
+        org,
+        founder,
+        author,
+        invite,
+        team,
+        role.as_str(),
+        &projects,
+        expires,
+        single_use,
+        tag,
+    ]
+    .join("\n")
+    .into_bytes()
+}
+
+/// `key_sig` for `invite_key_message`, signed with the code's key.
+pub fn sign_invite_key(code: &NormalizedCode, message: &[u8]) -> String {
+    hex::encode(invite_signing_key(code).sign(message).to_bytes())
 }
 
 /// What the joining laptop proves (same shape as `network::JoinProof`).

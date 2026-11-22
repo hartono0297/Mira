@@ -1237,3 +1237,241 @@ fn author_op_uses_lamport_after_everything_known() {
     assert_eq!(v.lamport(), max + 1);
     assert_eq!(v.author(), a.pk());
 }
+
+/// Signs a payload as `node` with an explicit lamport (what a modified
+/// laptop could send).
+fn raw_op(node: &Node, org: &str, lamport: u64, body: Body) -> SignedOp {
+    let payload = p::Payload {
+        v: 1,
+        org: org.to_owned(),
+        author: node.pk(),
+        lamport,
+        at: crate::permissions::format::format_time(now()),
+        nonce: rand_hex16(),
+        scope: Scope::Org,
+        body,
+    };
+    let json = serde_json::to_string(&payload).unwrap();
+    let sig = node.id.sign(&crate::permissions::op::signed_message(&json));
+    SignedOp {
+        payload: json,
+        sig: hex::encode(sig.to_bytes()),
+    }
+}
+
+#[test]
+fn a_huge_lamport_cannot_freeze_the_organization() {
+    let mut f = Node::founder("Sari");
+    let team = f.create_team("Tim A");
+    let mut g = Node::new("Tamu");
+    {
+        let code = f.invite(&team, InviteRole::Member, Validity::Once);
+        join(&mut f, &mut g, &code, now())
+    }
+    .unwrap();
+    let org = f.state().org.id;
+    // Even a plain member's profile op with the largest lamport would make
+    // every later `max + 1` invalid.
+    let op = raw_op(
+        &g,
+        &org,
+        crate::permissions::op::MAX_LAMPORT,
+        Body::ProfileSet {
+            name: "Tamu".into(),
+        },
+    );
+    let report = p::ingest(&mut f.conn, Some(&g.pk()), vec![op], now()).unwrap();
+    assert_eq!(report.new_ops, 0, "lamport jump must be refused");
+    assert_eq!(report.invalid, 1);
+    // The organization keeps working.
+    f.create_team("Tim B");
+}
+
+#[test]
+fn a_reasonable_lamport_gap_is_accepted() {
+    let mut f = Node::founder("Sari");
+    let team = f.create_team("Tim A");
+    let mut a = Node::new("Ani");
+    {
+        let code = f.invite(&team, InviteRole::Member, Validity::Once);
+        join(&mut f, &mut a, &code, now())
+    }
+    .unwrap();
+    let org = f.state().org.id;
+    let max = p::max_lamport(&f.conn).unwrap();
+    // A gap left by team ops the receiver cannot see, or ops still in flight.
+    let ops = vec![
+        raw_op(
+            &a,
+            &org,
+            max + 500,
+            Body::ProfileSet {
+                name: "Ani A".into(),
+            },
+        ),
+        raw_op(
+            &a,
+            &org,
+            max + 900,
+            Body::ProfileSet {
+                name: "Ani B".into(),
+            },
+        ),
+    ];
+    let report = p::ingest(&mut f.conn, Some(&a.pk()), ops, now()).unwrap();
+    assert_eq!(report.new_ops, 2);
+}
+
+#[test]
+fn joiner_refuses_admission_through_a_different_invite() {
+    // A responder that challenges the joiner with another invite (another
+    // team or role) and re-signs the invite part of the proof with that
+    // invite's own code.
+    let mut f = Node::founder("Sari");
+    let team_a = f.create_team("Tim A");
+    let team_b = f.create_team("Tim B");
+    let code_a = p::normalize_code(&f.invite(&team_a, InviteRole::Member, Validity::D7)).unwrap();
+    let code_b =
+        p::normalize_code(&f.invite(&team_b, InviteRole::TeamAdmin, Validity::D7)).unwrap();
+    let state = f.state();
+    let org = state.org.id.clone();
+    let invite_b = state
+        .invites
+        .values()
+        .find(|i| i.tag == code_b.tag())
+        .unwrap()
+        .id
+        .clone();
+
+    let mut joiner = Node::new("Joko");
+    // The joiner signs for the challenged invite with its own code.
+    let proof = p::build_join_proof(&code_a, &org, &invite_b, &joiner.id).unwrap();
+    let msg = p::redeem_message(&org, &invite_b, &proof.member, &proof.name);
+    let forged_invite_sig = {
+        use ed25519_dalek::Signer;
+        hex::encode(p::invite_signing_key(&code_b).sign(&msg).to_bytes())
+    };
+    p::author_op(
+        &mut f.conn,
+        &f.id,
+        Scope::Org,
+        Body::InviteAccept {
+            invite: invite_b.clone(),
+            member: proof.member.clone(),
+            name: proof.name.clone(),
+            invite_sig: forged_invite_sig,
+            member_sig: proof.member_sig.clone(),
+        },
+        now(),
+    )
+    .unwrap();
+    let state = f.state();
+    let ids = p::op_ids_for(&f.conn, &state, &joiner.pk()).unwrap();
+    let ops = p::ops_for(&f.conn, &state, &joiner.pk(), &ids).unwrap();
+    let org_record = org::load_organization(&f.conn).unwrap().unwrap();
+    let err = p::install_joined_org(
+        &mut joiner.conn,
+        &joiner.id,
+        org_record,
+        ops,
+        &code_a,
+        now(),
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "network");
+    assert_eq!(
+        p::membership(&joiner.conn, &joiner.id).unwrap(),
+        Membership::None
+    );
+}
+
+#[test]
+fn join_retry_after_a_lost_answer_is_idempotent() {
+    let mut f = Node::founder("Sari");
+    let team = f.create_team("Tim A");
+    let code = p::normalize_code(&f.invite(&team, InviteRole::Member, Validity::D7)).unwrap();
+    let mut a = Node::new("Ani");
+    let (org, invite) = p::join_lookup(&f.conn, code.tag(), now()).unwrap();
+    let proof = p::build_join_proof(&code, &org, &invite, &a.id).unwrap();
+    // First answer is lost on the way.
+    p::join_accept(&mut f.conn, &f.id, &a.pk(), &invite, &proof, now()).unwrap();
+    let ops_before = f.op_ids();
+    let (org2, invite2) = p::join_lookup(&f.conn, code.tag(), now()).unwrap();
+    let proof = p::build_join_proof(&code, &org2, &invite2, &a.id).unwrap();
+    let accepted = p::join_accept(&mut f.conn, &f.id, &a.pk(), &invite2, &proof, now()).unwrap();
+    assert_eq!(f.op_ids(), ops_before, "no second accept op");
+    p::install_joined_org(&mut a.conn, &a.id, accepted.org, accepted.ops, &code, now()).unwrap();
+    assert_eq!(p::membership(&a.conn, &a.id).unwrap(), Membership::Active);
+    // The person cannot use the same invite again from their own laptop.
+    assert_eq!(
+        p::redeem_as_member(&mut a.conn, &a.id, &code, now())
+            .unwrap_err()
+            .code(),
+        "forbidden"
+    );
+}
+
+#[test]
+fn joiner_refuses_a_look_alike_organization() {
+    // Mallory saw the real invite in the log and runs her own organization
+    // with a copy of that invite, hoping to catch the person with the code.
+    let mut f = Node::founder("Sari");
+    let team = f.create_team("Tim A");
+    let code = p::normalize_code(&f.invite(&team, InviteRole::Member, Validity::D7)).unwrap();
+    let real_body = p::load_ops(&f.conn)
+        .unwrap()
+        .into_iter()
+        .find(|o| o.payload.body.kind() == "invite_create")
+        .unwrap()
+        .payload
+        .body;
+    let p::Body::InviteCreate {
+        invite,
+        team: real_team,
+        ..
+    } = real_body.clone()
+    else {
+        unreachable!()
+    };
+
+    let m = Node::founder("Mallory");
+    let fake_org = m.state().org.id;
+    let fake_team_op = raw_op(
+        &m,
+        &fake_org,
+        50,
+        Body::TeamCreate {
+            team: real_team,
+            name: "Tim A".into(),
+        },
+    );
+    let fake_invite_op = raw_op(&m, &fake_org, 51, real_body);
+    let mut joiner = Node::new("Joko");
+    let proof = p::build_join_proof(&code, &fake_org, &invite, &joiner.id).unwrap();
+    let accept = raw_op(
+        &m,
+        &fake_org,
+        52,
+        Body::InviteAccept {
+            invite,
+            member: proof.member,
+            name: proof.name,
+            invite_sig: proof.invite_sig,
+            member_sig: proof.member_sig,
+        },
+    );
+    let mut ops: Vec<SignedOp> = p::load_ops(&m.conn)
+        .unwrap()
+        .into_iter()
+        .map(|v| v.signed)
+        .collect();
+    ops.extend([fake_team_op, fake_invite_op, accept]);
+    let record = org::load_organization(&m.conn).unwrap().unwrap();
+    let err =
+        p::install_joined_org(&mut joiner.conn, &joiner.id, record, ops, &code, now()).unwrap_err();
+    assert_eq!(err.code(), "network");
+    assert_eq!(
+        p::membership(&joiner.conn, &joiner.id).unwrap(),
+        Membership::None
+    );
+}
