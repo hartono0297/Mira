@@ -1573,14 +1573,34 @@ fn signed_version_may_exceed_import_limit() {
     let mut f = fx();
     let me = f.me();
     f.save_signature();
-    let d = f.create(std::slice::from_ref(&me), "sequential");
+
+    // An original just under the import limit (padding after %%EOF, which
+    // readers ignore); its stamped version is over the import limit.
+    let mut original = original_pdf();
+    original.resize(MAX_PDF_BYTES - 64, b' ');
+    let mut too_large_import = original.clone();
+    too_large_import.resize(MAX_PDF_BYTES + 1024, b' ');
+    assert_eq!(
+        code(f.ctx().import_pdf(&too_large_import, "besar.pdf")),
+        "pdf_too_large"
+    );
+    drop(too_large_import);
+    let hash = f.import(&original);
+    let d = f
+        .ctx()
+        .create_request(
+            "Kontrak Besar.pdf",
+            &hash,
+            "sequential",
+            std::slice::from_ref(&me),
+            t(5),
+        )
+        .unwrap();
     let id = d.summary.id.clone();
+    let big = pdf::stamp(&original, &seal::doc_tag(&id));
+    assert!(big.len() > MAX_PDF_BYTES);
 
-    let mut big = stamped(&id, 1);
-    big.resize(MAX_PDF_BYTES + 1024, b' ');
-    assert_eq!(code(f.ctx().import_pdf(&big, "besar.pdf")), "pdf_too_large");
-
-    let mut too_big = stamped(&id, 1);
+    let mut too_big = big.clone();
     too_big.resize(MAX_SIGNED_PDF_BYTES + 1, b' ');
     let err = f.sign(&d, &too_big).unwrap_err();
     assert_eq!(err.code(), "pdf_too_large");
