@@ -8,6 +8,8 @@ pub const MIGRATIONS: &[&str] = &[
     crate::board::schema::BOARD_SCHEMA,
     // Tahap 4 (dokumen), v4.
     crate::documents::schema::MIGRATION,
+    // Tahap 5 (tanda tangan PDF), v5.
+    crate::signing::schema::SIGNING_SCHEMA,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.

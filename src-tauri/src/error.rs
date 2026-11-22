@@ -78,6 +78,11 @@ pub enum AppError {
     /// Tahap 4: Windows could not open the file in Office or another app.
     #[error("{0}")]
     OpenFailed(String),
+    /// Tahap 5 (tanda tangan PDF): satu varian dengan kode sendiri, misalnya
+    /// `pin_wrong`, `pin_locked`, `not_your_turn`. Daftar kode ada di
+    /// `docs/plans/tahap-5-lokal.md`.
+    #[error("{message}")]
+    Signing { code: &'static str, message: String },
 }
 
 impl AppError {
@@ -109,6 +114,7 @@ impl AppError {
             AppError::InvalidInput(_) => "invalid_input",
             AppError::DocumentEditing(_) => "document_editing",
             AppError::OpenFailed(_) => "open_failed",
+            AppError::Signing { code, .. } => code,
         }
     }
 }

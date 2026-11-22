@@ -21,6 +21,7 @@ pub mod peers;
 pub mod permissions;
 pub mod qr;
 pub mod settings;
+pub mod signing;
 pub mod state;
 pub mod team_commands;
 pub mod window_theme;
@@ -99,6 +100,7 @@ pub fn run() {
             );
             app.manage(documents.clone());
             documents.spawn_recovery();
+            app.manage(signing::session::SignSessions::default());
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
                 Ok(d) => d.from_env.then(|| d.path.clone()),
@@ -154,6 +156,19 @@ pub fn run() {
             documents::commands::restore_version,
             documents::commands::resolve_conflict,
             documents::commands::export_version,
+            signing::commands::sign_overview,
+            signing::commands::sign_save_signature,
+            signing::commands::sign_delete_signature,
+            signing::commands::sign_unlock,
+            signing::commands::sign_list_candidates,
+            signing::commands::sign_import_pdf,
+            signing::commands::sign_create_request,
+            signing::commands::sign_get_request,
+            signing::commands::sign_read_file,
+            signing::commands::sign_complete,
+            signing::commands::sign_cancel,
+            signing::commands::sign_export,
+            signing::commands::sign_verify_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

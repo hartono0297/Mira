@@ -13,7 +13,8 @@
     "build:installer-offline": "tauri build --config src-tauri/tauri.offline.conf.json",
     "test:e2e": "node scripts/smoke-e2e.mjs src-tauri/target/release/mira.exe docs/progress/screenshots",
     "test:e2e-multi": "node scripts/e2e-multi.mjs src-tauri/target/release/mira.exe docs/progress/screenshots/tahap-1",
-    "test:e2e:docs": "node scripts/smoke-docs-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots test-files/docs"
+    "test:e2e:docs": "node scripts/smoke-docs-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots test-files/docs",
+    "test:e2e-ttd": "node scripts/sign-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots"
   },
   "dependencies": {
     "@fontsource/nunito": "^5.3.0",
@@ -22,6 +23,8 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-opener": "^2",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.5.438",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

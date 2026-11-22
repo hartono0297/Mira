@@ -1,0 +1,261 @@
+/* Tanda tangan: kotak gambar, dialog buat tanda tangan, dialog PIN. */
+
+/* Dialog buat tanda tangan lebih lebar dari dialog biasa supaya kotak gambar lega. */
+.dlg:has(.sig-setup) {
+  width: min(580px, calc(100vw - 32px));
+}
+
+.sig-setup,
+.sig-step-body,
+.pin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Isi langkah yang sedang tidak tampil tetap terpasang (gambar tidak hilang saat Kembali). */
+.sig-setup [hidden] {
+  display: none !important;
+}
+
+.sig-step {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+/* Kertas: latar kotak gambar dan pratinjau. Tinta selalu gelap (INK_COLOR), jadi
+   kertas selalu terang. Mode gelap memakai warna teks utama tema gelap sebagai
+   kertas krem, supaya tinta terbaca dan kertas tetap terasa bagian dari tema. */
+.sig-paper {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+:root[data-theme="dark"] .sig-paper {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.sig-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 5 / 2;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* Garis tempat tanda tangan, di 72% tinggi kotak. Hanya panduan, tidak ikut tersimpan.
+   border-strong di atas kertas: 3,05:1 (terang) dan 3,58:1 (gelap). */
+.sig-baseline {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 72%;
+  border-top: 1.5px dashed var(--border-strong);
+  pointer-events: none;
+}
+
+.sig-pad {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sig-pad-bar {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.sig-pad-bar .hint {
+  flex: 1 1 220px;
+}
+
+.sig-pad-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Tombol yang nonaktif karena keadaan (kotak kosong, PIN terkunci), bukan karena sedang memproses. */
+.sig-pad-tools .btn:disabled,
+.pin-form .btn:disabled:not([aria-busy="true"]) {
+  cursor: not-allowed;
+}
+
+/* Pilihan cara membuat: radio asli tetap terlihat, jadi pilihan tidak hanya ditandai warna. */
+.sig-methods {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sig-legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.sig-seg {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sig-seg-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 16px 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.sig-seg-opt:hover {
+  background: var(--hover);
+}
+
+.sig-seg-opt input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Cincin fokus dipindah ke seluruh pilihan supaya lebih mudah terlihat. */
+.sig-seg-opt input:focus-visible {
+  outline: none;
+}
+
+.sig-seg-opt:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sig-seg-opt:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* Impor gambar */
+
+.sig-import {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sig-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 5 / 2;
+  padding: 16px;
+}
+
+.sig-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Belum ada gambar: bukan kertas, cukup bingkai putus-putus di warna tema. */
+.sig-preview-empty,
+:root[data-theme="dark"] .sig-preview-empty {
+  background: var(--card);
+  border: 1px dashed var(--border-strong);
+}
+
+.sig-preview-icon {
+  color: var(--text-sec);
+}
+
+.sig-import-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.sig-file-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+/* Langkah PIN */
+
+.sig-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+  padding: 10px 16px;
+}
+
+.sig-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.sig-warn {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.sig-warn svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-sec);
+}
+
+.pin-locked {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.pin-locked svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* Aksi tambahan dialog PIN (mis. "Lupa PIN?") di kiri, terpisah dari Batal dan kirim. */
+.pin-extra {
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+}
+
+.pin-extra .link-btn {
+  min-height: 40px;
+}

@@ -1,0 +1,680 @@
+/* Layar dokumen tanda tangan: penampil PDF di kiri, panel urutan dan tindakan
+   di kanan (mockup "Tanda tangan PDF berurutan" di design/brainstorming.html).
+   Semua warna lewat token peran. */
+
+.sdoc {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sdoc-head {
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 6px;
+  padding: 12px 24px;
+}
+
+.sdoc-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* "Berjalan, 0 dari 2 sudah tanda tangan" boleh turun baris di jendela sempit. */
+.sdoc-head-chip {
+  white-space: normal;
+}
+
+/* Tombol yang sedang tidak bisa dipakai tetap bisa difokus (aria-disabled),
+   supaya fokus keyboard tidak jatuh ke body saat tombolnya berubah keadaan. */
+.sdoc .btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.sdoc .btn[aria-disabled="true"]:hover {
+  filter: none;
+}
+
+.sdoc .btn-ghost[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.sdoc-pad {
+  padding: 20px 24px 0;
+}
+
+.sdoc-narrow {
+  max-width: 640px;
+}
+
+.sdoc-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sdoc-banner {
+  padding: 14px 24px 0;
+}
+
+.sdoc-banner .alert {
+  font-size: 14px;
+}
+
+/* Wilayah status tetap ada di pohon aksesibilitas; hanya jaraknya yang hilang saat kosong. */
+.sdoc-live {
+  padding: 14px 24px 0;
+}
+
+.sdoc-live:empty {
+  padding: 0;
+}
+
+.sdoc-ok {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.sdoc-ok > svg {
+  flex: none;
+  color: var(--online);
+  margin-top: 1px;
+}
+
+.sdoc-ok strong {
+  display: block;
+  font-size: 14px;
+}
+
+.sdoc-ok:focus-visible {
+  outline-offset: 2px;
+}
+
+/* Penanda posisi stempel untuk menggulir; tidak terlihat dan tidak bisa diklik. */
+.sdoc-stamp-mark {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* Isi: kolom penampil lentur, panel lebar tetap yang digulir sendiri. */
+
+.sdoc-body {
+  flex: 1;
+  min-height: 420px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  padding: 16px 24px;
+}
+
+.sdoc-viewer {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sdoc-viewer > .pdf-viewer {
+  flex: 1;
+}
+
+.sdoc-viewer-msg {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--col);
+  color: var(--text-sec);
+  text-align: center;
+}
+
+.sdoc-viewer-msg .alert {
+  text-align: left;
+  max-width: 52ch;
+}
+
+.sdoc-panel {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 2px 4px 2px 2px;
+}
+
+.sdoc-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sdoc-sec + .sdoc-sec,
+.sdoc-sec + .audit {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.sdoc-h {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sdoc-h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sdoc-small {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-sec);
+}
+
+.sdoc-text {
+  font-size: 13px;
+}
+
+/* Urutan penanda tangan: nomor bulat, nama, peran, dan status sebagai teks. */
+
+.sdoc-signers {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sdoc-signer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.sdoc-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  color: var(--text-sec);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sdoc-signer[data-tone="done"] .sdoc-num {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.sdoc-signer[data-tone="now"] .sdoc-num {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.sdoc-signer-text {
+  min-width: 0;
+}
+
+.sdoc-signer-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sdoc-you {
+  font-weight: 400;
+}
+
+.sdoc-kind {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.sdoc-signer-state {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.sdoc-signer[data-tone="now"] .sdoc-signer-state {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+/* Tindakan */
+
+.sdoc-act {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.sdoc-wide {
+  width: 100%;
+}
+
+.sdoc-fit {
+  align-self: flex-start;
+}
+
+.sdoc-notice-btn {
+  margin-top: 10px;
+}
+
+.sdoc-where {
+  font-weight: 600;
+}
+
+/* Masa tunggu tanda tangan baru: alasan tombol nonaktif, warna status "menunggu". */
+.sdoc-cooling {
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 700;
+  color: var(--state);
+}
+
+.sdoc-ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sdoc-ctl-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.sdoc-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sdoc-seg .btn {
+  padding: 5px 10px;
+  gap: 4px;
+}
+
+.sdoc-cancel {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+/* Kunci dan hash */
+
+.sdoc-lock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  font-size: 13px;
+}
+
+.sdoc-lock-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+.sdoc-dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.sdoc-dl dt {
+  color: var(--text-sec);
+}
+
+.sdoc-dl dd {
+  margin: 0;
+}
+
+/* Salinan */
+
+.sdoc-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.sdoc-path {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sdoc-saved + .alert,
+[aria-live] > .alert {
+  margin-top: 6px;
+}
+
+.sdoc-exports ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sdoc-export {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.sdoc-export[data-state="changed"] {
+  border-color: var(--danger-border);
+}
+
+.sdoc-export-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.sdoc-chip-ok {
+  gap: 3px;
+}
+
+.sdoc-chip-ok svg {
+  flex: none;
+  color: var(--online);
+}
+
+.sdoc-chip-bad {
+  border-color: transparent;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sdoc-export-note {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+/* Kotak tanda tangan di halaman: label nama di tengah dengan latar padat,
+   karena kertas PDF selalu putih di kedua tema. */
+
+.sdoc-overlay {
+  display: contents;
+}
+
+.sdoc-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 3px;
+  overflow: hidden;
+  container-type: size;
+  pointer-events: none;
+}
+
+.sdoc-ph-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  line-height: 1.25;
+  text-align: center;
+}
+
+.sdoc-ph-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sdoc-ph-sub {
+  font-size: 11px;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+@container (max-height: 44px) {
+  .sdoc-ph-sub {
+    display: none;
+  }
+}
+
+/* Jejak audit, dilipat supaya panel tidak penuh */
+
+.audit {
+  font-size: 13px;
+}
+
+.audit-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 34px;
+  padding: 6px 0;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.audit-summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Penanda buka-tutup: summary berbentuk flex kehilangan segitiga bawaan. */
+.audit-chevron {
+  flex: none;
+  align-self: center;
+  color: var(--text-sec);
+  transition: transform 120ms ease;
+}
+
+.audit[open] .audit-chevron {
+  transform: rotate(90deg);
+}
+
+.audit-summary:focus-visible {
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.audit-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-sec);
+}
+
+.audit-count-bad {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.audit-count-warn {
+  color: var(--state);
+  font-weight: 700;
+}
+
+.audit-empty {
+  color: var(--text-sec);
+  font-size: 12px;
+}
+
+.audit-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.audit-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.audit-what {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.audit-who {
+  overflow-wrap: anywhere;
+}
+
+.audit-when,
+.audit-detail,
+.audit-hashes {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.audit-hashes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+}
+
+.audit-hash .mono {
+  font-size: 12px;
+}
+
+.audit-valid,
+.audit-invalid {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.audit-valid {
+  color: var(--text-sec);
+}
+
+.audit-valid svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--online);
+}
+
+.audit-invalid {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.audit-invalid svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* Tanda tangan dibuat ulang atau dihapus saat permintaan berjalan. */
+.audit-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--state);
+}
+
+.audit-warn svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* Jendela sempit (minimal 900px, sidebar 208px): panel dan jarak lebih rapat. */
+
+@media (max-width: 1180px) {
+  .sdoc-head,
+  .sdoc-banner,
+  .sdoc-live,
+  .sdoc-pad {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .sdoc-body {
+    grid-template-columns: minmax(0, 1fr) 264px;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+}
+
+/* Mendekati lebar minimum jendela: panel dipersempit supaya halaman PDF tetap terbaca. */
+@media (max-width: 1000px) {
+  .sdoc-body {
+    grid-template-columns: minmax(0, 1fr) 248px;
+  }
+}
+
+/* Zoom 200% (jendela 1280x800 jadi 640x400): satu kolom, panel di bawah
+   penampil. Halaman yang menggulir, bukan panel. */
+@media (max-width: 800px) {
+  .sdoc {
+    flex: none;
+  }
+
+  .sdoc-body {
+    flex: none;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .sdoc-viewer {
+    height: max(320px, 80vh);
+  }
+
+  .sdoc-panel {
+    overflow: visible;
+    padding: 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .sdoc-signer[data-tone="now"] .sdoc-num {
+    border-color: Highlight;
+  }
+}

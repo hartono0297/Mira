@@ -44,6 +44,9 @@ automerge = "0.12.0"
 tauri-plugin-notification = "2"
 notify = "9.0.0"
 tauri-plugin-dialog = "2.8.4"
+# Tahap 5 (tanda tangan PDF): kunci turunan PIN dan enkripsi gambar tanda tangan.
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -61,3 +64,11 @@ tempfile = "3.27.0"
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Security_Credentials", "Win32_Foundation"] }
 winreg = "0.56.0"
+
+# Argon2 dan BLAKE2 sangat lambat tanpa optimasi; tes dan `tauri dev` memakai
+# profil dev, jadi keduanya dioptimasi juga di sana (hanya dua crate ini).
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
