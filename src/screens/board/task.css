@@ -87,6 +87,34 @@
   background: var(--accent-soft);
 }
 
+/* Task atau proyeknya hilang karena perubahan dari laptop lain. */
+.td-gone .btn-ghost {
+  margin-top: 4px;
+  border-color: var(--text-sec);
+}
+
+/* Draf yang belum tersimpan, ditampilkan untuk disalin setelah task hilang. */
+.td-kept {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.td-kept .td-textarea {
+  background: var(--bg);
+}
+
+/* Rekan mengubah field yang sedang Anda ketik. Teks biasa, bukan error. */
+.td-moved {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .td-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 240px;

@@ -1,0 +1,453 @@
+//! Who may see and change which project (docs/plans/sinkron-board.md,
+//! "Aturan akses").
+//!
+//! [`Rights`] is the membership as far as the board cares: active members
+//! (guest or not, superadmin or not), live teams with their admins, and guest
+//! access per project. It is read from the tables the Tahap 1 fold keeps
+//! (`members`, `teams`, `team_members`, `guest_access`), or built from an
+//! `OrgState`.
+//!
+//! | Right | Project of team T | Project without team |
+//! |---|---|---|
+//! | read | active member of T (any role), or guest access (pk, T, project) | active non-guest member |
+//! | write | read, and not a guest | active non-guest member |
+//! | delete task | write, and task creator, admin of T or superadmin in T | write, and task creator or superadmin |
+//! | manage project | write, and admin of T, superadmin in T or project creator | write, and project creator or superadmin |
+//! | create project | admin of T, or superadmin in T | superadmin, or admin of any team |
+//!
+//! Guest access only counts when the invite's team is the project's team.
+//! A superadmin does not read a team's projects until joining the team
+//! (F-ROLE-11).
+//!
+//! [`RightsHistory`] replays the accepted membership ops to answer "did the
+//! author have this right when the change was made": allowed when the right
+//! exists now, or existed and was taken away after the change's time.
+//!
+//! Chat and documents use [`projects_accessible_by`] and
+//! [`may_access_project`] for project-scoped data.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use rusqlite::{Connection, OptionalExtension, params};
+use time::OffsetDateTime;
+
+use crate::error::{AppError, AppResult};
+use crate::org;
+use crate::permissions::{self, MemberKind, MemberStatus, OrgState, TeamRole};
+
+/// A project as the rules need it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectRef<'a> {
+    pub id: &'a str,
+    pub team_id: Option<&'a str>,
+    /// Public key of the project creator.
+    pub created_by: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MemberRights {
+    guest: bool,
+    superadmin: bool,
+}
+
+/// Board-relevant membership at one moment.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rights {
+    /// Active members only.
+    members: BTreeMap<String, MemberRights>,
+    /// Live teams: team id -> member public key -> is team admin.
+    teams: BTreeMap<String, BTreeMap<String, bool>>,
+    /// `(public key, team id, project id)`.
+    guests: BTreeSet<(String, String, String)>,
+    /// `false` without an organization.
+    has_org: bool,
+}
+
+impl Rights {
+    /// Current rights from the tables kept by the membership fold.
+    pub fn load(conn: &Connection) -> AppResult<Rights> {
+        let org: Option<String> = conn
+            .query_row(
+                "SELECT id FROM organizations ORDER BY created_at LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(org) = org else {
+            return Ok(Rights::default());
+        };
+        let mut rights = Rights {
+            has_org: true,
+            ..Rights::default()
+        };
+        let mut stmt = conn.prepare(
+            "SELECT public_key, role, is_superadmin, kind FROM members
+             WHERE organization_id = ?1 AND status = 'active'",
+        )?;
+        let rows = stmt.query_map([&org], |r| {
+            let pk: String = r.get(0)?;
+            let role: String = r.get(1)?;
+            let sa: i64 = r.get(2)?;
+            let kind: String = r.get(3)?;
+            Ok((pk, role, sa, kind))
+        })?;
+        for row in rows {
+            let (pk, role, sa, kind) = row?;
+            rights.members.insert(
+                pk,
+                MemberRights {
+                    guest: kind == "guest" || role == "guest",
+                    superadmin: sa != 0 || role == "superadmin",
+                },
+            );
+        }
+        let mut stmt = conn.prepare(
+            "SELECT t.id, tm.public_key, tm.role FROM teams t
+             LEFT JOIN team_members tm ON tm.team_id = t.id
+             WHERE t.deleted = 0",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (team, pk, role) = row?;
+            let members = rights.teams.entry(team).or_default();
+            if let Some(pk) = pk {
+                members.insert(pk, role.as_deref() == Some("admin"));
+            }
+        }
+        let mut stmt = conn.prepare("SELECT public_key, team_id, project_id FROM guest_access")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        for row in rows {
+            rights.guests.insert(row?);
+        }
+        Ok(rights)
+    }
+
+    pub fn from_state(state: &OrgState) -> Rights {
+        let members = state
+            .members
+            .values()
+            .filter(|m| m.status == MemberStatus::Active)
+            .map(|m| {
+                (
+                    m.public_key.clone(),
+                    MemberRights {
+                        guest: m.kind == MemberKind::Guest,
+                        superadmin: m.is_superadmin,
+                    },
+                )
+            })
+            .collect();
+        let teams = state
+            .teams
+            .values()
+            .filter(|t| !t.deleted)
+            .map(|t| {
+                let members = t
+                    .members
+                    .iter()
+                    .map(|(pk, m)| (pk.clone(), m.role == TeamRole::Admin))
+                    .collect();
+                (t.id.clone(), members)
+            })
+            .collect();
+        let guests = state
+            .guest_access
+            .iter()
+            .map(|g| (g.public_key.clone(), g.team.clone(), g.project.clone()))
+            .collect();
+        Rights {
+            members,
+            teams,
+            guests,
+            has_org: true,
+        }
+    }
+
+    pub fn has_org(&self) -> bool {
+        self.has_org
+    }
+
+    fn active(&self, pk: &str) -> Option<MemberRights> {
+        self.members.get(pk).copied()
+    }
+
+    /// Active member, guest or not.
+    pub fn is_active(&self, pk: &str) -> bool {
+        self.members.contains_key(pk)
+    }
+
+    /// Active member who is not a guest.
+    pub fn is_active_member(&self, pk: &str) -> bool {
+        self.active(pk).is_some_and(|m| !m.guest)
+    }
+
+    pub fn is_guest(&self, pk: &str) -> bool {
+        self.active(pk).is_some_and(|m| m.guest)
+    }
+
+    pub fn is_superadmin(&self, pk: &str) -> bool {
+        self.active(pk).is_some_and(|m| m.superadmin)
+    }
+
+    /// Member of the live team (any role).
+    pub fn in_team(&self, team: &str, pk: &str) -> bool {
+        self.teams.get(team).is_some_and(|m| m.contains_key(pk))
+    }
+
+    pub fn is_team_admin(&self, team: &str, pk: &str) -> bool {
+        self.teams
+            .get(team)
+            .is_some_and(|m| m.get(pk).copied().unwrap_or(false))
+    }
+
+    fn is_any_team_admin(&self, pk: &str) -> bool {
+        self.teams
+            .values()
+            .any(|m| m.get(pk).copied().unwrap_or(false))
+    }
+
+    fn has_guest_access(&self, pk: &str, team: &str, project: &str) -> bool {
+        self.guests
+            .contains(&(pk.to_owned(), team.to_owned(), project.to_owned()))
+    }
+
+    /// Admin of the project's team or superadmin in it; superadmin for a
+    /// project without team.
+    fn project_admin(&self, pk: &str, team: Option<&str>) -> bool {
+        match team {
+            Some(t) => self.is_team_admin(t, pk) || (self.is_superadmin(pk) && self.in_team(t, pk)),
+            None => self.is_superadmin(pk),
+        }
+    }
+
+    pub fn can_read(&self, pk: &str, p: ProjectRef<'_>) -> bool {
+        let Some(m) = self.active(pk) else {
+            return false;
+        };
+        match p.team_id {
+            None => !m.guest,
+            Some(team) => self.in_team(team, pk) || self.has_guest_access(pk, team, p.id),
+        }
+    }
+
+    pub fn can_write(&self, pk: &str, p: ProjectRef<'_>) -> bool {
+        self.is_active_member(pk) && self.can_read(pk, p)
+    }
+
+    pub fn can_delete_task(&self, pk: &str, p: ProjectRef<'_>, task_created_by: &str) -> bool {
+        self.can_write(pk, p) && (task_created_by == pk || self.project_admin(pk, p.team_id))
+    }
+
+    pub fn can_manage(&self, pk: &str, p: ProjectRef<'_>) -> bool {
+        self.can_write(pk, p) && (p.created_by == pk || self.project_admin(pk, p.team_id))
+    }
+
+    pub fn can_create_project(&self, pk: &str, team: Option<&str>) -> bool {
+        if !self.is_active_member(pk) {
+            return false;
+        }
+        match team {
+            Some(t) => self.project_admin(pk, Some(t)),
+            None => self.is_superadmin(pk) || self.is_any_team_admin(pk),
+        }
+    }
+
+    /// Everyone who may read the project, sorted.
+    pub fn readers(&self, p: ProjectRef<'_>) -> Vec<String> {
+        self.members
+            .keys()
+            .filter(|pk| self.can_read(pk, p))
+            .cloned()
+            .collect()
+    }
+
+    /// Everyone who may write in the project, sorted.
+    pub fn writers(&self, p: ProjectRef<'_>) -> Vec<String> {
+        self.members
+            .keys()
+            .filter(|pk| self.can_write(pk, p))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Rights after every accepted membership op, to judge a change against the
+/// moment it was made.
+#[derive(Debug, Clone, Default)]
+pub struct RightsHistory {
+    current: Rights,
+    /// `(time of the op that produced it, rights)`, oldest first. The first
+    /// entry is the genesis state; consecutive entries differ.
+    steps: Vec<(OffsetDateTime, Rights)>,
+}
+
+impl RightsHistory {
+    /// Current rights from the tables, history from the stored ops.
+    pub fn load(conn: &Connection) -> AppResult<RightsHistory> {
+        let current = Rights::load(conn)?;
+        let Some(org) = org::load_organization(conn)? else {
+            return Ok(RightsHistory {
+                current,
+                steps: Vec::new(),
+            });
+        };
+        let ops = permissions::load_ops(conn)?;
+        Ok(RightsHistory {
+            current,
+            steps: replay(&org, &ops),
+        })
+    }
+
+    pub fn from_parts(current: Rights, steps: Vec<(OffsetDateTime, Rights)>) -> RightsHistory {
+        RightsHistory { current, steps }
+    }
+
+    pub fn current(&self) -> &Rights {
+        &self.current
+    }
+
+    /// `true` when `check` holds now, or held at some point and the op that
+    /// took it away is dated after `at` (unix seconds). The start of a right
+    /// is not compared with `at`, so a laptop whose clock runs behind is not
+    /// refused.
+    pub fn allowed_at(&self, at: i64, check: impl Fn(&Rights) -> bool) -> bool {
+        if check(&self.current) {
+            return true;
+        }
+        let last_true = self.steps.iter().rposition(|(_, r)| check(r));
+        match last_true {
+            Some(i) => self
+                .steps
+                .get(i + 1)
+                .is_some_and(|(lost_at, _)| at < lost_at.unix_timestamp()),
+            None => false,
+        }
+    }
+}
+
+/// Applies the accepted ops one at a time from genesis and keeps the rights
+/// after each op that changed them.
+fn replay(org: &org::Organization, ops: &[permissions::VerifiedOp]) -> Vec<(OffsetDateTime, Rights)> {
+    let result = permissions::fold(org, ops);
+    let by_id: HashMap<&str, &permissions::VerifiedOp> =
+        ops.iter().map(|op| (op.id.as_str(), op)).collect();
+    let mut state = OrgState::genesis(org);
+    let start = permissions::format::parse_time(&org.created_at)
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    let mut steps = vec![(start, Rights::from_state(&state))];
+    for (id, outcome) in &result.outcomes {
+        if outcome.is_err() {
+            continue;
+        }
+        let Some(op) = by_id.get(id.as_str()) else {
+            continue;
+        };
+        if state.apply(op).is_err() {
+            continue;
+        }
+        let rights = Rights::from_state(&state);
+        if steps.last().is_some_and(|(_, last)| *last != rights) {
+            steps.push((op.at, rights));
+        }
+    }
+    steps
+}
+
+/// A project this peer may access, for chat and documents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectAccess {
+    pub project_id: String,
+    pub team_id: Option<String>,
+    /// May create and change tasks (not a guest).
+    pub can_write: bool,
+}
+
+fn project_rows(conn: &Connection) -> AppResult<Vec<(String, Option<String>, String)>> {
+    let mut stmt =
+        conn.prepare("SELECT id, team_id, created_by FROM board_projects ORDER BY id")?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
+/// The projects on this laptop that `peer` (64 hex public key) may see now:
+/// "proyek yang boleh diakses peer X". Chat and documents call this to scope
+/// project channels and project files the same way the board does.
+pub fn projects_accessible_by(conn: &Connection, peer: &str) -> AppResult<Vec<ProjectAccess>> {
+    let rights = Rights::load(conn)?;
+    Ok(project_rows(conn)?
+        .into_iter()
+        .filter_map(|(id, team, creator)| {
+            let p = ProjectRef {
+                id: &id,
+                team_id: team.as_deref(),
+                created_by: &creator,
+            };
+            rights.can_read(peer, p).then(|| ProjectAccess {
+                can_write: rights.can_write(peer, p),
+                project_id: id.clone(),
+                team_id: team.clone(),
+            })
+        })
+        .collect())
+}
+
+/// Whether `peer` may see `project_id` now. `false` for unknown projects.
+pub fn may_access_project(conn: &Connection, peer: &str, project_id: &str) -> AppResult<bool> {
+    let row: Option<(Option<String>, String)> = conn
+        .query_row(
+            "SELECT team_id, created_by FROM board_projects WHERE id = ?1",
+            [project_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((team, creator)) = row else {
+        return Ok(false);
+    };
+    Ok(Rights::load(conn)?.can_read(
+        peer,
+        ProjectRef {
+            id: project_id,
+            team_id: team.as_deref(),
+            created_by: &creator,
+        },
+    ))
+}
+
+/// For a guest invite: every project must exist on this laptop and belong to
+/// `team_id`, otherwise the invite would grant nothing.
+pub fn check_guest_projects(conn: &Connection, team_id: &str, project_ids: &[String]) -> AppResult<()> {
+    for id in project_ids {
+        let team: Option<Option<String>> = conn
+            .query_row(
+                "SELECT team_id FROM board_projects WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match team {
+            Some(Some(t)) if t == team_id => {}
+            Some(_) => {
+                return Err(AppError::InvalidInput(
+                    "Tamu hanya bisa diundang ke proyek milik tim yang dipilih. Pilih proyek dari tim itu.".into(),
+                ));
+            }
+            None => {
+                return Err(AppError::NotFound(
+                    "Proyek tidak ditemukan di laptop ini.".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

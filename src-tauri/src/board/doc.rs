@@ -8,13 +8,19 @@
 //!   project: { id, code, name, team_id (str or null) }
 //!   next_number: int
 //!   tasks: Map<task_id> {
-//!     number, title: Text, description: Text, column, rank,
+//!     nonce, number, title: Text, description: Text, column, rank,
 //!     assignee (str or null), due (str or null), priority, labels: List<str>,
 //!     created_by, created_at, updated_at, deleted,
-//!     comments: Map<comment_id> { author, at, body },
+//!     comments: Map<comment_id> { nonce, author, at, body },
 //!     activity: List<{ at, actor, kind, detail }>
 //!   }
 //! ```
+//!
+//! A task id is bound to its creator and a comment id to its author through
+//! the random `nonce` stored next to it ([`derive_task_id`],
+//! [`derive_comment_id`]), so nobody can create a task or comment at a key
+//! that someone else's task or comment could take. Tasks and comments made
+//! before ids were bound have no nonce; they are still read normally.
 //!
 //! Mutations only stage operations; `store::commit_local` turns them into one
 //! signed change. Reads are lenient: a document merged from other laptops may
@@ -38,6 +44,9 @@ use crate::error::{AppError, AppResult};
 
 pub const DOC_VERSION: i64 = 1;
 
+/// Largest task number a document may hold, so `+ 1` never overflows.
+pub const MAX_TASK_NUMBER: i64 = 1_000_000_000;
+
 /// Activity kinds stored in `activity[].kind`.
 pub mod kind {
     pub const CREATED: &str = "created";
@@ -50,6 +59,9 @@ pub mod kind {
     pub const LABELS: &str = "labels";
     pub const DELETED: &str = "deleted";
     pub const COMMENTED: &str = "commented";
+    /// The task got a new number because another task had the same one after
+    /// sync; `detail` is the old code, for example `PA-12`.
+    pub const RENUMBERED: &str = "renumbered";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -135,6 +147,36 @@ pub fn random_id() -> String {
     hex::encode(b)
 }
 
+/// A task id bound to its creator: the first 32 hex characters of BLAKE3
+/// over `mira-task-v1`, creator and nonce, separated by newlines.
+pub fn derive_task_id(created_by: &str, nonce: &str) -> String {
+    bound_id("mira-task-v1", created_by, nonce)
+}
+
+/// A comment id bound to its author, like [`derive_task_id`] with
+/// `mira-comment-v1`.
+pub fn derive_comment_id(author: &str, nonce: &str) -> String {
+    bound_id("mira-comment-v1", author, nonce)
+}
+
+fn bound_id(domain: &str, who: &str, nonce: &str) -> String {
+    let input = format!("{domain}
+{who}
+{nonce}");
+    blake3::hash(input.as_bytes()).to_hex()[..32].to_owned()
+}
+
+/// Whether `id` is the bound id of `who` and `nonce` (32 hex) under
+/// `derive` ([`derive_task_id`] or [`derive_comment_id`]).
+pub fn is_bound_id(
+    derive: fn(&str, &str) -> String,
+    id: &str,
+    who: &str,
+    nonce: Option<&str>,
+) -> bool {
+    nonce.is_some_and(|n| crate::org::is_lower_hex(n, 32) && derive(who, n) == id)
+}
+
 fn am(err: AutomergeError) -> AppError {
     AppError::Internal(format!("Dokumen board tidak bisa diproses. Detail: {err}"))
 }
@@ -161,6 +203,22 @@ impl BoardDoc {
         doc.put(ROOT, "next_number", 1_i64).map_err(am)?;
         doc.put_object(ROOT, "tasks", ObjType::Map).map_err(am)?;
         Ok(BoardDoc { doc })
+    }
+
+    /// Stores the nonce that binds the project id to its creator and team
+    /// (`store::derive_project_id`). Staged, part of the first change.
+    pub fn set_project_nonce(&mut self, nonce: &str) -> AppResult<()> {
+        let project = self.obj(&ROOT, "project").ok_or_else(|| {
+            AppError::Internal("Dokumen proyek tidak lengkap: data proyek tidak ada.".into())
+        })?;
+        self.doc.put(&project, "nonce", nonce).map_err(am)
+    }
+
+    /// The nonce of [`BoardDoc::set_project_nonce`]; `None` for projects made
+    /// before ids were bound.
+    pub fn project_nonce(&self) -> Option<String> {
+        self.obj(&ROOT, "project")
+            .and_then(|p| self.str(&p, "nonce"))
     }
 
     /// Loads a snapshot made by [`BoardDoc::save`].
@@ -250,6 +308,20 @@ impl BoardDoc {
         Ok(())
     }
 
+    /// A copy with the same actor and history, to restore after a change
+    /// that `sync` refuses once applied (for example a delete without right).
+    pub fn fork(&mut self) -> BoardDoc {
+        let actor = self.doc.get_actor().clone();
+        BoardDoc {
+            doc: self.doc.fork().with_actor(actor),
+        }
+    }
+
+    /// Read access to the Automerge document, for `rules`.
+    pub(crate) fn automerge(&self) -> &AutoCommit {
+        &self.doc
+    }
+
     /// What a remote change may not alter about existing tasks:
     /// task id -> (created_by, deleted).
     fn shape_guard(&self) -> HashMap<String, (String, bool)> {
@@ -273,13 +345,24 @@ impl BoardDoc {
         author: &str,
     ) -> Result<(), String> {
         let root_ok = matches!(self.field(&ROOT, "v"), Some(Field::Int(_)))
-            && matches!(self.field(&ROOT, "next_number"), Some(Field::Int(_)))
+            && matches!(self.field(&ROOT, "next_number"), Some(Field::Int(n)) if (1..=MAX_TASK_NUMBER + 1).contains(&n))
             && matches!(self.field(&ROOT, "project"), Some(Field::Obj(ObjType::Map)))
             && matches!(self.field(&ROOT, "tasks"), Some(Field::Obj(ObjType::Map)));
         if !root_ok {
             return Err("struktur utama dokumen board rusak".into());
         }
         let tasks = self.tasks_obj().map_err(|e| e.to_string())?;
+        let present: std::collections::HashSet<String> = self.doc.keys(&tasks).collect();
+        if let Some(gone) = before.keys().find(|id| !present.contains(*id)) {
+            return Err(format!("task {gone}: dihapus dari dokumen"));
+        }
+        let meta = self.project();
+        if !meta.id.is_empty()
+            && (super::model::validate_project_name(&meta.name).ok().as_deref() != Some(meta.name.as_str())
+                || super::model::validate_project_code(&meta.code).ok().as_deref() != Some(meta.code.as_str()))
+        {
+            return Err("nama atau kode proyek tidak valid".into());
+        }
         for id in self.doc.keys(&tasks) {
             let bad = |what: &str| Err(format!("task {id}: {what}"));
             let Some(t) = self.obj(&tasks, &id) else {
@@ -292,7 +375,7 @@ impl BoardDoc {
             let is_str = |k: &str| matches!(f(k), Some(Field::Str(_)));
             let is_obj = |k: &str, ty: ObjType| f(k) == Some(Field::Obj(ty));
             let str_or_null = |k: &str| matches!(f(k), Some(Field::Str(_) | Field::Null));
-            let fields_ok = matches!(f("number"), Some(Field::Int(_)))
+            let fields_ok = matches!(f("number"), Some(Field::Int(n)) if (1..=MAX_TASK_NUMBER).contains(&n))
                 && is_obj("title", ObjType::Text)
                 && is_obj("description", ObjType::Text)
                 && matches!(f("column"), Some(Field::Str(c)) if ColumnId::parse(&c).is_some())
@@ -306,7 +389,8 @@ impl BoardDoc {
                 && is_str("created_by")
                 && is_str("created_at")
                 && is_str("updated_at")
-                && matches!(f("deleted"), Some(Field::Bool(_)));
+                && matches!(f("deleted"), Some(Field::Bool(_)))
+                && matches!(f("nonce"), None | Some(Field::Str(_)));
             if !fields_ok {
                 return bad("isian wajib hilang atau jenisnya salah");
             }
@@ -317,6 +401,17 @@ impl BoardDoc {
                 Some((_, true)) if !deleted => return bad("task yang dihapus dimunculkan lagi"),
                 None if created_by != author => {
                     return bad("task baru dibuat atas nama laptop lain");
+                }
+                // Also checked by `rules::check_new_authorship`; failing here
+                // lets `apply_remote` restore the document.
+                None if !is_bound_id(
+                    derive_task_id,
+                    &id,
+                    &created_by,
+                    self.str(&t, "nonce").as_deref(),
+                ) =>
+                {
+                    return bad("kode task baru tidak cocok dengan pembuatnya");
                 }
                 _ => {}
             }
@@ -384,14 +479,7 @@ impl BoardDoc {
     pub fn create_task(&mut self, stamp: Stamp<'_>, init: TaskInit) -> AppResult<String> {
         let existing = self.tasks()?;
         let tasks = self.tasks_obj()?;
-        let stored_next = self
-            .doc
-            .get(ROOT, "next_number")
-            .map_err(am)?
-            .and_then(|(v, _)| v.as_i64())
-            .unwrap_or(1);
-        let max_number = existing.iter().map(|t| t.number).max().unwrap_or(0);
-        let number = stored_next.max(max_number + 1).max(1);
+        let number = self.fresh_number()?;
         let column = init.column.unwrap_or(ColumnId::Todo);
         let last_rank = existing
             .iter()
@@ -401,12 +489,14 @@ impl BoardDoc {
             .max();
         let rank = rank::between(last_rank, None).unwrap_or_else(|| "V".to_owned());
 
-        let id = random_id();
+        let nonce = random_id();
+        let id = derive_task_id(stamp.actor, &nonce);
         let d = &mut self.doc;
         d.put(ROOT, "next_number", number + 1).map_err(am)?;
         let t = d
             .put_object(&tasks, id.as_str(), ObjType::Map)
             .map_err(am)?;
+        d.put(&t, "nonce", nonce.as_str()).map_err(am)?;
         d.put(&t, "number", number).map_err(am)?;
         let title = d.put_object(&t, "title", ObjType::Text).map_err(am)?;
         d.splice_text(&title, 0, 0, &init.title).map_err(am)?;
@@ -428,6 +518,86 @@ impl BoardDoc {
         d.put_object(&t, "activity", ObjType::List).map_err(am)?;
         self.log(&t, stamp, kind::CREATED, column.name())?;
         Ok(id)
+    }
+
+    fn next_number(&self) -> AppResult<i64> {
+        Ok(self
+            .doc
+            .get(ROOT, "next_number")
+            .map_err(am)?
+            .and_then(|(v, _)| v.as_i64())
+            .unwrap_or(1))
+    }
+
+    /// The number a new or renumbered task gets: `next_number`, but above
+    /// every number in use (deleted tasks included), at least 1.
+    pub fn fresh_number(&self) -> AppResult<i64> {
+        let max_number = self.tasks()?.iter().map(|t| t.number).max().unwrap_or(0);
+        Ok(self
+            .next_number()?
+            .max(max_number.saturating_add(1))
+            .clamp(1, MAX_TASK_NUMBER))
+    }
+
+    /// [`BoardDoc::fresh_number`] as the document was at `heads` (changes it
+    /// holds), so every laptop computes the same value for a change judged
+    /// against its dependencies.
+    pub fn fresh_number_at(&self, heads: &[ChangeHash]) -> i64 {
+        let d = &self.doc;
+        let int = |obj: &ObjId, key: &str| -> Option<i64> {
+            d.get_at(obj, key, heads).ok().flatten().and_then(|(v, _)| v.as_i64())
+        };
+        let max_number = match d.get_at(ROOT, "tasks", heads) {
+            Ok(Some((Value::Object(ObjType::Map), tasks))) => d
+                .keys_at(&tasks, heads)
+                .filter_map(|id| match d.get_at(&tasks, id.as_str(), heads) {
+                    Ok(Some((Value::Object(_), t))) => int(&t, "number"),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0),
+            _ => 0,
+        };
+        int(&ROOT, "next_number")
+            .unwrap_or(1)
+            .max(max_number.saturating_add(1))
+            .clamp(1, MAX_TASK_NUMBER)
+    }
+
+    /// Gives a live task `new_number` (chosen by `numbers.rs`), raises
+    /// `next_number` past it and logs a `renumbered` entry whose detail is
+    /// the old code. Nothing is staged when the number is already that.
+    pub fn renumber_task(
+        &mut self,
+        stamp: Stamp<'_>,
+        id: &str,
+        new_number: i64,
+        old_code: &str,
+    ) -> AppResult<()> {
+        let cur = self.live_task(id)?;
+        if cur.number == new_number {
+            return Ok(());
+        }
+        let t = self.task_obj(id)?;
+        self.doc.put(&t, "number", new_number).map_err(am)?;
+        let next = new_number.saturating_add(1);
+        if next > self.next_number()? {
+            self.doc.put(ROOT, "next_number", next).map_err(am)?;
+        }
+        self.doc.put(&t, "updated_at", stamp.at).map_err(am)?;
+        self.log(&t, stamp, kind::RENUMBERED, old_code)
+    }
+
+    /// Sets the project name (already validated); nothing is staged when it
+    /// is unchanged.
+    pub fn rename_project(&mut self, name: &str) -> AppResult<()> {
+        if self.project().name == name {
+            return Ok(());
+        }
+        let project = self.obj(&ROOT, "project").ok_or_else(|| {
+            AppError::Internal("Dokumen proyek tidak lengkap: data proyek tidak ada.".into())
+        })?;
+        self.doc.put(&project, "name", name).map_err(am)
     }
 
     /// Applies the fields that differ from the current values, one activity
@@ -565,11 +735,13 @@ impl BoardDoc {
                 .put_object(&t, "comments", ObjType::Map)
                 .map_err(am)?,
         };
-        let comment_id = random_id();
+        let nonce = random_id();
+        let comment_id = derive_comment_id(stamp.actor, &nonce);
         let c = self
             .doc
             .put_object(&comments, comment_id.as_str(), ObjType::Map)
             .map_err(am)?;
+        self.doc.put(&c, "nonce", nonce.as_str()).map_err(am)?;
         self.doc.put(&c, "author", stamp.actor).map_err(am)?;
         self.doc.put(&c, "at", stamp.at).map_err(am)?;
         self.doc.put(&c, "body", body).map_err(am)?;
@@ -1056,6 +1228,180 @@ mod tests {
         let ta = a.live_task(&id).unwrap();
         assert_eq!(ta.description, "Wah, Halo dunia!");
         assert_eq!(ta, b.live_task(&id).unwrap());
+    }
+
+    #[test]
+    fn renumber_moves_next_number_and_logs_old_code() {
+        let mut d = new_doc();
+        let a = d.create_task(stamp("t1"), init("a")).unwrap();
+        d.create_task(stamp("t1"), init("b")).unwrap();
+        assert_eq!(d.fresh_number().unwrap(), 3);
+        d.commit(0).unwrap();
+        d.renumber_task(stamp("t2"), &a, 7, "PA-1").unwrap();
+        let t = d.live_task(&a).unwrap();
+        assert_eq!(t.number, 7);
+        assert_eq!(t.updated_at, "t2");
+        let last = t.activity.last().unwrap();
+        assert_eq!(
+            (last.kind.as_str(), last.detail.as_str()),
+            (kind::RENUMBERED, "PA-1")
+        );
+        assert_eq!(d.fresh_number().unwrap(), 8);
+        d.commit(0).unwrap();
+        d.renumber_task(stamp("t3"), &a, 7, "PA-7").unwrap();
+        assert_eq!(d.commit(0), None, "same number, nothing staged");
+        let c = d.create_task(stamp("t4"), init("c")).unwrap();
+        assert_eq!(d.live_task(&c).unwrap().number, 8);
+        d.delete_task(stamp("t5"), &c).unwrap();
+        assert_eq!(
+            d.renumber_task(stamp("t6"), &c, 9, "PA-8")
+                .unwrap_err()
+                .code(),
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn renumbering_by_another_laptop_keeps_the_shape() {
+        let mut a = new_doc();
+        let id = a
+            .create_task(
+                Stamp {
+                    actor: &hex::encode(A),
+                    at: "t1",
+                },
+                init("a"),
+            )
+            .unwrap();
+        a.commit(0).unwrap();
+        let base = a.heads();
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        b.renumber_task(
+            Stamp {
+                actor: &hex::encode(B),
+                at: "t2",
+            },
+            &id,
+            5,
+            "PA-1",
+        )
+        .unwrap();
+        b.rename_project("Proyek Baru").unwrap();
+        b.commit(0).unwrap();
+        for c in b.changes_after(&base) {
+            a.apply_remote(c, &hex::encode(B)).unwrap();
+        }
+        assert_eq!(a.live_task(&id).unwrap().number, 5);
+        assert_eq!(a.project().name, "Proyek Baru");
+        assert_eq!(a.fresh_number().unwrap(), 6);
+    }
+
+    fn nonce(d: &BoardDoc, obj: &ObjId) -> Option<String> {
+        d.str(obj, "nonce")
+    }
+
+    #[test]
+    fn task_and_comment_ids_are_bound_to_their_author() {
+        let mut d = new_doc();
+        let id = d.create_task(stamp("t1"), init("a")).unwrap();
+        let cid = d.add_comment(stamp("t2"), &id, "halo").unwrap();
+        let t = d.task_obj(&id).unwrap();
+        let n = nonce(&d, &t).unwrap();
+        assert!(crate::org::is_lower_hex(&n, 32));
+        assert_eq!(id, derive_task_id("aa", &n));
+        let c = d.obj(&d.obj(&t, "comments").unwrap(), &cid).unwrap();
+        let cn = nonce(&d, &c).unwrap();
+        assert_eq!(cid, derive_comment_id("aa", &cn));
+        assert_ne!(n, cn);
+        assert!(is_bound_id(derive_task_id, &id, "aa", Some(&n)));
+        assert!(!is_bound_id(derive_task_id, &id, "bb", Some(&n)));
+        assert!(!is_bound_id(derive_comment_id, &id, "aa", Some(&n)));
+        assert!(!is_bound_id(derive_task_id, &id, "aa", None));
+        // Fixed inputs give a fixed id, on every laptop and version.
+        assert_eq!(derive_task_id("aa", "00"), derive_task_id("aa", "00"));
+        assert_eq!(derive_task_id("aa", "00").len(), 32);
+        assert_ne!(derive_task_id("aa", "00"), derive_comment_id("aa", "00"));
+    }
+
+    #[test]
+    fn a_remote_task_at_an_unbound_id_breaks_the_shape() {
+        let mut a = new_doc();
+        let base = a.heads();
+        let b_hex = hex::encode(B);
+        let wrong: [(&str, Option<ScalarValue>); 3] = [
+            ("nonce lain", Some(random_id().as_str().into())),
+            ("tanpa nonce", None),
+            ("nonce bukan teks", Some(5_i64.into())),
+        ];
+        for (label, value) in wrong {
+            let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+            let id = b
+                .create_task(Stamp { actor: &b_hex, at: "t1" }, init("x"))
+                .unwrap();
+            let t = b.task_obj(&id).unwrap();
+            match value {
+                Some(v) => b.doc.put(&t, "nonce", v).unwrap(),
+                None => b.doc.delete(&t, "nonce").unwrap(),
+            }
+            b.commit(0).unwrap();
+            let c = b.changes_after(&base).remove(0);
+            let err = a.apply_remote(c, &b_hex).unwrap_err();
+            assert_eq!(err.0, "board_invalid_doc", "{label}: {err:?}");
+            assert_eq!(a.task(&id).unwrap(), None, "{label}: restored");
+        }
+        // The bound id is accepted.
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        let id = b
+            .create_task(Stamp { actor: &b_hex, at: "t1" }, init("x"))
+            .unwrap();
+        b.commit(0).unwrap();
+        a.apply_remote(b.changes_after(&base).remove(0), &b_hex)
+            .unwrap();
+        assert!(a.live_task(&id).is_ok());
+    }
+
+    #[test]
+    fn tasks_and_comments_without_a_nonce_are_still_read() {
+        let mut d = new_doc();
+        let id = d.create_task(stamp("t1"), init("lama")).unwrap();
+        let cid = d.add_comment(stamp("t2"), &id, "komentar lama").unwrap();
+        let t = d.task_obj(&id).unwrap();
+        let c = d.obj(&d.obj(&t, "comments").unwrap(), &cid).unwrap();
+        d.doc.delete(&t, "nonce").unwrap();
+        d.doc.delete(&c, "nonce").unwrap();
+        let task = d.live_task(&id).unwrap();
+        assert_eq!(task.title, "lama");
+        assert_eq!(task.comments[0].body, "komentar lama");
+    }
+
+    #[test]
+    fn fresh_number_at_reads_the_past() {
+        let mut d = new_doc();
+        let first = d.heads();
+        assert_eq!(d.fresh_number_at(&first), 1);
+        let a = d.create_task(stamp("t1"), init("a")).unwrap();
+        d.create_task(stamp("t1"), init("b")).unwrap();
+        d.commit(0).unwrap();
+        let second = d.heads();
+        d.renumber_task(stamp("t2"), &a, 40, "PA-1").unwrap();
+        d.doc.put(ROOT, "next_number", 3_i64).unwrap();
+        d.commit(0).unwrap();
+        let third = d.heads();
+        assert_eq!(d.fresh_number_at(&first), 1);
+        assert_eq!(d.fresh_number_at(&second), 3);
+        assert_eq!(d.fresh_number_at(&third), 41);
+        assert_eq!(d.fresh_number_at(&third), d.fresh_number().unwrap());
+    }
+
+    #[test]
+    fn rename_project_only_stages_a_real_change() {
+        let mut d = new_doc();
+        d.rename_project("Proyek A").unwrap();
+        assert_eq!(d.commit(0), None);
+        d.rename_project("Proyek B").unwrap();
+        assert!(d.commit(0).is_some());
+        assert_eq!(d.project().name, "Proyek B");
+        assert_eq!(d.project().code, "PA");
     }
 
     #[test]

@@ -194,9 +194,18 @@ impl ReminderSource for SqlReminderSource {
                 r.get::<_, String>(5)?,
             ))
         })?;
+        // Only projects this laptop may still see (not after leaving the team).
+        let visible: std::collections::HashSet<String> =
+            crate::board::access::projects_accessible_by(conn, me)?
+                .into_iter()
+                .map(|a| a.project_id)
+                .collect();
         let mut tasks = Vec::new();
         for row in rows {
             let (project_id, task_id, code, title, project_name, due) = row?;
+            if !visible.contains(&project_id) {
+                continue;
+            }
             let Some(due) = parse_date(&due) else {
                 continue;
             };
@@ -534,6 +543,20 @@ mod tests {
             params![PROJECT, ME],
         )
         .unwrap();
+        // The project has no team, so ME as an active member may see it.
+        let org = "0f".repeat(16);
+        conn.execute(
+            "INSERT INTO organizations (id, name, founder_public_key, created_at, genesis_signature)
+             VALUES (?1, 'Kantor', ?2, 't', ?3)",
+            params![org, ME, "00".repeat(64)],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO members (organization_id, public_key, display_name, role, added_at, status, is_superadmin, kind)
+             VALUES (?1, ?2, 'Saya', 'member', 't', 'active', 0, 'member')",
+            params![org, ME],
+        )
+        .unwrap();
         Db { _tmp: tmp, conn }
     }
 
@@ -802,6 +825,9 @@ mod tests {
     #[test]
     fn board_ready_needs_an_organization() {
         let d = db();
+        assert!(board_ready(&d.conn).unwrap());
+        d.conn.execute("DELETE FROM members", []).unwrap();
+        d.conn.execute("DELETE FROM organizations", []).unwrap();
         assert!(!board_ready(&d.conn).unwrap());
     }
 

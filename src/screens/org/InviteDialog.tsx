@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import {
   api,
   INVITE_ROLE_LABELS,
@@ -9,16 +9,28 @@ import {
   type InviteValidity,
   type TeamView,
 } from "../../api";
+import { boardApi, type ProjectSummary } from "../../api/board";
 import { formatDateTime } from "../../api/format";
+import { teamLabel } from "../board/format";
 import { CopyButton } from "../../components/CopyButton";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { FieldError } from "../../components/FieldError";
 import type { OrgCtx } from "./context";
+
+// Batas proyek per kode undangan Tamu, sama dengan inti Rust.
+export const MAX_GUEST_PROJECTS = 50;
+
+type ProjectsState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; list: ProjectSummary[] }
+  | { status: "error"; error: AppError };
 
 const ROLE_DESC: Record<InviteRole, string> = {
   member: "Chat, buat dan kerjakan task di semua proyek tim",
   team_admin: "Semua izin di tim ini, termasuk mengatur anggota",
-  guest: "Lihat dan komentar di proyek yang dipilih",
+  guest: "Melihat board dan membaca komentar di proyek yang dipilih. Tidak bisa mengubah task atau berkomentar.",
 };
 
 const VALIDITY_HINT: Record<InviteValidity, string> = {
@@ -43,9 +55,18 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const [created, setCreated] = useState<CreatedInvite | null>(null);
+  const [projects, setProjects] = useState<ProjectsState>({ status: "idle" });
+  const [projectsAttempt, setProjectsAttempt] = useState(0);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const [sentIds, setSentIds] = useState<string[]>([]);
+  const pickRef = useRef<HTMLUListElement>(null);
   const teamSelect = useId();
   const validitySelect = useId();
   const validityHint = useId();
+  const guestHint = useId();
+  const pickErrId = useId();
+  const isGuest = role === "guest";
 
   // Setiap kali dialog dibuka, mulai dari form kosong. Kode lama tidak pernah tampil lagi.
   useEffect(() => {
@@ -55,10 +76,38 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
       setValidity("24h");
       setError(null);
       setCreated(null);
+      setPicked([]);
+      setPickError(null);
+      setSentIds([]);
     }
   }, [open]);
 
+  // Daftar proyek dibaca saat Tamu dipilih: hanya proyek yang terlihat di laptop ini.
+  useEffect(() => {
+    if (!open || !isGuest) return;
+    let live = true;
+    setProjects({ status: "loading" });
+    boardApi
+      .listProjects()
+      .then((list) => {
+        if (live) setProjects({ status: "ready", list: Array.isArray(list) ? list : [] });
+      })
+      .catch((err) => {
+        if (live) setProjects({ status: "error", error: toAppError(err) });
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, isGuest, projectsAttempt]);
+
   const team = teams.find((t) => t.id === teamId);
+  // Superadmin yang bukan anggota tim ini tidak menerima sinkron proyek tim itu.
+  const inTeam = !!team?.members.some((m) => m.publicKey === ctx.dir.me.publicKey);
+  const teamProjects = projects.status === "ready" ? projects.list.filter((p) => p.teamId === teamId) : [];
+  // Centang dari tim lain tidak ikut terkirim kalau timnya diganti.
+  const pickedHere = picked.filter((id) => teamProjects.some((p) => p.id === id));
+  const atMax = pickedHere.length >= MAX_GUEST_PROJECTS;
+  const guestBlocked = isGuest && (projects.status !== "ready" || teamProjects.length === 0);
   const single = teams.length === 1 && initialTeamId !== undefined;
   const title = created
     ? "Kode undangan siap"
@@ -68,11 +117,18 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (busy || !teamId) return;
+    if (busy || !teamId || guestBlocked) return;
+    if (isGuest && pickedHere.length === 0) {
+      setPickError("Centang minimal satu proyek yang boleh dilihat Tamu.");
+      pickRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+      return;
+    }
+    const projectIds = isGuest ? pickedHere : [];
     setBusy(true);
     setError(null);
     try {
-      const result = await api.createInvite(teamId, role, validity, []);
+      const result = await api.createInvite(teamId, role, validity, projectIds);
+      setSentIds(projectIds);
       setCreated(result);
       void ctx.reload();
     } catch (err) {
@@ -107,6 +163,19 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
                 {INVITE_ROLE_LABELS[created.invite.role]} di {created.invite.teamName}
               </dd>
             </div>
+            {created.invite.role === "guest" && (
+              <div>
+                <dt>Proyek</dt>
+                <dd>
+                  <ul className="guest-facts">
+                    {(created.invite.projectIds.length > 0 ? created.invite.projectIds : sentIds).map((id) => {
+                      const p = projects.status === "ready" ? projects.list.find((x) => x.id === id) : undefined;
+                      return <li key={id}>{p ? `${p.code} ${p.name}` : "Proyek yang tidak terlihat di laptop ini"}</li>;
+                    })}
+                  </ul>
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Berlaku sampai</dt>
               <dd>
@@ -150,14 +219,70 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
             <legend className="set-label">Peran</legend>
             <RoleOption value="member" role={role} onPick={setRole} disabled={busy} />
             {isSA && <RoleOption value="team_admin" role={role} onPick={setRole} disabled={busy} />}
-            <RoleOption
-              value="guest"
-              role={role}
-              onPick={setRole}
-              disabled
-              note="Belum bisa dipilih. Tamu diundang ke proyek tertentu, dan proyek baru hadir di Tahap 3."
-            />
+            <RoleOption value="guest" role={role} onPick={setRole} disabled={busy} />
           </fieldset>
+
+          {isGuest && (
+            <fieldset className="role-set" aria-describedby={`${guestHint} ${pickErrId}`}>
+              <legend className="set-label">Proyek yang boleh dilihat</legend>
+              <p id={guestHint} className="hint">
+                Tamu hanya bisa melihat board dan komentar proyek yang dicentang, tidak bisa mengubah task. Paling banyak{" "}
+                {MAX_GUEST_PROJECTS} proyek.
+              </p>
+              {projects.status === "loading" && (
+                <p className="hint" role="status">
+                  Memuat proyek tim...
+                </p>
+              )}
+              {projects.status === "error" && (
+                <ErrorAlert title="Daftar proyek belum terbaca">
+                  <p>{projects.error.message}</p>
+                  <button type="button" className="link-btn" onClick={() => setProjectsAttempt((n) => n + 1)}>
+                    Coba baca lagi
+                  </button>
+                </ErrorAlert>
+              )}
+              {projects.status === "ready" && teamProjects.length === 0 && (
+                <p className="notice-plain">
+                  {team ? teamLabel(team.name) : "Tim ini"} belum punya proyek yang terlihat di laptop ini. Buat proyek
+                  untuk tim ini dulu di menu Board, lalu undang Tamu ke proyek itu.
+                  {isSA && !inTeam && (
+                    <> Kalau tim ini sudah punya proyek, masuk dulu ke tim itu supaya proyeknya terlihat.</>
+                  )}
+                </p>
+              )}
+              {teamProjects.length > 0 && (
+                <ul className="guest-pick" ref={pickRef}>
+                  {teamProjects.map((p, i) => {
+                    const checked = pickedHere.includes(p.id);
+                    return (
+                      <li key={p.id}>
+                        <label className="guest-row">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={busy || (!checked && atMax)}
+                            aria-invalid={i === 0 && pickError ? true : undefined}
+                            aria-describedby={i === 0 && pickError ? pickErrId : undefined}
+                            onChange={(e) => {
+                              setPickError(null);
+                              setPicked(e.target.checked ? [...pickedHere, p.id] : pickedHere.filter((id) => id !== p.id));
+                            }}
+                          />
+                          <span className="guest-code">{p.code}</span>
+                          <span className="guest-name">{p.name}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {atMax && <p className="hint">Sudah {MAX_GUEST_PROJECTS} proyek, batas satu kode undangan.</p>}
+              <div id={pickErrId} aria-live="polite">
+                {pickError && <FieldError text={pickError} />}
+              </div>
+            </fieldset>
+          )}
 
           <div className="field">
             <label htmlFor={validitySelect}>Kode berlaku selama</label>
@@ -193,7 +318,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
                 Batal
               </button>
             </DialogClose>
-            <button type="submit" className="btn" disabled={busy || !teamId} aria-busy={busy || undefined}>
+            <button type="submit" className="btn" disabled={busy || !teamId || guestBlocked} aria-busy={busy || undefined}>
               {busy ? "Membuat kode..." : "Buat kode undangan"}
             </button>
           </div>
@@ -208,13 +333,11 @@ function RoleOption({
   role,
   onPick,
   disabled,
-  note,
 }: {
   value: InviteRole;
   role: InviteRole;
   onPick: (role: InviteRole) => void;
   disabled: boolean;
-  note?: string;
 }) {
   const descId = useId();
   return (
@@ -232,7 +355,6 @@ function RoleOption({
         <span className="role-title">{INVITE_ROLE_LABELS[value]}</span>
         <span id={descId} className="role-desc">
           {ROLE_DESC[value]}
-          {note && <span className="role-note">{note}</span>}
         </span>
       </span>
     </label>

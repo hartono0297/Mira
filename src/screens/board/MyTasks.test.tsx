@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { REMINDER_DAY_BEFORE, REMINDER_DUE_DAY, type MyTask, type TaskCard } from "../../api/board";
@@ -8,11 +8,23 @@ import { groupMyTasks } from "./myTasksGroups";
 const board = vi.hoisted(() => ({ myTasks: vi.fn() }));
 const settings = vi.hoisted(() => ({ getSetting: vi.fn(), setSetting: vi.fn() }));
 
+// Event board (lokal atau dari laptop lain) dipicu sendiri oleh tes lewat boardEvent().
+const listeners = vi.hoisted(() => new Set<() => void>());
+
 vi.mock("../../api/board", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/board")>()),
   boardApi: board,
-  subscribeBoard: () => () => {},
+  subscribeBoard: (handler: () => void) => {
+    listeners.add(handler);
+    return () => listeners.delete(handler);
+  },
 }));
+
+async function boardEvent() {
+  await act(async () => {
+    listeners.forEach((h) => h());
+  });
+}
 
 vi.mock("../../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../../api")>();
@@ -56,6 +68,7 @@ const sample: MyTask[] = [
 ];
 
 beforeEach(() => {
+  listeners.clear();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
   board.myTasks.mockResolvedValue(sample);
@@ -133,6 +146,42 @@ describe("Halaman Task saya", () => {
     expect(
       await screen.findByText("Task yang ditugaskan ke Anda di board proyek akan muncul di sini."),
     ).toBeInTheDocument();
+  });
+
+  it("event board memuat ulang; baris yang difokus lalu hilang memindah fokus ke baris sebelahnya", async () => {
+    render(<MyTasks onOpenTask={vi.fn()} />);
+    const row = await screen.findByRole("button", { name: /PA-6/ });
+    act(() => row.focus());
+    // PA-6 dialihkan rekan ke orang lain, dan ada task baru untuk saya.
+    board.myTasks.mockResolvedValue([...sample.filter((i) => i.task.code !== "PA-6"), item(9, "2026-11-28")]);
+    await boardEvent();
+    expect(await screen.findByText("Task nomor 9")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /PA-6/ })).not.toBeInTheDocument();
+    // Grup "7 hari ke depan" sekarang PA-9 lalu PA-8; fokus ke posisi yang sama.
+    expect(document.activeElement?.closest("li")?.dataset.rescue).toMatch(/-0+9$/);
+  });
+
+  it("selama detail task terbuka, fokus tidak dipindah walau barisnya hilang", async () => {
+    render(<MyTasks taskOpen onOpenTask={vi.fn()} />);
+    const row = await screen.findByRole("button", { name: /PA-6/ });
+    act(() => row.focus());
+    board.myTasks.mockResolvedValue(sample.filter((i) => i.task.code !== "PA-6"));
+    await boardEvent();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /PA-6/ })).not.toBeInTheDocument());
+    // Fokus milik dialog detail; halaman ini tidak merebutnya.
+    expect(document.activeElement?.closest("li")).toBeNull();
+  });
+
+  it("fokus yang sengaja dipindah keluar oleh pengguna tidak direbut kembali", async () => {
+    render(<MyTasks onOpenTask={vi.fn()} />);
+    const row = await screen.findByRole("button", { name: /PA-6/ });
+    act(() => row.focus());
+    act(() => row.blur());
+    await act(async () => {});
+    board.myTasks.mockResolvedValue(sample.filter((i) => i.task.code !== "PA-6"));
+    await boardEvent();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /PA-6/ })).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("error membaca bisa dicoba lagi", async () => {

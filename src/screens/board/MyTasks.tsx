@@ -7,11 +7,16 @@ import { COLUMN_NAMES, daysUntil, dueLabel } from "./format";
 import { GROUP_TITLES, groupMyTasks, type GroupId } from "./myTasksGroups";
 import { ReminderSettings } from "./ReminderSettings";
 import { PriorityChip } from "./TaskDetail";
+import { useFocusRescue } from "./useFocusRescue";
 import "./task.css";
 
 export const MY_TASKS_POLL_MS = 15000;
 
-type Props = { onOpenTask: (projectId: string, taskId: string) => void };
+type Props = {
+  onOpenTask: (projectId: string, taskId: string) => void;
+  // Detail task terbuka di atas halaman ini; fokus sedang dikunci di dialog.
+  taskOpen?: boolean;
+};
 
 function useMyTasks() {
   const [data, setData] = useState<MyTask[] | null>(null);
@@ -51,10 +56,14 @@ function useMyTasks() {
 }
 
 // Halaman Task saya: task milik saya dari semua proyek, dikelompokkan menurut tenggat.
-export function MyTasks({ onOpenTask }: Props) {
+export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
   const live = useMyTasks();
   const [showDone, setShowDone] = useState(false);
   const ids = useId();
+  const rootRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Baris yang difokus bisa hilang saat muat ulang (task dihapus atau dialihkan rekan).
+  const rescue = useFocusRescue(rootRef, { fallback: headingRef, paused: taskOpen });
   const now = new Date();
   const groups = live.data ? groupMyTasks(live.data, now) : [];
   const open = groups.filter((g) => g.id !== "done");
@@ -64,7 +73,7 @@ export function MyTasks({ onOpenTask }: Props) {
     const t = item.task;
     const late = t.due !== null && group !== "done" && (daysUntil(t.due, now) ?? 0) < 0;
     return (
-      <li key={`${item.projectId}-${t.id}`}>
+      <li key={`${item.projectId}-${t.id}`} data-rescue={`${item.projectId}-${t.id}`}>
         <button type="button" className="mt-row" onClick={() => onOpenTask(item.projectId, t.id)}>
           <span className="mt-code">{t.code}</span>
           <span className="mt-main">
@@ -128,7 +137,7 @@ export function MyTasks({ onOpenTask }: Props) {
         )}
         {open.length === 0 && <p className="mt-allclear">Semua task Anda sudah selesai.</p>}
         {open.map((g) => (
-          <section key={g.id} className="mt-group" aria-labelledby={`${ids}-${g.id}`}>
+          <section key={g.id} className="mt-group" aria-labelledby={`${ids}-${g.id}`} data-rescue-group={g.id}>
             <h3 id={`${ids}-${g.id}`} className={`mt-group-title${g.id === "late" ? " td-late" : ""}`}>
               {GROUP_TITLES[g.id]} <span className="td-count">{g.items.length}</span>
             </h3>
@@ -136,7 +145,7 @@ export function MyTasks({ onOpenTask }: Props) {
           </section>
         ))}
         {done && (
-          <section className="mt-group" aria-labelledby={`${ids}-done`}>
+          <section className="mt-group" aria-labelledby={`${ids}-done`} data-rescue-group="done">
             <h3 id={`${ids}-done`} className="mt-group-title">
               <button
                 type="button"
@@ -163,9 +172,9 @@ export function MyTasks({ onOpenTask }: Props) {
   }
 
   return (
-    <section className="mt" aria-labelledby={`${ids}-page`}>
+    <section className="mt" aria-labelledby={`${ids}-page`} ref={rootRef} {...rescue}>
       <header className="page-head mt-head">
-        <h2 id={`${ids}-page`} className="page-title">
+        <h2 id={`${ids}-page`} className="page-title" ref={headingRef} tabIndex={-1}>
           Task saya
         </h2>
         <span className="page-sub">Task yang ditugaskan ke Anda, dikumpulkan dari semua proyek.</span>

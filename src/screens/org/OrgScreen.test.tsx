@@ -1,7 +1,8 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, Directory, InviteView, OrgInfo } from "../../api";
+import type { ProjectSummary } from "../../api/board";
 import { appState, directory, member, ME, PK_B, PK_C, router, rustError, TEAM_1 } from "../../test/fixtures";
 import { OrgScreen } from "./OrgScreen";
 
@@ -120,7 +121,7 @@ describe("Organisasi: dialog undangan", () => {
     return screen.findByRole("dialog", { name: "Undang ke Tim Uji" });
   }
 
-  it("superadmin bisa memilih Anggota dan Admin tim; Tamu nonaktif dengan alasan", async () => {
+  it("superadmin bisa memilih Anggota, Admin tim, dan Tamu", async () => {
     const user = userEvent.setup();
     invoke.mockImplementation(router({ get_directory: directory() }));
     renderOrg();
@@ -128,8 +129,8 @@ describe("Organisasi: dialog undangan", () => {
 
     expect(within(dialog).getByRole("radio", { name: /Anggota/ })).toBeChecked();
     expect(within(dialog).getByRole("radio", { name: /Admin tim/ })).toBeEnabled();
-    expect(within(dialog).getByRole("radio", { name: /Tamu/ })).toBeDisabled();
-    expect(within(dialog).getByText(/proyek baru hadir di Tahap 3/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: /Tamu/ })).toBeEnabled();
+    expect(within(dialog).queryByText(/Tahap 3/)).not.toBeInTheDocument();
     expect(within(dialog).getByText("Chat, buat dan kerjakan task di semua proyek tim")).toBeInTheDocument();
     expect(within(dialog).getByRole("combobox", { name: "Kode berlaku selama" })).toHaveValue("24h");
   });
@@ -201,6 +202,174 @@ describe("Organisasi: dialog undangan", () => {
     await user.click(within(dialog).getByRole("button", { name: "Buat kode undangan" }));
     expect(await within(dialog).findByText("Anda tidak punya izin mengundang ke tim ini")).toBeInTheDocument();
     expect(within(dialog).getByText("Anda bukan admin tim ini.")).toBeInTheDocument();
+  });
+});
+
+describe("Organisasi: undangan Tamu", () => {
+  const PA = "5".repeat(32);
+  const PB = "6".repeat(32);
+  const PC = "8".repeat(32);
+
+  function project(id: string, code: string, name: string, teamId: string | null): ProjectSummary {
+    return { id, code, name, teamId, teamName: teamId ? "Tim Uji" : null, openCount: 0, taskCount: 0, canManage: true };
+  }
+
+  const projects = [
+    project(PA, "PA", "Proyek Alfa", TEAM_1),
+    project(PB, "KB", "Kantor Baru", TEAM_1),
+    project(PC, "LN", "Tim Lain", "4".repeat(32)),
+  ];
+
+  async function openGuestInvite(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: /Tim Uji/ }));
+    await user.click(screen.getByRole("button", { name: "Undang ke tim" }));
+    const dialog = await screen.findByRole("dialog", { name: "Undang ke Tim Uji" });
+    await user.click(within(dialog).getByRole("radio", { name: /Tamu/ }));
+    return dialog;
+  }
+
+  it("memilih proyek tim, minimal satu, lalu mengirim id proyek dan menampilkan namanya", async () => {
+    const user = userEvent.setup();
+    const created = invite({ role: "guest", projectIds: [PB] });
+    invoke.mockImplementation(
+      router({
+        get_directory: directory(),
+        board_list_projects: projects,
+        create_invite: { code: "ABCD-EFGH-JKMN-PQRS-TVWX", invite: created },
+      }),
+    );
+    renderOrg();
+    const dialog = await openGuestInvite(user);
+    expect(
+      within(dialog).getByText(/Tamu hanya bisa melihat board dan komentar proyek yang dicentang, tidak bisa mengubah task/),
+    ).toBeInTheDocument();
+    const alfa = await within(dialog).findByRole("checkbox", { name: /Proyek Alfa/ });
+    expect(within(dialog).getByRole("checkbox", { name: /Kantor Baru/ })).not.toBeChecked();
+    // Proyek tim lain tidak ditawarkan.
+    expect(within(dialog).queryByRole("checkbox", { name: /Tim Lain/ })).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Buat kode undangan" }));
+    expect(within(dialog).getByText("Centang minimal satu proyek yang boleh dilihat Tamu.")).toBeInTheDocument();
+    expect(alfa).toHaveFocus();
+    expect(invoke).not.toHaveBeenCalledWith("create_invite", expect.anything());
+
+    await user.click(within(dialog).getByRole("checkbox", { name: /Kantor Baru/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Buat kode undangan" }));
+    expect(invoke).toHaveBeenCalledWith("create_invite", {
+      teamId: TEAM_1,
+      role: "guest",
+      validity: "24h",
+      projectIds: [PB],
+    });
+    const done = await screen.findByRole("dialog", { name: "Kode undangan siap" });
+    expect(within(done).getByText(/Tamu di Tim Uji/)).toBeInTheDocument();
+    expect(within(done).getByText("KB Kantor Baru")).toBeInTheDocument();
+  });
+
+  it("tim tanpa proyek yang terlihat: dijelaskan dan tombol buat mati", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation(router({ get_directory: directory(), board_list_projects: [projects[2]] }));
+    renderOrg();
+    const dialog = await openGuestInvite(user);
+    expect(await within(dialog).findByText(/Tim Uji belum punya proyek yang terlihat di laptop ini/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Buat kode undangan" })).toBeDisabled();
+  });
+
+  it("kembali ke Anggota: undangan dikirim tanpa proyek", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation(
+      router({
+        get_directory: directory(),
+        board_list_projects: projects,
+        create_invite: { code: "ABCD-EFGH-JKMN-PQRS-TVWX", invite: invite() },
+      }),
+    );
+    renderOrg();
+    const dialog = await openGuestInvite(user);
+    await user.click(await within(dialog).findByRole("checkbox", { name: /Proyek Alfa/ }));
+    await user.click(within(dialog).getByRole("radio", { name: /Anggota/ }));
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Buat kode undangan" }));
+    expect(invoke).toHaveBeenCalledWith("create_invite", { teamId: TEAM_1, role: "member", validity: "24h", projectIds: [] });
+  });
+
+  it("paling banyak 50 proyek: centang ke-51 dimatikan dengan keterangan", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 51 }, (_, i) =>
+      project(String(i + 10).padStart(32, "0"), `P${i}`, `Proyek ${i}`, TEAM_1),
+    );
+    invoke.mockImplementation(router({ get_directory: directory(), board_list_projects: many }));
+    renderOrg();
+    const dialog = await openGuestInvite(user);
+    const boxes = await within(dialog).findAllByRole("checkbox");
+    expect(boxes).toHaveLength(51);
+    boxes.slice(0, 50).forEach((box) => fireEvent.click(box));
+    expect(boxes[49]).toBeChecked();
+    expect(boxes[50]).toBeDisabled();
+    expect(within(dialog).getByText("Sudah 50 proyek, batas satu kode undangan.")).toBeInTheDocument();
+    fireEvent.click(boxes[0]);
+    expect(boxes[50]).toBeEnabled();
+  });
+
+  it("ganti tim membuang centang proyek tim sebelumnya", async () => {
+    const user = userEvent.setup();
+    const TEAM_2 = "4".repeat(32);
+    const dir = directory({
+      teams: [
+        ...directory().teams,
+        { id: TEAM_2, name: "Gudang", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: ME, role: "admin" }] },
+      ],
+      can: { createTeam: true, manageSuperadmins: true, removeMembers: true, manageTeamIds: [TEAM_1, TEAM_2] },
+    });
+    const gudang = project("9".repeat(32), "GD", "Stok Gudang", TEAM_2);
+    invoke.mockImplementation(
+      router({
+        get_directory: dir,
+        board_list_projects: [...projects, gudang],
+        create_invite: { code: "ABCD-EFGH-JKMN-PQRS-TVWX", invite: invite({ role: "guest", teamId: TEAM_2, projectIds: [gudang.id] }) },
+      }),
+    );
+    renderOrg();
+    await user.click(await screen.findByRole("button", { name: "Kode undangan" }));
+    await user.click(screen.getByRole("button", { name: "Buat kode undangan" }));
+    const dialog = await screen.findByRole("dialog", { name: "Undang ke tim" });
+    await user.click(within(dialog).getByRole("radio", { name: /Tamu/ }));
+    await user.click(await within(dialog).findByRole("checkbox", { name: /Proyek Alfa/ }));
+
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Tim" }), TEAM_2);
+    expect(within(dialog).queryByRole("checkbox", { name: /Proyek Alfa/ })).not.toBeInTheDocument();
+    const stok = within(dialog).getByRole("checkbox", { name: /Stok Gudang/ });
+    expect(stok).not.toBeChecked();
+    await user.click(stok);
+    await user.click(within(dialog).getByRole("button", { name: "Buat kode undangan" }));
+    expect(invoke).toHaveBeenCalledWith("create_invite", {
+      teamId: TEAM_2,
+      role: "guest",
+      validity: "24h",
+      projectIds: [gudang.id],
+    });
+  });
+
+  it("superadmin di luar tim: diberi tahu proyek tim baru terlihat setelah masuk tim", async () => {
+    const user = userEvent.setup();
+    const outside = directory({
+      teams: [{ id: TEAM_1, name: "Tim Uji", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: PK_B, role: "admin" }] }],
+    });
+    invoke.mockImplementation(router({ get_directory: outside, board_list_projects: [] }));
+    renderOrg();
+    const dialog = await openGuestInvite(user);
+    expect(await within(dialog).findByText(/masuk dulu ke tim itu supaya proyeknya terlihat/)).toBeInTheDocument();
+  });
+
+  it("tanpa centang: kotak pertama ditandai tidak valid", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation(router({ get_directory: directory(), board_list_projects: projects }));
+    renderOrg();
+    const dialog = await openGuestInvite(user);
+    const first = await within(dialog).findByRole("checkbox", { name: /Proyek Alfa/ });
+    await user.click(within(dialog).getByRole("button", { name: "Buat kode undangan" }));
+    expect(first).toHaveAttribute("aria-invalid", "true");
+    expect(first).toHaveAccessibleDescription(/Centang minimal satu proyek/);
   });
 });
 

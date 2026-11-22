@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,11 +16,23 @@ const board = vi.hoisted(() => ({
   myTasks: vi.fn(),
 }));
 
+// Event board (lokal atau dari laptop lain) dipicu sendiri oleh tes lewat boardEvent().
+const listeners = vi.hoisted(() => new Set<() => void>());
+
 vi.mock("../../api/board", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/board")>()),
   boardApi: board,
-  subscribeBoard: () => () => {},
+  subscribeBoard: (handler: () => void) => {
+    listeners.add(handler);
+    return () => listeners.delete(handler);
+  },
 }));
+
+async function boardEvent() {
+  await act(async () => {
+    listeners.forEach((h) => h());
+  });
+}
 
 const ME = "a".repeat(64);
 const PK_B = "b".repeat(64);
@@ -53,13 +65,23 @@ function task(extra: Partial<Task> = {}): Task {
     ],
     canEdit: true,
     canDelete: true,
+    canComment: true,
     ...extra,
   };
 }
 
 function view(): BoardView {
   return {
-    project: { id: P, code: "PA", name: "Proyek Uji", teamId: null, openCount: 1, taskCount: 1, canManage: true },
+    project: {
+      id: P,
+      code: "PA",
+      name: "Proyek Uji",
+      teamId: null,
+      teamName: null,
+      openCount: 1,
+      taskCount: 1,
+      canManage: true,
+    },
     columns: [
       { id: "todo", name: "To do", tasks: [] },
       { id: "doing", name: "Dikerjakan", tasks: [] },
@@ -92,6 +114,7 @@ async function openDialog() {
 }
 
 beforeEach(() => {
+  listeners.clear();
   board.getTask.mockResolvedValue(task());
   board.getBoard.mockResolvedValue(view());
   board.updateTask.mockImplementation(async (_p: string, _t: string, patch: Partial<Task>) => task(patch));
@@ -306,7 +329,7 @@ describe("Detail task: hapus", () => {
 
 describe("Detail task: hanya-baca", () => {
   it("menampilkan nilai sebagai teks dan menjelaskan alasannya", async () => {
-    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false }));
+    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false, canComment: false }));
     renderDetail();
     expect(await screen.findByText(/Anda hanya bisa melihat task ini/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Judul task")).not.toBeInTheDocument();
@@ -452,5 +475,195 @@ describe("Detail task: fokus setelah tutup", () => {
     await user.click(within(confirm).getByRole("button", { name: "Hapus PA-12" }));
     await waitFor(() => expect(onDeleted).toHaveBeenCalledWith(T, "PA-12"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+});
+
+describe("Detail task: Tamu dan izin komentar", () => {
+  it("Tamu: tidak ada isian, tombol hapus, label, atau form komentar", async () => {
+    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false, canComment: false }));
+    renderDetail();
+    expect(await screen.findByText(/Anda hanya bisa melihat task ini/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hapus task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Hapus label/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tulis komentar")).not.toBeInTheDocument();
+    // Komentar yang sudah ada tetap bisa dibaca.
+    expect(screen.getByText(/Sudah saya baca/)).toBeInTheDocument();
+  });
+
+  it("boleh berkomentar tapi tidak mengubah: hanya form komentar", async () => {
+    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false, canComment: true }));
+    renderDetail();
+    expect(await screen.findByText(/bisa membaca dan mengomentari task ini/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Tulis komentar")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Judul task")).not.toBeInTheDocument();
+  });
+
+  it("boleh mengubah tapi tidak berkomentar: form komentar tidak ada", async () => {
+    board.getTask.mockResolvedValue(task({ canComment: false }));
+    renderDetail();
+    await openDialog();
+    expect(screen.queryByLabelText("Tulis komentar")).not.toBeInTheDocument();
+  });
+});
+
+describe("Detail task: penanggung jawab yang tidak bisa ditugaskan lagi", () => {
+  it("tetap tampil sebagai pilihan terpilih dengan keterangan", async () => {
+    const lama = { publicKey: "c".repeat(64), name: "Budi Uji" };
+    board.getTask.mockResolvedValue(task({ assignee: lama }));
+    renderDetail();
+    await openDialog();
+    const select = screen.getByLabelText("Penanggung jawab");
+    expect(select).toHaveValue(lama.publicKey);
+    expect(within(select).getByRole("option", { name: "Budi Uji (tidak bisa ditugaskan lagi)" })).toBeInTheDocument();
+    // Anggota proyek yang lain tidak diberi keterangan.
+    expect(within(select).getByRole("option", { name: "Sari Uji" })).toBeInTheDocument();
+  });
+
+  it("di tampilan baca-saja juga diberi keterangan", async () => {
+    const lama = { publicKey: "c".repeat(64), name: "Budi Uji" };
+    board.getTask.mockResolvedValue(task({ assignee: lama, canEdit: false, canDelete: false, canComment: false }));
+    renderDetail();
+    const side = await screen.findByRole("complementary", { name: "Rincian task" });
+    expect(within(side).getByText("Budi Uji (tidak bisa ditugaskan lagi)")).toBeInTheDocument();
+  });
+});
+
+describe("Detail task: muat ulang saat board berubah", () => {
+  it("isian yang sudah diketik tidak tertimpa, field lain ikut data baru", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+    await openDialog();
+    // Deskripsi, label, dan komentar baru tersimpan lewat tombol. Judul tersimpan
+    // saat ditinggalkan, jadi diketik terakhir dan tetap difokus.
+    await user.type(screen.getByLabelText("Deskripsi"), " Catatan saya.");
+    await user.type(screen.getByLabelText("Label baru"), "draf-label");
+    await user.type(screen.getByLabelText("Tulis komentar"), "Komentar belum dikirim");
+    await user.clear(screen.getByLabelText("Judul task"));
+    await user.type(screen.getByLabelText("Judul task"), "Judul saya");
+
+    board.getTask.mockResolvedValue(
+      task({ title: "Judul dari rekan", description: "Deskripsi dari rekan", priority: "high", due: "2026-12-05" }),
+    );
+    await boardEvent();
+
+    await waitFor(() => expect(screen.getByLabelText("Prioritas")).toHaveValue("high"));
+    expect(screen.getByLabelText("Tenggat")).toHaveValue("2026-12-05");
+    expect(screen.getByLabelText("Judul task")).toHaveValue("Judul saya");
+    expect(screen.getByLabelText("Deskripsi")).toHaveValue("Cek pasal pembayaran.\nLalu lampiran. Catatan saya.");
+    expect(screen.getByLabelText("Label baru")).toHaveValue("draf-label");
+    expect(screen.getByLabelText("Tulis komentar")).toHaveValue("Komentar belum dikirim");
+    // Pengguna diberi tahu bahwa rekan juga mengubah field yang sedang diketik.
+    expect(screen.getByText(/Judul ini baru diubah di laptop lain menjadi "Judul dari rekan"/)).toBeInTheDocument();
+    expect(screen.getByText(/Deskripsi ini baru diubah di laptop lain/)).toBeInTheDocument();
+    expect(board.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("field yang difokus tanpa diketik ditahan, lalu ikut data baru setelah ditinggalkan", async () => {
+    renderDetail();
+    await openDialog();
+    const title = screen.getByLabelText("Judul task");
+    act(() => title.focus());
+    board.getTask.mockResolvedValue(task({ title: "Judul dari rekan" }));
+    await boardEvent();
+    await waitFor(() => expect(board.getTask).toHaveBeenCalledTimes(2));
+    expect(title).toHaveValue("Review kontrak proyek A");
+    act(() => title.blur());
+    expect(title).toHaveValue("Judul dari rekan");
+    expect(board.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("setelah disimpan, isian kembali ikut data dari server", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+    await openDialog();
+    const title = screen.getByLabelText("Judul task");
+    await user.clear(title);
+    await user.type(title, "Judul baru{Enter}");
+    await waitFor(() => expect(board.updateTask).toHaveBeenCalledWith(P, T, { title: "Judul baru" }));
+    expect(title).toHaveValue("Judul baru");
+    act(() => title.blur());
+    board.getTask.mockResolvedValue(task({ title: "Judul dari rekan" }));
+    await boardEvent();
+    await waitFor(() => expect(title).toHaveValue("Judul dari rekan"));
+  });
+});
+
+describe("Detail task: dihapus di laptop lain", () => {
+  it("menampilkan keterangan, isian yang belum tersimpan tetap bisa disalin, dan tidak menutup sendiri", async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderDetail();
+    await openDialog();
+    await user.type(screen.getByLabelText("Deskripsi"), " Draf penting.");
+    await user.type(screen.getByLabelText("Tulis komentar"), "Komentar draf");
+
+    board.getTask.mockRejectedValue({ code: "not_found", message: "Task tidak ditemukan." });
+    await boardEvent();
+
+    expect(await screen.findByText("Task ini dihapus di laptop lain.")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    const desc = screen.getByRole("textbox", { name: "Deskripsi" });
+    expect(desc).toHaveValue("Cek pasal pembayaran.\nLalu lampiran. Draf penting.");
+    expect(desc).toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: "Komentar" })).toHaveValue("Komentar draf");
+    // Isi terakhir tetap terbaca, tapi tidak ada lagi aksi yang menyimpan.
+    expect(screen.getByText("Review kontrak proyek A")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hapus task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Kirim" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Tutup" })).toHaveFocus());
+
+    await user.click(screen.getByRole("button", { name: "Tutup" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(board.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("tanpa isian tertunda: keterangan dan tombol Tutup saja", async () => {
+    renderDetail();
+    await openDialog();
+    board.getTask.mockRejectedValue({ code: "not_found", message: "Task tidak ditemukan." });
+    await boardEvent();
+    expect(await screen.findByText("Task ini dihapus di laptop lain.")).toBeInTheDocument();
+    expect(screen.queryByText("Isian Anda yang belum tersimpan")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tutup" })).toBeInTheDocument();
+  });
+
+  it("izin mengubah dicabut saat ada draf: draf tetap bisa disalin, fokus ke Tutup", async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderDetail();
+    await openDialog();
+    await user.type(screen.getByLabelText("Deskripsi"), " Draf saya.");
+
+    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false, canComment: false }));
+    await boardEvent();
+
+    expect(await screen.findByText("Izin mengubah task ini baru dicabut.")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Deskripsi" })).toHaveValue("Cek pasal pembayaran.\nLalu lampiran. Draf saya.");
+    expect(screen.getByRole("textbox", { name: "Deskripsi" })).toHaveAttribute("readonly");
+    expect(screen.queryByText(/Lihat pesan di bawah/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Tutup" })).toHaveFocus());
+    // Menutup tidak mencoba menyimpan draf yang sudah tidak boleh disimpan.
+    await user.click(screen.getByRole("button", { name: "Tutup" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(board.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("izin mengubah dicabut tanpa draf: langsung tampilan baca-saja biasa", async () => {
+    renderDetail();
+    await openDialog();
+    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false, canComment: false }));
+    await boardEvent();
+    expect(await screen.findByText(/Anda hanya bisa melihat task ini/)).toBeInTheDocument();
+    expect(screen.queryByText("Izin mengubah task ini baru dicabut.")).not.toBeInTheDocument();
+  });
+
+  it("proyeknya tidak bisa dibuka lagi: penyebab dijelaskan", async () => {
+    renderDetail();
+    await openDialog();
+    board.getBoard.mockRejectedValue({ code: "forbidden", message: "Anda bukan anggota tim proyek ini." });
+    board.getTask.mockRejectedValue({ code: "forbidden", message: "Anda bukan anggota tim proyek ini." });
+    await boardEvent();
+    expect(await screen.findByText("Proyek task ini tidak bisa dibuka lagi.")).toBeInTheDocument();
+    expect(screen.getByText(/tidak punya akses lagi ke proyek ini/)).toBeInTheDocument();
   });
 });

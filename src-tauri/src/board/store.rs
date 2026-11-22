@@ -105,10 +105,13 @@ fn team_exists(conn: &Connection, team_id: &str) -> AppResult<bool> {
     Ok(n > 0)
 }
 
+/// Refuses a code for a new local project when another project shows it
+/// (`code`) or has it in its document (`doc_code`).
 pub(crate) fn ensure_code_free(conn: &Connection, code: &str, except_id: &str) -> AppResult<()> {
     let taken: Option<String> = conn
         .query_row(
-            "SELECT name FROM board_projects WHERE code = ?1 AND id <> ?2",
+            "SELECT name FROM board_projects WHERE (code = ?1 OR doc_code = ?1) AND id <> ?2
+             ORDER BY created_at, id LIMIT 1",
             params![code, except_id],
             |r| r.get(0),
         )
@@ -119,6 +122,183 @@ pub(crate) fn ensure_code_free(conn: &Connection, code: &str, except_id: &str) -
         ))),
         None => Ok(()),
     }
+}
+
+/// One project as the code rule needs it.
+struct CodeRow {
+    id: String,
+    doc_code: String,
+    created_at: String,
+}
+
+/// The code shown for each project (docs/plans/sinkron-board.md, "Kode
+/// proyek ganda"): among projects with the same `doc_code`, the first by
+/// `(created_at, id)` shows it, each other one the first `doc_code2`,
+/// `doc_code3`, ... that no project has as its document code and no project
+/// shows yet. Depends only on the set of projects, so every laptop holding
+/// the same projects shows the same codes. Returns `(project id, code)`.
+fn shown_codes(mut rows: Vec<CodeRow>) -> Vec<(String, String)> {
+    rows.sort_by(|a, b| {
+        (&a.doc_code, &a.created_at, &a.id).cmp(&(&b.doc_code, &b.created_at, &b.id))
+    });
+    let mut used: std::collections::HashSet<String> =
+        rows.iter().map(|r| r.doc_code.clone()).collect();
+    let mut out = Vec::with_capacity(rows.len());
+    let mut rest = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        if i > 0 && rows[i - 1].doc_code == r.doc_code {
+            rest.push(r);
+        } else {
+            out.push((r.id.clone(), r.doc_code.clone()));
+        }
+    }
+    for r in rest {
+        let code = (2u64..)
+            .map(|n| format!("{}{n}", r.doc_code))
+            .find(|c| !used.contains(c))
+            .unwrap_or_default();
+        used.insert(code.clone());
+        out.push((r.id.clone(), code));
+    }
+    out
+}
+
+fn code_rows(conn: &Connection) -> AppResult<Vec<CodeRow>> {
+    let mut stmt = conn.prepare("SELECT id, doc_code, created_at FROM board_projects")?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(CodeRow {
+                id: r.get(0)?,
+                doc_code: r.get(1)?,
+                created_at: r.get(2)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
+/// Gives every project the code [`shown_codes`] says and rewrites the task
+/// index rows of the projects whose code changed (task codes follow).
+/// Returns the ids of those projects.
+pub fn refresh_codes(conn: &Connection) -> AppResult<Vec<String>> {
+    let mut current: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    {
+        let mut stmt = conn.prepare("SELECT id, code FROM board_projects")?;
+        for row in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get(1)?)))? {
+            let (id, code) = row?;
+            current.insert(id, code);
+        }
+    }
+    let changed: Vec<(String, String)> = shown_codes(code_rows(conn)?)
+        .into_iter()
+        .filter(|(id, code)| current.get(id) != Some(code))
+        .collect();
+    // `code` is UNIQUE: park the moving rows first so codes can swap.
+    for (id, _) in &changed {
+        conn.execute(
+            "UPDATE board_projects SET code = '~' || id WHERE id = ?1",
+            [id],
+        )?;
+    }
+    for (id, code) in &changed {
+        conn.execute(
+            "UPDATE board_projects SET code = ?2 WHERE id = ?1",
+            params![id, code],
+        )?;
+        // Task codes are `<project code>-<number>`; project codes have no '-'.
+        conn.execute(
+            "UPDATE board_task_index SET code = ?2 || substr(code, instr(code, '-'))
+             WHERE project_id = ?1",
+            params![id, code],
+        )?;
+    }
+    Ok(changed.into_iter().map(|(id, _)| id).collect())
+}
+
+/// The code to insert for a project received from another laptop whose
+/// document says `wanted`: the code [`shown_codes`] gives it when no other
+/// project shows that code now, otherwise a temporary one. The insert is
+/// followed by `save_doc`, whose [`refresh_codes`] settles every code.
+pub(crate) fn claim_code(
+    conn: &Connection,
+    wanted: &str,
+    project_id: &str,
+    created_at: &str,
+) -> AppResult<String> {
+    let mut rows = code_rows(conn)?;
+    rows.retain(|r| r.id != project_id);
+    rows.push(CodeRow {
+        id: project_id.to_owned(),
+        doc_code: wanted.to_owned(),
+        created_at: created_at.to_owned(),
+    });
+    let code = shown_codes(rows)
+        .into_iter()
+        .find(|(id, _)| id == project_id)
+        .map(|(_, c)| c)
+        .unwrap_or_else(|| wanted.to_owned());
+    let taken = conn
+        .query_row(
+            "SELECT 1 FROM board_projects WHERE code = ?1 AND id <> ?2",
+            params![code, project_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some();
+    Ok(if taken {
+        format!("~{project_id}")
+    } else {
+        code
+    })
+}
+
+/// A project id bound to its creator and team: the first 32 hex characters
+/// of BLAKE3 over `mira-board-project-v1`, creator, team (or empty) and
+/// nonce, each followed by a newline except the last. Nobody can present
+/// another creator's or team's project under that id, so a forged first
+/// change cannot take over a project.
+pub fn derive_project_id(creator: &str, team_id: Option<&str>, nonce: &str) -> String {
+    let input = format!(
+        "mira-board-project-v1\n{creator}\n{}\n{nonce}",
+        team_id.unwrap_or("")
+    );
+    blake3::hash(input.as_bytes()).to_hex()[..32].to_owned()
+}
+
+/// Whether the project in `doc` (its first change by `creator`) has a bound
+/// id. Projects made before ids were bound have no nonce and stay on the
+/// laptop that made them.
+pub fn project_id_matches(doc: &BoardDoc, creator: &str) -> bool {
+    let meta = doc.project();
+    doc.project_nonce().is_some_and(|nonce| {
+        crate::org::is_lower_hex(&nonce, 32)
+            && derive_project_id(creator, meta.team_id.as_deref(), &nonce) == meta.id
+    })
+}
+
+/// Whether a stored project may be offered to other laptops (bound id).
+/// Computed from the document once, then read from `board_projects.bound`:
+/// the id, creator, team and nonce never change.
+pub fn is_syncable(conn: &Connection, project_id: &str) -> AppResult<bool> {
+    let bound: Option<i64> = conn
+        .query_row(
+            "SELECT bound FROM board_projects WHERE id = ?1",
+            [project_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(project_not_found)?;
+    if let Some(bound) = bound {
+        return Ok(bound == 1);
+    }
+    let row = project(conn, project_id)?;
+    let doc = load_doc(conn, project_id, &[0; 32])?;
+    let bound = project_id_matches(&doc, &row.created_by);
+    conn.execute(
+        "UPDATE board_projects SET bound = ?2 WHERE id = ?1",
+        params![project_id, bound],
+    )?;
+    Ok(bound)
 }
 
 /// Creates a project and its document. Permission is checked by the caller.
@@ -141,7 +321,8 @@ pub fn create_project(
             "Tim yang dipilih tidak ditemukan. Pilih tim lain atau buat proyek tanpa tim.".into(),
         ));
     }
-    let id = random_id();
+    let nonce = random_id();
+    let id = derive_project_id(identity.public_key_hex(), team_id, &nonce);
     ensure_code_free(&tx, &code, &id)?;
     let now = clock::now();
     let at = clock::format_rfc3339(now);
@@ -161,9 +342,10 @@ pub fn create_project(
         team_id: row.team_id.clone(),
     };
     let mut doc = BoardDoc::create(&actor_of(identity), &meta)?;
+    doc.set_project_nonce(&nonce)?;
     tx.execute(
-        "INSERT INTO board_projects (id, code, name, team_id, created_by, created_at, doc, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, x'', ?7)",
+        "INSERT INTO board_projects (id, code, doc_code, name, team_id, created_by, created_at, doc, updated_at)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, x'', ?7)",
         params![
             row.id,
             row.code,
@@ -242,6 +424,12 @@ fn commit_and_sign(
                     .into(),
             ));
         }
+        if change.len() > super::rules::MAX_CHANGE_OPS {
+            return Err(AppError::InvalidInput(
+                "Perubahan ini terlalu besar untuk disimpan. Persingkat deskripsi atau komentarnya, lalu coba lagi."
+                    .into(),
+            ));
+        }
         let sc = sign_change(identity, &row.id, &change);
         if sc.author != identity.public_key_hex() {
             return Err(AppError::Internal(
@@ -270,8 +458,8 @@ pub(crate) fn insert_change(
         .map_err(|_| AppError::InvalidInput("Nomor urut perubahan board terlalu besar.".into()))?;
     let n = conn.execute(
         "INSERT OR IGNORE INTO board_changes
-           (hash, project_id, author, seq, bytes, sig, created_at, received_at, received_from)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+           (hash, project_id, author, seq, bytes, sig, created_at, received_at, received_from, record_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             sc.hash,
             sc.project_id,
@@ -281,7 +469,8 @@ pub(crate) fn insert_change(
             sc.sig,
             created_at,
             clock::format_rfc3339(now),
-            received_from
+            received_from,
+            sc.record_id()
         ],
     )?;
     Ok(n == 1)
@@ -296,7 +485,9 @@ pub(crate) fn change_exists(conn: &Connection, hash: &str) -> AppResult<bool> {
     Ok(n > 0)
 }
 
-/// Writes the snapshot and rewrites the project's rows in the task index.
+/// Writes the snapshot, takes the project name and document code from the
+/// document (so a rename from another laptop shows), settles the shown codes
+/// ([`refresh_codes`]) and rewrites the project's rows in the task index.
 pub(crate) fn save_doc(
     conn: &Connection,
     row: &ProjectRow,
@@ -306,6 +497,28 @@ pub(crate) fn save_doc(
     conn.execute(
         "UPDATE board_projects SET doc = ?2, updated_at = ?3 WHERE id = ?1",
         params![row.id, doc.save(), clock::format_rfc3339(now)],
+    )?;
+    // A value that would not pass the local checks keeps the previous one.
+    let meta = doc.project();
+    if meta.id == row.id {
+        if validate_project_name(&meta.name).is_ok_and(|n| n == meta.name) {
+            conn.execute(
+                "UPDATE board_projects SET name = ?2 WHERE id = ?1",
+                params![row.id, meta.name],
+            )?;
+        }
+        if validate_project_code(&meta.code).is_ok_and(|c| c == meta.code) {
+            conn.execute(
+                "UPDATE board_projects SET doc_code = ?2 WHERE id = ?1",
+                params![row.id, meta.code],
+            )?;
+        }
+    }
+    refresh_codes(conn)?;
+    let code: String = conn.query_row(
+        "SELECT code FROM board_projects WHERE id = ?1",
+        [&row.id],
+        |r| r.get(0),
     )?;
     conn.execute(
         "DELETE FROM board_task_index WHERE project_id = ?1",
@@ -320,7 +533,7 @@ pub(crate) fn save_doc(
         stmt.execute(params![
             row.id,
             t.id,
-            task_code(&row.code, t.number),
+            task_code(&code, t.number),
             t.title,
             t.column.as_str(),
             t.assignee,
@@ -408,7 +621,7 @@ mod tests {
     use super::*;
     use crate::board::doc::{Stamp, TaskInit};
     use crate::board::sign::verify_change;
-    use crate::board::testutil::{Laptop, add_team};
+    use crate::board::testutil::{Laptop, add_member, add_team};
     use crate::db;
     use crate::identity::{MemoryKeyStore, ensure_identity};
     use automerge::Change;
@@ -566,6 +779,158 @@ mod tests {
         assert_eq!(stored_changes(&l.conn, &p.id).unwrap().len(), 2);
         let doc = load_doc(&l.conn, &p.id, &actor_of(&l.id)).unwrap();
         assert_eq!(doc.live_task(&id).unwrap().description, "");
+    }
+
+    /// The code this laptop shows for the project.
+    fn shown(l: &Laptop, project: &str) -> String {
+        super::project(&l.conn, project).unwrap().code
+    }
+
+    fn task_codes(l: &Laptop, project: &str) -> Vec<String> {
+        let mut v: Vec<String> = index_rows(&l.conn, project)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.1)
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Sends `from` everything `to` lacks, as a transport would.
+    fn send(from: &Laptop, to: &mut Laptop, project: &str) {
+        use crate::board::sync;
+        let have = if super::project(&to.conn, project).is_ok() {
+            sync::heads(&to.conn, project).unwrap()
+        } else {
+            Vec::new()
+        };
+        let changes = sync::changes_since(&from.conn, project, &have).unwrap();
+        let r = sync::import_project(
+            &mut to.conn,
+            &crate::board::policy::LocalRolePolicy,
+            project,
+            Some(&from.pk()),
+            changes,
+        )
+        .unwrap();
+        assert_eq!((r.rejected, r.held, r.missing_deps), (0, 0, 0), "{r:?}");
+        assert!(r.applied > 0, "{r:?}");
+    }
+
+    #[test]
+    fn refresh_codes_follows_creation_order_and_rewrites_the_index() {
+        let mut l = Laptop::founder("Sari");
+        let p1 = create_project(&mut l.conn, &l.id, "Satu", "PA", None)
+            .unwrap()
+            .value;
+        let p2 = create_project(&mut l.conn, &l.id, "Dua", "PB", None)
+            .unwrap()
+            .value;
+        let p3 = create_project(&mut l.conn, &l.id, "Tiga", "PC", None)
+            .unwrap()
+            .value;
+        add(&mut l, &p1.id, "a");
+        add(&mut l, &p2.id, "b");
+        // As if p2's document said PA and p2 were older than p1.
+        l.conn
+            .execute(
+                "UPDATE board_projects SET doc_code = 'PA', created_at = '2026-01-01T00:00:00Z' WHERE id = ?1",
+                [&p2.id],
+            )
+            .unwrap();
+        let mut changed = refresh_codes(&l.conn).unwrap();
+        changed.sort();
+        let mut want = vec![p1.id.clone(), p2.id.clone()];
+        want.sort();
+        assert_eq!(changed, want);
+        assert_eq!(shown(&l, &p2.id), "PA");
+        assert_eq!(shown(&l, &p1.id), "PA2");
+        assert_eq!(task_codes(&l, &p1.id), ["PA2-1"]);
+        assert_eq!(task_codes(&l, &p2.id), ["PA-1"]);
+        assert!(refresh_codes(&l.conn).unwrap().is_empty(), "stable");
+
+        // A project whose own code is PA2 keeps it; the duplicate moves on.
+        l.conn
+            .execute(
+                "UPDATE board_projects SET doc_code = 'PA2' WHERE id = ?1",
+                [&p3.id],
+            )
+            .unwrap();
+        refresh_codes(&l.conn).unwrap();
+        assert_eq!(shown(&l, &p3.id), "PA2");
+        assert_eq!(shown(&l, &p1.id), "PA3");
+        assert_eq!(task_codes(&l, &p1.id), ["PA3-1"]);
+
+        // New local projects may not take a shown code or a document code.
+        for code in ["PA", "PA2", "PA3"] {
+            let err = create_project(&mut l.conn, &l.id, "Baru", code, None)
+                .err()
+                .unwrap();
+            assert_eq!(err.code(), "invalid_input", "{code}");
+        }
+        create_project(&mut l.conn, &l.id, "Baru", "PA4", None).unwrap();
+    }
+
+    #[test]
+    fn two_offline_projects_with_one_code_show_the_same_codes_everywhere() {
+        let mut a = Laptop::founder("Sari");
+        let mut b = Laptop::joined(&a, "Budi");
+        let mut c = Laptop::joined(&a, "Cici");
+        // Budi may create projects too (superadmin on every laptop).
+        for conn in [&a.conn, &b.conn, &c.conn] {
+            add_member(conn, &b.pk(), "Budi", "superadmin");
+        }
+        add_member(&b.conn, &c.pk(), "Cici", "member");
+        let pa = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+            .unwrap()
+            .value;
+        let pb = create_project(&mut b.conn, &b.id, "Beta", "PA", None)
+            .unwrap()
+            .value;
+        add(&mut a, &pa.id, "a");
+        add(&mut b, &pb.id, "b");
+
+        // C only gets Beta: it shows the code in the document.
+        send(&b, &mut c, &pb.id);
+        assert_eq!(shown(&c, &pb.id), "PA");
+        assert_eq!(task_codes(&c, &pb.id), ["PA-1"]);
+
+        send(&a, &mut b, &pa.id);
+        send(&b, &mut a, &pb.id);
+        send(&a, &mut c, &pa.id);
+        let first_is_alfa = (&pa.created_at, &pa.id) <= (&pb.created_at, &pb.id);
+        let (first, second) = if first_is_alfa {
+            (&pa.id, &pb.id)
+        } else {
+            (&pb.id, &pa.id)
+        };
+        for l in [&a, &b, &c] {
+            assert_eq!(shown(l, first), "PA");
+            assert_eq!(shown(l, second), "PA2");
+            assert_eq!(task_codes(l, first), ["PA-1"]);
+            assert_eq!(task_codes(l, second), ["PA2-1"]);
+        }
+        // The documents keep PA.
+        let doc = load_doc(&a.conn, second, &actor_of(&a.id)).unwrap();
+        assert_eq!(doc.project().code, "PA");
+    }
+
+    #[test]
+    fn rename_from_another_laptop_shows() {
+        let mut a = Laptop::founder("Sari");
+        let mut b = Laptop::joined(&a, "Budi");
+        let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+            .unwrap()
+            .value;
+        add(&mut a, &p.id, "a");
+        send(&a, &mut b, &p.id);
+        let c = commit_local(&mut a.conn, &a.id, &p.id, |d| d.rename_project("Alfa Baru")).unwrap();
+        assert_eq!(c.changes.len(), 1);
+        assert_eq!(super::project(&a.conn, &p.id).unwrap().name, "Alfa Baru");
+        send(&a, &mut b, &p.id);
+        let row = super::project(&b.conn, &p.id).unwrap();
+        assert_eq!((row.name.as_str(), row.code.as_str()), ("Alfa Baru", "PA"));
+        assert_eq!(task_codes(&b, &p.id), ["PA-1"]);
     }
 
     #[test]

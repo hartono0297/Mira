@@ -92,9 +92,13 @@ pub fn run() {
                 std::sync::Arc::new(board::reminder::TauriNotifier::new(app.handle().clone())),
             );
             app.manage(board::commands::BoardRuntime {
-                hook: std::sync::Arc::new(reminders),
+                hook: std::sync::Arc::new(board::feature::BoardSyncNotifier::new(
+                    std::sync::Arc::new(reminders),
+                    app.handle().clone(),
+                )),
             });
             app.manage(state);
+            board::feature::register(app.handle());
             // Document library: managed even when the data folder is missing
             // (its commands then return the error). Edit sessions left from
             // the last run are recovered in the background.
@@ -151,6 +155,7 @@ pub fn run() {
             board::commands::board_delete_task,
             board::commands::board_add_comment,
             board::commands::board_my_tasks,
+            board::commands::board_update_project,
             documents::commands::list_documents,
             documents::commands::get_document,
             documents::commands::add_documents,

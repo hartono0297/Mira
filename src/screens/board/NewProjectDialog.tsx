@@ -1,10 +1,10 @@
-import { useId, useRef, useState, type FormEvent } from "react";
-import { toAppError, type AppError } from "../../api";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { api, toAppError, type AppError, type Directory } from "../../api";
 import { boardApi, type ProjectSummary } from "../../api/board";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
-import { PROJECT_CODE_RE, suggestCode } from "./format";
+import { PROJECT_CODE_RE, projectNameProblem, suggestCode, teamLabel } from "./format";
 
 type Props = {
   open: boolean;
@@ -13,6 +13,37 @@ type Props = {
 };
 
 export const CODE_RULE = "Kode harus 2 sampai 6 karakter, huruf A sampai Z atau angka, dan diawali huruf. Contoh: PA atau WEB2.";
+export const NO_TEAM_HINT = "Tambahkan diri Anda ke tim dulu di halaman Organisasi untuk membuat proyek tim.";
+
+// Nilai select untuk proyek tanpa tim.
+const ORG = "";
+
+export type TeamChoices = {
+  teams: { id: string; name: string }[];
+  // Proyek tanpa tim boleh dibuat oleh superadmin dan admin tim.
+  allowOrg: boolean;
+  // Superadmin yang belum masuk tim mana pun.
+  saWithoutTeam: boolean;
+};
+
+// Tim yang boleh dipilih: tim tempat saya admin tim, atau tim yang saya ikuti
+// kalau saya superadmin. Inti Rust tetap memeriksa izinnya.
+export function teamChoices(dir: Directory): TeamChoices {
+  const me = dir.me.publicKey;
+  const sa = dir.me.isSuperadmin;
+  const myRole = (members: Directory["teams"][number]["members"]) => members.find((m) => m.publicKey === me)?.role;
+  const teams = dir.teams
+    .filter((t) => {
+      const role = myRole(t.members);
+      return role === "admin" || (sa && role !== undefined);
+    })
+    .map((t) => ({ id: t.id, name: t.name }));
+  const adminSomewhere = dir.teams.some((t) => myRole(t.members) === "admin");
+  const inAnyTeam = dir.teams.some((t) => myRole(t.members) !== undefined);
+  return { teams, allowOrg: sa || adminSomewhere, saWithoutTeam: sa && !inAnyTeam };
+}
+
+type TeamState = { status: "loading" } | { status: "ready"; choices: TeamChoices } | { status: "error"; error: AppError };
 
 function serverTitle(error: AppError): string {
   if (error.code === "forbidden") return "Anda tidak punya izin membuat proyek";
@@ -24,12 +55,16 @@ function serverHint(error: AppError): string | null {
   return null;
 }
 
-// Proyek baru: nama dan kode. Kode diusulkan dari nama sampai orangnya mengubah
-// kode sendiri. Tim belum dipilih di sini (proyek organisasi, teamId null).
+// Proyek baru: nama, kode, dan tim. Kode diusulkan dari nama sampai orangnya
+// mengubah kode sendiri. Tim menentukan siapa yang melihat dan menerima
+// sinkron board-nya.
 export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [codeTouched, setCodeTouched] = useState(false);
+  const [teamPick, setTeamPick] = useState<string | null>(null);
+  const [teamState, setTeamState] = useState<TeamState>({ status: "loading" });
+  const [teamAttempt, setTeamAttempt] = useState(0);
   const [nameError, setNameError] = useState<string | null>(null);
   const [codeError, setCodeError] = useState<string | null>(null);
   const [server, setServer] = useState<AppError | null>(null);
@@ -41,11 +76,38 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
   const codeId = useId();
   const codeHintId = useId();
   const codeErrId = useId();
+  const teamId = useId();
+  const teamHintId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setTeamState({ status: "loading" });
+    api
+      .getDirectory()
+      .then((dir) => {
+        if (live) setTeamState({ status: "ready", choices: teamChoices(dir) });
+      })
+      .catch((err) => {
+        if (live) setTeamState({ status: "error", error: toAppError(err) });
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, teamAttempt]);
+
+  const choices = teamState.status === "ready" ? teamState.choices : null;
+  const options = choices ? [...choices.teams.map((t) => t.id), ...(choices.allowOrg ? [ORG] : [])] : [];
+  // Pilihan bawaan: tim pertama yang boleh dipilih. Pilihan yang tidak berlaku lagi kembali ke bawaan.
+  const teamValue = teamPick !== null && options.includes(teamPick) ? teamPick : (options[0] ?? ORG);
+  const pickedTeam = choices?.teams.find((t) => t.id === teamValue) ?? null;
+  const cannotCreate = !!choices && options.length === 0;
 
   function reset() {
     setName("");
     setCode("");
     setCodeTouched(false);
+    setTeamPick(null);
     setNameError(null);
     setCodeError(null);
     setServer(null);
@@ -58,11 +120,12 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (busy) return;
+    // Tanpa daftar tim, pilihan tim tidak bisa ditentukan: proyek tidak dibuat sampai daftarnya terbaca.
+    if (busy || cannotCreate || teamState.status !== "ready") return;
     const cleanName = name.trim();
     const cleanCode = code.trim().toUpperCase();
     setServer(null);
-    const nameProblem = cleanName ? null : "Tulis nama proyek dulu.";
+    const nameProblem = projectNameProblem(cleanName);
     const codeProblem = PROJECT_CODE_RE.test(cleanCode) ? null : CODE_RULE;
     setNameError(nameProblem);
     setCodeError(codeProblem);
@@ -76,7 +139,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     }
     setBusy(true);
     try {
-      const project = await boardApi.createProject(cleanName, cleanCode, null);
+      const project = await boardApi.createProject(cleanName, cleanCode, teamValue !== ORG ? teamValue : null);
       reset();
       onCreated(project);
     } catch (err) {
@@ -97,6 +160,60 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
   }
 
   const example = PROJECT_CODE_RE.test(code) ? `${code}-1` : "PA-1";
+
+  function teamField() {
+    if (teamState.status === "loading") {
+      return (
+        <p className="hint" role="status">
+          Memuat daftar tim...
+        </p>
+      );
+    }
+    if (teamState.status === "error") {
+      return (
+        <p className="hint">
+          Daftar tim belum terbaca ({teamState.error.message}). Proyek bisa dibuat setelah daftar tim terbaca, supaya
+          tidak terlanjur terlihat oleh seluruh organisasi.{" "}
+          <button type="button" className="link-btn" onClick={() => setTeamAttempt((n) => n + 1)}>
+            Coba baca lagi
+          </button>
+        </p>
+      );
+    }
+    if (cannotCreate) {
+      return (
+        <p className="hint">
+          Hanya superadmin atau admin tim yang bisa membuat proyek. Minta salah satu dari mereka membuatkannya.
+        </p>
+      );
+    }
+    return (
+      <>
+        <select
+          id={teamId}
+          value={teamValue}
+          onChange={(e) => setTeamPick(e.target.value)}
+          aria-describedby={teamHintId}
+          disabled={busy}
+        >
+          {teamState.choices.teams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+          {teamState.choices.allowOrg && <option value={ORG}>Tanpa tim (seluruh organisasi)</option>}
+        </select>
+        <div id={teamHintId}>
+          <p className="hint">
+            {pickedTeam
+              ? `Proyek tim hanya terlihat dan tersinkron ke anggota ${teamLabel(pickedTeam.name)} dan Tamu yang diundang ke proyek ini.`
+              : "Proyek tanpa tim terlihat dan tersinkron ke semua anggota organisasi, kecuali Tamu."}
+          </p>
+          {teamState.choices.saWithoutTeam && <p className="hint">{NO_TEAM_HINT}</p>}
+        </div>
+      </>
+    );
+  }
 
   return (
     <Dialog
@@ -152,6 +269,14 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
             {codeError && <FieldError text={codeError} />}
           </div>
         </div>
+        <div className="field">
+          {teamState.status === "ready" && !cannotCreate ? (
+            <label htmlFor={teamId}>Tim</label>
+          ) : (
+            <span className="np-label">Tim</span>
+          )}
+          {teamField()}
+        </div>
         <div aria-live="polite">
           {server && (
             <ErrorAlert title={serverTitle(server)}>
@@ -166,7 +291,12 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
               Batal
             </button>
           </DialogClose>
-          <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
+          <button
+            type="submit"
+            className="btn"
+            disabled={busy || cannotCreate || teamState.status !== "ready"}
+            aria-busy={busy || undefined}
+          >
             {busy ? "Membuat proyek..." : "Buat proyek"}
           </button>
         </div>

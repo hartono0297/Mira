@@ -41,6 +41,11 @@ export function activitySentence(a: Activity, me: string, people: Person[] = [],
       return `${who} menghapus task ini`;
     case "commented":
       return `${who} menambahkan komentar`;
+    case "renumbered":
+      // Dua laptop offline membuat nomor yang sama; satu task diberi nomor baru.
+      return d
+        ? `${who} mengganti nomor task ini dari ${d} karena nomornya sama dengan task lain`
+        : `${who} mengganti nomor task ini`;
     default:
       return d ? `${who} mengubah task: ${d}` : `${who} mengubah task`;
   }

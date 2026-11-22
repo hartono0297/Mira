@@ -10,8 +10,10 @@ use crate::board::model::{ColumnId, Priority};
 use crate::board::policy::LocalRolePolicy;
 use crate::board::sign::sign_change;
 use crate::board::store::{actor_of, commit_local, create_project, stored_changes};
-use crate::board::testutil::{Laptop, add_member};
+use crate::board::testutil::{Laptop, add_member, org_ops};
 use crate::board::view::Ctx;
+use crate::identity::Identity;
+use crate::permissions::{self as p, InviteRole};
 
 fn pair() -> (Laptop, Laptop) {
     let a = Laptop::founder("Sari");
@@ -211,6 +213,59 @@ fn concurrent_edits_of_the_same_task_merge_without_loss() {
     assert!(rejected(&a.conn).is_empty() && rejected(&b.conn).is_empty());
 }
 
+/// Like `mutate`, with the stamp `at`.
+fn mutate_at<T>(
+    l: &mut Laptop,
+    project: &str,
+    at: &str,
+    f: impl FnOnce(&mut BoardDoc, Stamp<'_>) -> AppResult<T>,
+) -> T {
+    let me = l.id.public_key_hex().to_owned();
+    commit_local(&mut l.conn, &l.id, project, |d| f(d, Stamp { actor: &me, at }))
+        .unwrap()
+        .value
+}
+
+#[test]
+fn deleting_a_task_edited_concurrently_in_the_same_second_is_accepted() {
+    // Both laptops edit a task offline in the same second, so `updated_at`
+    // holds two equal concurrent values. A then deletes the task in that
+    // second: Automerge writes the repeated `updated_at` as a delete of B's
+    // value. B used to refuse it for good, and every later change of A
+    // waited for it forever.
+    let (mut a, mut b) = pair();
+    let p = create_project(&mut a.conn, &a.id, "Situs Web", "WEB", None)
+        .unwrap()
+        .value;
+    let at = "2026-11-22T10:00:00Z";
+    let task = mutate_at(&mut a, &p.id, "2026-11-22T09:59:00Z", |d, s| {
+        d.create_task(s, TaskInit {
+            title: "Halaman depan".into(),
+            ..Default::default()
+        })
+    });
+    send(&a, &mut b, &p.id);
+    mutate_at(&mut a, &p.id, at, |d, s| {
+        d.move_task(s, &task, ColumnId::Doing, 0)
+    });
+    mutate_at(&mut b, &p.id, at, |d, s| d.add_comment(s, &task, "oke"));
+    send(&a, &mut b, &p.id);
+    send(&b, &mut a, &p.id);
+    mutate_at(&mut a, &p.id, at, |d, s| d.delete_task(s, &task));
+    mutate_at(&mut a, &p.id, at, |d, s| {
+        d.create_task(s, TaskInit {
+            title: "Sesudahnya".into(),
+            ..Default::default()
+        })
+    });
+
+    let r = send(&a, &mut b, &p.id);
+    assert_eq!((r.applied, r.rejected, r.missing_deps), (2, 0, 0), "{r:?}");
+    assert_eq!(tasks(&a, &p.id), tasks(&b, &p.id));
+    assert_eq!(heads(&a.conn, &p.id).unwrap(), heads(&b.conn, &p.id).unwrap());
+    assert!(rejected(&b.conn).is_empty(), "{:?}", rejected(&b.conn));
+}
+
 #[test]
 fn changes_out_of_order_wait_for_dependencies() {
     let (mut a, mut b) = pair();
@@ -317,10 +372,19 @@ fn bad_signature_and_non_member_are_rejected_and_logged() {
         signed.clone(),
     )
     .unwrap();
-    assert_eq!((r.applied, r.rejected), (0, 1));
-    assert_eq!(rejected(&a.conn), ["board_forbidden"]);
+    // Held, not refused for good: the op that admits the author may still
+    // be on its way. Held changes are not logged here (the caller logs once).
+    assert_eq!((r.applied, r.rejected, r.held), (0, 0, 1));
+    assert!(matches!(
+        r.outcome(&signed[0].hash),
+        Some(ChangeOutcome::Held {
+            code: "board_forbidden",
+            ..
+        })
+    ));
+    assert!(rejected(&a.conn).is_empty());
 
-    // A removed member is refused too; a guest as well.
+    // A removed member is held too; a guest as well.
     add_member(&a.conn, &me, "Orang Luar", "removed");
     let r = apply_remote_changes(
         &mut a.conn,
@@ -330,7 +394,7 @@ fn bad_signature_and_non_member_are_rejected_and_logged() {
         signed.clone(),
     )
     .unwrap();
-    assert_eq!(r.rejected, 1);
+    assert_eq!(r.held, 1);
     add_member(&a.conn, &me, "Orang Luar", "guest");
     let r = apply_remote_changes(
         &mut a.conn,
@@ -340,7 +404,7 @@ fn bad_signature_and_non_member_are_rejected_and_logged() {
         signed.clone(),
     )
     .unwrap();
-    assert_eq!(r.rejected, 1);
+    assert_eq!(r.held, 1);
     // Once a member, the same change is accepted.
     add_member(&a.conn, &me, "Orang Luar", "member");
     let r = apply_remote_changes(&mut a.conn, &LocalRolePolicy, &p.id, Some(&me), signed).unwrap();
@@ -367,17 +431,33 @@ fn import_requires_a_creator_allowed_to_create_projects() {
         .value;
     add_member(&a.conn, &b_admin.pk(), "Budi", "member");
     let changes = stored_changes(&b_admin.conn, &p.id).unwrap();
-    let err = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap_err();
-    assert_eq!(err.code(), "forbidden");
+    let root = changes[0].hash.clone();
+    let r = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap();
+    assert!(matches!(
+        r.outcome(&root),
+        Some(ChangeOutcome::Held {
+            code: "board_forbidden",
+            ..
+        })
+    ));
+    assert_eq!(r.applied, 0);
     assert!(store::project(&a.conn, &p.id).is_err());
-    assert_eq!(rejected(&a.conn), ["board_forbidden"]);
+    assert!(rejected(&a.conn).is_empty());
 
-    // Code already used locally.
-    create_project(&mut a.conn, &a.id, "Lokal", "PG", None).unwrap();
+    // Code already used locally: both projects stay, with distinct codes.
+    let local = create_project(&mut a.conn, &a.id, "Lokal", "PG", None)
+        .unwrap()
+        .value;
     add_member(&a.conn, &b_admin.pk(), "Budi", "superadmin");
     let changes = stored_changes(&b_admin.conn, &p.id).unwrap();
-    let err = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap_err();
-    assert_eq!(err.code(), "invalid_input");
+    let r = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap();
+    assert_eq!(r.applied, 1);
+    let mut codes = vec![
+        store::project(&a.conn, &p.id).unwrap().code,
+        store::project(&a.conn, &local.id).unwrap().code,
+    ];
+    codes.sort();
+    assert_eq!(codes, ["PG", "PG2"]);
 
     // Without the first change the project cannot be imported.
     let p2 = create_project(&mut a.conn, &a.id, "Delta", "PD", None)
@@ -394,8 +474,10 @@ fn import_requires_a_creator_allowed_to_create_projects() {
     });
     let mut changes = stored_changes(&a.conn, &p2.id).unwrap();
     changes.remove(0);
-    let err = import_project(&mut b.conn, &LocalRolePolicy, &p2.id, None, changes).unwrap_err();
-    assert_eq!(err.code(), "not_found");
+    let r = import_project(&mut b.conn, &LocalRolePolicy, &p2.id, None, changes).unwrap();
+    assert_eq!((r.applied, r.missing_deps), (0, 1));
+    assert_eq!(r.outcomes[0].1, ChangeOutcome::NoProject);
+    assert!(store::project(&b.conn, &p2.id).is_err());
 }
 
 #[test]
@@ -630,10 +712,10 @@ fn changes_that_break_the_document_shape_are_refused() {
         assert_eq!(bad.len(), 1, "{label}");
         let r = apply_remote_changes(&mut b.conn, &LocalRolePolicy, &p.id, Some(&me), bad).unwrap();
         assert_eq!((r.applied, r.rejected), (0, 1), "{label}");
-        assert_eq!(
-            rejected(&b.conn).last().unwrap(),
-            "board_invalid_doc",
-            "{label}"
+        let code = rejected(&b.conn).last().unwrap().clone();
+        assert!(
+            code == "board_invalid_doc" || code == "board_not_allowed",
+            "{label}: {code}"
         );
         assert_eq!(tasks(&b, &p.id), before, "{label}");
     }
@@ -669,8 +751,10 @@ fn strangers_are_refused_before_parsing_and_batches_are_capped() {
         bytes: junk,
     };
     let r = apply_remote_changes(&mut b.conn, &LocalRolePolicy, &p.id, None, vec![sc]).unwrap();
-    assert_eq!(r.rejected, 1);
-    assert_eq!(rejected(&b.conn), ["board_forbidden"]);
+    // Held without being parsed (junk bytes would otherwise be rejected as
+    // bad format); held changes are logged by the caller, not here.
+    assert_eq!((r.held, r.rejected), (1, 0));
+    assert!(rejected(&b.conn).is_empty());
 
     // Over the count limit: the rest is deferred, not dropped silently.
     for i in 0..3 {
@@ -836,6 +920,9 @@ proptest! {
         ops_b in proptest::collection::vec(op(), 0..12),
     ) {
         let (mut a, mut b) = pair();
+        // Both may delete any task (superadmins of a project without team).
+        add_member(&a.conn, &b.pk(), "Budi", "superadmin");
+        add_member(&b.conn, &b.pk(), "Budi", "superadmin");
         let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None).unwrap().value;
         run(&mut a, &p.id, &Op::Create(0, 0));
         for o in &shared {
@@ -865,4 +952,504 @@ proptest! {
         let total = stored_changes(&a.conn, &p.id).unwrap().len();
         prop_assert_eq!(total, stored_changes(&b.conn, &p.id).unwrap().len());
     }
+}
+
+#[test]
+fn a_forged_first_change_cannot_take_over_a_project_id() {
+    let (mut a, b) = pair();
+    let mut c = Laptop::joined(&a, "Citra");
+    // B may create projects on C's laptop (superadmin there).
+    add_member(&c.conn, &b.pk(), "Budi", "superadmin");
+    let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+        .unwrap()
+        .value;
+    assert!(store::is_syncable(&a.conn, &p.id).unwrap(), "bound id");
+
+    // B forges a first change with A's project id under B's own key.
+    let meta = crate::board::doc::ProjectMeta {
+        id: p.id.clone(),
+        code: "PX".into(),
+        name: "Palsu".into(),
+        team_id: None,
+    };
+    let mut forged = BoardDoc::create(&actor_of(&b.id), &meta).unwrap();
+    forged.set_project_nonce(&"ab".repeat(16)).unwrap();
+    forged.commit(1).unwrap();
+    let fake: Vec<SignedChange> = forged
+        .changes_after(&[])
+        .iter()
+        .map(|ch| sign_change(&b.id, &p.id, ch))
+        .collect();
+    let r = import_project(&mut c.conn, &LocalRolePolicy, &p.id, None, fake).unwrap();
+    assert_eq!(r.applied, 0);
+    assert_eq!(r.rejected, 1);
+    assert!(store::project(&c.conn, &p.id).is_err());
+
+    // The real project still imports afterwards.
+    let r = send(&a, &mut c, &p.id);
+    assert_eq!(r.applied, 1);
+    assert_eq!(store::project(&c.conn, &p.id).unwrap().name, "Alfa");
+}
+
+// --- Rights lost later and the project's first change -------------------
+
+/// Ani (founder, superadmin, member of team Desain) and team Lain, with a
+/// real signed membership log.
+struct Office {
+    ani: Laptop,
+    desain: String,
+    lain: String,
+}
+
+fn office() -> Office {
+    let mut ani = Laptop::founder("Ani");
+    let desain = org_ops::create_team(&mut ani.conn, &ani.id, "Desain");
+    let lain = org_ops::create_team(&mut ani.conn, &ani.id, "Lain");
+    let me = ani.pk();
+    p::add_team_member(&mut ani.conn, &ani.id, &desain, &me, org_ops::now()).unwrap();
+    Office { ani, desain, lain }
+}
+
+impl Office {
+    /// A new laptop that joins through an invite to `team`.
+    fn hire(&mut self, name: &str, team: &str) -> Laptop {
+        let mut l = Laptop::bare(name);
+        org_ops::join(
+            (&mut self.ani.conn, &self.ani.id),
+            (&mut l.conn, &l.id),
+            team,
+            InviteRole::Member,
+            vec![],
+        );
+        l
+    }
+
+    /// Sends `l` the membership ops it is missing.
+    fn tell(&self, l: &mut Laptop) {
+        let to = l.pk();
+        org_ops::sync(&self.ani.conn, &mut l.conn, &to, &self.ani.pk());
+    }
+
+    fn in_team(&mut self, team: &str, who: &Laptop) {
+        p::add_team_member(&mut self.ani.conn, &self.ani.id, team, &who.pk(), org_ops::now())
+            .unwrap();
+    }
+
+    fn out_of_team(&mut self, team: &str, who: &Laptop) {
+        p::remove_team_member(&mut self.ani.conn, &self.ani.id, team, &who.pk(), org_ops::now())
+            .unwrap();
+    }
+
+    fn team_admin(&mut self, team: &str, who: &Laptop, admin: bool) {
+        p::set_team_admin(&mut self.ani.conn, &self.ani.id, team, &who.pk(), admin, org_ops::now())
+            .unwrap();
+    }
+}
+
+/// Unix seconds, `offset` from now.
+fn unix(offset: i64) -> i64 {
+    clock::now().unix_timestamp() + offset
+}
+
+/// The first change of a new project by `l`, dated `at`.
+fn root_at(l: &Laptop, name: &str, code: &str, team: Option<&str>, at: i64) -> SignedChange {
+    let nonce = crate::board::doc::random_id();
+    let id = store::derive_project_id(&l.pk(), team, &nonce);
+    let meta = ProjectMeta {
+        id: id.clone(),
+        code: code.into(),
+        name: name.into(),
+        team_id: team.map(str::to_owned),
+    };
+    let mut doc = BoardDoc::create(&actor_of(&l.id), &meta).unwrap();
+    doc.set_project_nonce(&nonce).unwrap();
+    doc.commit(at).unwrap();
+    sign_change(&l.id, &id, &doc.changes_after(&[])[0])
+}
+
+/// The document made of `changes`, with `who`'s actor.
+fn doc_of(who: &Identity, changes: &[&SignedChange]) -> BoardDoc {
+    let mut d = BoardDoc::empty(&actor_of(who));
+    for sc in changes {
+        d.apply(parse_change(sc).unwrap()).unwrap();
+    }
+    d
+}
+
+/// One signed change by `who` on `doc`, dated `at` (the author's clock).
+fn write_at(
+    who: &Identity,
+    project: &str,
+    doc: &mut BoardDoc,
+    at: i64,
+    edit: impl FnOnce(&mut BoardDoc, Stamp<'_>),
+) -> SignedChange {
+    let me = who.public_key_hex().to_owned();
+    let before = doc.heads();
+    edit(
+        doc,
+        Stamp {
+            actor: &me,
+            at: "2026-11-22T08:00:00Z",
+        },
+    );
+    doc.commit(at).unwrap();
+    let changes = doc.changes_after(&before);
+    assert_eq!(changes.len(), 1);
+    sign_change(who, project, &changes[0])
+}
+
+fn is_held(r: &ApplyReport, sc: &SignedChange) -> bool {
+    matches!(
+        r.outcome(&sc.hash),
+        Some(ChangeOutcome::Held {
+            code: "board_forbidden",
+            ..
+        })
+    )
+}
+
+#[test]
+fn history_of_a_member_who_moved_teams_is_accepted_once_a_colleague_built_on_it() {
+    let mut o = office();
+    let (desain, lain) = (o.desain.clone(), o.lain.clone());
+    let budi = o.hire("Budi", &desain);
+    let mut sari = o.hire("Sari", &lain);
+    let root = root_at(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    let pid = root.project_id.clone();
+
+    // Monday: Budi writes in Desain.
+    let mut bd = doc_of(&budi.id, &[&root]);
+    let logo = write_at(&budi.id, &pid, &mut bd, unix(-300), |d, s| {
+        d.create_task(s, new_task("Logo")).unwrap();
+    });
+    // Tuesday: Budi moves to team Lain. Wednesday: Sari joins Desain.
+    o.out_of_team(&desain, &budi);
+    o.in_team(&lain, &budi);
+    o.in_team(&desain, &sari);
+    o.tell(&mut sari);
+
+    // Nobody who still writes there has built on Budi's change yet: held,
+    // not refused, and the project itself is imported.
+    let r = import_project(
+        &mut sari.conn,
+        &LocalRolePolicy,
+        &pid,
+        None,
+        vec![root.clone(), logo.clone()],
+    )
+    .unwrap();
+    assert_eq!(r.outcome(&root.hash), Some(&ChangeOutcome::Applied), "{r:?}");
+    assert!(is_held(&r, &logo), "{r:?}");
+    assert!(tasks(&sari, &pid).is_empty());
+
+    // Ani (still in Desain) comments on Budi's task: both are accepted.
+    let mut ad = doc_of(&o.ani.id, &[&root, &logo]);
+    let task = ad.tasks().unwrap()[0].id.clone();
+    let comment = write_at(&o.ani.id, &pid, &mut ad, unix(0), |d, s| {
+        d.add_comment(s, &task, "Bagus").unwrap();
+    });
+    let r = apply_remote_changes(
+        &mut sari.conn,
+        &LocalRolePolicy,
+        &pid,
+        None,
+        vec![logo, comment],
+    )
+    .unwrap();
+    assert_eq!((r.applied, r.held, r.rejected), (2, 0, 0), "{r:?}");
+    let t = &tasks(&sari, &pid)[0];
+    assert_eq!(t.title, "Logo");
+    assert_eq!(t.created_by, budi.pk());
+    assert_eq!(t.comments.len(), 1);
+    assert!(rejected(&sari.conn).is_empty());
+}
+
+#[test]
+fn a_backdated_change_without_a_colleague_stays_held() {
+    let mut o = office();
+    let desain = o.desain.clone();
+    let budi = o.hire("Budi", &desain);
+    let root = root_at(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    let pid = root.project_id.clone();
+    let r = import_project(&mut o.ani.conn, &LocalRolePolicy, &pid, None, vec![root.clone()])
+        .unwrap();
+    assert_eq!(r.applied, 1);
+
+    // Budi leaves Desain, then writes and dates the change before that.
+    // Building on it himself does not count as support.
+    o.out_of_team(&desain, &budi);
+    let mut bd = doc_of(&budi.id, &[&root]);
+    let back = write_at(&budi.id, &pid, &mut bd, unix(-300), |d, s| {
+        d.create_task(s, new_task("Mundur")).unwrap();
+    });
+    let task = bd.tasks().unwrap()[0].id.clone();
+    let own = write_at(&budi.id, &pid, &mut bd, unix(-290), |d, s| {
+        d.add_comment(s, &task, "Sendiri").unwrap();
+    });
+    let r = apply_remote_changes(
+        &mut o.ani.conn,
+        &LocalRolePolicy,
+        &pid,
+        None,
+        vec![back.clone(), own.clone()],
+    )
+    .unwrap();
+    assert_eq!((r.applied, r.held, r.rejected), (0, 2, 0), "{r:?}");
+    assert!(is_held(&r, &back) && is_held(&r, &own));
+    assert!(tasks(&o.ani, &pid).is_empty());
+}
+
+#[test]
+fn a_delete_by_a_demoted_admin_needs_a_colleague_too() {
+    let mut o = office();
+    let desain = o.desain.clone();
+    let dewi = o.hire("Dewi", &desain);
+    o.team_admin(&desain, &dewi, true);
+    let mut sari = o.hire("Sari", &desain);
+    let root = root_at(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    let pid = root.project_id.clone();
+    let mut ad = doc_of(&o.ani.id, &[&root]);
+    let poster = write_at(&o.ani.id, &pid, &mut ad, unix(-500), |d, s| {
+        d.create_task(s, new_task("Poster")).unwrap();
+    });
+    let task = ad.tasks().unwrap()[0].id.clone();
+
+    // Dewi stops being team admin (she still writes in Desain), deletes
+    // Ani's task dated before that, and builds on it herself.
+    o.team_admin(&desain, &dewi, false);
+    o.tell(&mut sari);
+    let mut dd = doc_of(&dewi.id, &[&root, &poster]);
+    let delete = write_at(&dewi.id, &pid, &mut dd, unix(-300), |d, s| {
+        d.delete_task(s, &task).unwrap();
+    });
+    let own = write_at(&dewi.id, &pid, &mut dd, unix(-290), |d, s| {
+        d.create_task(s, new_task("Sendiri")).unwrap();
+    });
+    let r = import_project(
+        &mut sari.conn,
+        &LocalRolePolicy,
+        &pid,
+        None,
+        vec![root.clone(), poster.clone(), delete.clone(), own.clone()],
+    )
+    .unwrap();
+    assert_eq!(r.applied, 2, "{r:?}");
+    assert!(is_held(&r, &delete), "{r:?}");
+    assert_eq!(r.outcome(&own.hash), Some(&ChangeOutcome::MissingDeps));
+    assert!(!tasks(&sari, &pid)[0].deleted);
+
+    // Ani builds on Dewi's work: the delete is supported through the chain.
+    let mut ad = doc_of(&o.ani.id, &[&root, &poster, &delete, &own]);
+    let next = write_at(&o.ani.id, &pid, &mut ad, unix(0), |d, s| {
+        d.create_task(s, new_task("Baru")).unwrap();
+    });
+    let r = apply_remote_changes(
+        &mut sari.conn,
+        &LocalRolePolicy,
+        &pid,
+        None,
+        vec![delete, own, next],
+    )
+    .unwrap();
+    assert_eq!((r.applied, r.held), (3, 0), "{r:?}");
+    let all = tasks(&sari, &pid);
+    assert!(all.iter().find(|t| t.id == task).unwrap().deleted);
+}
+
+#[test]
+fn a_project_by_an_admin_who_left_the_team_imports_once_a_colleague_built_on_it() {
+    let mut o = office();
+    let desain = o.desain.clone();
+    let dewi = o.hire("Dewi", &desain);
+    o.team_admin(&desain, &dewi, true);
+    let mut sari = o.hire("Sari", &desain);
+    let root = root_at(&dewi, "Pameran", "PM", Some(&desain), unix(-600));
+    let pid = root.project_id.clone();
+    o.out_of_team(&desain, &dewi);
+    o.tell(&mut sari);
+
+    let r = import_project(&mut sari.conn, &LocalRolePolicy, &pid, None, vec![root.clone()])
+        .unwrap();
+    assert!(is_held(&r, &root), "{r:?}");
+    assert!(store::project(&sari.conn, &pid).is_err());
+
+    let mut ad = doc_of(&o.ani.id, &[&root]);
+    let booth = write_at(&o.ani.id, &pid, &mut ad, unix(0), |d, s| {
+        d.create_task(s, new_task("Booth")).unwrap();
+    });
+    let r = import_project(
+        &mut sari.conn,
+        &LocalRolePolicy,
+        &pid,
+        None,
+        vec![root, booth],
+    )
+    .unwrap();
+    assert_eq!((r.applied, r.held), (2, 0), "{r:?}");
+    let row = store::project(&sari.conn, &pid).unwrap();
+    assert_eq!(row.created_by, dewi.pk());
+    assert_eq!(row.name, "Pameran");
+}
+
+/// A change without dependencies by `l` that sets up a project document
+/// with `doc_id` as its id, signed for `project`, whose hash sorts after
+/// `after` (so `import_project` never tries it as the first change).
+fn second_root(l: &Laptop, project: &str, doc_id: &str, after: &str) -> SignedChange {
+    for i in 0..256 {
+        let meta = ProjectMeta {
+            id: doc_id.into(),
+            code: "PX".into(),
+            name: format!("Palsu {i}"),
+            team_id: None,
+        };
+        let mut doc = BoardDoc::create(&actor_of(&l.id), &meta).unwrap();
+        doc.commit(unix(0)).unwrap();
+        let sc = sign_change(&l.id, project, &doc.changes_after(&[])[0]);
+        if sc.hash.as_str() > after {
+            return sc;
+        }
+    }
+    panic!("no hash after {after}");
+}
+
+#[test]
+fn only_the_chosen_first_change_skips_the_rules() {
+    for same_id in [true, false] {
+        let (a, b) = pair();
+        let mut c = Laptop::joined(&a, "Citra");
+        add_member(&c.conn, &b.pk(), "Budi", "member");
+        let root = root_at(&a, "Alfa", "PA", None, unix(-60));
+        let pid = root.project_id.clone();
+        let id = if same_id { pid.as_str() } else { "" };
+        let fake = second_root(&b, &pid, id, &root.hash);
+        let mut ad = doc_of(&a.id, &[&root]);
+        let child = write_at(&a.id, &pid, &mut ad, unix(0), |d, s| {
+            d.create_task(s, new_task("Satu")).unwrap();
+        });
+        // The forged change comes first in the batch.
+        let r = import_project(
+            &mut c.conn,
+            &LocalRolePolicy,
+            &pid,
+            None,
+            vec![fake.clone(), root.clone(), child.clone()],
+        )
+        .unwrap();
+        let refused = Some(&ChangeOutcome::Rejected {
+            code: "board_not_allowed",
+        });
+        assert_eq!(r.outcome(&fake.hash), refused, "{same_id}: {r:?}");
+        assert_eq!(r.outcome(&root.hash), Some(&ChangeOutcome::Applied), "{same_id}");
+        assert_eq!(r.outcome(&child.hash), Some(&ChangeOutcome::Applied), "{same_id}");
+        assert_eq!(store::project(&c.conn, &pid).unwrap().name, "Alfa");
+        let doc = store::load_doc(&c.conn, &pid, &actor_of(&c.id)).unwrap();
+        assert_eq!(doc.project().id, pid);
+        assert_eq!(doc.project().name, "Alfa");
+        assert_eq!(tasks(&c, &pid).len(), 1);
+
+        // Sent later to the existing project: refused all the same.
+        let again = second_root(&b, &pid, id, &fake.hash);
+        let r = apply_remote_changes(&mut c.conn, &LocalRolePolicy, &pid, None, vec![again.clone()])
+            .unwrap();
+        assert_eq!(r.outcome(&again.hash), refused, "{same_id}");
+        let doc = store::load_doc(&c.conn, &pid, &actor_of(&c.id)).unwrap();
+        assert_eq!(doc.project().name, "Alfa");
+    }
+}
+
+#[test]
+fn a_first_change_for_another_project_id_is_refused_after_applying() {
+    let mut l = Laptop::founder("Sari");
+    let pid = "ab".repeat(16);
+    // Signed for `pid`, but the document names another id.
+    let meta = ProjectMeta {
+        id: "cd".repeat(16),
+        code: "PA".into(),
+        name: "Alfa".into(),
+        team_id: None,
+    };
+    let mut d = BoardDoc::create(&actor_of(&l.id), &meta).unwrap();
+    d.commit(unix(0)).unwrap();
+    let root = sign_change(&l.id, &pid, &d.changes_after(&[])[0]);
+    let row = ProjectRow {
+        id: pid.clone(),
+        code: "PA".into(),
+        name: "Alfa".into(),
+        team_id: None,
+        created_by: l.pk(),
+        created_at: "t".into(),
+        updated_at: "t".into(),
+    };
+    let tx = l.conn.transaction().unwrap();
+    tx.execute(
+        "INSERT INTO board_projects (id, code, doc_code, name, team_id, created_by, created_at, doc, updated_at)
+         VALUES (?1, 'PA', 'PA', 'Alfa', NULL, ?2, 't', x'', 't')",
+        params![pid, row.created_by],
+    )
+    .unwrap();
+    let mut doc = BoardDoc::empty(&MERGE_ACTOR);
+    let mut report = ApplyReport::default();
+    ingest(
+        &tx,
+        &LocalRolePolicy,
+        &row,
+        &mut doc,
+        None,
+        vec![root.clone()],
+        Some(&root.hash),
+        clock::now(),
+        &mut report,
+    )
+    .unwrap();
+    assert_eq!(
+        report.outcome(&root.hash),
+        Some(&ChangeOutcome::Rejected {
+            code: "board_invalid_doc"
+        })
+    );
+    assert_eq!(report.applied, 0);
+    assert!(doc.heads().is_empty(), "document restored");
+    assert!(doc.project().id.is_empty());
+    let detail: String = tx
+        .query_row("SELECT detail FROM rejected_changes", [], |r| r.get(0))
+        .unwrap();
+    assert!(detail.contains("id proyek"), "{detail}");
+}
+
+#[test]
+fn an_oversized_first_change_is_refused_before_the_probe() {
+    use automerge::transaction::Transactable;
+    use automerge::{ObjType, ROOT};
+
+    let (a, mut b) = pair();
+    let nonce = crate::board::doc::random_id();
+    let id = store::derive_project_id(&a.pk(), None, &nonce);
+    let meta = ProjectMeta {
+        id: id.clone(),
+        code: "PA".into(),
+        name: "Alfa".into(),
+        team_id: None,
+    };
+    let mut doc = BoardDoc::create(&actor_of(&a.id), &meta).unwrap();
+    doc.set_project_nonce(&nonce).unwrap();
+    let text = doc.raw().put_object(ROOT, "catatan", ObjType::Text).unwrap();
+    doc.raw()
+        .splice_text(&text, 0, 0, &"x".repeat(rules::MAX_CHANGE_OPS + 1))
+        .unwrap();
+    doc.commit(unix(0)).unwrap();
+    let change = doc.changes_after(&[]).remove(0);
+    assert!(change.len() > rules::MAX_CHANGE_OPS);
+    let root = sign_change(&a.id, &id, &change);
+    verify_envelope(&root).expect("within the byte limit, only the operation count is over");
+
+    let r = import_project(&mut b.conn, &LocalRolePolicy, &id, None, vec![root.clone()]).unwrap();
+    assert_eq!(
+        r.outcome(&root.hash),
+        Some(&ChangeOutcome::Rejected {
+            code: "board_bad_project"
+        })
+    );
+    assert!(store::project(&b.conn, &id).is_err());
+    assert_eq!(rejected(&b.conn), ["board_bad_project"]);
 }
