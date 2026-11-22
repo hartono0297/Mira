@@ -82,7 +82,7 @@ describe("PinDialog", () => {
     const { user } = setup(onSubmit);
     await user.type(screen.getByLabelText("PIN tanda tangan"), "123456{Enter}");
     expect(await screen.findByText("Basis data Mira tidak bisa dibaca.")).toBeInTheDocument();
-    expect(screen.getByText("PIN belum bisa diperiksa")).toBeInTheDocument();
+    expect(screen.getByText("Belum bisa dilanjutkan")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Tanda tangani" })).toBeEnabled();
   });
 

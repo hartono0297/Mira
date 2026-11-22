@@ -171,7 +171,7 @@ export function PinDialog({
 
         <div aria-live="polite">
           {problem?.kind === "other" && (
-            <ErrorAlert title="PIN belum bisa diperiksa">
+            <ErrorAlert title="Belum bisa dilanjutkan">
               <p>{problem.error.message}</p>
             </ErrorAlert>
           )}
