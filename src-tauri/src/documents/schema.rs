@@ -101,14 +101,26 @@ mod tests {
     ///
     /// `db::migrations` is private, so the old database is made by opening a
     /// new one, filling it, then dropping the documents tables and setting
-    /// `user_version` back to the version before this migration. This assumes
-    /// the documents migration is the last one; adjust when later stages
-    /// append theirs.
+    /// `user_version` back to the version before this migration. After the
+    /// stage merge the documents migration is v4 and Tahap 5's signing
+    /// migration (v5) follows it, so the signing tables are dropped too.
+    /// Tables of the migrations that come after documents (Tahap 5, v5),
+    /// children before parents.
+    const SIGNING_TABLES_AFTER_DOCUMENTS: [&str; 6] = [
+        "sign_exports",
+        "sign_events",
+        "sign_signers",
+        "sign_requests",
+        "sign_pin_resets",
+        "sign_saved_signature",
+    ];
+
     #[test]
     fn database_before_documents_upgrades_and_keeps_data() {
         let tmp = tempfile::tempdir().unwrap();
-        let before = db::latest_version() - 1;
-        assert!(before >= 2, "documents come after the Tahap 1 schema");
+        // v1 foundation, v2 membership log, v3 board, v4 documents, v5 signing.
+        let before = 3;
+        assert_eq!(db::latest_version(), 5, "update this test when a migration is added");
         let (pk, org_id) = {
             let mut conn = db::open(tmp.path()).unwrap();
             let mut me = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
@@ -119,6 +131,9 @@ mod tests {
                 [],
             )
             .unwrap();
+            for t in SIGNING_TABLES_AFTER_DOCUMENTS {
+                conn.execute_batch(&format!("DROP TABLE {t};")).unwrap();
+            }
             for t in DOCUMENT_TABLES.iter().rev() {
                 conn.execute_batch(&format!("DROP TABLE {t};")).unwrap();
             }
