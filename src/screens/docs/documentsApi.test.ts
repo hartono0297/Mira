@@ -49,14 +49,14 @@ describe("api dokumen", () => {
   it("dialog pilih file: banyak file, batal = null", async () => {
     dialog.open.mockResolvedValueOnce(["C:\\a.docx", "C:\\b.xlsx"]).mockResolvedValueOnce(null);
     expect(await pickFilesToAdd()).toEqual(["C:\\a.docx", "C:\\b.xlsx"]);
-    expect(dialog.open).toHaveBeenCalledWith({ multiple: true, directory: false });
+    expect(dialog.open).toHaveBeenCalledWith({ title: "Pilih file untuk pustaka", multiple: true, directory: false });
     expect(await pickFilesToAdd()).toBeNull();
   });
 
   it("dialog simpan memakai nama file sebagai bawaan", async () => {
     dialog.save.mockResolvedValue("D:\\x.docx");
     expect(await pickExportDestination("x.docx")).toBe("D:\\x.docx");
-    expect(dialog.save).toHaveBeenCalledWith({ defaultPath: "x.docx" });
+    expect(dialog.save).toHaveBeenCalledWith({ title: "Simpan salinan", defaultPath: "x.docx" });
   });
 
   it("di luar aplikasi desktop tidak memanggil Tauri", async () => {

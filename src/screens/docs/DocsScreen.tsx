@@ -1,5 +1,5 @@
 import { IconPlus } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import {
   addDocuments,
@@ -67,9 +67,36 @@ export function DocsScreen() {
     await Promise.all([reloadList(), reloadDetail()]);
   }, [reloadList, reloadDetail]);
 
-  // Menjalankan satu aksi: tombolnya sibuk, hasilnya ditampilkan di atas daftar.
+  // Satu aksi pada satu waktu. Ref dipakai (bukan hanya state) supaya klik
+  // kedua sebelum render berikutnya tetap ditolak.
+  const busyRef = useRef(false);
+
+  // Tombol yang baru ditekan bisa hilang setelah aksi (Selesai mengedit, Pakai
+  // versi ini). Kalau fokus jatuh ke body, fokus dipindah ke baris file itu.
+  const [refocus, setRefocus] = useState<{ id: string; n: number } | null>(null);
+  const focusDoc = useCallback((id: string) => setRefocus((r) => ({ id, n: (r?.n ?? 0) + 1 })), []);
+  useEffect(() => {
+    if (!refocus) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    const picks = document.querySelectorAll<HTMLElement>("[data-doc-pick]");
+    Array.from(picks)
+      .find((el) => el.dataset.docPick === refocus.id)
+      ?.focus();
+  }, [refocus]);
+
+  // Menjalankan satu aksi: tombolnya sibuk, tombol lain menunggu, hasilnya
+  // ditampilkan di atas daftar.
   const run = useCallback(
-    async <T,>(key: string, action: ActionKind, task: () => Promise<T>, ok: (result: T) => string | null) => {
+    async <T,>(
+      key: string,
+      action: ActionKind,
+      docId: string | null,
+      task: () => Promise<T>,
+      ok: (result: T) => string | null,
+    ) => {
+      if (busyRef.current) return false;
+      busyRef.current = true;
       setPending(key);
       setFeedback(null);
       try {
@@ -87,16 +114,19 @@ export function DocsScreen() {
         }
         return false;
       } finally {
+        busyRef.current = false;
         setPending(null);
+        if (docId) focusDoc(docId);
       }
     },
-    [reloadAll],
+    [reloadAll, focusDoc],
   );
 
   const addFiles = useCallback(() => {
     void run(
       keys.add,
       "add",
+      null,
       async () => {
         const paths = await pickFilesToAdd();
         if (!paths || paths.length === 0) return null;
@@ -105,12 +135,14 @@ export function DocsScreen() {
       (added) => {
         if (!added || added.length === 0) return null;
         setSelectedId(added[0].id);
+        // Tombol Tambah file di keadaan kosong hilang begitu daftar muncul.
+        focusDoc(added[0].id);
         return added.length === 1
           ? `${added[0].name} ditambahkan ke pustaka ${LIBRARY_LABEL}.`
           : `${added.length} file ditambahkan ke pustaka ${LIBRARY_LABEL}.`;
       },
     );
-  }, [run]);
+  }, [run, focusDoc]);
 
   const actions: DocActions = useMemo(
     () => ({
@@ -120,6 +152,7 @@ export function DocsScreen() {
         void run(
           keys.edit(doc.id, from?.id ?? null),
           "edit",
+          doc.id,
           () => startEdit(doc.id, from?.id ?? null),
           () =>
             from
@@ -128,13 +161,20 @@ export function DocsScreen() {
         );
       },
       finish: (doc) => {
-        void run(keys.finish(doc.id), "finish", () => finishEdit(doc.id), () => `Edit ${doc.name} selesai.`);
+        void run(
+          keys.finish(doc.id),
+          "finish",
+          doc.id,
+          () => finishEdit(doc.id),
+          () => `Selesai mengedit ${doc.name}. Rekan sekarang bisa mengeditnya.`,
+        );
       },
       open: (doc, version) => {
         const number = version?.number ?? doc.current.number;
         void run(
           keys.open(doc.id, version?.id ?? null),
           "open",
+          doc.id,
           () => openReadOnly(doc.id, version?.id ?? null),
           () => `${doc.name} versi ${number} dibuka hanya baca.`,
         );
@@ -143,6 +183,7 @@ export function DocsScreen() {
         void run(
           keys.export(doc.id, version.id),
           "export",
+          doc.id,
           async () => {
             const destination = await pickExportDestination(doc.name);
             if (!destination) return null;
@@ -153,6 +194,7 @@ export function DocsScreen() {
         );
       },
       askRestore: (doc, version) => {
+        if (busyRef.current) return;
         setRestoreError(null);
         setRestore({ doc, version });
       },
@@ -160,11 +202,13 @@ export function DocsScreen() {
         void run(
           keys.resolve(doc.id, keep.id),
           "resolve",
+          doc.id,
           () => resolveConflict(doc.id, keep.id),
           (result) => `Bentrok selesai. Versi ${result.current.number} berisi isi versi ${keep.number}.`,
         );
       },
       showConflict: (doc) => {
+        if (busyRef.current) return;
         setSelectedId(doc.id);
         setFocusConflict((n) => n + 1);
       },
@@ -173,7 +217,8 @@ export function DocsScreen() {
   );
 
   const confirmRestore = useCallback(async () => {
-    if (!restore) return;
+    if (!restore || busyRef.current) return;
+    busyRef.current = true;
     setRestoreBusy(true);
     setRestoreError(null);
     try {
@@ -189,6 +234,7 @@ export function DocsScreen() {
       setRestoreError(error);
       if (error.code === "not_found" || error.code === "document_editing") void reloadAll();
     } finally {
+      busyRef.current = false;
       setRestoreBusy(false);
     }
   }, [restore, reloadAll]);
@@ -197,12 +243,14 @@ export function DocsScreen() {
   const addBusy = pending === keys.add;
   const now = new Date();
 
+  // aria-disabled, bukan disabled: tombol yang dinonaktifkan kehilangan fokus
+  // keyboard di WebView2. Klik selama sibuk ditolak oleh run().
   const addButton = (
     <button
       type="button"
       className="btn"
       onClick={addFiles}
-      disabled={addBusy}
+      aria-disabled={pending !== null || undefined}
       aria-busy={addBusy || undefined}
     >
       <IconPlus size={18} aria-hidden="true" />

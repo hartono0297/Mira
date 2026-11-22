@@ -38,7 +38,10 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
     ];
   }
   if (doc.conflict && doc.conflictVersions.length > 1) {
-    return [{ key: `conflict:${doc.id}`, label: "Selesaikan bentrok", busyLabel: "", run: () => actions.showConflict(doc) }];
+    // Tamu tidak bisa memilih atau menggabung, jadi tombolnya hanya menunjukkan bentrok.
+    const canAct = doc.can.resolve || (editable(doc.kind) && doc.can.edit);
+    const label = canAct ? "Selesaikan bentrok" : "Lihat bentrok";
+    return [{ key: `conflict:${doc.id}`, label, busyLabel: label, run: () => actions.showConflict(doc) }];
   }
   if (rekan || !editable(doc.kind) || !doc.can.edit) {
     const label = rekan || editable(doc.kind) ? "Buka hanya baca" : "Buka";
@@ -48,17 +51,21 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
 }
 
 export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
-  const nameId = `doc-name-${doc.id}`;
   const lines = statusLines(doc, now);
   const buttons = rowButtons(doc, actions);
+  const blocked = actions.pending !== null;
   return (
     <li className={`doc-row${selected ? " is-selected" : ""}`} data-testid={`doc-${doc.id}`}>
-      <button type="button" className="doc-pick" aria-current={selected ? "true" : undefined} onClick={onSelect}>
+      <button
+        type="button"
+        className="doc-pick"
+        aria-current={selected ? "true" : undefined}
+        data-doc-pick={doc.id}
+        onClick={onSelect}
+      >
         <KindIcon kind={doc.kind} />
         <span className="doc-main">
-          <span className="doc-name" id={nameId}>
-            {doc.name}
-          </span>
+          <span className="doc-name">{doc.name}</span>
           {lines.map((line) => (
             <span key={line.kind + line.text} className={`doc-status doc-status-${line.kind}`}>
               <StatusIcon kind={line.kind} />
@@ -68,19 +75,25 @@ export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
         </span>
       </button>
       <div className="doc-actions">
-        {buttons.map((b) => {
+        {buttons.map((b, i) => {
           const busy = actions.pending === b.key;
+          const text = busy ? b.busyLabel : b.label;
           return (
+            // Kunci per posisi: tombol yang sama dipakai ulang saat labelnya
+            // berganti (Edit di Word menjadi Buka lagi), jadi fokus tidak hilang.
+            // Nama file ikut dibacakan supaya tombol tiap baris bisa dibedakan.
             <button
-              key={b.key + b.label}
+              key={i}
               type="button"
               className="btn btn-ghost btn-sm"
-              aria-describedby={nameId}
-              disabled={busy}
+              aria-label={`${text} ${doc.name}`}
+              aria-disabled={blocked || undefined}
               aria-busy={busy || undefined}
-              onClick={b.run}
+              onClick={() => {
+                if (!blocked) b.run();
+              }}
             >
-              {busy ? b.busyLabel : b.label}
+              {text}
             </button>
           );
         })}

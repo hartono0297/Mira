@@ -81,11 +81,12 @@ export const resolveConflict = (documentId: string, keepVersionId: string) =>
 export const exportVersion = (documentId: string, versionId: string | null, destination: string) =>
   call<null>("export_version", { documentId, versionId, destination });
 
-// Dialog Windows untuk memilih file. Hasil null = user membatalkan.
+// Dialog Windows untuk memilih file. Hasil null = user membatalkan. Judul
+// diberikan supaya dialog tidak memakai judul bawaan Windows berbahasa Inggris.
 export async function pickFilesToAdd(): Promise<string[] | null> {
   if (!isTauri()) throw NO_TAURI_ERROR;
   try {
-    const picked = await open({ multiple: true, directory: false });
+    const picked = await open({ title: "Pilih file untuk pustaka", multiple: true, directory: false });
     if (picked === null) return null;
     return Array.isArray(picked) ? picked : [picked];
   } catch (err) {
@@ -96,7 +97,7 @@ export async function pickFilesToAdd(): Promise<string[] | null> {
 export async function pickExportDestination(name: string): Promise<string | null> {
   if (!isTauri()) throw NO_TAURI_ERROR;
   try {
-    return await save({ defaultPath: name });
+    return await save({ title: "Simpan salinan", defaultPath: name });
   } catch (err) {
     throw toAppError(err);
   }

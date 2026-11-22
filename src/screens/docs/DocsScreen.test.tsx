@@ -81,9 +81,9 @@ describe("Layar Dokumen", () => {
     expect(within(row("brosur.pdf")).getByText(/^Versi 1 · Ditambahkan Anda/)).toBeInTheDocument();
 
     // Tombol baris sesuai jenis dan keadaan.
-    expect(within(row("laporan-bulanan.docx")).getByRole("button", { name: "Edit di Word" })).toBeInTheDocument();
-    expect(within(row("brosur.pdf")).getByRole("button", { name: "Buka" })).toBeInTheDocument();
-    expect(within(row("kontrak.docx")).getByRole("button", { name: "Selesaikan bentrok" })).toBeInTheDocument();
+    expect(within(row("laporan-bulanan.docx")).getByRole("button", { name: "Edit di Word laporan-bulanan.docx" })).toBeInTheDocument();
+    expect(within(row("brosur.pdf")).getByRole("button", { name: "Buka brosur.pdf" })).toBeInTheDocument();
+    expect(within(row("kontrak.docx")).getByRole("button", { name: "Selesaikan bentrok kontrak.docx" })).toBeInTheDocument();
 
     // File pertama terpilih dan riwayatnya tampil.
     expect(await screen.findByRole("heading", { level: 2, name: "laporan-bulanan.docx" })).toBeInTheDocument();
@@ -102,7 +102,7 @@ describe("Layar Dokumen", () => {
     setup([laporan]);
     docsApi.startEdit.mockResolvedValue(laporan);
     render(<DocsScreen />);
-    await user.click(await screen.findByRole("button", { name: "Edit di Word" }));
+    await user.click(await screen.findByRole("button", { name: "Edit di Word laporan-bulanan.docx" }));
     expect(docsApi.startEdit).toHaveBeenCalledWith("d1", null);
     expect(await screen.findByText(/laporan-bulanan\.docx dibuka di Word/)).toBeInTheDocument();
   });
@@ -118,12 +118,12 @@ describe("Layar Dokumen", () => {
     await screen.findByText("RAB-proyek.xlsx", { selector: ".doc-name" });
     const r = row("RAB-proyek.xlsx");
     expect(within(r).queryByRole("button", { name: /^Edit di/ })).toBeNull();
-    await user.click(within(r).getByRole("button", { name: "Buka lagi" }));
+    await user.click(within(r).getByRole("button", { name: "Buka lagi RAB-proyek.xlsx" }));
     expect(docsApi.startEdit).toHaveBeenCalledWith("d2", null);
 
-    await user.click(within(r).getByRole("button", { name: "Selesai mengedit" }));
+    await user.click(within(r).getByRole("button", { name: "Selesai mengedit RAB-proyek.xlsx" }));
     expect(docsApi.finishEdit).toHaveBeenCalledWith("d2");
-    expect(await screen.findByText("Edit RAB-proyek.xlsx selesai.")).toBeInTheDocument();
+    expect(await screen.findByText("Selesai mengedit RAB-proyek.xlsx. Rekan sekarang bisa mengeditnya.")).toBeInTheDocument();
 
     // Selama diedit, versi lama tidak bisa dipulihkan dari layar ini.
     expect(await screen.findByText(/setelah Anda menekan Selesai mengedit/)).toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("Layar Dokumen", () => {
     await screen.findByText("jadwal.xlsx", { selector: ".doc-name" });
     const r = row("jadwal.xlsx");
     expect(within(r).queryByRole("button", { name: /^Edit di/ })).toBeNull();
-    await user.click(within(r).getByRole("button", { name: "Buka hanya baca" }));
+    await user.click(within(r).getByRole("button", { name: "Buka hanya baca jadwal.xlsx" }));
     expect(docsApi.openReadOnly).toHaveBeenCalledWith("d3", null);
     expect(await screen.findByText("jadwal.xlsx versi 1 dibuka hanya baca.")).toBeInTheDocument();
   });
@@ -174,7 +174,7 @@ describe("Layar Dokumen", () => {
     render(<DocsScreen />);
     await screen.findByRole("heading", { level: 2, name: "laporan-bulanan.docx" });
 
-    await user.click(within(row("kontrak.docx")).getByRole("button", { name: "Selesaikan bentrok" }));
+    await user.click(within(row("kontrak.docx")).getByRole("button", { name: "Selesaikan bentrok kontrak.docx" }));
     const title = await screen.findByRole("heading", { level: 3, name: "Dua versi tersimpan berdampingan" });
     await waitFor(() => expect(title).toHaveFocus());
   });
@@ -241,7 +241,7 @@ describe("Layar Dokumen", () => {
     render(<DocsScreen />);
 
     await user.click(await screen.findByRole("button", { name: "Tambah file" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Tambah file" })).not.toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Tambah file" })).not.toHaveAttribute("aria-disabled"));
     expect(docsApi.addDocuments).not.toHaveBeenCalled();
     expect(screen.queryByText(/ditambahkan/)).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -280,10 +280,61 @@ describe("Layar Dokumen", () => {
     docsApi.finishEdit.mockRejectedValue({ code: "document_editing", message: "Excel masih membuka file ini." });
     render(<DocsScreen />);
 
-    await user.click(await screen.findByRole("button", { name: "Selesai mengedit" }));
+    await user.click(await screen.findByRole("button", { name: "Selesai mengedit RAB-proyek.xlsx" }));
     expect(await screen.findByText("Edit belum bisa diselesaikan")).toBeInTheDocument();
     expect(screen.getByText("Excel masih membuka file ini.")).toBeInTheDocument();
     expect(screen.getByText(/Tutup file di Word atau Excel dulu/)).toBeInTheDocument();
+  });
+
+  it("satu aksi pada satu waktu: tombol lain menunggu dan klik kedua ditolak", async () => {
+    const user = userEvent.setup();
+    setup([laporan, brosur]);
+    let finish: (value: DocumentSummary) => void = () => {};
+    docsApi.startEdit.mockImplementation(() => new Promise<DocumentSummary>((resolve) => (finish = resolve)));
+    docsApi.openReadOnly.mockResolvedValue(null);
+    render(<DocsScreen />);
+
+    const edit = await screen.findByRole("button", { name: "Edit di Word laporan-bulanan.docx" });
+    await user.click(edit);
+    expect(edit).toHaveAttribute("aria-busy", "true");
+    expect(edit).toHaveTextContent("Membuka...");
+    // Tombol yang sibuk tidak memakai disabled, jadi fokus keyboard tetap di sana.
+    expect(edit).not.toBeDisabled();
+    expect(edit).toHaveFocus();
+
+    const other = within(row("brosur.pdf")).getByRole("button", { name: "Buka brosur.pdf" });
+    expect(other).toHaveAttribute("aria-disabled", "true");
+    await user.click(other);
+    await user.click(edit);
+    expect(docsApi.openReadOnly).not.toHaveBeenCalled();
+    expect(docsApi.startEdit).toHaveBeenCalledTimes(1);
+
+    await act(async () => finish(laporan));
+    await waitFor(() => expect(other).not.toHaveAttribute("aria-disabled"));
+  });
+
+  it("fokus pindah ke baris file kalau tombol yang ditekan hilang", async () => {
+    const user = userEvent.setup();
+    setup([rab]);
+    docsApi.finishEdit.mockImplementation(async () => {
+      docsApi.listDocuments.mockResolvedValue([{ ...rab, editing: [] }]);
+      return { ...rab, editing: [] };
+    });
+    render(<DocsScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "Selesai mengedit RAB-proyek.xlsx" }));
+    await screen.findByText(/^Selesai mengedit RAB-proyek\.xlsx\./);
+    const pick = within(row("RAB-proyek.xlsx")).getByRole("button", { name: /^RAB-proyek\.xlsx/ });
+    await waitFor(() => expect(pick).toHaveFocus());
+  });
+
+  it("tamu yang tidak bisa memilih versi hanya melihat bentrok", async () => {
+    setup([{ ...kontrak, can: { edit: false, restore: false, resolve: false, export: true } }]);
+    render(<DocsScreen />);
+    await screen.findByText("kontrak.docx", { selector: ".doc-name" });
+    expect(within(row("kontrak.docx")).getByRole("button", { name: "Lihat bentrok kontrak.docx" })).toBeInTheDocument();
+    expect(await screen.findByText(/Anda tidak punya izin memilih versi/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Pakai versi ini/ })).toBeNull();
   });
 
   it("pustaka kosong menampilkan penjelasan dan satu tombol Tambah file", async () => {

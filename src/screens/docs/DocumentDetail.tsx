@@ -49,14 +49,19 @@ function ActionButton({
   onClick: () => void;
 }) {
   const busy = actions.pending === pendingKey;
+  // Selama aksi lain berjalan, tombol ini menunggu. aria-disabled menjaga fokus
+  // keyboard tetap di tombol (disabled membuang fokus di WebView2).
+  const blocked = actions.pending !== null;
   return (
     <button
       type="button"
       className={`btn btn-sm${primary ? "" : " btn-ghost"}`}
       aria-label={busy ? busyLabel : ariaLabel}
-      disabled={busy}
+      aria-disabled={blocked || undefined}
       aria-busy={busy || undefined}
-      onClick={onClick}
+      onClick={() => {
+        if (!blocked) onClick();
+      }}
     >
       {busy ? busyLabel : label}
     </button>
@@ -141,12 +146,12 @@ function ConflictBox({
       </ul>
       {canMerge && doc.can.resolve && (
         <p className="conflict-note">
-          Gabung manual membuka versi itu di {app}. Salin bagian yang perlu dari versi lain, lalu simpan. Simpanan
-          pertama menyelesaikan bentrok.
+          Gabung manual membuka versi itu di {app}. Salin bagian yang perlu dari versi lain, lalu simpan. Begitu
+          Anda menyimpan, bentrok selesai.
         </p>
       )}
       {!doc.can.resolve && (
-        <p className="conflict-note">Anda tidak punya izin memilih versi. Minta anggota tim yang mengelola file ini.</p>
+        <p className="conflict-note">Anda tidak punya izin memilih versi. Minta salah satu rekan anggota tim memilihnya.</p>
       )}
     </div>
   );
@@ -204,6 +209,7 @@ function VersionRow({
                 type="button"
                 className="btn btn-ghost btn-sm"
                 aria-label={`Pulihkan versi ${v.number}`}
+                aria-disabled={actions.pending !== null || undefined}
                 onClick={() => actions.askRestore(doc, v)}
               >
                 Pulihkan

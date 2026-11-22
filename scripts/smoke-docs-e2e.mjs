@@ -114,8 +114,9 @@ async function waitFor(fn, timeoutMs, label) {
   }
 }
 
+// Nama aksesibel tombol baris = teks tombol + nama file, misalnya "Edit di Excel RAB-proyek-a.xlsx".
 const rowButton = (page, fileName, label) =>
-  page.locator("li", { hasText: fileName }).getByRole("button", { name: label, exact: true });
+  page.getByRole("button", { name: `${label} ${fileName}`, exact: true });
 
 try {
   // Jalankan 1
