@@ -115,6 +115,7 @@ pub fn run() {
             app.manage(documents.clone());
             documents.spawn_recovery();
             app.manage(signing::session::SignSessions::default());
+            signing::peer_sync::register(app.handle());
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
                 Ok(d) => d.from_env.then(|| d.path.clone()),
@@ -183,6 +184,7 @@ pub fn run() {
             signing::commands::sign_cancel,
             signing::commands::sign_export,
             signing::commands::sign_verify_file,
+            signing::commands::sign_download_file,
             feature_bridge::debug_feature_offer,
             feature_bridge::debug_feature_ingest,
             feature_bridge::debug_blob_serve,
