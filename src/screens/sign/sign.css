@@ -1,0 +1,529 @@
+/* Layar Tanda tangan: tanda tangan saya, daftar dokumen, dialog minta tanda
+   tangan dan periksa file. Semua warna lewat token peran. */
+
+.sign {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.sign-body {
+  max-width: 820px;
+  padding: 20px 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* Wilayah live selalu ada supaya pembaca layar membacakan isinya; tanpa jarak saat kosong. */
+.sign-live:empty {
+  display: none;
+}
+
+.sign-live:not(:empty) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sign-ok {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.sign-inline-btn {
+  margin-top: 8px;
+}
+
+.sign-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sign-h2 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Tanda tangan saya: satu baris ringkas, karena hanya prasyarat. Fokus layar ada di daftar dokumen. */
+
+.sign-mine {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.sign-mine-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  align-self: flex-start;
+}
+
+.sign-mine-text {
+  flex: 1 1 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sign-mine-main {
+  font-weight: 700;
+}
+
+.sign-mine-sub {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.sign-mine-lock {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.sign-mine-lock svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.sign-mine-action {
+  flex: none;
+}
+
+/* Daftar dokumen */
+
+.sign-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sign-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sign-guest {
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sign-empty {
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.sign-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.sign-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.sign-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sign-row:hover {
+  background: var(--hover);
+}
+
+.sign-row-icon,
+.sign-row-chevron {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.sign-row-icon {
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+.sign-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sign-row-title {
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.sign-row-meta {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.sign-row-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* Peringatan integritas: teks + ikon, warna hanya pendukung. */
+.sign-warn-line {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  align-self: flex-start;
+  padding: 3px 9px;
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sign-warn-line svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.sign-row-warn .sign-row-icon {
+  color: var(--danger);
+}
+
+.sign-confirm-p {
+  margin-top: 8px;
+}
+
+/* Dialog minta tanda tangan dan periksa file */
+
+.dlg:has(.sign-form) {
+  width: min(540px, calc(100vw - 32px));
+}
+
+.sign-file-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.sign-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sign-set {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sign-legend {
+  padding: 0;
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sign-empty-small {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+/* Daftar calon penanda tangan. Bergulir sendiri kalau anggotanya banyak (sampai 30 orang). */
+.sign-pick {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 232px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.sign-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.sign-pick-row:hover {
+  background: var(--hover);
+}
+
+.sign-pick-row input {
+  flex: none;
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.sign-pick-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sign-opts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sign-opt {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.sign-opt:hover {
+  background: var(--hover);
+}
+
+.sign-opt:has(input:checked) {
+  border: 2px solid var(--accent);
+  padding: 9px 11px;
+  background: var(--accent-soft);
+}
+
+.sign-opt:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sign-opt input {
+  margin: 3px 0 0;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.sign-opt input:focus-visible {
+  outline: none;
+}
+
+.sign-opt-title {
+  display: block;
+  font-weight: 700;
+}
+
+.sign-opt-desc {
+  display: block;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.sign-opt:has(input:checked) .sign-opt-desc {
+  color: var(--text);
+}
+
+/* Urutan: nomor bulat seperti panel urutan di layar dokumen. */
+.sign-order {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sign-order-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sign-num {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sign-order-name {
+  flex: 1 1 160px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sign-order-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.sign-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.sign-note svg {
+  flex: none;
+  color: var(--text-sec);
+  margin-top: 1px;
+}
+
+/* Hasil periksa file. Setiap keadaan punya ikon dan judul sendiri, bukan hanya warna. */
+.sign-verify {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.sign-verify > svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.sign-verify > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sign-verify strong {
+  font-size: 14px;
+}
+
+.sign-verify-ok {
+  border-color: var(--online);
+}
+
+.sign-verify-ok > svg {
+  color: var(--online);
+}
+
+.sign-verify-mid {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.sign-verify-mid > svg {
+  color: var(--accent-text);
+}
+
+.sign-verify-bad {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.sign-verify-bad > svg,
+.sign-verify-bad strong {
+  color: var(--danger);
+}
+
+.sign-verify-unknown > svg {
+  color: var(--text-sec);
+}
+
+.sign-verify-title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.sign-verify-signers {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sign-verify-signers li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.sign-verify-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.sign-verify-hash {
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

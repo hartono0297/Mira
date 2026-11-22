@@ -4,6 +4,7 @@ import {
   IconLayoutKanban,
   IconMessage,
   IconSettings,
+  IconSignature,
   type Icon,
 } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
@@ -15,16 +16,18 @@ import { ChatScreen } from "../chat/ChatScreen";
 import { DocsScreen } from "../docs/DocsScreen";
 import { OrgScreen } from "../org/OrgScreen";
 import { SettingsScreen, type SettingsPart } from "../settings/SettingsScreen";
+import { SignScreen } from "../sign/SignScreen";
 import { NetworkPanel } from "./NetworkPanel";
 import { NetworkProvider } from "./NetworkContext";
 import "./shell.css";
 
-export type Section = "chat" | "board" | "docs" | "org" | "settings";
+export type Section = "chat" | "board" | "docs" | "sign" | "org" | "settings";
 
 const NAV: { id: Section; label: string; icon: Icon }[] = [
   { id: "chat", label: "Chat", icon: IconMessage },
   { id: "board", label: "Board", icon: IconLayoutKanban },
   { id: "docs", label: "Dokumen", icon: IconFileText },
+  { id: "sign", label: "Tanda tangan", icon: IconSignature },
   { id: "org", label: "Organisasi", icon: IconBuildingCommunity },
   { id: "settings", label: "Pengaturan", icon: IconSettings },
 ];
@@ -89,6 +92,7 @@ export function Shell({ state, onRefresh }: Props) {
           {section === "chat" && <ChatScreen />}
           {section === "board" && <BoardScreen />}
           {section === "docs" && <DocsScreen />}
+          {section === "sign" && <SignScreen />}
           {section === "org" && <OrgScreen state={state} onRefresh={onRefresh} />}
           {section === "settings" && <SettingsScreen state={state} part={settingsPart} onPart={setSettingsPart} />}
         </div>
