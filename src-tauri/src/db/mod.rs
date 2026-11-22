@@ -97,7 +97,14 @@ mod tests {
         assert_eq!(fk, 1);
 
         let tables = table_names(&conn);
-        for t in ["identity", "members", "organizations", "settings"] {
+        for t in [
+            "identity",
+            "members",
+            "organizations",
+            "settings",
+            "org_ops",
+            "rejected_changes",
+        ] {
             assert!(
                 tables.iter().any(|n| n == t),
                 "missing table {t}: {tables:?}"
@@ -148,6 +155,127 @@ mod tests {
         }
         let err = open(tmp.path()).unwrap_err();
         assert_eq!(err.code(), "database");
+    }
+
+    #[test]
+    fn v1_database_upgrades_to_v2_without_losing_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(DB_FILE_NAME);
+        let (org_id, founder, other) = ("0a".repeat(16), "1b".repeat(32), "2c".repeat(32));
+        {
+            let conn = Connection::open(&path).unwrap();
+            configure(&conn).unwrap();
+            conn.execute_batch(migrations::MIGRATIONS[0]).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute(
+                "INSERT INTO identity (id, public_key, display_name, created_at) VALUES (1, ?1, 'Sari', 't0')",
+                [&founder],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO organizations (id, name, founder_public_key, created_at, genesis_signature)
+                 VALUES (?1, 'CV Maju Jaya', ?2, '2026-11-01T00:00:00Z', ?3)",
+                [&org_id, &founder, &"3d".repeat(64)],
+            )
+            .unwrap();
+            for (pk, role, name) in [(&founder, "superadmin", "Sari"), (&other, "member", "Budi")] {
+                conn.execute(
+                    "INSERT INTO members (organization_id, public_key, display_name, role, added_at)
+                     VALUES (?1, ?2, ?3, ?4, 't1')",
+                    [&org_id, pk, &name.to_owned(), &role.to_owned()],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES ('theme.mode', 'dark', 't')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let conn = open(tmp.path()).unwrap();
+        assert_eq!(schema_version(&conn).unwrap(), latest_version());
+        assert!(latest_version() >= 2);
+
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM organizations WHERE id = ?1",
+                [&org_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "CV Maju Jaya");
+        let rows: Vec<(String, String, String, String, i64, String)> = conn
+            .prepare(
+                "SELECT public_key, display_name, role, status, is_superadmin, kind
+                 FROM members ORDER BY display_name DESC",
+            )
+            .unwrap()
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    founder.clone(),
+                    "Sari".into(),
+                    "superadmin".into(),
+                    "active".into(),
+                    1,
+                    "member".into()
+                ),
+                (
+                    other.clone(),
+                    "Budi".into(),
+                    "member".into(),
+                    "active".into(),
+                    0,
+                    "member".into()
+                ),
+            ]
+        );
+        let theme: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'theme.mode'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(theme, "dark");
+        let pk: String = conn
+            .query_row("SELECT public_key FROM identity", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pk, founder);
+
+        let tables = table_names(&conn);
+        for t in [
+            "org_ops",
+            "teams",
+            "team_members",
+            "invites",
+            "guest_access",
+            "channels",
+            "peer_addresses",
+            "manual_addresses",
+            "peer_seen",
+            "rejected_changes",
+        ] {
+            assert!(
+                tables.iter().any(|n| n == t),
+                "missing table {t}: {tables:?}"
+            );
+        }
     }
 
     #[test]
