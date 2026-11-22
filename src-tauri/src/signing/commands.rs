@@ -8,34 +8,43 @@
 //! (`x-mira-file-name` berisi `encodeURIComponent(nama)`), dan
 //! `sign_read_file` membalas `tauri::ipc::Response` berisi byte.
 //!
-//! - File PDF: `FolderStore` di `<data_dir>/ttd-berkas`.
+//! - File PDF: `BlobDocumentStore` (blob store `<data_dir>/blobs`, dengan
+//!   cadangan berkas lama `<data_dir>/ttd-berkas`).
+//! - Perubahan lokal memberi tahu jaringan lewat `HubOutbox`
+//!   (`FeatureHub::notify_changed("sign")`).
 //! - Folder ekspor: `MIRA_EXPORT_DIR` kalau diisi, kalau tidak folder Unduhan
 //!   Windows, kalau itu pun gagal `<data_dir>/ekspor`.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
-use super::outbox::LocalOnlyOutbox;
+use super::err;
+use super::outbox::{HubOutbox, LocalOnlyOutbox, SignOutbox};
+use super::peer_sync::{self, SignSync};
 use super::pin::KdfParams;
+use super::repo::RequestScope;
 use super::service::{
     Candidate, ExportResult, ImportedPdf, RequestDetail, SignContext, SignOverview, UnlockResult,
     VerifyResult,
 };
 use super::session::SignSessions;
-use super::store::FolderStore;
+use super::store::{BlobDocumentStore, MAX_SIGNED_PDF_BYTES};
 use super::vault::SavedSignatureInfo;
 use crate::clock;
+use crate::documents::scope::InviteGuestProjects;
 use crate::error::{AppError, AppResult};
+use crate::network::feature::FeatureHub;
 use crate::state::MiraState;
 
 /// Folder ekspor pilihan (untuk uji ujung ke ujung dan pengguna mahir).
 pub const EXPORT_DIR_ENV: &str = "MIRA_EXPORT_DIR";
 
-/// Subfolder `data_dir` untuk file PDF tanda tangan.
-pub const STORE_FOLDER: &str = "ttd-berkas";
+/// Subfolder `data_dir` berkas PDF lama (sebelum blob store).
+pub const STORE_FOLDER: &str = super::store::LEGACY_FOLDER;
 
 const HEADER_FILE_NAME: &str = "x-mira-file-name";
 const HEADER_REQUEST: &str = "x-mira-request";
@@ -59,7 +68,14 @@ fn run<T>(
     f: impl FnOnce(&mut SignContext<'_>) -> AppResult<T>,
 ) -> AppResult<T> {
     let data_dir = state.data_dir()?.to_path_buf();
-    let store = FolderStore::new(data_dir.join(STORE_FOLDER));
+    let store = match app.try_state::<Arc<SignSync>>() {
+        Some(sync) => sync.store().clone(),
+        None => BlobDocumentStore::in_data_dir(&data_dir)?,
+    };
+    let outbox: Box<dyn SignOutbox> = match app.try_state::<Arc<FeatureHub>>() {
+        Some(hub) => Box::new(HubOutbox::new(hub.inner().clone())),
+        None => Box::new(LocalOnlyOutbox),
+    };
     let export_dir = export_dir(app, &data_dir);
     state.with_core(|core| {
         let mut ctx = SignContext {
@@ -67,12 +83,28 @@ fn run<T>(
             identity: &core.identity,
             store: &store,
             sessions,
-            outbox: &LocalOnlyOutbox,
+            outbox: outbox.as_ref(),
+            guests: &InviteGuestProjects,
             export_dir: &export_dir,
             kdf: KdfParams::DEFAULT,
         };
         f(&mut ctx)
     })
+}
+
+fn not_available(detail: impl std::fmt::Display) -> AppError {
+    err(
+        "not_available",
+        format!(
+            "File ini belum bisa diunduh: tidak ada laptop rekan tersambung yang menyimpannya. Pastikan laptop pengirim atau penanda tangan menyala dan tersambung, lalu coba lagi. Detail: {detail}"
+        ),
+    )
+}
+
+fn join_error(e: impl std::fmt::Display) -> AppError {
+    AppError::Internal(format!(
+        "Pekerjaan tanda tangan berhenti di tengah jalan. Coba lagi. Detail: {e}"
+    ))
 }
 
 /// Seperti `run`, tetapi di thread `spawn_blocking`, supaya Argon2, hash
@@ -87,11 +119,7 @@ async fn run_blocking<T: Send + 'static>(
     let (app, state, sessions) = (app.clone(), state.inner().clone(), sessions.inner().clone());
     tauri::async_runtime::spawn_blocking(move || run(&app, &state, &sessions, f))
         .await
-        .map_err(|e| {
-            AppError::Internal(format!(
-                "Pekerjaan tanda tangan berhenti di tengah jalan. Coba lagi. Detail: {e}"
-            ))
-        })?
+        .map_err(join_error)?
 }
 
 fn raw_body<'a>(request: &'a Request<'_>) -> AppResult<&'a [u8]> {
@@ -202,13 +230,18 @@ pub async fn sign_unlock(
     .await
 }
 
+/// Tamu hanya muncul kalau `projectId` diisi dan proyek itu diizinkan untuknya.
 #[tauri::command]
 pub async fn sign_list_candidates(
     app: AppHandle,
     state: State<'_, MiraState>,
     sessions: State<'_, SignSessions>,
+    project_id: Option<String>,
+    team_id: Option<String>,
 ) -> AppResult<Vec<Candidate>> {
-    run(&app, &state, &sessions, |c| c.list_candidates())
+    run(&app, &state, &sessions, |c| {
+        c.list_candidates_for(team_id.as_deref(), project_id.as_deref())
+    })
 }
 
 #[tauri::command]
@@ -228,6 +261,8 @@ pub async fn sign_import_pdf(
     .await
 }
 
+// Argumen perintah adalah kontrak dengan frontend (`src/api/signing.ts`).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn sign_create_request(
     app: AppHandle,
@@ -237,10 +272,59 @@ pub async fn sign_create_request(
     file_hash: String,
     mode: String,
     signers: Vec<String>,
+    team_id: Option<String>,
+    project_id: Option<String>,
 ) -> AppResult<RequestDetail> {
+    let scope = RequestScope {
+        team_id: team_id.filter(|s| !s.is_empty()),
+        project_id: project_id.filter(|s| !s.is_empty()),
+    };
     run(&app, &state, &sessions, |c| {
-        c.create_request(&title, &file_hash, &mode, &signers, clock::now())
+        c.create_request_scoped(&title, &file_hash, &mode, &signers, &scope, clock::now())
     })
+}
+
+/// Mengunduh file versi permintaan yang belum ada di laptop ini (termasuk
+/// yang lebih dari 20 MB) dari laptop rekan, lalu mengembalikan rinciannya.
+/// Error `not_available` kalau tidak ada rekan tersambung yang menyimpannya.
+#[tauri::command]
+pub async fn sign_download_file(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    sessions: State<'_, SignSessions>,
+    request_id: String,
+) -> AppResult<RequestDetail> {
+    let sync = app
+        .try_state::<Arc<SignSync>>()
+        .map(|s| s.inner().clone())
+        .ok_or_else(|| not_available("sinkron tanda tangan belum berjalan"))?;
+    let hub = app
+        .try_state::<Arc<FeatureHub>>()
+        .map(|h| h.inner().clone())
+        .ok_or_else(|| not_available("jaringan belum berjalan"))?;
+    let missing = {
+        let (sync, id) = (sync.clone(), request_id.clone());
+        tauri::async_runtime::spawn_blocking(move || sync.missing_files(&id))
+            .await
+            .map_err(join_error)??
+    };
+    let fetched = !missing.is_empty();
+    for file in missing {
+        let dest = sync.download_path(&file.hash)?;
+        let max = file.size.min(MAX_SIGNED_PDF_BYTES as u64);
+        if let Err(e) = hub.fetch_blob(&file.hash, max, file.prefer, &dest).await {
+            let _ = std::fs::remove_file(&dest);
+            return Err(not_available(e));
+        }
+        let (sync, hash) = (sync.clone(), file.hash.clone());
+        tauri::async_runtime::spawn_blocking(move || sync.add_downloaded(&dest, &hash))
+            .await
+            .map_err(join_error)??;
+    }
+    if fetched {
+        peer_sync::emit_changed(&app);
+    }
+    run_blocking(&app, &state, &sessions, move |c| c.get_request(&request_id)).await
 }
 
 #[tauri::command]

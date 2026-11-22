@@ -1,8 +1,10 @@
 //! Penyimpanan berkas PDF berdasarkan hash BLAKE3.
 //!
-//! `FolderStore` menyimpan berkas di `<root>/<2 hex pertama>/<hash>.pdf`
-//! (dipakai aplikasi dengan root `<data_dir>/ttd-berkas`). `MemoryStore`
-//! untuk tes.
+//! - `BlobDocumentStore`: yang dipakai aplikasi, di atas blob store Tahap 4
+//!   (`<data_dir>/blobs`), dengan cadangan berkas lama `ttd-berkas`.
+//! - `FolderStore`: penyimpanan lama `<root>/<2 hex pertama>/<hash>.pdf`
+//!   (root `<data_dir>/ttd-berkas`), sekarang hanya dibaca sebagai cadangan.
+//! - `MemoryStore`: untuk tes.
 
 use std::collections::HashMap;
 use std::fs;
@@ -14,6 +16,7 @@ use rand_core::{OsRng, RngCore};
 
 use super::err;
 use super::seal::{hash_hex, is_hash_hex};
+use crate::blobs::{BlobHash, BlobStore};
 use crate::error::{AppError, AppResult};
 
 /// Batas ukuran PDF yang diimpor (dibuka untuk permintaan baru): 50 MB.
@@ -44,6 +47,10 @@ pub trait DocumentStore: Send + Sync {
     fn get(&self, hash: &str) -> AppResult<Option<Vec<u8>>>;
     /// Benar kalau berkas dengan hash itu ada (tanpa memeriksa isinya).
     fn contains(&self, hash: &str) -> AppResult<bool>;
+    /// Ukuran berkas dalam byte, atau `None` kalau tidak ada.
+    fn size(&self, hash: &str) -> AppResult<Option<u64>> {
+        Ok(self.get(hash)?.map(|b| b.len() as u64))
+    }
 }
 
 fn check_size(bytes: &[u8]) -> AppResult<()> {
@@ -147,6 +154,131 @@ impl DocumentStore for FolderStore {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(e) => Err(self.io_error("dibaca", e)),
         }
+    }
+}
+
+impl FolderStore {
+    /// Menghapus berkas `hash` kalau ada (dipakai saat berkas lama dipindah
+    /// ke blob store).
+    fn remove(&self, hash: &str) -> AppResult<()> {
+        check_hash(hash)?;
+        match fs::remove_file(self.path_for(hash)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(self.io_error("dihapus", e)),
+        }
+    }
+}
+
+/// Penyimpanan PDF tanda tangan di blob store Tahap 4 (`<data_dir>/blobs`),
+/// dipakai aplikasi sejak sinkron antar laptop.
+///
+/// Berkas lama dari `FolderStore` (`<data_dir>/ttd-berkas`) dibaca sebagai
+/// cadangan. Saat pertama dibaca dan isinya cocok dengan hash-nya, berkas itu
+/// dipindah ke blob store. Berkas lama yang isinya sudah berubah dibiarkan di
+/// tempatnya dan dikembalikan apa adanya, supaya pemanggil bisa melaporkannya
+/// sebagai "berubah".
+#[derive(Debug, Clone)]
+pub struct BlobDocumentStore {
+    blobs: BlobStore,
+    legacy: Option<FolderStore>,
+}
+
+impl BlobDocumentStore {
+    pub fn new(blobs: BlobStore, legacy: Option<FolderStore>) -> Self {
+        Self { blobs, legacy }
+    }
+
+    /// Blob store `<data_dir>/blobs` dengan cadangan `<data_dir>/ttd-berkas`.
+    pub fn in_data_dir(data_dir: &Path) -> AppResult<Self> {
+        Ok(Self::new(
+            BlobStore::in_data_dir(data_dir)?,
+            Some(FolderStore::new(data_dir.join(LEGACY_FOLDER))),
+        ))
+    }
+
+    pub fn blobs(&self) -> &BlobStore {
+        &self.blobs
+    }
+
+    fn blob_hash(hash: &str) -> AppResult<BlobHash> {
+        check_hash(hash)?;
+        BlobHash::parse(hash)
+    }
+
+    /// Memindah berkas lama `hash` ke blob store kalau ada dan utuh. Hasilnya
+    /// isi berkas lama (utuh atau tidak), atau `None` kalau tidak ada.
+    fn migrate(&self, hash: &str) -> AppResult<Option<Vec<u8>>> {
+        let Some(legacy) = &self.legacy else {
+            return Ok(None);
+        };
+        let Some(bytes) = legacy.get(hash)? else {
+            return Ok(None);
+        };
+        if hash_hex(&bytes) == hash {
+            self.blobs.put_bytes(&bytes)?;
+            legacy.remove(hash)?;
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Path berkas `hash` di blob store (berkas lama dipindah dulu), atau
+    /// `None` kalau tidak ada di laptop ini.
+    pub fn path_for(&self, hash: &str) -> AppResult<Option<PathBuf>> {
+        let h = Self::blob_hash(hash)?;
+        if !self.blobs.contains(&h) {
+            self.migrate(hash)?;
+        }
+        Ok(self.blobs.contains(&h).then(|| self.blobs.path_of(&h)))
+    }
+}
+
+/// Subfolder `data_dir` milik `FolderStore` lama.
+pub const LEGACY_FOLDER: &str = "ttd-berkas";
+
+impl DocumentStore for BlobDocumentStore {
+    fn put(&self, bytes: &[u8]) -> AppResult<String> {
+        check_size(bytes)?;
+        let hash = hash_hex(bytes);
+        let h = BlobHash::parse(&hash)?;
+        if self.blobs.contains(&h) {
+            match self.blobs.read_all(&h) {
+                Ok(existing) if existing == bytes => return Ok(hash),
+                // Rusak atau diubah (panjang sama pun): hapus lalu tulis ulang.
+                _ => {
+                    self.blobs.remove(&h)?;
+                }
+            }
+        }
+        let info = self.blobs.put_bytes(bytes)?;
+        Ok(info.hash.as_str().to_owned())
+    }
+
+    fn get(&self, hash: &str) -> AppResult<Option<Vec<u8>>> {
+        let h = Self::blob_hash(hash)?;
+        if self.blobs.contains(&h) {
+            return self.blobs.read_all(&h).map(Some);
+        }
+        self.migrate(hash)
+    }
+
+    fn contains(&self, hash: &str) -> AppResult<bool> {
+        let h = Self::blob_hash(hash)?;
+        if self.blobs.contains(&h) {
+            return Ok(true);
+        }
+        match &self.legacy {
+            Some(legacy) => legacy.contains(hash),
+            None => Ok(false),
+        }
+    }
+
+    fn size(&self, hash: &str) -> AppResult<Option<u64>> {
+        let h = Self::blob_hash(hash)?;
+        if self.blobs.contains(&h) {
+            return self.blobs.size(&h).map(Some);
+        }
+        Ok(self.get(hash)?.map(|b| b.len() as u64))
     }
 }
 
@@ -342,6 +474,85 @@ mod tests {
             assert_eq!(store.get(&bad).unwrap_err().code(), "pdf_invalid");
             assert_eq!(store.contains(&bad).unwrap_err().code(), "pdf_invalid");
         }
+    }
+
+    fn blob_store() -> (tempfile::TempDir, BlobDocumentStore) {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = BlobDocumentStore::in_data_dir(tmp.path()).unwrap();
+        (tmp, store)
+    }
+
+    #[test]
+    fn blob_store_put_get_contains_size() {
+        let (_tmp, store) = blob_store();
+        let hash = store.put(PDF).unwrap();
+        assert_eq!(hash, hash_hex(PDF));
+        assert_eq!(store.put(PDF).unwrap(), hash, "idempoten");
+        assert!(store.contains(&hash).unwrap());
+        assert_eq!(store.get(&hash).unwrap().as_deref(), Some(PDF));
+        assert_eq!(store.size(&hash).unwrap(), Some(PDF.len() as u64));
+        let path = store.path_for(&hash).unwrap().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), PDF);
+
+        let absent = hash_hex(b"lain");
+        assert!(!store.contains(&absent).unwrap());
+        assert_eq!(store.get(&absent).unwrap(), None);
+        assert_eq!(store.size(&absent).unwrap(), None);
+        assert_eq!(store.path_for(&absent).unwrap(), None);
+    }
+
+    #[test]
+    fn blob_store_get_does_not_verify_and_put_repairs_same_length() {
+        let (_tmp, store) = blob_store();
+        let hash = store.put(PDF).unwrap();
+        let path = store.path_for(&hash).unwrap().unwrap();
+        let mut damaged = PDF.to_vec();
+        damaged[3] ^= 1;
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&path, perms).unwrap();
+        fs::write(&path, &damaged).unwrap();
+
+        let got = store.get(&hash).unwrap();
+        assert_eq!(check_bytes(&hash, got.as_deref()), Integrity::Changed);
+        assert_eq!(store.put(PDF).unwrap(), hash);
+        assert_eq!(store.get(&hash).unwrap().as_deref(), Some(PDF));
+    }
+
+    #[test]
+    fn blob_store_moves_legacy_files_on_first_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy = FolderStore::new(tmp.path().join(LEGACY_FOLDER));
+        let hash = legacy.put(PDF).unwrap();
+        let broken = legacy.put(b"%PDF-1.7 lama").unwrap();
+        let broken_path = legacy.path_for(&broken);
+        fs::write(&broken_path, b"%PDF-1.7 diubah").unwrap();
+
+        let store = BlobDocumentStore::in_data_dir(tmp.path()).unwrap();
+        assert!(store.contains(&hash).unwrap());
+        assert_eq!(store.get(&hash).unwrap().as_deref(), Some(PDF));
+        assert!(!legacy.contains(&hash).unwrap(), "dipindah");
+        assert!(store.blobs().contains(&BlobHash::parse(&hash).unwrap()));
+        assert_eq!(store.get(&hash).unwrap().as_deref(), Some(PDF));
+
+        // Berkas lama yang berubah dikembalikan apa adanya dan tidak dipindah.
+        let got = store.get(&broken).unwrap();
+        assert_eq!(check_bytes(&broken, got.as_deref()), Integrity::Changed);
+        assert!(broken_path.exists());
+        assert_eq!(store.path_for(&broken).unwrap(), None);
+    }
+
+    #[test]
+    fn blob_store_rejects_malicious_hashes_and_large_files() {
+        let (_tmp, store) = blob_store();
+        for bad in evil_hashes() {
+            assert_eq!(store.get(&bad).unwrap_err().code(), "pdf_invalid", "{bad}");
+            assert_eq!(store.contains(&bad).unwrap_err().code(), "pdf_invalid");
+            assert_eq!(store.path_for(&bad).unwrap_err().code(), "pdf_invalid");
+        }
+        let big = vec![0u8; MAX_SIGNED_PDF_BYTES + 1];
+        assert_eq!(store.put(&big).unwrap_err().code(), "pdf_too_large");
     }
 
     #[test]

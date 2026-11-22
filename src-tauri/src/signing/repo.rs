@@ -149,6 +149,44 @@ pub fn save_request(tx: &Transaction<'_>, req: &SignRequest) -> AppResult<()> {
     Ok(())
 }
 
+/// Cakupan tim dan proyek permintaan (kolom `team_id`, `project_id`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RequestScope {
+    pub team_id: Option<String>,
+    pub project_id: Option<String>,
+}
+
+pub fn set_scope(conn: &Connection, request_id: &str, scope: &RequestScope) -> AppResult<()> {
+    conn.execute(
+        "UPDATE sign_requests SET team_id = ?1, project_id = ?2 WHERE id = ?3",
+        params![scope.team_id, scope.project_id, request_id],
+    )?;
+    Ok(())
+}
+
+pub fn load_scope(conn: &Connection, request_id: &str) -> AppResult<RequestScope> {
+    Ok(conn
+        .query_row(
+            "SELECT team_id, project_id FROM sign_requests WHERE id = ?1",
+            params![request_id],
+            |r| {
+                Ok(RequestScope {
+                    team_id: r.get(0)?,
+                    project_id: r.get(1)?,
+                })
+            },
+        )
+        .optional()?
+        .unwrap_or_default())
+}
+
+/// Menghapus satu baris `sign_events` (dipakai sinkron saat catatan dari
+/// versi yang kalah dibuang).
+pub fn delete_event(conn: &Connection, id: i64) -> AppResult<()> {
+    conn.execute("DELETE FROM sign_events WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 /// Permintaan dengan id itu, atau `None`.
 pub fn load_request(conn: &Connection, id: &str) -> AppResult<Option<SignRequest>> {
     let row = conn

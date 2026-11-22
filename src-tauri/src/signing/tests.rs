@@ -9,6 +9,7 @@ use data_encoding::BASE64;
 use rusqlite::{Connection, params};
 use time::{Duration, OffsetDateTime};
 
+use super::increment::testing as pdf;
 use super::outbox::SignOutbox;
 use super::pin::KdfParams;
 use super::repo;
@@ -19,6 +20,7 @@ use super::service::{
 };
 use super::session::SignSessions;
 use super::store::{DocumentStore, MemoryStore};
+use crate::documents::scope::InviteGuestProjects;
 use crate::error::{AppError, AppResult};
 use crate::identity::{self, Identity, MemoryKeyStore};
 use crate::{clock, db, org};
@@ -107,15 +109,14 @@ fn tiny_png(width: u32, height: u32) -> Vec<u8> {
 }
 
 fn original_pdf() -> Vec<u8> {
-    b"%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n".to_vec()
+    pdf::sample_pdf(1)
 }
 
+/// Versi ke-`n` permintaan `id`: `n` kali stempel incremental di atas
+/// `original_pdf()` (n >= 1), jadi lolos bukti stempel terhadap versi ke-(n-1).
 fn stamped(id: &str, n: u32) -> Vec<u8> {
-    format!(
-        "%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n2 0 obj << /Keywords ({}) >> endobj\n% stempel {n}\n%%EOF\n",
-        seal::doc_tag(id)
-    )
-    .into_bytes()
+    let tag = seal::doc_tag(id);
+    (0..n.max(1)).fold(original_pdf(), |prev, _| pdf::stamp(&prev, &tag))
 }
 
 fn code<T: std::fmt::Debug>(r: AppResult<T>) -> &'static str {
@@ -130,6 +131,7 @@ impl Fx {
             store: &self.store,
             sessions: &self.sessions,
             outbox: &self.outbox,
+            guests: &InviteGuestProjects,
             export_dir: &self.export_dir,
             kdf: KdfParams::TEST,
         }
@@ -387,7 +389,7 @@ fn version_conflict_tag_missing_and_unchanged_file() {
     );
 
     // Versi terkini yang sudah memuat penanda, lalu dikirim ulang tanpa perubahan.
-    let tagged = stamped(&id, 0);
+    let tagged = stamped(&id, 1);
     let tagged_hash = f.store.put(&tagged).unwrap();
     f.exec(
         "UPDATE sign_requests SET current_hash = ?1 WHERE id = ?2",
@@ -452,11 +454,24 @@ fn guest_rules() {
     let me = f.me();
     let tamu = f.add_member(0xc1, "Tamu Klien", "guest", "guest", "active");
     f.save_signature();
+    // Tamu tidak muncul tanpa proyek, dan juga tidak di proyek yang tidak
+    // diizinkan untuknya.
     let candidates = f.ctx().list_candidates().unwrap();
-    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates.len(), 1);
     assert!(candidates[0].is_me);
-    assert_eq!(candidates[1].public_key, tamu);
-    assert_eq!(candidates[1].kind.as_str(), "guest");
+    let in_project = f
+        .ctx()
+        .list_candidates_for(None, Some(&"ab".repeat(16)))
+        .unwrap();
+    assert!(in_project.iter().all(|c| c.public_key != tamu));
+    // Tamu sebagai penanda tangan tanpa proyek ditolak.
+    let hash = f.import(&original_pdf());
+    let err = f
+        .ctx()
+        .create_request("Lain", &hash, "parallel", std::slice::from_ref(&tamu), t(6))
+        .unwrap_err();
+    assert_eq!(err.code(), "request_invalid");
+    assert!(err.to_string().contains("Tamu Klien adalah Tamu"), "{err}");
 
     // Dibuat saat masih anggota; lalu laptop ini menjadi Tamu.
     let d = f.create(std::slice::from_ref(&me), "sequential");
@@ -590,6 +605,7 @@ fn no_organization_means_no_requests() {
         store: &store,
         sessions: &sessions,
         outbox: &outbox,
+        guests: &InviteGuestProjects,
         export_dir: dir.path(),
         kdf: KdfParams::TEST,
     };
@@ -992,6 +1008,11 @@ fn json_uses_contract_field_names() {
         "completedAt",
         "integrity",
         "exportWarnings",
+        "fromPeer",
+        "requestedByName",
+        "fileAvailable",
+        "fileSize",
+        "pending",
     ];
     let mut detail_keys = summary_keys.to_vec();
     detail_keys.extend([
@@ -1004,6 +1025,8 @@ fn json_uses_contract_field_names() {
         "isLastPending",
         "docTag",
         "sealValid",
+        "scope",
+        "rejected",
     ]);
     let j = serde_json::to_value(&done).unwrap();
     assert_eq!(keys(&j), set(&detail_keys));
@@ -1048,6 +1071,14 @@ fn json_uses_contract_field_names() {
     assert_eq!(j["signers"][0]["status"], "signed");
     assert_eq!(j["exports"][0]["state"], "intact");
     assert_eq!(j["events"][1]["kind"], "signed");
+    assert_eq!(keys(&j["scope"]), set(&["teamId", "projectId"]));
+    assert_eq!(j["scope"]["projectId"], serde_json::Value::Null);
+    assert_eq!(j["rejected"], serde_json::json!([]));
+    assert_eq!(j["fromPeer"], false);
+    assert_eq!(j["requestedByName"], "Sari Dewi");
+    assert_eq!(j["fileAvailable"], true);
+    assert_eq!(j["fileSize"], stamped(&id, 1).len());
+    assert_eq!(j["pending"], false);
 
     let ov = serde_json::to_value(f.ctx().overview(t(1000)).unwrap()).unwrap();
     assert_eq!(keys(&ov), set(&["saved", "requests", "canRequest", "me"]));
@@ -1121,6 +1152,8 @@ fn signing_sources_have_no_em_dash() {
         include_str!("vault.rs"),
         include_str!("seal.rs"),
         include_str!("store.rs"),
+        include_str!("peer_sync.rs"),
+        include_str!("sync_tests.rs"),
     ];
     for src in sources {
         assert!(!src.contains('\u{2014}'));
@@ -1496,12 +1529,10 @@ fn complete_accepts_old_tag_before_new_one() {
     let d = f.create(std::slice::from_ref(&me), "sequential");
     let id = d.summary.id.clone();
     let old = "f".repeat(32);
-    let resaved = format!(
-        "%PDF-1.7\n<x:Keywords>{}</x:Keywords>\n2 0 obj << /Keywords ({}) >> endobj\n%%EOF\n",
-        seal::doc_tag(&old),
-        seal::doc_tag(&id)
-    )
-    .into_bytes();
+    let resaved = pdf::stamp(
+        &pdf::stamp(&original_pdf(), &seal::doc_tag(&old)),
+        &seal::doc_tag(&id),
+    );
     assert_eq!(seal::find_mira_doc_id(&resaved), Some(old.clone()));
     let done = f.sign(&d, &resaved).unwrap();
     assert_eq!(done.summary.status, RequestStatus::Completed);
