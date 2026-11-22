@@ -139,7 +139,10 @@ Contoh: Budi menulis di proyek Desain hari Senin, Selasa dipindah ke tim lain, R
   - Riwayat sah dari orang yang pindah tim tertahan selamanya: aturan "didukung rekan".
   - Plafon nomor task bisa diracuni: nomor dibatasi.
   - Kuota pending dalam byte per pengirim, umur baris `rights`, batas jawaban 8 MiB, cache id proyek terikat.
-- Tes konvergensi menemukan dua bug lagi yang sudah diperbaiki: change dari Tamu yang baru dijadikan anggota sempat ditolak permanen, dan change pendukung dari pengirim lain sempat tidak dinilai bersama change yang ditahan.
+- Tes konvergensi menemukan tiga bug lagi yang sudah diperbaiki:
+  - Change dari Tamu yang baru dijadikan anggota sempat ditolak permanen.
+  - Change pendukung dari pengirim lain sempat tidak dinilai bersama change yang ditahan.
+  - Kalau dua laptop mengedit task yang sama di detik yang sama, Automerge menulis edit berikutnya sebagai "hapus nilai yang kalah konflik". Aturan sempat menolaknya, sehingga laptop lain tertahan. Sekarang hapus seperti itu diterima selama minimal satu nilai tetap ada.
 
 ## Fungsi akses proyek untuk chat dan dokumen
 
@@ -180,13 +183,17 @@ Fungsi ini menjawab hak saat ini. Kalau chat atau dokumen perlu menerima pesan l
 
 | Pemeriksaan | Hasil |
 |---|---|
-| `cargo test` | [ISI] |
-| `cargo clippy --all-targets` | [ISI] |
-| Vitest | [ISI] |
-| `tsc --noEmit` | [ISI] |
-| Uji ujung ke ujung sinkron board satu laptop (`board-sync-e2e.mjs`) | [ISI] |
-| Uji ujung ke ujung board (`board-e2e.mjs`) | [ISI] |
-| Uji empat instance (`e2e-multi.mjs`) | [ISI] |
+| `cargo test` (seluruh crate) | 611 lulus, 0 gagal, 7 diabaikan (tes keyring, firewall, dan mDNS sungguhan milik Tahap 0 dan 1). Tes board: 159. |
+| `cargo clippy --all-targets` | tanpa peringatan |
+| Vitest | 32 file, 424 tes lulus |
+| `tsc --noEmit` | tanpa error |
+| Uji ujung ke ujung sinkron board satu laptop (`board-sync-e2e.mjs`) | 23/23 |
+| Uji ujung ke ujung board (`board-e2e.mjs`) | 11/11 |
+| Uji empat instance (`e2e-multi.mjs`, sama dengan `npm run test:e2e-multi` dengan exe build ini) | 25/25 |
+
+Uji ujung ke ujung dijalankan terhadap build release commit `28e200a` (`npx tauri build --no-bundle`, target terpisah di folder scratch), satu per satu di satu PC, dengan `MIRA_DATA_DIR` dan port CDP sendiri. Folder data uji dihapus oleh skripnya. Proptest konvergensi tiga laptop lulus 5 kali berturut-turut setelah perbaikan terakhir.
+
+Screenshot uji empat instance dengan build ini ada di `docs/progress/screenshots/tahap-1-sinkron-board/`; screenshot Tahap 1 yang lama tidak diubah.
 
 Screenshot di `docs/progress/screenshots/sinkron-board/`:
 - Mode terang: `sb-01-tim-desain-terang.png` sampai `sb-09-detail-task-terang.png`, antara lain proyek baru dengan tim, draf yang tetap ada setelah sinkron, ubah nama proyek, dan undangan Tamu dengan pilihan proyek.
