@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
+    "fixtures:sign": "node --experimental-strip-types --no-warnings scripts/make-sign-fixtures.mjs",
     "build:installer": "tauri build",
     "build:installer-offline": "tauri build --config src-tauri/tauri.offline.conf.json",
     "test:e2e": "node scripts/smoke-e2e.mjs src-tauri/target/release/mira.exe docs/progress/screenshots",

@@ -5,9 +5,11 @@
 // kotak tanda tangan seperti terlihat di layar. Pada halaman ber-/Rotate,
 // gambar dan teks digambar berputar searah supaya tampak tegak bagi pembaca.
 //
-// Semua dokumen disimpan dengan `useObjectStreams: false` dan kode dokumen
-// ditulis sebagai string literal ASCII di kamus Info, supaya inti Rust bisa
-// menemukan `mira-doc:` cukup dengan memindai byte file.
+// Stempel dan halaman catatan disimpan sebagai incremental update: byte versi
+// sebelumnya tidak berubah, objek baru dan yang berubah ditulis di belakang
+// tanpa object stream. Kode dokumen ditulis sebagai string literal ASCII di
+// kamus Info, supaya inti Rust bisa menemukan `mira-doc:` cukup dengan
+// memindai byte file.
 
 import {
   PDFDict,
@@ -15,7 +17,10 @@ import {
   PDFFont,
   PDFHexString,
   PDFName,
+  PDFObject,
   PDFPage,
+  PDFRawStream,
+  PDFRef,
   PDFString,
   PageSizes,
   StandardFonts,
@@ -228,6 +233,8 @@ async function loadPdf(bytes: Uint8Array): Promise<PDFDocument> {
 export async function checkSignablePdf(bytes: Uint8Array): Promise<void> {
   try {
     await loadPdf(bytes);
+    // Stempel ditulis sebagai incremental update, jadi ujung file harus terbaca.
+    if (!readXrefTail(bytes)) throw new Error(BROKEN_MESSAGE);
   } catch (err) {
     const message = err instanceof Error ? err.message : BROKEN_MESSAGE;
     throw { code: "pdf_invalid", message } satisfies AppError;
@@ -278,8 +285,176 @@ function applyMetadata(doc: PDFDocument, docTag: string, modifiedAt: Date): void
   doc.setModificationDate(modifiedAt);
 }
 
-function savePdf(doc: PDFDocument): Promise<Uint8Array> {
-  return doc.save({ useObjectStreams: false });
+// ---------------------------------------------------------------------------
+// Incremental update
+//
+// Versi bertanda tangan = byte versi lama apa adanya + objek baru dan objek
+// yang berubah + tabel xref klasik + trailer dengan /Prev ke startxref lama.
+// Inti Rust (`signing::increment::check_increment`) memeriksa bahwa tambahan
+// itu hanya stempel. Tidak pernah memakai object stream di bagian tambahan.
+
+const latin1 = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes);
+const ascii = (text: string) => new TextEncoder().encode(text);
+
+type XrefTail = {
+  /** Nilai `startxref` terakhir: offset tabel xref atau xref stream terbaru. */
+  startxref: number;
+  /** Nomor objek pertama yang pasti belum dipakai versi lama. */
+  firstFree: number;
+};
+
+/**
+ * Membaca ujung file seperti pembaca PDF: `startxref` terakhir harus
+ * menunjuk tepat ke `xref` atau ke `n g obj` (xref stream). Nomor objek baru
+ * dimulai di atas /Size dan di atas semua `n g obj` di file, termasuk object
+ * stream dan xref stream yang tidak disimpan pdf-lib di konteksnya.
+ */
+function readXrefTail(bytes: Uint8Array): XrefTail | null {
+  const text = latin1(bytes);
+  const at = text.lastIndexOf("startxref");
+  if (at < 0) return null;
+  const m = /^startxref\s*(\d+)/.exec(text.slice(at, at + 40));
+  if (!m) return null;
+  const startxref = Number(m[1]);
+  if (!Number.isSafeInteger(startxref) || startxref >= bytes.length) return null;
+
+  const head = text.slice(startxref, startxref + 64);
+  let dictText: string;
+  if (head.startsWith("xref")) {
+    const trailerAt = text.indexOf("trailer", startxref);
+    if (trailerAt < 0) return null;
+    dictText = text.slice(trailerAt, text.indexOf("startxref", trailerAt) >>> 0);
+  } else if (/^\d+\s+\d+\s+obj\b/.test(head)) {
+    const streamAt = text.indexOf("stream", startxref);
+    dictText = text.slice(startxref, streamAt < 0 ? undefined : streamAt);
+  } else {
+    return null;
+  }
+  const size = Number(/\/Size\s+(\d+)/.exec(dictText)?.[1] ?? 0);
+
+  let maxObject = 0;
+  for (const hit of text.matchAll(/(\d+)\s+\d+\s+obj\b/g)) {
+    // Batas 10 juta: angka lebih besar hanya kebetulan di data biner.
+    const n = Number(hit[1]);
+    if (n > maxObject && n < 10_000_000) maxObject = n;
+  }
+  return { startxref, firstFree: Math.max(size, maxObject + 1) };
+}
+
+type Snapshot = Map<string, { bytes: Uint8Array; contents?: Uint8Array }>;
+
+const refKey = (ref: PDFRef) => `${ref.objectNumber} ${ref.generationNumber}`;
+
+function serialize(obj: PDFObject): Uint8Array {
+  const out = new Uint8Array(obj.sizeInBytes());
+  obj.copyBytesInto(out, 0);
+  return out;
+}
+
+function snapshotEntry(obj: PDFObject): { bytes: Uint8Array; contents?: Uint8Array } {
+  // Stream mentah dari file: isi dibandingkan lewat referensi array-nya,
+  // supaya gambar besar tidak disalin.
+  if (obj instanceof PDFRawStream) return { bytes: serialize(obj.dict), contents: obj.contents };
+  return { bytes: serialize(obj) };
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function takeSnapshot(doc: PDFDocument): Snapshot {
+  const snap: Snapshot = new Map();
+  for (const [ref, obj] of doc.context.enumerateIndirectObjects()) {
+    snap.set(refKey(ref), snapshotEntry(obj));
+  }
+  return snap;
+}
+
+function unchanged(before: Snapshot, ref: PDFRef, obj: PDFObject): boolean {
+  const prev = before.get(refKey(ref));
+  if (!prev) return false;
+  const now = snapshotEntry(obj);
+  if (!sameBytes(prev.bytes, now.bytes)) return false;
+  if (prev.contents || now.contents) {
+    return !!prev.contents && !!now.contents && sameBytes(prev.contents, now.contents);
+  }
+  return true;
+}
+
+/** Dokumen yang dimuat untuk ditambah, dengan keadaan awalnya. */
+type Editable = {
+  doc: PDFDocument;
+  original: Uint8Array;
+  tail: XrefTail;
+  before: Snapshot;
+};
+
+async function openForIncrement(bytes: Uint8Array): Promise<Editable> {
+  const doc = await loadPdf(bytes);
+  const tail = readXrefTail(bytes);
+  if (!tail) throw new Error(BROKEN_MESSAGE);
+  // Nomor objek baru tidak boleh memakai ulang nomor lama mana pun.
+  doc.context.largestObjectNumber = Math.max(doc.context.largestObjectNumber, tail.firstFree - 1);
+  return { doc, original: bytes, tail, before: takeSnapshot(doc) };
+}
+
+async function saveIncrement({ doc, original, tail, before }: Editable): Promise<Uint8Array> {
+  await doc.flush();
+  const chunks: Uint8Array[] = [original];
+  let length = original.length;
+  const push = (chunk: Uint8Array) => {
+    chunks.push(chunk);
+    length += chunk.length;
+  };
+  const last = original[original.length - 1];
+  if (last !== 0x0a && last !== 0x0d) push(ascii("\n"));
+
+  const offsets: { num: number; gen: number; offset: number }[] = [];
+  let maxNum = tail.firstFree - 1;
+  for (const [ref, obj] of doc.context.enumerateIndirectObjects()) {
+    if (ref.objectNumber === 0 || unchanged(before, ref, obj)) continue;
+    offsets.push({ num: ref.objectNumber, gen: ref.generationNumber, offset: length });
+    maxNum = Math.max(maxNum, ref.objectNumber);
+    push(ascii(`${ref.objectNumber} ${ref.generationNumber} obj\n`));
+    push(serialize(obj));
+    push(ascii("\nendobj\n"));
+  }
+
+  const xrefAt = length;
+  let xref = "xref\n";
+  offsets.sort((a, b) => a.num - b.num);
+  for (let i = 0; i < offsets.length; ) {
+    let j = i + 1;
+    while (j < offsets.length && offsets[j].num === offsets[j - 1].num + 1) j++;
+    xref += `${offsets[i].num} ${j - i}\n`;
+    for (const e of offsets.slice(i, j)) {
+      xref += `${String(e.offset).padStart(10, "0")} ${String(e.gen).padStart(5, "0")} n\r\n`;
+    }
+    i = j;
+  }
+  push(ascii(`${xref}trailer\n`));
+
+  const { Root, Info, ID } = doc.context.trailerInfo;
+  const trailer = doc.context.obj({
+    Size: Math.max(maxNum + 1, doc.context.largestObjectNumber + 1),
+    Root,
+    Info,
+    ID,
+    Prev: tail.startxref,
+  });
+  push(serialize(trailer));
+  push(ascii(`\nstartxref\n${xrefAt}\n%%EOF\n`));
+
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -398,8 +573,12 @@ function assertPlacement(doc: PDFDocument, p: PdfRect): PDFPage {
 
 export async function stampSignature(pdf: Uint8Array, opts: StampOptions): Promise<Uint8Array> {
   assertDocTag(opts.docTag);
-  const doc = await loadPdf(pdf);
+  const editable = await openForIncrement(pdf);
+  const { doc } = editable;
   const page = assertPlacement(doc, opts.placement);
+  // normalize() pdf-lib menambah /Annots kosong; dikembalikan supaya hanya
+  // /Contents dan /Resources halaman yang berubah.
+  const annots = page.node.get(PDFName.Annots);
 
   let image;
   try {
@@ -460,8 +639,11 @@ export async function stampSignature(pdf: Uint8Array, opts: StampOptions): Promi
     page.drawText(line, { x: p.x, y: p.y, size, font, color: INK, rotate });
   });
 
+  if (annots === undefined) page.node.delete(PDFName.Annots);
+  else page.node.set(PDFName.Annots, annots);
+
   applyMetadata(doc, opts.docTag, validDate(opts.signedAt));
-  return savePdf(doc);
+  return saveIncrement(editable);
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +697,8 @@ const COLUMNS: Column[] = [
 
 export async function appendAuditPage(pdf: Uint8Array, info: AuditInfo): Promise<Uint8Array> {
   assertDocTag(info.docTag);
-  const doc = await loadPdf(pdf);
+  const editable = await openForIncrement(pdf);
+  const { doc } = editable;
   const fonts: Fonts = {
     regular: await doc.embedFont(StandardFonts.Helvetica),
     bold: await doc.embedFont(StandardFonts.HelveticaBold),
@@ -677,5 +860,5 @@ export async function appendAuditPage(pdf: Uint8Array, info: AuditInfo): Promise
   }
 
   applyMetadata(doc, info.docTag, validDate(info.generatedAt));
-  return savePdf(doc);
+  return saveIncrement(editable);
 }
