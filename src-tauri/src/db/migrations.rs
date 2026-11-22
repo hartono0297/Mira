@@ -10,6 +10,8 @@ pub const MIGRATIONS: &[&str] = &[
     crate::documents::schema::MIGRATION,
     // Tahap 5 (tanda tangan PDF), v5.
     crate::signing::schema::SIGNING_SCHEMA,
+    // Sinkron dokumen dan tanda tangan, v6 di branch ini (nomor final saat merge).
+    crate::documents::sync_schema::SYNC_SCHEMA,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.

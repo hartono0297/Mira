@@ -115,12 +115,20 @@ mod tests {
         "sign_saved_signature",
     ];
 
+    /// Tables of the sync migration (v6 on this branch), after signing.
+    const SYNC_TABLES_AFTER_SIGNING: [&str; 4] = [
+        "docs_sync_records",
+        "sign_sync_records",
+        "sign_proof_checks",
+        "sign_notified",
+    ];
+
     #[test]
     fn database_before_documents_upgrades_and_keeps_data() {
         let tmp = tempfile::tempdir().unwrap();
         // v1 foundation, v2 membership log, v3 board, v4 documents, v5 signing.
         let before = 3;
-        assert_eq!(db::latest_version(), 5, "update this test when a migration is added");
+        assert_eq!(db::latest_version(), 6, "update this test when a migration is added");
         let (pk, org_id) = {
             let mut conn = db::open(tmp.path()).unwrap();
             let mut me = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
@@ -131,6 +139,9 @@ mod tests {
                 [],
             )
             .unwrap();
+            for t in SYNC_TABLES_AFTER_SIGNING {
+                conn.execute_batch(&format!("DROP TABLE {t};")).unwrap();
+            }
             for t in SIGNING_TABLES_AFTER_DOCUMENTS {
                 conn.execute_batch(&format!("DROP TABLE {t};")).unwrap();
             }

@@ -14,6 +14,8 @@
 //! - `service`: alur lengkap (`SignContext`), bisa dites tanpa Tauri.
 //! - `commands`: perintah Tauri tipis, termasuk IPC mentah untuk byte PDF.
 //! - `schema`: SQL migrasi tanda tangan.
+//! - `increment`: bukti bahwa versi baru hanya menambah stempel.
+//! - `peer_sync`: sinkron permintaan dan versi dengan laptop rekan.
 //!
 //! Rencana dan kontrak perintah: `docs/plans/tahap-5-lokal.md`.
 //!
@@ -28,7 +30,9 @@
 //! `removed`, `database`, `internal`.
 
 pub mod commands;
+pub mod increment;
 pub mod outbox;
+pub mod peer_sync;
 pub mod pin;
 pub mod repo;
 pub mod request;
