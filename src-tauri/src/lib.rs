@@ -42,6 +42,11 @@ pub fn run() {
             if let Err(err) = state.with_core(|_| Ok(())) {
                 eprintln!("Mira: inisialisasi gagal [{}]: {err}", err.code());
             }
+            // Window background from the saved theme mode, so a dark start
+            // does not flash white before the page loads.
+            let background = state
+                .with_core(|core| Ok(window_theme::initial_background(Some(&core.db))))
+                .unwrap_or_else(|_| window_theme::initial_background(None));
             app.manage(state);
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
@@ -51,7 +56,7 @@ pub fn run() {
                     .map(std::path::PathBuf::from)
                     .and_then(|p| std::path::absolute(p).ok()),
             };
-            create_main_window(app, instance_dir.as_deref())?;
+            create_main_window(app, instance_dir.as_deref(), background)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -68,7 +73,11 @@ pub fn run() {
 /// Builds the main window from `tauri.conf.json` (which has `create: false`).
 /// With `MIRA_DATA_DIR` set, WebView2 data goes to `<data_dir>/webview` and the
 /// title names the folder, so several instances on one laptop stay apart.
-fn create_main_window(app: &App, instance_dir: Option<&std::path::Path>) -> tauri::Result<()> {
+fn create_main_window(
+    app: &App,
+    instance_dir: Option<&std::path::Path>,
+    background: tauri::window::Color,
+) -> tauri::Result<()> {
     let config = app
         .config()
         .app
@@ -76,7 +85,8 @@ fn create_main_window(app: &App, instance_dir: Option<&std::path::Path>) -> taur
         .first()
         .cloned()
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
-    let mut builder = WebviewWindowBuilder::from_config(app.handle(), &config)?;
+    let mut builder =
+        WebviewWindowBuilder::from_config(app.handle(), &config)?.background_color(background);
     if let Some(dir) = instance_dir {
         let folder = dir
             .file_name()

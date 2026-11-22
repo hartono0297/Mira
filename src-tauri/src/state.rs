@@ -7,7 +7,7 @@
 //! makes the frontend's "Coba lagi" button meaningful.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::Connection;
 
@@ -29,24 +29,27 @@ impl Core {
     }
 }
 
+/// Cheap to clone: clones share the same core, so the network task can hold
+/// one while Tauri manages another.
+#[derive(Clone)]
 pub struct MiraState {
-    data_dir: AppResult<PathBuf>,
-    keystore: Box<dyn KeyStore>,
-    core: Mutex<Option<Core>>,
+    data_dir: Arc<AppResult<PathBuf>>,
+    keystore: Arc<dyn KeyStore>,
+    core: Arc<Mutex<Option<Core>>>,
 }
 
 impl MiraState {
     /// Does not touch the disk; call `with_core` to initialize.
     pub fn new(data_dir: AppResult<PathBuf>, keystore: Box<dyn KeyStore>) -> Self {
         Self {
-            data_dir,
-            keystore,
-            core: Mutex::new(None),
+            data_dir: Arc::new(data_dir),
+            keystore: Arc::from(keystore),
+            core: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn data_dir(&self) -> AppResult<&Path> {
-        self.data_dir.as_deref().map_err(Clone::clone)
+        self.data_dir.as_ref().as_deref().map_err(Clone::clone)
     }
 
     /// Runs `f` with the initialized core, initializing it first if needed.
