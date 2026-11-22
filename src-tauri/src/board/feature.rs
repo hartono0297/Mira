@@ -675,27 +675,32 @@ fn backfill_record_ids(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
-/// Ids of the projects `peer` may read now.
+/// Ids of the projects whose changes may be offered to `peer` now.
 fn readable_projects(conn: &Connection, peer: &str) -> AppResult<HashSet<String>> {
     let rights = Rights::load(conn)?;
     let mut stmt = conn.prepare("SELECT id, team_id, created_by FROM board_projects")?;
     let rows: Vec<(String, Option<String>, String)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<Result<_, _>>()?;
-    Ok(rows
-        .into_iter()
-        .filter(|(id, team, creator)| {
-            rights.can_read(
-                peer,
-                ProjectRef {
-                    id,
-                    team_id: team.as_deref(),
-                    created_by: creator,
-                },
-            )
-        })
-        .map(|(id, _, _)| id)
-        .collect())
+    let mut out = HashSet::new();
+    for (id, team, creator) in rows {
+        let p = ProjectRef {
+            id: &id,
+            team_id: team.as_deref(),
+            created_by: &creator,
+        };
+        if offerable(conn, &rights, peer, p)? {
+            out.insert(id);
+        }
+    }
+    Ok(out)
+}
+
+/// The one per-project check before offering or sending a project's
+/// changes to `peer` (`record_ids_for` and `records_for` both go through
+/// it). Further conditions on the project itself belong here.
+fn offerable(_conn: &Connection, rights: &Rights, peer: &str, p: ProjectRef<'_>) -> AppResult<bool> {
+    Ok(rights.can_read(peer, p))
 }
 
 /// Changes whenever an op is added to the membership log.
