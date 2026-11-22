@@ -88,12 +88,16 @@ pub fn run() {
                 std::sync::Arc::new(board::reminder::TauriNotifier::new(app.handle().clone())),
             );
             app.manage(board::commands::BoardRuntime {
-                hook: std::sync::Arc::new(reminders),
+                hook: std::sync::Arc::new(board::feature::BoardSyncNotifier::new(
+                    std::sync::Arc::new(reminders),
+                    app.handle().clone(),
+                )),
             });
             app.manage(state);
             // Feature sync contract (network/feature.rs): chat, board, documents
             // and signing register here; the transport sets the real link.
             app.manage(std::sync::Arc::new(network::feature::FeatureHub::default()));
+            board::feature::register(app.handle());
             // Document library: managed even when the data folder is missing
             // (its commands then return the error). Edit sessions left from
             // the last run are recovered in the background.
