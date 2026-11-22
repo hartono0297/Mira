@@ -16,14 +16,18 @@
 //! - `sync`: `ChatSync`, implementing `FeatureSync` and `BlobSource`.
 //! - `service`, `files`: methods behind the Tauri commands.
 //! - `read`, `view`: data for the chat screen (`src/api/chat.ts`).
+//! - `commands`, `runtime`: Tauri commands, hooks, downloader, registration
+//!   with the `FeatureHub`.
 
 pub mod audience;
+pub mod commands;
 pub mod fetch;
 pub mod files;
 pub mod hooks;
 pub mod judge;
 pub mod model;
 pub mod read;
+pub mod runtime;
 pub mod schema;
 pub mod seal;
 pub mod service;
