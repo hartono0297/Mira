@@ -50,6 +50,9 @@ pub mod kind {
     pub const LABELS: &str = "labels";
     pub const DELETED: &str = "deleted";
     pub const COMMENTED: &str = "commented";
+    /// The task got a new number because another task had the same one after
+    /// sync; `detail` is the old code, for example `PA-12`.
+    pub const RENUMBERED: &str = "renumbered";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -393,14 +396,7 @@ impl BoardDoc {
     pub fn create_task(&mut self, stamp: Stamp<'_>, init: TaskInit) -> AppResult<String> {
         let existing = self.tasks()?;
         let tasks = self.tasks_obj()?;
-        let stored_next = self
-            .doc
-            .get(ROOT, "next_number")
-            .map_err(am)?
-            .and_then(|(v, _)| v.as_i64())
-            .unwrap_or(1);
-        let max_number = existing.iter().map(|t| t.number).max().unwrap_or(0);
-        let number = stored_next.max(max_number + 1).max(1);
+        let number = self.fresh_number()?;
         let column = init.column.unwrap_or(ColumnId::Todo);
         let last_rank = existing
             .iter()
@@ -437,6 +433,58 @@ impl BoardDoc {
         d.put_object(&t, "activity", ObjType::List).map_err(am)?;
         self.log(&t, stamp, kind::CREATED, column.name())?;
         Ok(id)
+    }
+
+    fn next_number(&self) -> AppResult<i64> {
+        Ok(self
+            .doc
+            .get(ROOT, "next_number")
+            .map_err(am)?
+            .and_then(|(v, _)| v.as_i64())
+            .unwrap_or(1))
+    }
+
+    /// The number a new or renumbered task gets: `next_number`, but above
+    /// every number in use (deleted tasks included), at least 1.
+    pub fn fresh_number(&self) -> AppResult<i64> {
+        let max_number = self.tasks()?.iter().map(|t| t.number).max().unwrap_or(0);
+        Ok(self.next_number()?.max(max_number.saturating_add(1)).max(1))
+    }
+
+    /// Gives a live task `new_number` (chosen by `numbers.rs`), raises
+    /// `next_number` past it and logs a `renumbered` entry whose detail is
+    /// the old code. Nothing is staged when the number is already that.
+    pub fn renumber_task(
+        &mut self,
+        stamp: Stamp<'_>,
+        id: &str,
+        new_number: i64,
+        old_code: &str,
+    ) -> AppResult<()> {
+        let cur = self.live_task(id)?;
+        if cur.number == new_number {
+            return Ok(());
+        }
+        let t = self.task_obj(id)?;
+        self.doc.put(&t, "number", new_number).map_err(am)?;
+        let next = new_number.saturating_add(1);
+        if next > self.next_number()? {
+            self.doc.put(ROOT, "next_number", next).map_err(am)?;
+        }
+        self.doc.put(&t, "updated_at", stamp.at).map_err(am)?;
+        self.log(&t, stamp, kind::RENUMBERED, old_code)
+    }
+
+    /// Sets the project name (already validated); nothing is staged when it
+    /// is unchanged.
+    pub fn rename_project(&mut self, name: &str) -> AppResult<()> {
+        if self.project().name == name {
+            return Ok(());
+        }
+        let project = self.obj(&ROOT, "project").ok_or_else(|| {
+            AppError::Internal("Dokumen proyek tidak lengkap: data proyek tidak ada.".into())
+        })?;
+        self.doc.put(&project, "name", name).map_err(am)
     }
 
     /// Applies the fields that differ from the current values, one activity
@@ -1065,6 +1113,83 @@ mod tests {
         let ta = a.live_task(&id).unwrap();
         assert_eq!(ta.description, "Wah, Halo dunia!");
         assert_eq!(ta, b.live_task(&id).unwrap());
+    }
+
+    #[test]
+    fn renumber_moves_next_number_and_logs_old_code() {
+        let mut d = new_doc();
+        let a = d.create_task(stamp("t1"), init("a")).unwrap();
+        d.create_task(stamp("t1"), init("b")).unwrap();
+        assert_eq!(d.fresh_number().unwrap(), 3);
+        d.commit(0).unwrap();
+        d.renumber_task(stamp("t2"), &a, 7, "PA-1").unwrap();
+        let t = d.live_task(&a).unwrap();
+        assert_eq!(t.number, 7);
+        assert_eq!(t.updated_at, "t2");
+        let last = t.activity.last().unwrap();
+        assert_eq!(
+            (last.kind.as_str(), last.detail.as_str()),
+            (kind::RENUMBERED, "PA-1")
+        );
+        assert_eq!(d.fresh_number().unwrap(), 8);
+        d.commit(0).unwrap();
+        d.renumber_task(stamp("t3"), &a, 7, "PA-7").unwrap();
+        assert_eq!(d.commit(0), None, "same number, nothing staged");
+        let c = d.create_task(stamp("t4"), init("c")).unwrap();
+        assert_eq!(d.live_task(&c).unwrap().number, 8);
+        d.delete_task(stamp("t5"), &c).unwrap();
+        assert_eq!(
+            d.renumber_task(stamp("t6"), &c, 9, "PA-8")
+                .unwrap_err()
+                .code(),
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn renumbering_by_another_laptop_keeps_the_shape() {
+        let mut a = new_doc();
+        let id = a
+            .create_task(
+                Stamp {
+                    actor: &hex::encode(A),
+                    at: "t1",
+                },
+                init("a"),
+            )
+            .unwrap();
+        a.commit(0).unwrap();
+        let base = a.heads();
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        b.renumber_task(
+            Stamp {
+                actor: &hex::encode(B),
+                at: "t2",
+            },
+            &id,
+            5,
+            "PA-1",
+        )
+        .unwrap();
+        b.rename_project("Proyek Baru").unwrap();
+        b.commit(0).unwrap();
+        for c in b.changes_after(&base) {
+            a.apply_remote(c, &hex::encode(B)).unwrap();
+        }
+        assert_eq!(a.live_task(&id).unwrap().number, 5);
+        assert_eq!(a.project().name, "Proyek Baru");
+        assert_eq!(a.fresh_number().unwrap(), 6);
+    }
+
+    #[test]
+    fn rename_project_only_stages_a_real_change() {
+        let mut d = new_doc();
+        d.rename_project("Proyek A").unwrap();
+        assert_eq!(d.commit(0), None);
+        d.rename_project("Proyek B").unwrap();
+        assert!(d.commit(0).is_some());
+        assert_eq!(d.project().name, "Proyek B");
+        assert_eq!(d.project().code, "PA");
     }
 
     #[test]

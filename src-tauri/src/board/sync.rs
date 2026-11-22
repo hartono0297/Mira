@@ -626,7 +626,8 @@ fn reject(
 }
 
 /// Groups of live tasks that share a number after a merge, as
-/// `(number, task ids sorted by (created_at, id))`.
+/// `(number, task ids sorted by (created_at, id))`. The first task of each
+/// group keeps the number; `numbers::renumber_duplicates` renumbers the rest.
 pub fn duplicate_numbers(doc: &BoardDoc) -> AppResult<Vec<(i64, Vec<String>)>> {
     let mut tasks = doc.tasks()?;
     tasks.retain(|t| !t.deleted);
@@ -640,21 +641,6 @@ pub fn duplicate_numbers(doc: &BoardDoc) -> AppResult<Vec<(i64, Vec<String>)>> {
     }
     out.retain(|(_, ids)| ids.len() > 1);
     Ok(out)
-}
-
-/// Intended rule for task numbers that collide after sync (not implemented,
-/// not called yet):
-///
-/// Two laptops offline can both create `PA-12`. After merging, for each
-/// group from [`duplicate_numbers`] the first task by `(created_at, id)`
-/// keeps the number. Every other task in the group gets a fresh number from
-/// `next_number`, written only by the laptop that created that task (its
-/// `created_by`), so exactly one laptop renumbers each task and two laptops
-/// never renumber concurrently into a new collision. The renumbering is one
-/// signed change with a `renumbered` activity entry (old code in `detail`),
-/// so links and messages that mention the old code can be explained.
-pub fn resolve_duplicate_numbers(_doc: &mut BoardDoc, _me: &str) -> AppResult<()> {
-    Ok(())
 }
 
 #[cfg(test)]

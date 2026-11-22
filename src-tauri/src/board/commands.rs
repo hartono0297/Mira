@@ -129,6 +129,35 @@ pub fn create_project(
     Ok(summary)
 }
 
+/// Renames a project (`project.name` in the document, as a signed change).
+/// The code stays: other laptops and messages refer to it.
+pub fn update_project(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    name: &str,
+) -> AppResult<ProjectSummary> {
+    let (summary, changes) = with_ctx(state, |core, policy, dir| {
+        let me = core.identity.public_key_hex().to_owned();
+        let row = store::project(&core.db, project_id)?;
+        policy.check(
+            &core.db,
+            &me,
+            &BoardAction::ManageProject {
+                project_id: row.id.clone(),
+            },
+        )?;
+        let name = model::validate_project_name(name)?;
+        let c = store::commit_local(&mut core.db, &core.identity, project_id, |doc| {
+            doc.rename_project(&name)
+        })?;
+        let row = store::project(&core.db, project_id)?;
+        Ok((ctx(core, policy, dir).summary(&row)?, c.changes))
+    })?;
+    notify(hook, project_id, &changes);
+    Ok(summary)
+}
+
 /// Refuses projects the viewer may not see (for example after leaving the
 /// team): the local copy stays but is not shown.
 fn require_view(core: &Core, policy: &dyn BoardPolicy, project_id: &str) -> AppResult<()> {
@@ -418,6 +447,19 @@ pub async fn board_create_project(
         &code,
         team_id.as_deref(),
     )?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_update_project(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    name: String,
+) -> AppResult<ProjectSummary> {
+    let out = update_project(&state, board.hook.as_ref(), &project_id, &name)?;
     emit(&app);
     Ok(out)
 }

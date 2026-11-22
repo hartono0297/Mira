@@ -216,6 +216,79 @@ fn board_flow_and_json_shape() {
 }
 
 #[test]
+fn rename_project_keeps_the_code_and_needs_the_right() {
+    let (_t, state) = app();
+    crate::commands::organization(&state, "CV Maju Jaya").unwrap();
+    let hook = Recorder::default();
+    let project = create_project(&state, &hook, "Situs Web", "WEB", None).unwrap();
+    let input: NewTask = serde_json::from_value(serde_json::json!({ "title": "x" })).unwrap();
+    create_task(&state, &hook, &project.id, input).unwrap();
+    assert_eq!(hook.count(), 2);
+
+    let renamed = update_project(&state, &hook, &project.id, "  Situs Kantor ").unwrap();
+    assert_eq!(renamed.name, "Situs Kantor");
+    assert_eq!(renamed.code, "WEB");
+    assert_eq!(renamed.task_count, 1);
+    assert!(renamed.can_manage);
+    assert_eq!(hook.count(), 3);
+    assert_eq!(list_projects(&state).unwrap()[0].name, "Situs Kantor");
+    assert_eq!(
+        get_board(&state, &project.id).unwrap().project.name,
+        "Situs Kantor"
+    );
+    let doc_name = state
+        .with_core(|c| {
+            let doc = store::load_doc(&c.db, &project.id, &store::actor_of(&c.identity))?;
+            Ok(doc.project().name)
+        })
+        .unwrap();
+    assert_eq!(doc_name, "Situs Kantor");
+    let stored = state
+        .with_core(|c| store::stored_changes(&c.db, &project.id))
+        .unwrap();
+    assert_eq!(stored.len(), 3);
+    crate::board::sign::verify_change(&stored[2]).unwrap();
+
+    // Same name: nothing signed. Bad name: refused.
+    update_project(&state, &hook, &project.id, "Situs Kantor").unwrap();
+    assert_eq!(hook.count(), 3);
+    for bad in ["", "x", "a\nb"] {
+        assert_eq!(
+            update_project(&state, &hook, &project.id, bad)
+                .unwrap_err()
+                .code(),
+            "invalid_input",
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        update_project(&state, &hook, &"f".repeat(32), "Nama")
+            .unwrap_err()
+            .code(),
+        "not_found"
+    );
+
+    // A plain member who did not create the project may not rename it.
+    state
+        .with_core(|c| {
+            c.db.execute("UPDATE members SET role = 'member', is_superadmin = 0", [])?;
+            c.db.execute(
+                "UPDATE board_projects SET created_by = ?1",
+                [&"ab".repeat(32)],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        update_project(&state, &hook, &project.id, "Nama Lain")
+            .unwrap_err()
+            .code(),
+        "forbidden"
+    );
+    assert_eq!(hook.count(), 3);
+}
+
+#[test]
 fn removed_laptop_cannot_change_or_read() {
     let (_t, state) = app();
     crate::commands::organization(&state, "CV Maju Jaya").unwrap();
@@ -243,9 +316,14 @@ fn removed_laptop_cannot_change_or_read() {
     );
     // A removed laptop stops seeing the project (the app shows the removed
     // screen instead); the local copy is kept, nothing is deleted.
-    assert_eq!(get_board(&state, &project.id).unwrap_err().code(), "removed");
     assert_eq!(
-        get_task(&state, &project.id, &t.card.id).unwrap_err().code(),
+        get_board(&state, &project.id).unwrap_err().code(),
+        "removed"
+    );
+    assert_eq!(
+        get_task(&state, &project.id, &t.card.id)
+            .unwrap_err()
+            .code(),
         "removed"
     );
     assert!(list_projects(&state).unwrap().is_empty());
