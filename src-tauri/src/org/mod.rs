@@ -24,7 +24,9 @@
 
 use rand_core::{OsRng, RngCore};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 use crate::clock;
 use crate::error::{AppError, AppResult};
@@ -75,7 +77,9 @@ pub struct OrgInfo {
 }
 
 /// Full organization record as stored, including the genesis signature.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Serialized with snake_case field names (same shape as `network::OrgRecord`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Organization {
     pub id: String,
     pub name: String,
@@ -94,14 +98,44 @@ impl Organization {
         )
     }
 
-    /// True when `genesis_signature` is a valid founder signature over the record.
+    /// True when every field is well formed (see `validate_org_record`) and
+    /// `genesis_signature` is a valid founder signature over the record.
     pub fn verify_genesis(&self) -> bool {
-        identity::verify_hex(
-            &self.founder_public_key,
-            &self.genesis_message(),
-            &self.genesis_signature,
-        )
+        validate_org_record(self).is_ok()
+            && identity::verify_hex(
+                &self.founder_public_key,
+                &self.genesis_message(),
+                &self.genesis_signature,
+            )
     }
+}
+
+/// Strict format check of an organization record, done before the signature
+/// check and for every record that comes from another laptop. Returns an
+/// Indonesian description of the first bad field.
+pub fn validate_org_record(org: &Organization) -> Result<(), String> {
+    if !is_lower_hex(&org.id, 32) {
+        return Err("id organisasi harus 32 karakter hex huruf kecil".into());
+    }
+    match validate_org_name(&org.name) {
+        Ok(name) if name == org.name => {}
+        _ => return Err("nama organisasi tidak valid atau belum dipangkas".into()),
+    }
+    if !is_lower_hex(&org.founder_public_key, 64) {
+        return Err("kunci pendiri harus 64 karakter hex huruf kecil".into());
+    }
+    if OffsetDateTime::parse(&org.created_at, &Rfc3339).is_err() {
+        return Err("waktu pembuatan organisasi bukan RFC 3339".into());
+    }
+    if !is_lower_hex(&org.genesis_signature, 128) {
+        return Err("tanda tangan genesis harus 128 karakter hex huruf kecil".into());
+    }
+    Ok(())
+}
+
+/// Exactly `len` characters of `0-9a-f`.
+pub fn is_lower_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Canonical genesis bytes; see the module docs for the format.
@@ -183,8 +217,8 @@ pub fn create_organization(
         ],
     )?;
     tx.execute(
-        "INSERT INTO members (organization_id, public_key, display_name, role, added_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO members (organization_id, public_key, display_name, role, added_at, is_superadmin)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1)",
         params![
             org.id,
             org.founder_public_key,
@@ -193,6 +227,10 @@ pub fn create_organization(
             org.created_at
         ],
     )?;
+    // The founder's signed profile op carries the display name to other laptops.
+    let now = OffsetDateTime::parse(&org.created_at, &Rfc3339)
+        .map_err(|e| AppError::Internal(format!("Waktu pembuatan organisasi tidak valid: {e}")))?;
+    crate::permissions::ensure_profile_in(&tx, identity, now)?;
     tx.commit()?;
 
     Ok(OrgInfo {
@@ -224,6 +262,11 @@ pub fn load_organization(conn: &Connection) -> AppResult<Option<Organization>> {
 }
 
 /// The organization with this laptop's role, if any.
+///
+/// The role comes from the `members` table, which the membership fold keeps
+/// up to date (`orgRole`). A laptop that holds the organization but never
+/// became a member (for example it lost a single-use invite race) reports
+/// `member`; `permissions::membership` tells the frontend it is not active.
 pub fn get_organization(conn: &Connection, identity: &Identity) -> AppResult<Option<OrgInfo>> {
     let Some(org) = load_organization(conn)? else {
         return Ok(None);
@@ -235,11 +278,14 @@ pub fn get_organization(conn: &Connection, identity: &Identity) -> AppResult<Opt
             |r| r.get(0),
         )
         .optional()?;
-    let role = role.as_deref().and_then(Role::parse).ok_or_else(|| {
-        AppError::Internal(
-            "Data organisasi di laptop ini tidak lengkap: peran laptop ini tidak ditemukan.".into(),
-        )
-    })?;
+    let role = match role {
+        None => Role::Member,
+        Some(r) => Role::parse(&r).ok_or_else(|| {
+            AppError::Internal(format!(
+                "Data organisasi di laptop ini tidak lengkap: peran laptop ini tidak dikenal ({r})."
+            ))
+        })?,
+    };
     Ok(Some(OrgInfo {
         id: org.id,
         name: org.name,
@@ -320,6 +366,70 @@ mod tests {
             ..org
         };
         assert!(!garbage.verify_genesis());
+    }
+
+    #[test]
+    fn org_record_validation_rejects_each_bad_field() {
+        let mut f = fixture(true);
+        create_organization(&mut f.conn, &f.identity, "CV Maju Jaya").unwrap();
+        let org = load_organization(&f.conn).unwrap().unwrap();
+        assert_eq!(validate_org_record(&org), Ok(()));
+        assert!(org.verify_genesis());
+
+        let with = |edit: &dyn Fn(&mut Organization)| {
+            let mut o = org.clone();
+            edit(&mut o);
+            o
+        };
+        let cases = [
+            ("id uppercase", with(&|o| o.id = o.id.to_uppercase())),
+            ("id short", with(&|o| o.id.truncate(30))),
+            ("id not hex", with(&|o| o.id.replace_range(0..1, "g"))),
+            ("name untrimmed", with(&|o| o.name = format!(" {}", o.name))),
+            ("name too short", with(&|o| o.name = "A".into())),
+            ("name newline", with(&|o| o.name = "CV\nMaju".into())),
+            ("name bidi", with(&|o| o.name = "CV \u{202E}Maju".into())),
+            (
+                "founder uppercase",
+                with(&|o| o.founder_public_key = o.founder_public_key.to_uppercase()),
+            ),
+            (
+                "founder short",
+                with(&|o| o.founder_public_key.truncate(62)),
+            ),
+            ("created_at", with(&|o| o.created_at = "kemarin".into())),
+            (
+                "created_at no zone",
+                with(&|o| o.created_at = "2026-11-22T08:00:00".into()),
+            ),
+            (
+                "sig uppercase",
+                with(&|o| o.genesis_signature = o.genesis_signature.to_uppercase()),
+            ),
+            ("sig short", with(&|o| o.genesis_signature.truncate(126))),
+        ];
+        for (label, bad) in cases {
+            assert!(validate_org_record(&bad).is_err(), "{label}");
+            assert!(!bad.verify_genesis(), "{label}");
+        }
+    }
+
+    #[test]
+    fn org_record_serializes_snake_case_and_rejects_unknown_fields() {
+        let org = Organization {
+            id: "0".repeat(32),
+            name: "Kantor".into(),
+            founder_public_key: "a".repeat(64),
+            created_at: "2026-11-22T00:00:00Z".into(),
+            genesis_signature: "b".repeat(128),
+        };
+        let json = serde_json::to_value(&org).unwrap();
+        assert_eq!(json["founder_public_key"], "a".repeat(64));
+        let back: Organization = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back, org);
+        let mut extra = json;
+        extra["x"] = 1.into();
+        assert!(serde_json::from_value::<Organization>(extra).is_err());
     }
 
     #[test]

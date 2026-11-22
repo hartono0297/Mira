@@ -26,6 +26,46 @@ pub enum AppError {
     Internal(String),
     #[error("{0}")]
     InvalidSetting(String),
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
+    NotFound(String),
+    #[error(
+        "Kode undangan tidak valid. Kode terdiri dari 20 huruf dan angka, misalnya ABCD-EFGH-JKMN-PQRS-TVWX."
+    )]
+    InviteInvalid,
+    #[error(
+        "Kode undangan tidak dikenal oleh laptop rekan yang ditemukan. Periksa kodenya, atau minta kode baru ke admin tim."
+    )]
+    InviteNotFound,
+    #[error("Kode undangan ini sudah kedaluwarsa. Minta kode baru ke admin tim.")]
+    InviteExpired,
+    #[error("Kode undangan sekali pakai ini sudah dipakai. Minta kode baru ke admin tim.")]
+    InviteUsed,
+    #[error("Kode undangan ini sudah dicabut. Minta kode baru ke admin tim.")]
+    InviteRevoked,
+    #[error(
+        "Tidak ada laptop rekan yang ditemukan di jaringan. Pastikan laptop rekan menyala dan membuka Mira, atau isi alamat laptop rekan."
+    )]
+    NoPeerFound,
+    #[error("{0}")]
+    PeerUnreachable(String),
+    #[error(
+        "Laptop ini sudah tergabung dalam sebuah organisasi. Satu laptop hanya bisa memegang satu organisasi."
+    )]
+    AlreadyInOrg,
+    #[error(
+        "Laptop ini sudah dikeluarkan dari organisasi, jadi tidak bisa membuat perubahan lagi."
+    )]
+    Removed,
+    #[error(
+        "Organisasi harus punya minimal satu superadmin. Angkat superadmin lain dulu sebelum melepas yang terakhir."
+    )]
+    LastSuperadmin,
+    #[error("{0}")]
+    InvalidAddress(String),
+    #[error("{0}")]
+    Network(String),
 }
 
 impl AppError {
@@ -39,6 +79,20 @@ impl AppError {
             AppError::Database(_) => "database",
             AppError::Internal(_) => "internal",
             AppError::InvalidSetting(_) => "invalid_setting",
+            AppError::Forbidden(_) => "forbidden",
+            AppError::NotFound(_) => "not_found",
+            AppError::InviteInvalid => "invite_invalid",
+            AppError::InviteNotFound => "invite_not_found",
+            AppError::InviteExpired => "invite_expired",
+            AppError::InviteUsed => "invite_used",
+            AppError::InviteRevoked => "invite_revoked",
+            AppError::NoPeerFound => "no_peer_found",
+            AppError::PeerUnreachable(_) => "peer_unreachable",
+            AppError::AlreadyInOrg => "already_in_org",
+            AppError::Removed => "removed",
+            AppError::LastSuperadmin => "last_superadmin",
+            AppError::InvalidAddress(_) => "invalid_address",
+            AppError::Network(_) => "network",
         }
     }
 }
@@ -75,6 +129,32 @@ mod tests {
             "Isi nama tampilan dulu sebelum membuat organisasi."
         );
         assert_eq!(json.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn tahap_1_codes_are_stable_and_messages_have_no_em_dash() {
+        let cases = [
+            (AppError::Forbidden("x".into()), "forbidden"),
+            (AppError::NotFound("x".into()), "not_found"),
+            (AppError::InviteInvalid, "invite_invalid"),
+            (AppError::InviteNotFound, "invite_not_found"),
+            (AppError::InviteExpired, "invite_expired"),
+            (AppError::InviteUsed, "invite_used"),
+            (AppError::InviteRevoked, "invite_revoked"),
+            (AppError::NoPeerFound, "no_peer_found"),
+            (AppError::PeerUnreachable("x".into()), "peer_unreachable"),
+            (AppError::AlreadyInOrg, "already_in_org"),
+            (AppError::Removed, "removed"),
+            (AppError::LastSuperadmin, "last_superadmin"),
+            (AppError::InvalidAddress("x".into()), "invalid_address"),
+            (AppError::Network("x".into()), "network"),
+        ];
+        for (err, code) in cases {
+            assert_eq!(err.code(), code);
+            let json = serde_json::to_value(&err).unwrap();
+            assert_eq!(json["code"], code);
+            assert!(!err.to_string().contains('\u{2014}'), "{code}");
+        }
     }
 
     #[test]
