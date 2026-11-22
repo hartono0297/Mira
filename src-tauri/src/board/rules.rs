@@ -13,7 +13,7 @@
 //! | root | put `next_number` (integer up to the number ceiling + 1) |
 //! | `project` | put `name` or `code` (needs the manage right) |
 //! | `tasks` | make a map at a key that is not a task yet (a new task, its id bound to A) |
-//! | an existing task | put `column`, `rank`, `assignee`, `due`, `priority`, `updated_at`; put `number` (integer up to the ceiling) when the task is not deleted; put `deleted = true` (needs the delete right); make `title`/`description` text or `labels` list; make `comments`/`activity` only when missing |
+//! | an existing task | put `column`, `rank`, `assignee`, `due`, `priority`, `updated_at`, or delete some but not all of their values (what Automerge writes when a put repeats the winning value of a conflict); put `number` (integer up to the ceiling) when the task is not deleted; put `deleted = true` (needs the delete right); make `title`/`description` text or `labels` list; make `comments`/`activity` only when missing |
 //! | title, description, labels | anything |
 //! | `comments` of a task | make a map at a new key (a new comment, its id bound to A) |
 //! | `activity` of a task | insert a new map (a new entry) |
@@ -39,7 +39,7 @@
 use std::cell::OnceCell;
 use std::collections::HashMap;
 
-use automerge::legacy::{Key, ObjectId, OpId, OpType};
+use automerge::legacy::{Key, ObjectId, OpId, OpType, SortedVec};
 use automerge::{ActorId, Change, ChangeHash, ObjType, Prop, ReadDoc, ScalarValue};
 
 use super::doc::{BoardDoc, derive_comment_id, derive_task_id, is_bound_id};
@@ -226,6 +226,11 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
             }),
             (Kind::Task { id, new: false }, action, Some(k)) => match (k, action) {
                 ("column" | "rank" | "assignee" | "due" | "priority" | "updated_at", OpType::Put(_)) => None,
+                ("column" | "rank" | "assignee" | "due" | "priority" | "updated_at", OpType::Delete)
+                    if drops_only_losers(before, &op.obj, k, &op.pred, &deps) =>
+                {
+                    None
+                }
                 ("number", OpType::Put(v)) => {
                     if deleted_at(before, &op.obj, &deps) {
                         return refuse(format!("mengubah nomor task {id} yang sudah dihapus"));
@@ -337,6 +342,29 @@ fn int_of(v: &ScalarValue) -> Option<i64> {
         ScalarValue::Uint(n) => i64::try_from(*n).ok(),
         _ => None,
     }
+}
+
+/// Whether a delete of `key` in `obj` with predecessors `pred` removes only
+/// some of the values `key` held as of `heads`, so at least one stays. A
+/// local put that repeats the winning value of a conflicted key is written
+/// by Automerge as such a delete of the losing values.
+fn drops_only_losers(
+    doc: &BoardDoc,
+    obj: &ObjectId,
+    key: &str,
+    pred: &SortedVec<OpId>,
+    heads: &[ChangeHash],
+) -> bool {
+    let am = doc.automerge();
+    let Some(values) = am
+        .import_obj(&op_key_of_target(obj))
+        .ok()
+        .and_then(|o| am.get_all_at(&o, key, heads).ok())
+    else {
+        return false;
+    };
+    let ids: Vec<String> = values.iter().map(|(_, id)| id.to_string()).collect();
+    !pred.is_empty() && pred.len() < ids.len() && pred.iter().all(|p| ids.contains(&op_key(p)))
 }
 
 /// Whether the task `obj` was deleted as of `heads`.

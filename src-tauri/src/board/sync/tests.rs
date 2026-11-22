@@ -213,6 +213,59 @@ fn concurrent_edits_of_the_same_task_merge_without_loss() {
     assert!(rejected(&a.conn).is_empty() && rejected(&b.conn).is_empty());
 }
 
+/// Like `mutate`, with the stamp `at`.
+fn mutate_at<T>(
+    l: &mut Laptop,
+    project: &str,
+    at: &str,
+    f: impl FnOnce(&mut BoardDoc, Stamp<'_>) -> AppResult<T>,
+) -> T {
+    let me = l.id.public_key_hex().to_owned();
+    commit_local(&mut l.conn, &l.id, project, |d| f(d, Stamp { actor: &me, at }))
+        .unwrap()
+        .value
+}
+
+#[test]
+fn deleting_a_task_edited_concurrently_in_the_same_second_is_accepted() {
+    // Both laptops edit a task offline in the same second, so `updated_at`
+    // holds two equal concurrent values. A then deletes the task in that
+    // second: Automerge writes the repeated `updated_at` as a delete of B's
+    // value. B used to refuse it for good, and every later change of A
+    // waited for it forever.
+    let (mut a, mut b) = pair();
+    let p = create_project(&mut a.conn, &a.id, "Situs Web", "WEB", None)
+        .unwrap()
+        .value;
+    let at = "2026-11-22T10:00:00Z";
+    let task = mutate_at(&mut a, &p.id, "2026-11-22T09:59:00Z", |d, s| {
+        d.create_task(s, TaskInit {
+            title: "Halaman depan".into(),
+            ..Default::default()
+        })
+    });
+    send(&a, &mut b, &p.id);
+    mutate_at(&mut a, &p.id, at, |d, s| {
+        d.move_task(s, &task, ColumnId::Doing, 0)
+    });
+    mutate_at(&mut b, &p.id, at, |d, s| d.add_comment(s, &task, "oke"));
+    send(&a, &mut b, &p.id);
+    send(&b, &mut a, &p.id);
+    mutate_at(&mut a, &p.id, at, |d, s| d.delete_task(s, &task));
+    mutate_at(&mut a, &p.id, at, |d, s| {
+        d.create_task(s, TaskInit {
+            title: "Sesudahnya".into(),
+            ..Default::default()
+        })
+    });
+
+    let r = send(&a, &mut b, &p.id);
+    assert_eq!((r.applied, r.rejected, r.missing_deps), (2, 0, 0), "{r:?}");
+    assert_eq!(tasks(&a, &p.id), tasks(&b, &p.id));
+    assert_eq!(heads(&a.conn, &p.id).unwrap(), heads(&b.conn, &p.id).unwrap());
+    assert!(rejected(&b.conn).is_empty(), "{:?}", rejected(&b.conn));
+}
+
 #[test]
 fn changes_out_of_order_wait_for_dependencies() {
     let (mut a, mut b) = pair();
