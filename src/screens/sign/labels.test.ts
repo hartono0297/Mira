@@ -6,6 +6,8 @@ import {
   exportNoticeText,
   exportStateLabel,
   exportWarningLabel,
+  fileNeed,
+  fileNeedText,
   fingerprint,
   formatSize,
   formatWhen,
@@ -17,7 +19,9 @@ import {
   kindLabel,
   modeLabel,
   myStateLabel,
+  rejectReasonText,
   requestStateLabel,
+  signErrorMessage,
   shortHash,
   statusLabel,
 } from "./labels";
@@ -120,5 +124,56 @@ describe("label tanda tangan", () => {
     expect(checkPdfFile(new File(["%PDF"], "a.pdf", { type: "application/pdf" }))).toBeNull();
     expect(checkPdfFile(new File(["x"], "catatan.txt", { type: "text/plain" }))).toMatch(/bukan PDF/);
     expect(checkPdfFile(new File([], "kosong.pdf"))).toMatch(/kosong/);
+  });
+});
+
+describe("label sinkron dari rekan", () => {
+  const MB = 1024 * 1024;
+  const base = { status: "in_progress" as const, fileAvailable: true, pending: false, fileSize: MB };
+
+  it("file belum ada: disalin otomatis sampai 20 MB, lebih besar diunduh", () => {
+    expect(fileNeed(base)).toBeNull();
+    expect(fileNeed({ ...base, fileAvailable: false })).toEqual({ state: "copying", newer: false });
+    expect(fileNeed({ ...base, fileAvailable: false, fileSize: 20 * MB })).toEqual({ state: "copying", newer: false });
+    expect(fileNeed({ ...base, fileAvailable: false, fileSize: 20 * MB + 1 })).toEqual({ state: "manual", newer: false });
+    expect(fileNeed({ ...base, pending: true })).toEqual({ state: "copying", newer: true });
+    expect(fileNeedText({ state: "manual", newer: false }, 25 * MB)).toBe(
+      "File 25 MB belum diunduh. File di atas 20 MB tidak disalin otomatis.",
+    );
+  });
+
+  it("giliran saya tanpa file: Menunggu file, bukan Giliran Anda", () => {
+    const r = { status: "in_progress" as const, myState: "your_turn" as const, integrity: "missing" as const, fileAvailable: false };
+    expect(isActionable(r)).toBe(false);
+    expect(requestStateLabel(r)).toBe("Menunggu file");
+  });
+
+  it("kode error baru dijelaskan dengan kata biasa, kode lain apa adanya", () => {
+    expect(signErrorMessage({ code: "version_changes_content", message: "x" })).toMatch(/mengubah isi dokumen selain stempel/);
+    expect(signErrorMessage({ code: "version_not_prefix", message: "x" })).toMatch(/isi versi sebelumnya tidak utuh/);
+    expect(signErrorMessage({ code: "not_available", message: "x" })).toMatch(/^Belum ada laptop rekan yang tersambung/);
+    expect(signErrorMessage({ code: "pin_wrong", message: "PIN salah." })).toBe("PIN salah.");
+  });
+
+  it("alasan penolakan: kode, potongan kalimat, atau kalimat utuh", () => {
+    expect(rejectReasonText("version_changes_content")).toBe(
+      "Versi ditolak karena mengubah isi dokumen selain stempel tanda tangan.",
+    );
+    expect(rejectReasonText("ditandatangani bersamaan")).toBe("Versi ditolak karena ditandatangani bersamaan.");
+    expect(rejectReasonText("Versi lama tidak cocok.")).toBe("Versi lama tidak cocok.");
+    expect(rejectReasonText("  ")).toBe("Versi ditolak Mira.");
+  });
+
+  it("tidak ada em dash di teks baru", () => {
+    const text = [
+      fileNeedText({ state: "copying", newer: false }, 1),
+      fileNeedText({ state: "copying", newer: true }, 1),
+      fileNeedText({ state: "manual", newer: true }, 1),
+      signErrorMessage({ code: "version_not_prefix", message: "" }),
+      signErrorMessage({ code: "version_changes_content", message: "" }),
+      signErrorMessage({ code: "not_available", message: "" }),
+      rejectReasonText("concurrent"),
+    ].join(" ");
+    expect(text).not.toContain(String.fromCharCode(0x2014));
   });
 });

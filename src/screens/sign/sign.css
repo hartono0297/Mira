@@ -220,6 +220,52 @@
   color: var(--text-sec);
 }
 
+.sign-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Siapa yang meminta: penting untuk permintaan dari rekan, jadi teks biasa,
+   bukan teks pendukung. */
+.sign-row-from {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* File dari rekan yang belum tersalin: keadaan biasa yang akan berubah
+   sendiri, jadi teks biasa dengan ikon, bukan warna peringatan. */
+.sign-row-file {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.sign-row-file svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-sec);
+}
+
+/* Tombol unduh di bawah baris, sejajar dengan judul (14 + 22 + 12 px). Tidak
+   di dalam tombol baris, karena tombol tidak boleh bersarang. */
+.sign-row-extra {
+  padding: 0 14px 12px 48px;
+}
+
+.sign-row-extra .btn[aria-disabled="true"]:not([aria-busy="true"]) {
+  opacity: 0.75;
+}
+
+.sign-row-extra .btn[aria-busy="true"] {
+  cursor: progress;
+}
+
 .sign-row-warnings {
   display: flex;
   flex-direction: column;

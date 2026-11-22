@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import {
   addDocuments,
+  downloadVersion,
   exportVersion,
   finishEdit,
   getDocument,
@@ -21,7 +22,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { keys, type DocActions } from "./actions";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentRow } from "./DocumentRow";
-import { appName, errorHint, errorTitle, LIBRARY_LABEL, type ActionKind } from "./text";
+import { appName, errorHint, errorMessage, errorTitle, LIBRARY_LABEL, type ActionKind } from "./text";
 import { useReload } from "./useReload";
 import "./docs.css";
 
@@ -109,7 +110,13 @@ export function DocsScreen() {
       } catch (err) {
         const error = toAppError(err);
         setFeedback({ kind: "error", title: errorTitle(error, action), error, hint: errorHint(error, action) });
-        if (error.code === "not_found" || error.code === "forbidden" || error.code === "document_editing") {
+        // not_available: keadaan unduhan mungkin sudah berubah (rekan baru saja putus).
+        if (
+          error.code === "not_found" ||
+          error.code === "forbidden" ||
+          error.code === "document_editing" ||
+          error.code === "not_available"
+        ) {
           void reloadAll();
         }
         return false;
@@ -212,6 +219,15 @@ export function DocsScreen() {
         setSelectedId(doc.id);
         setFocusConflict((n) => n + 1);
       },
+      download: (doc, version) => {
+        void run(
+          keys.download(doc.id, version.id),
+          "download",
+          doc.id,
+          () => downloadVersion(doc.id, version.id),
+          () => `Isi versi ${version.number} dari ${doc.name} sudah ada di laptop ini.`,
+        );
+      },
     }),
     [pending, run],
   );
@@ -272,7 +288,7 @@ export function DocsScreen() {
         {feedback?.kind === "ok" && <p className="docs-ok">{feedback.text}</p>}
         {feedback?.kind === "error" && (
           <ErrorAlert title={feedback.title}>
-            <p>{feedback.error.message}</p>
+            <p>{errorMessage(feedback.error)}</p>
             {feedback.hint && <p>{feedback.hint}</p>}
           </ErrorAlert>
         )}

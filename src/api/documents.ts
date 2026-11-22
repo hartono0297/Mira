@@ -22,6 +22,8 @@ export type DocumentVersion = {
   isHead: boolean;
   received: boolean; // datang dari rekan
   available: boolean; // isinya ada di laptop ini
+  downloading: boolean; // isinya sedang disalin dari laptop rekan
+  autoDownload: boolean; // sampai 20 MB: disalin otomatis saat rekan tersambung
 };
 
 export type EditingInfo = { editor: PersonRef; since: string; local: boolean; lastSavedAt: string | null };
@@ -45,7 +47,8 @@ export type DocumentSummary = {
 export type DocumentDetail = DocumentSummary & { versions: DocumentVersion[] }; // nomor turun
 
 // Kode error baru dari inti Rust untuk dokumen (selain kode umum di types.ts).
-export type DocumentErrorCode = "storage" | "invalid_input" | "document_editing" | "open_failed";
+// not_available: tidak ada laptop rekan tersambung yang menyimpan isi versi itu.
+export type DocumentErrorCode = "storage" | "invalid_input" | "document_editing" | "open_failed" | "not_available";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!isTauri()) throw NO_TAURI_ERROR;
@@ -77,6 +80,10 @@ export const restoreVersion = (documentId: string, versionId: string) =>
 
 export const resolveConflict = (documentId: string, keepVersionId: string) =>
   call<DocumentSummary>("resolve_conflict", { documentId, keepVersionId });
+
+// Menyalin isi versi yang lebih dari 20 MB dari laptop rekan yang tersambung.
+export const downloadVersion = (documentId: string, versionId: string) =>
+  call<DocumentSummary>("download_version", { documentId, versionId });
 
 export const exportVersion = (documentId: string, versionId: string | null, destination: string) =>
   call<null>("export_version", { documentId, versionId, destination });
