@@ -1,0 +1,582 @@
+/* Layar Board. Mengikuti mockup board di design/tema-c.html: kolom berlatar
+   --col, kartu berlatar --card, garis --border. Kode proyek dan kode task
+   (PA, PA-12) selalu tebal dan berangka rata, supaya mudah dicari dengan mata
+   di sub-menu, kepala board, dan kartu. */
+
+.bd {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+/* Sub-menu: Task saya dan daftar proyek, seperti daftar channel di mockup chat. */
+
+.bd-nav {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 15px 10px 16px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.bd-title {
+  margin: 0 8px 12px;
+}
+
+.bd-navlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bd-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-sec);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.bd-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.bd-link[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.bd-link svg {
+  flex: none;
+}
+
+.bd-link-code,
+.pb-code,
+.tc-code {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.bd-link-code {
+  flex: none;
+  min-width: 34px;
+  font-size: 12px;
+}
+
+.bd-link-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bd-link-count {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bd-lbl {
+  margin: 16px 8px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.bd-nav-note {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.bd-new {
+  align-self: flex-start;
+  margin: 10px 8px 0;
+}
+
+/* Isi kanan. Bergulir sendiri ke dua arah; kolom board punya lebar minimum. */
+
+.bd-main {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.bd-pad {
+  padding: 20px 24px;
+}
+
+.bd-narrow {
+  max-width: 640px;
+}
+
+/* Tombol di dalam kotak error: garis --text-sec karena --border-strong di atas
+   --danger-soft hanya 2,81:1 di mode terang. */
+.bd-retry {
+  margin-top: 8px;
+  border-color: var(--text-sec);
+}
+
+.bd-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 520px;
+  padding: 48px 32px;
+  font-size: 14px;
+}
+
+.bd-empty-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Board satu proyek */
+
+.pb {
+  display: flex;
+  flex-direction: column;
+  min-width: 820px;
+}
+
+.pb-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pb-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 700;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pb-code {
+  color: var(--text-sec);
+}
+
+.pb-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.pb-keys {
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  font-size: 13px;
+  max-width: 100%;
+}
+
+.pb-keys p {
+  max-width: 760px;
+}
+
+.pb-live {
+  padding: 12px 24px 0;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pb-live:empty {
+  display: none;
+}
+
+.pb-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(250px, 1fr));
+  gap: 12px;
+  align-items: start;
+  padding: 16px 24px 32px;
+}
+
+.pb-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--col);
+}
+
+/* Kolom tujuan saat kartu diseret: garis putus-putus, ditambah garis sisip di posisi jatuhnya. */
+.pb-col-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+
+.pb-colh {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pb-count {
+  color: var(--text-sec);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pb-drop {
+  height: 3px;
+  margin: -3px 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.pb-empty {
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+/* Kartu task. Seluruh kartu bisa diklik lewat ::after tombol judul; cincin fokus
+   dipindah ke kartu supaya terlihat utuh. */
+
+.tc {
+  position: relative;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  transition: border-color 120ms ease;
+}
+
+.tc[draggable="true"] {
+  cursor: grab;
+}
+
+.tc:hover {
+  border-color: var(--border-strong);
+}
+
+.tc:has(.tc-open:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.tc-dragging {
+  opacity: 0.5;
+}
+
+.tc-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.tc-open {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.tc-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+}
+
+/* Fokus tetap terlihat: cincinnya dipasang di .tc lewat :has di atas. */
+.tc-open:focus-visible {
+  outline: none;
+}
+
+.tc-open-done {
+  color: var(--text-sec);
+}
+
+.tc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.tc-av {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tc-due,
+.tc-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* Terlambat: warna status "menunggu Anda" ditambah teks "Terlambat n hari". */
+.tc-late {
+  color: var(--state);
+  font-weight: 700;
+}
+
+.tc-pri {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+/* Prioritas tinggi memakai warna bahaya, sama dengan detail task dan Task saya.
+   Teks "Tinggi" tetap yang membawa artinya. */
+.tc-pri-high {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.tc-labels {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tc-label {
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.tc-merged {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.tc-merged svg {
+  flex: none;
+}
+
+/* Tombol Pindahkan dan menunya. Duduk di atas ::after kartu supaya bisa diklik. */
+
+.mv {
+  position: relative;
+  z-index: 1;
+  flex: none;
+}
+
+.mv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.mv-btn:hover,
+.mv-btn[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Bayangan hanya di menu: ia melayang di atas kartu lain. */
+.mv-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 190px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 8px 20px var(--scrim);
+}
+
+.mv-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mv-item:hover,
+.mv-item:focus-visible {
+  background: var(--hover);
+}
+
+.mv-item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Tambah task cepat di bawah kolom. Garis kolom isian dan tombol memakai
+   --text-sec: --border-strong di atas --col hanya 2,95:1. */
+
+.qa-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-sec);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.qa-open:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.qa {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qa-input {
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--text-sec);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 14px;
+}
+
+.qa-input::placeholder {
+  color: var(--text-sec);
+  opacity: 1;
+}
+
+.qa-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.qa-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.qa-hint {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.qa-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.qa-cancel {
+  border-color: var(--text-sec);
+}
+
+/* Dialog proyek baru */
+
+.np-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.np-code {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bd-link,
+  .tc {
+    transition: none;
+  }
+}

@@ -1,0 +1,703 @@
+/* Detail task (dialog), Task saya, dan pengaturan pengingat. Semua warna lewat token peran. */
+
+/* Dialog detail task: lebih lebar dari .dlg karena ada panel rincian di kanan. */
+.td-dlg {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 51;
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 22px 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  /* Satu-satunya elemen yang terangkat: dialog di atas board. */
+  box-shadow: 0 12px 32px var(--scrim);
+}
+
+.td-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.td-crumb {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sec);
+  min-width: 0;
+}
+
+.td-project {
+  overflow-wrap: anywhere;
+}
+
+.td-code {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.td-status {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.td-close {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.td-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.td-pad {
+  padding: 8px 0;
+}
+
+.td-unsaved {
+  background: var(--accent-soft);
+}
+
+.td-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  grid-template-areas:
+    "top side"
+    "bottom side";
+  column-gap: 24px;
+  row-gap: 20px;
+  align-items: start;
+}
+
+.td-top {
+  grid-area: top;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.td-side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 20px;
+  border-left: 1px solid var(--border);
+  min-width: 0;
+}
+
+.td-bottom {
+  grid-area: bottom;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .td-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "top"
+      "side"
+      "bottom";
+  }
+
+  .td-side {
+    padding-left: 0;
+    padding-top: 14px;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+
+.td-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.td-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Judul bisa diedit langsung. Garis tepi tetap terlihat supaya jelas ini kolom isian. */
+.td-title-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.td-title-text {
+  font-size: 19px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.td-input,
+.td-textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 14px;
+}
+
+.td-textarea {
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.td-title-input:focus-visible,
+.td-input:focus-visible,
+.td-textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.td-title-input[aria-invalid="true"],
+.td-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.td-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.td-composer .td-row-actions {
+  justify-content: space-between;
+}
+
+.td-link {
+  align-self: flex-start;
+  font-size: 13px;
+}
+
+.td-due-hint {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+/* Terlambat: teks "Terlambat 2 hari" sudah membawa artinya. Warnanya sama dengan
+   kartu board (token state, "menunggu Anda"); merah hanya untuk prioritas Tinggi dan error. */
+.td-late {
+  color: var(--state);
+}
+
+/* Wilayah aria-live yang selalu terpasang. Saat kosong tidak menambah jarak. */
+.td-live:empty {
+  margin-top: -6px;
+}
+
+.td-merged {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.td-merged svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent-text);
+}
+
+.td-readonly-note {
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--col);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.td-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+/* Label dan prioritas */
+
+.td-labels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.td-label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.td-dl .td-label-chip {
+  padding-right: 10px;
+}
+
+.td-chip-x {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.td-chip-x:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.td-label-add {
+  display: flex;
+  gap: 6px;
+}
+
+.td-label-add .td-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.td-prio {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.td-prio-medium {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.td-prio-high {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Rincian hanya-baca */
+
+.td-dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.td-dl dt {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.td-dl dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+}
+
+.td-side-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.td-delete {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.td-delete:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+/* Komentar dan aktivitas */
+
+.td-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.td-sh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.td-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.td-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.td-comment,
+.td-log {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.td-av {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.td-entry {
+  min-width: 0;
+  flex: 1;
+}
+
+.td-entry-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.td-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.td-log p {
+  font-size: 13px;
+  padding-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.td-log .td-time {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.td-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.td-send {
+  min-width: 84px;
+}
+
+/* Task saya */
+
+.mt {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.mt-head {
+  flex-wrap: wrap;
+}
+
+.mt-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 28px;
+  padding: 20px 24px 32px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .mt-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 760px;
+  min-width: 0;
+}
+
+.mt-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mt-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.mt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.mt-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.mt-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mt-row:hover {
+  background: var(--hover);
+}
+
+.mt-code {
+  flex: none;
+  min-width: 56px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+
+.mt-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mt-title {
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.mt-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.mt-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.mt-due {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mt-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 10px 4px 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mt-disclosure:hover {
+  background: var(--hover);
+}
+
+.mt-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.mt-allclear {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Pengingat tenggat */
+
+.rem {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--col);
+}
+
+.rem-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.rem-note {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.rem-set {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rem-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rem-opt:hover {
+  background: var(--hover);
+}
+
+.rem-opt input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.rem-saved {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rem-retry {
+  margin-top: 8px;
+  background: var(--bg);
+}

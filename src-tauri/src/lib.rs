@@ -3,6 +3,7 @@
 //! Modules are split by concern so later stages can add `network/`, `sync/`
 //! and `permissions/` next to these without reshaping them.
 
+pub mod board;
 pub mod clock;
 pub mod commands;
 pub mod db;
@@ -33,6 +34,7 @@ use crate::state::MiraState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data_dir = paths::resolve_data_dir(app.handle());
             let state = MiraState::new(
@@ -75,6 +77,15 @@ pub fn run() {
                     }
                 });
             }
+            // Deadline reminders (F-TASK-06). The trigger doubles as the board's
+            // local-change hook so a new due date is checked right away.
+            let reminders = board::reminder::spawn(
+                state.clone(),
+                std::sync::Arc::new(board::reminder::TauriNotifier::new(app.handle().clone())),
+            );
+            app.manage(board::commands::BoardRuntime {
+                hook: std::sync::Arc::new(reminders),
+            });
             app.manage(state);
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
@@ -112,6 +123,16 @@ pub fn run() {
             network_commands::remove_manual_address,
             network_commands::get_firewall_status,
             network_commands::request_firewall_rule,
+            board::commands::board_list_projects,
+            board::commands::board_create_project,
+            board::commands::board_get_board,
+            board::commands::board_create_task,
+            board::commands::board_get_task,
+            board::commands::board_update_task,
+            board::commands::board_move_task,
+            board::commands::board_delete_task,
+            board::commands::board_add_comment,
+            board::commands::board_my_tasks,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
