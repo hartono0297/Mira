@@ -12,7 +12,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
-use super::audience::BoardTeamAudience;
+use super::audience::BoardAudience;
 use super::fetch::FetchJob;
 use super::hooks::{ChatHooks, MessageNotification};
 use super::sync::ChatSync;
@@ -114,7 +114,7 @@ impl ChatRuntime {
             hub: Arc::downgrade(&hub),
             wake: wake.clone(),
         });
-        let chat = ChatSync::new(state, Arc::new(BoardTeamAudience), hooks).map(Arc::new);
+        let chat = ChatSync::new(state, Arc::new(BoardAudience), hooks).map(Arc::new);
         match &chat {
             Ok(chat) => {
                 hub.register(chat.clone());

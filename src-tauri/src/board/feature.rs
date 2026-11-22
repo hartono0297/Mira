@@ -780,8 +780,8 @@ impl HubSource for Weak<FeatureHub> {
     }
 }
 
-/// The hub managed by Tauri; `None` until it is managed (it is managed after
-/// `BoardRuntime` in `lib.rs`).
+/// The hub managed by Tauri; `None` until it is managed (it is managed before
+/// `AppNet::new` in `lib.rs`).
 impl<R: tauri::Runtime> HubSource for tauri::AppHandle<R> {
     fn hub(&self) -> Option<Arc<FeatureHub>> {
         self.try_state::<Arc<FeatureHub>>()

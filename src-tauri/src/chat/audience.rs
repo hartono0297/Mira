@@ -6,9 +6,9 @@
 //! `record_ids_for` can judge thousands of records without a query each.
 //!
 //! Only members with `status = 'active'` are ever in an audience. Guests are
-//! only in the project conversations they have access to; chat pribadi is only
-//! between two active members who are not guests; a deleted team has no
-//! members.
+//! only in the project conversations the board lets them read; chat pribadi
+//! is only between two active members who are not guests; a deleted team has
+//! no members.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -17,6 +17,10 @@ use rusqlite::{Connection, OptionalExtension};
 use time::OffsetDateTime;
 
 use super::model::{self, Conv};
+use crate::board::{
+    self,
+    access::{ProjectRef, Rights},
+};
 use crate::error::AppResult;
 use crate::identity;
 use crate::permissions::{self, format::parse_time};
@@ -35,53 +39,29 @@ pub struct ProjectInfo {
 }
 
 /// "Who may be in this project's channel". Every answer is limited to active
-/// members of the organization.
+/// members of the organization. A project chat cannot see (unknown here, or
+/// never synced) has no channel: `project` returns `None`, `projects` leaves
+/// it out and nobody is its member.
 pub trait ProjectAudience: Send + Sync {
     fn project(&self, conn: &Connection, project_id: &str) -> AppResult<Option<ProjectInfo>>;
     fn projects(&self, conn: &Connection) -> AppResult<Vec<ProjectInfo>>;
     fn is_member(&self, conn: &Connection, project_id: &str, pk: &str) -> AppResult<bool>;
-    fn members(&self, conn: &Connection, project_id: &str) -> AppResult<Vec<String>>;
+    /// Members of every project at once, by project id. [`Ctx`] calls this
+    /// once and keeps the answer, so judging many records reads the
+    /// membership tables once.
+    fn members_by_project(&self, conn: &Connection) -> AppResult<HashMap<String, Vec<String>>>;
 }
 
-/// Temporary [`ProjectAudience`] reading `board_projects.team_id`. A project
-/// with a team: that team's members plus guests listed in `guest_access` for
-/// the project. A project without a team: every active member who is not a
-/// guest, plus those guests. A project whose team is deleted has nobody.
-///
-/// Connection point for the board-sync session: when board sync grants guest
-/// access per project, it replaces this implementation.
+/// [`ProjectAudience`] on the board's own rules (`board::access`): a project
+/// channel has exactly the people who may read the project on the board
+/// (guest access only counts for the project's own team; a project without a
+/// team has no guests), and only projects the board syncs to other laptops
+/// (`board::store::is_syncable`) have a channel.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct BoardTeamAudience;
+pub struct BoardAudience;
 
-impl BoardTeamAudience {
-    fn team_alive(conn: &Connection, team_id: &str) -> AppResult<bool> {
-        let n: i64 = conn.query_row(
-            "SELECT count(*) FROM teams WHERE id = ?1 AND deleted = 0",
-            [team_id],
-            |r| r.get(0),
-        )?;
-        Ok(n > 0)
-    }
-}
-
-impl ProjectAudience for BoardTeamAudience {
-    fn project(&self, conn: &Connection, project_id: &str) -> AppResult<Option<ProjectInfo>> {
-        Ok(conn
-            .query_row(
-                "SELECT id, name, team_id FROM board_projects WHERE id = ?1",
-                [project_id],
-                |r| {
-                    Ok(ProjectInfo {
-                        id: r.get(0)?,
-                        name: r.get(1)?,
-                        team_id: r.get(2)?,
-                    })
-                },
-            )
-            .optional()?)
-    }
-
-    fn projects(&self, conn: &Connection) -> AppResult<Vec<ProjectInfo>> {
+impl BoardAudience {
+    fn all_projects(conn: &Connection) -> AppResult<Vec<ProjectInfo>> {
         let mut stmt =
             conn.prepare("SELECT id, name, team_id FROM board_projects ORDER BY name")?;
         let rows = stmt
@@ -95,51 +75,67 @@ impl ProjectAudience for BoardTeamAudience {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
-
-    fn is_member(&self, conn: &Connection, project_id: &str, pk: &str) -> AppResult<bool> {
-        Ok(self.members(conn, project_id)?.iter().any(|m| m == pk))
-    }
-
-    fn members(&self, conn: &Connection, project_id: &str) -> AppResult<Vec<String>> {
-        let Some(project) = self.project(conn, project_id)? else {
-            return Ok(Vec::new());
-        };
-        let mut out: Vec<String> = match &project.team_id {
-            Some(team) if !Self::team_alive(conn, team)? => return Ok(Vec::new()),
-            Some(team) => query_keys(
-                conn,
-                "SELECT tm.public_key FROM team_members tm
-                 JOIN members m ON m.public_key = tm.public_key
-                 WHERE tm.team_id = ?1 AND m.status = 'active' AND m.kind = 'member'",
-                team,
-            )?,
-            None => {
-                let mut stmt = conn.prepare(
-                    "SELECT public_key FROM members WHERE status = 'active' AND kind = 'member'",
-                )?;
-                stmt.query_map([], |r| r.get(0))?
-                    .collect::<Result<Vec<String>, _>>()?
-            }
-        };
-        out.extend(query_keys(
-            conn,
-            "SELECT g.public_key FROM guest_access g
-             JOIN members m ON m.public_key = g.public_key
-             WHERE g.project_id = ?1 AND m.status = 'active' AND m.kind = 'guest'",
-            project_id,
-        )?);
-        out.sort();
-        out.dedup();
-        Ok(out)
-    }
 }
 
-fn query_keys(conn: &Connection, sql: &str, arg: &str) -> AppResult<Vec<String>> {
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt
-        .query_map([arg], |r| r.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    Ok(rows)
+impl ProjectAudience for BoardAudience {
+    fn project(&self, conn: &Connection, project_id: &str) -> AppResult<Option<ProjectInfo>> {
+        let info = conn
+            .query_row(
+                "SELECT id, name, team_id FROM board_projects WHERE id = ?1",
+                [project_id],
+                |r| {
+                    Ok(ProjectInfo {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        team_id: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        match info {
+            Some(p) if board::store::is_syncable(conn, &p.id)? => Ok(Some(p)),
+            _ => Ok(None),
+        }
+    }
+
+    fn projects(&self, conn: &Connection) -> AppResult<Vec<ProjectInfo>> {
+        let mut out = Vec::new();
+        for p in Self::all_projects(conn)? {
+            if board::store::is_syncable(conn, &p.id)? {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+
+    fn is_member(&self, conn: &Connection, project_id: &str, pk: &str) -> AppResult<bool> {
+        // `may_access_project` is false for unknown projects, so
+        // `is_syncable` only sees projects that exist.
+        Ok(board::access::may_access_project(conn, pk, project_id)?
+            && board::store::is_syncable(conn, project_id)?)
+    }
+
+    fn members_by_project(&self, conn: &Connection) -> AppResult<HashMap<String, Vec<String>>> {
+        let rights = Rights::load(conn)?;
+        let rows: Vec<(String, Option<String>, String)> = {
+            let mut stmt = conn.prepare("SELECT id, team_id, created_by FROM board_projects")?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let mut out = HashMap::new();
+        for (id, team, creator) in rows {
+            if !board::store::is_syncable(conn, &id)? {
+                continue;
+            }
+            let readers = rights.readers(ProjectRef {
+                id: &id,
+                team_id: team.as_deref(),
+                created_by: &creator,
+            });
+            out.insert(id, readers);
+        }
+        Ok(out)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -384,7 +380,8 @@ pub struct Ctx<'a> {
     pub dir: Directory,
     pub projects: &'a dyn ProjectAudience,
     convs: RefCell<HashMap<String, Option<ConvInfo>>>,
-    project_members: RefCell<HashMap<String, HashSet<String>>>,
+    /// Members of every project, loaded on first use.
+    project_members: RefCell<Option<HashMap<String, HashSet<String>>>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -394,7 +391,7 @@ impl<'a> Ctx<'a> {
             dir,
             projects,
             convs: RefCell::new(HashMap::new()),
-            project_members: RefCell::new(HashMap::new()),
+            project_members: RefCell::new(None),
         }
     }
 
@@ -506,20 +503,42 @@ impl<'a> Ctx<'a> {
             .map_or_else(|| "Proyek".to_owned(), |p| p.name))
     }
 
-    fn project_members(&self, project: &str) -> AppResult<HashSet<String>> {
-        if let Some(hit) = self.project_members.borrow().get(project) {
-            return Ok(hit.clone());
-        }
-        let set: HashSet<String> = self
+    fn project_team(&self, project: &str) -> AppResult<Option<String>> {
+        Ok(self
             .projects
-            .members(self.conn, project)?
-            .into_iter()
-            .filter(|pk| self.dir.is_active(pk))
-            .collect();
-        self.project_members
-            .borrow_mut()
-            .insert(project.to_owned(), set.clone());
-        Ok(set)
+            .project(self.conn, project)?
+            .and_then(|p| p.team_id))
+    }
+
+    /// Runs `f` on the active members of `project` (`None` when it has no
+    /// channel). Every project's members are loaded once per context.
+    fn with_project_members<T>(
+        &self,
+        project: &str,
+        f: impl FnOnce(Option<&HashSet<String>>) -> T,
+    ) -> AppResult<T> {
+        if self.project_members.borrow().is_none() {
+            let all = self
+                .projects
+                .members_by_project(self.conn)?
+                .into_iter()
+                .map(|(id, pks)| {
+                    let set = pks
+                        .into_iter()
+                        .filter(|pk| self.dir.is_active(pk))
+                        .collect();
+                    (id, set)
+                })
+                .collect();
+            *self.project_members.borrow_mut() = Some(all);
+        }
+        let cache = self.project_members.borrow();
+        Ok(f(cache.as_ref().and_then(|all| all.get(project))))
+    }
+
+    /// Whether `pk` is in the project's channel now.
+    pub fn in_project(&self, project: &str, pk: &str) -> AppResult<bool> {
+        self.with_project_members(project, |set| set.is_some_and(|s| s.contains(pk)))
     }
 
     /// Whether `pk` is in the conversation now (active members only).
@@ -530,7 +549,7 @@ impl<'a> Ctx<'a> {
         Ok(match &info.scope {
             Scope::Umum | Scope::Org => self.dir.is_full_member(pk),
             Scope::Team(t) => self.dir.in_team(t, pk),
-            Scope::Project(p) => self.project_members(p)?.contains(pk),
+            Scope::Project(p) => self.in_project(p, pk)?,
             Scope::Direct(a, b) => {
                 (pk == a || pk == b) && self.dir.is_full_member(a) && self.dir.is_full_member(b)
             }
@@ -552,7 +571,9 @@ impl<'a> Ctx<'a> {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Scope::Project(p) => self.project_members(p)?.into_iter().collect(),
+            Scope::Project(p) => self.with_project_members(p, |set| {
+                set.map(|s| s.iter().cloned().collect()).unwrap_or_default()
+            })?,
             Scope::Direct(a, b) => {
                 if self.dir.is_full_member(a) && self.dir.is_full_member(b) {
                     vec![a.clone(), b.clone()]
@@ -576,20 +597,22 @@ impl<'a> Ctx<'a> {
                 (self.dir.is_superadmin(pk) && self.dir.in_team(t, pk))
                     || self.dir.is_team_admin(t, pk)
             }
-            Scope::Project(p) => {
-                if self.dir.is_superadmin(pk) {
-                    true
-                } else {
-                    let team = self.projects.project(self.conn, p)?.and_then(|p| p.team_id);
-                    team.is_some_and(|t| self.dir.is_team_admin(&t, pk))
+            // Same as the board's project admin: a superadmin only
+            // administers a team's project after joining the team (F-ROLE-11).
+            Scope::Project(p) => match self.project_team(p)? {
+                Some(t) => {
+                    (self.dir.is_superadmin(pk) && self.dir.in_team(&t, pk))
+                        || self.dir.is_team_admin(&t, pk)
                 }
-            }
+                None => self.dir.is_superadmin(pk),
+            },
             Scope::Direct(..) => false,
         })
     }
 
     /// The conversation ids of every channel this laptop can name: `#umum`,
-    /// membership-log channels, created channels and project channels.
+    /// membership-log channels, created channels and the channels of projects
+    /// the board syncs.
     pub fn all_channel_convs(&self) -> AppResult<Vec<String>> {
         let mut set: HashSet<String> = HashSet::new();
         set.insert(model::channel_conv(&self.dir.umum));

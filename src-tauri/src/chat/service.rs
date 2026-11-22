@@ -659,7 +659,7 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
     teams.sort_by(|a, b| a.name.cmp(&b.name));
     let mut projects = Vec::new();
     for p in ctx.projects.projects(ctx.conn)? {
-        if ctx.projects.is_member(ctx.conn, &p.id, &me)? {
+        if ctx.in_project(&p.id, &me)? {
             projects.push(ProjectRef {
                 id: p.id,
                 name: p.name,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use rusqlite::{Connection, params};
 
-use super::audience::BoardTeamAudience;
+use super::audience::BoardAudience;
 use super::fetch::FetchJob;
 use super::hooks::RecordingHooks;
 use super::sync::ChatSync;
@@ -46,8 +46,7 @@ impl Laptop {
             })
             .unwrap();
         let hooks = Arc::new(RecordingHooks::default());
-        let chat =
-            ChatSync::new(state.clone(), Arc::new(BoardTeamAudience), hooks.clone()).unwrap();
+        let chat = ChatSync::new(state.clone(), Arc::new(BoardAudience), hooks.clone()).unwrap();
         Laptop {
             tmp,
             state,
@@ -193,14 +192,15 @@ impl Office {
         (id, super::model::channel_conv(&channel))
     }
 
-    /// Board project row; returns its id (its channel is `ch:<id>`).
+    /// Board project row marked syncable (`bound = 1`); returns its id (its
+    /// channel is `ch:<id>`).
     pub fn add_project(&self, name: &str, team: Option<&str>, creator: &str) -> String {
         let id = super::model::random_hex32();
         let code = format!("P{}", &id[..6]);
         self.each(|c| {
             c.execute(
-                "INSERT INTO board_projects (id, code, name, team_id, created_by, created_at, doc, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 't', x'', 't')",
+                "INSERT INTO board_projects (id, code, name, team_id, created_by, created_at, doc, updated_at, bound)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 't', x'', 't', 1)",
                 params![id, code, name, team, creator],
             )
             .unwrap();

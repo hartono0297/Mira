@@ -6,7 +6,7 @@
 //!
 //! - `model`: record format, signatures, conversation ids, field checks.
 //! - `seal`: envelopes sealed for one recipient, encrypted attachments.
-//! - `schema`: migration v6.
+//! - `schema`: migration v7.
 //! - `audience`: who is in which conversation, who administers it, and the
 //!   `ProjectAudience` connection point for board projects.
 //! - `judge`: may this author make this record (accept, defer, reject).
@@ -40,7 +40,7 @@ mod tests;
 #[cfg(test)]
 mod testutil;
 
-pub use audience::{BoardTeamAudience, ProjectAudience, ProjectInfo};
+pub use audience::{BoardAudience, ProjectAudience, ProjectInfo};
 pub use fetch::{FetchJob, FetchKind};
 pub use hooks::{ChatHooks, MessageNotification, NoopHooks, RecordingHooks};
 pub use sync::ChatSync;
