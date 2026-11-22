@@ -33,7 +33,7 @@ Bukan lingkup: mengirim permintaan dan file ke rekan (butuh jaringan, disambung 
 
 ## 3. Skema (satu entri migrasi, `signing/schema.rs`)
 
-Tabel `sign_saved_signature`, `sign_requests`, `sign_signers`, `sign_events`, `sign_exports`. Lihat `src-tauri/src/signing/schema.rs`. Didaftarkan di akhir `MIGRATIONS` (sekarang v3; nomor final saat merge karena Tahap 3 dan 4 juga menambah).
+Tabel `sign_saved_signature`, `sign_pin_resets`, `sign_requests`, `sign_signers`, `sign_events`, `sign_exports`. Lihat `src-tauri/src/signing/schema.rs`. Didaftarkan di akhir `MIGRATIONS` (sekarang v3; nomor final saat merge karena Tahap 3 dan 4 juga menambah).
 
 ## 4. Inti Rust (`src-tauri/src/signing/`)
 

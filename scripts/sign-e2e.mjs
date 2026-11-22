@@ -9,17 +9,19 @@
 // dan gelap.
 //
 // Pakai:  node scripts/sign-e2e.mjs <path mira.exe> <folder screenshot> <folder kerja>
-// Folder kerja menampung data uji dan dihapus di akhir. PDF uji dibuat sendiri.
+// Folder kerja (bawaan: folder temp Windows) menampung data uji dan dihapus
+// kalau semua lulus. PDF uji dibuat sendiri. Build dulu: npx tauri build --debug --no-bundle
 
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
-const work = resolve(process.argv[4] ?? "scratch-sign-e2e");
+const work = resolve(process.argv[4] ?? join(tmpdir(), "mira-sign-e2e"));
 const dataDir = join(work, "data");
 const exportDir = join(work, "ekspor");
 const pdfPath = join(work, "kontrak-uji.pdf");
@@ -133,6 +135,30 @@ async function refocus(page) {
 
 const shot = (page, name) => page.screenshot({ path: join(shots, name) });
 
+async function createSignature(page, screenshot) {
+  await page.getByRole("button", { name: "Buat tanda tangan" }).first().click();
+  const pad = page.getByRole("img", { name: /Kotak menggambar tanda tangan/ }).or(page.locator("canvas").first());
+  await pad.first().waitFor();
+  const box = await pad.first().boundingBox();
+  const y0 = box.y + box.height * 0.6;
+  await page.mouse.move(box.x + box.width * 0.15, y0);
+  await page.mouse.down();
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40;
+    await page.mouse.move(box.x + box.width * (0.15 + 0.7 * t), y0 - Math.sin(t * Math.PI * 3) * box.height * 0.25, { steps: 2 });
+  }
+  await page.mouse.up();
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.75);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.72, { steps: 12 });
+  await page.mouse.up();
+  if (screenshot) await shot(page, screenshot);
+  await page.getByRole("button", { name: "Lanjut ke PIN" }).click();
+  await page.getByLabel("PIN baru").fill(PIN);
+  await page.getByLabel("Ulangi PIN").fill(PIN);
+  await page.getByRole("button", { name: "Simpan tanda tangan" }).click();
+}
+
 let app;
 try {
   await makePdf();
@@ -154,27 +180,7 @@ try {
   await shot(page, "t5-01-tanda-tangan-kosong-terang.png");
 
   // Buat tanda tangan dengan mouse.
-  await page.getByRole("button", { name: "Buat tanda tangan" }).first().click();
-  const pad = page.getByRole("img", { name: /Kotak menggambar tanda tangan/ }).or(page.locator("canvas").first());
-  await pad.first().waitFor();
-  const box = await pad.first().boundingBox();
-  const y0 = box.y + box.height * 0.6;
-  await page.mouse.move(box.x + box.width * 0.15, y0);
-  await page.mouse.down();
-  for (let i = 0; i <= 40; i++) {
-    const t = i / 40;
-    await page.mouse.move(box.x + box.width * (0.15 + 0.7 * t), y0 - Math.sin(t * Math.PI * 3) * box.height * 0.25, { steps: 2 });
-  }
-  await page.mouse.up();
-  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.75);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.72, { steps: 12 });
-  await page.mouse.up();
-  await shot(page, "t5-02-gambar-tanda-tangan.png");
-  await page.getByRole("button", { name: "Lanjut ke PIN" }).click();
-  await page.getByLabel("PIN baru").fill(PIN);
-  await page.getByLabel("Ulangi PIN").fill(PIN);
-  await page.getByRole("button", { name: "Simpan tanda tangan" }).click();
+  await createSignature(page, "t5-02-gambar-tanda-tangan.png");
   await page.getByText(/Tersimpan sejak/).waitFor({ timeout: 20000 });
   check("Tanda tangan tersimpan dengan PIN", true);
 
@@ -275,7 +281,7 @@ try {
   check("File final ada di penyimpanan Mira", Boolean(stored), stored ?? "");
   flipOneChar(stored);
   await refocus(page);
-  await page.getByText("Isi file berubah sejak ditandatangani").first().waitFor({ timeout: 15000 });
+  await page.getByText("Isi file tidak cocok dengan catatan Mira").first().waitFor({ timeout: 15000 });
   check("File di penyimpanan yang diubah memunculkan peringatan", true);
   await shot(page, "t5-09-peringatan-terang.png");
 
@@ -284,13 +290,24 @@ try {
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(400);
   await page.getByRole("button", { name: "Tanda tangan", exact: true }).click();
-  await page.getByText("Isi file berubah sejak ditandatangani").first().waitFor({ timeout: 15000 });
+  await page.getByText("Isi file tidak cocok dengan catatan Mira").first().waitFor({ timeout: 15000 });
   await shot(page, "t5-10-daftar-gelap.png");
   await page.getByText("kontrak-uji", { exact: false }).first().click();
   await page.locator("canvas").first().waitFor({ timeout: 20000 });
   await page.waitForTimeout(1500);
   await shot(page, "t5-11-dokumen-gelap.png");
   check("Mode gelap diterapkan di layar tanda tangan", (await page.evaluate(() => document.documentElement.dataset.theme)) === "dark");
+
+  // Lupa PIN: hapus tanpa PIN, tanda tangan baru kena masa tunggu 24 jam.
+  await page.getByRole("button", { name: "Kembali", exact: true }).first().click();
+  await page.getByRole("button", { name: "Hapus tanda tangan" }).click();
+  await page.getByRole("button", { name: "Lupa PIN?" }).click();
+  await page.getByRole("button", { name: "Hapus tanpa PIN" }).click();
+  await page.getByRole("button", { name: "Buat tanda tangan" }).first().waitFor({ timeout: 15000 });
+  await createSignature(page);
+  await page.getByText(/Bisa dipakai mulai/).waitFor({ timeout: 20000 });
+  check("Tanda tangan baru setelah lupa PIN kena masa tunggu 24 jam", true);
+  await shot(page, "t5-12-masa-tunggu-gelap.png");
 } catch (err) {
   check("Skrip berjalan tanpa error", false, String(err?.message ?? err).split("\n")[0]);
   if (app) await app.page.screenshot({ path: join(work, "gagal.png") }).catch(() => {});
