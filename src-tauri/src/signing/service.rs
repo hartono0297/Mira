@@ -24,9 +24,13 @@ use time::format_description::well_known::Rfc3339;
 use zeroize::Zeroizing;
 
 use super::err;
+use super::increment;
 use super::outbox::SignOutbox;
+use super::peer_sync::{
+    self, CancelledPayload, Payload, RequestPayload, SignedPayload, WireEvent, WireSigner,
+};
 use super::pin::{KdfParams, MAX_PNG_BYTES};
-use super::repo::{self, ExportRow, MemberRow, StoredEvent};
+use super::repo::{self, ExportRow, MemberRow, RequestScope, StoredEvent};
 use super::request::{
     self, MyState, NewRequest, RequestStatus, Requester, SignMode, SignRequest, Signer,
     SignerInput, SignerKind, SignerStatus,
@@ -36,9 +40,11 @@ use super::session::SignSessions;
 use super::store::{DocumentStore, MAX_PDF_BYTES, MAX_SIGNED_PDF_BYTES};
 use super::vault::{self, SavedSignatureInfo};
 use crate::clock;
+use crate::documents::scope::GuestProjects;
 use crate::error::{AppError, AppResult};
 use crate::identity::{self, Identity, has_forbidden_chars};
 use crate::org;
+use crate::permissions;
 
 // ---------------------------------------------------------------------------
 // Bentuk hasil (kontrak dengan frontend).
@@ -61,6 +67,16 @@ pub struct RequestSummary {
     pub integrity: Integrity,
     /// Jumlah file ekspor yang isinya berubah (yang hilang tidak dihitung).
     pub export_warnings: usize,
+    /// Permintaan dibuat laptop lain.
+    pub from_peer: bool,
+    pub requested_by_name: String,
+    /// File versi terkini ada di laptop ini.
+    pub file_available: bool,
+    /// Ukuran file versi terkini dalam byte (dari record kalau belum
+    /// diunduh; 0 kalau tidak diketahui).
+    pub file_size: u64,
+    /// Ada langkah yang menunggu file atau versi dari laptop rekan.
+    pub pending: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -137,6 +153,23 @@ pub struct PartyRef {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ScopeView {
+    pub team_id: Option<String>,
+    pub project_id: Option<String>,
+}
+
+/// Versi bertanda tangan dari rekan yang ditolak (misalnya ditandatangani
+/// bersamaan, atau mengubah isi dokumen).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectedView {
+    pub signer_name: String,
+    pub at: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RequestDetail {
     #[serde(flatten)]
     pub summary: RequestSummary,
@@ -151,6 +184,8 @@ pub struct RequestDetail {
     /// `None` kalau belum selesai; `true` kalau rantai jejak audit utuh
     /// (lihat `seal_chain_valid`) dan file versi final di penyimpanan utuh.
     pub seal_valid: Option<bool>,
+    pub scope: ScopeView,
+    pub rejected: Vec<RejectedView>,
 }
 
 /// `Debug` manual: token dan gambar tanda tangan tidak pernah dicetak.
@@ -231,6 +266,9 @@ pub struct SignContext<'a> {
     pub store: &'a dyn DocumentStore,
     pub sessions: &'a SignSessions,
     pub outbox: &'a dyn SignOutbox,
+    /// Proyek yang boleh dibuka Tamu (titik sambung board, lihat
+    /// `documents::scope`).
+    pub guests: &'a dyn GuestProjects,
     /// Folder tujuan `export`.
     pub export_dir: &'a Path,
     /// Parameter Argon2id untuk tanda tangan baru (`KdfParams::DEFAULT`;
@@ -276,10 +314,12 @@ fn new_event(
     }
 }
 
-fn store_event(identity: &Identity, conn: &Connection, rec: &EventRecord) -> AppResult<()> {
+/// Menandatangani dan menyimpan catatan; hasilnya catatan dalam bentuk record
+/// sinkron (dengan tanda tangannya).
+fn store_event(identity: &Identity, conn: &Connection, rec: &EventRecord) -> AppResult<WireEvent> {
     let sig = seal::sign_event(identity, rec)?;
     repo::insert_event(conn, rec, &sig)?;
-    Ok(())
+    Ok(WireEvent::new(rec, &sig))
 }
 
 fn random_id() -> String {
@@ -353,7 +393,7 @@ fn export_state(row: &ExportRow) -> Integrity {
     file_integrity(Path::new(&row.path), &row.hash)
 }
 
-fn parse_at(s: &str) -> Option<OffsetDateTime> {
+pub(crate) fn parse_at(s: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(s, &Rfc3339).ok()
 }
 
@@ -364,9 +404,10 @@ fn parse_at(s: &str) -> Option<OffsetDateTime> {
 /// - setiap penanda tangan berstatus signed punya catatan `signed` sah dari
 ///   kuncinya sendiri dengan `hash_after` = `hash_after` penanda tangan itu,
 ///   dan semua penanda tangan sudah signed;
-/// - diurutkan menurut waktu, `hash_before` setiap catatan `signed` = hash
-///   versi sebelumnya (yang pertama = versi asli), dan versi terakhir =
-///   `current_hash`;
+/// - catatan `signed` itu bersambung: mulai dari versi asli, setiap langkah
+///   ada tepat satu catatan dengan `hash_before` = versi sebelumnya, dan
+///   versi terakhir = `current_hash`. Rantai diikuti lewat hash, bukan waktu,
+///   supaya jam laptop yang berbeda tidak memutus rantai yang sah;
 /// - catatan `completed` terakhir sah, `hash_after`-nya = `current_hash`, dan
 ///   pelakunya penanda tangan yang `hash_after`-nya versi final itu.
 ///
@@ -397,17 +438,21 @@ pub fn seal_chain_valid(req: &SignRequest, events: &[StoredEvent]) -> bool {
         }) else {
             return false;
         };
-        let Some(at) = parse_at(&e.at) else {
-            return false;
-        };
-        chain.push((at, e.id, e));
-    }
-    chain.sort_by_key(|(at, id, _)| (*at, *id));
-    let mut prev = req.original_hash.as_str();
-    for (_, _, e) in &chain {
-        if e.hash_before.as_deref() != Some(prev) {
+        if parse_at(&e.at).is_none() {
             return false;
         }
+        chain.push(e);
+    }
+    let mut prev = req.original_hash.as_str();
+    while !chain.is_empty() {
+        let mut next = chain
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.hash_before.as_deref() == Some(prev));
+        let (Some((i, _)), None) = (next.next(), next.next()) else {
+            return false;
+        };
+        let e = chain.swap_remove(i);
         prev = e.hash_after.as_deref().unwrap_or_default();
     }
     if prev != final_hash {
@@ -557,31 +602,6 @@ fn write_unique(dir: &Path, stem: &str, bytes: &[u8]) -> AppResult<PathBuf> {
     ))
 }
 
-fn summary(
-    req: &SignRequest,
-    me: &str,
-    integrity: Integrity,
-    exports: &[ExportView],
-) -> RequestSummary {
-    RequestSummary {
-        id: req.id.clone(),
-        title: req.title.clone(),
-        mode: req.mode,
-        status: req.status,
-        my_state: req.my_state(me),
-        signed_count: req.signed_count(),
-        signer_count: req.signers.len(),
-        created_at: req.created_at.clone(),
-        updated_at: req.updated_at.clone(),
-        completed_at: req.completed_at.clone(),
-        integrity,
-        export_warnings: exports
-            .iter()
-            .filter(|e| e.state == Integrity::Changed)
-            .count(),
-    }
-}
-
 fn mode_label(mode: SignMode) -> &'static str {
     match mode {
         SignMode::Sequential => "berurutan",
@@ -669,10 +689,55 @@ impl SignContext<'_> {
         Ok(extra)
     }
 
+    fn summary(
+        &self,
+        req: &SignRequest,
+        integrity: Integrity,
+        exports: &[ExportView],
+    ) -> AppResult<RequestSummary> {
+        let me = self.me();
+        let file_available = self.store.contains(&req.current_hash).unwrap_or(false);
+        let file_size = match self.store.size(&req.current_hash).ok().flatten() {
+            Some(size) => size,
+            None => peer_sync::known_size(self.db(), &req.id, &req.current_hash)?.unwrap_or(0),
+        };
+        Ok(RequestSummary {
+            id: req.id.clone(),
+            title: req.title.clone(),
+            mode: req.mode,
+            status: req.status,
+            my_state: req.my_state(me),
+            signed_count: req.signed_count(),
+            signer_count: req.signers.len(),
+            created_at: req.created_at.clone(),
+            updated_at: req.updated_at.clone(),
+            completed_at: req.completed_at.clone(),
+            integrity,
+            export_warnings: exports
+                .iter()
+                .filter(|e| e.state == Integrity::Changed)
+                .count(),
+            from_peer: req.requested_by != me,
+            requested_by_name: self.name_of(&req.requested_by, req)?,
+            file_available,
+            file_size,
+            pending: peer_sync::has_pending(self.db(), &req.id)?,
+        })
+    }
+
     fn detail(&self, req: &SignRequest) -> AppResult<RequestDetail> {
         let me = self.me();
         let integrity = blob_integrity(self.store, &req.current_hash);
         let exports = self.export_views(&req.id)?;
+        let scope = repo::load_scope(self.db(), &req.id)?;
+        let mut rejected = Vec::new();
+        for r in peer_sync::rejected_versions(self.db(), &req.id)? {
+            rejected.push(RejectedView {
+                signer_name: self.name_of(&r.signer, req)?,
+                at: r.at,
+                reason: r.reason,
+            });
+        }
         let events = repo::events_for(self.db(), &req.id)?;
         let seal_valid = (req.status == RequestStatus::Completed)
             .then(|| integrity == Integrity::Intact && seal_chain_valid(req, &events));
@@ -706,7 +771,7 @@ impl SignContext<'_> {
             })
             .collect();
         Ok(RequestDetail {
-            summary: summary(req, me, integrity, &exports),
+            summary: self.summary(req, integrity, &exports)?,
             requested_by: PartyRef {
                 public_key: req.requested_by.clone(),
                 display_name: self.name_of(&req.requested_by, req)?,
@@ -719,6 +784,11 @@ impl SignContext<'_> {
             is_last_pending: req.is_last_pending(me),
             doc_tag: seal::doc_tag(&req.id),
             seal_valid,
+            scope: ScopeView {
+                team_id: scope.team_id,
+                project_id: scope.project_id,
+            },
+            rejected,
         })
     }
 
@@ -747,7 +817,7 @@ impl SignContext<'_> {
         for req in repo::list_requests(self.db())? {
             let integrity = blob_integrity(self.store, &req.current_hash);
             let exports = self.export_views(&req.id)?;
-            requests.push(summary(&req, me, integrity, &exports));
+            requests.push(self.summary(&req, integrity, &exports)?);
         }
         Ok(SignOverview {
             saved: vault::status(self.db(), me, now)?,
@@ -817,7 +887,7 @@ impl SignContext<'_> {
         match pin {
             Some(pin) => {
                 vault::delete_with_pin(self.conn, identity, pin, now, |tx| {
-                    store_event(identity, tx, &event("dengan PIN"))
+                    store_event(identity, tx, &event("dengan PIN")).map(drop)
                 })?;
             }
             None => {
@@ -851,13 +921,42 @@ impl SignContext<'_> {
     }
 
     /// Anggota aktif organisasi yang bisa dipilih sebagai penanda tangan
-    /// (laptop ini lebih dulu, lalu urut nama).
+    /// (laptop ini lebih dulu, lalu urut nama), tanpa cakupan proyek: Tamu
+    /// tidak ikut.
     pub fn list_candidates(&self) -> AppResult<Vec<Candidate>> {
+        self.list_candidates_for(None, None)
+    }
+
+    /// Seperti `list_candidates`, untuk permintaan di proyek `project_id`
+    /// (tim `team_id`): Tamu hanya muncul kalau proyek itu diizinkan untuknya.
+    pub fn list_candidates_for(
+        &self,
+        team_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> AppResult<Vec<Candidate>> {
         let Some(org) = org::load_organization(self.db())? else {
             return Ok(Vec::new());
         };
         let me = self.me();
-        let mut out: Vec<Candidate> = repo::active_members(self.db(), &org.id)?
+        let state = permissions::load_state(self.db())?;
+        let mut members = Vec::new();
+        for m in repo::active_members(self.db(), &org.id)? {
+            let allowed = !m.is_guest()
+                || match (&state, project_id) {
+                    (Some(st), Some(project)) => self.guests.guest_may_access(
+                        self.db(),
+                        st,
+                        &m.public_key,
+                        team_id,
+                        project,
+                    )?,
+                    _ => false,
+                };
+            if allowed {
+                members.push(m);
+            }
+        }
+        let mut out: Vec<Candidate> = members
             .into_iter()
             .map(|m| {
                 let is_me = m.public_key == me;
@@ -894,13 +993,38 @@ impl SignContext<'_> {
     }
 
     /// Membuat permintaan tanda tangan atas PDF `file_hash` yang sudah
-    /// diimpor. `signers` berisi kunci publik, berurutan.
+    /// diimpor, tanpa cakupan proyek. `signers` berisi kunci publik,
+    /// berurutan.
     pub fn create_request(
         &mut self,
         title: &str,
         file_hash: &str,
         mode: &str,
         signers: &[String],
+        now: OffsetDateTime,
+    ) -> AppResult<RequestDetail> {
+        self.create_request_scoped(
+            title,
+            file_hash,
+            mode,
+            signers,
+            &RequestScope::default(),
+            now,
+        )
+    }
+
+    /// Seperti `create_request`, dengan cakupan tim dan proyek. Tamu hanya
+    /// boleh menjadi penanda tangan kalau proyek itu diizinkan untuknya, dan
+    /// pengirim harus boleh menulis di cakupan itu (lihat
+    /// `peer_sync::check_scope_rules`). Permintaan disimpan bersama record
+    /// sinkronnya dalam satu transaksi.
+    pub fn create_request_scoped(
+        &mut self,
+        title: &str,
+        file_hash: &str,
+        mode: &str,
+        signers: &[String],
+        scope: &RequestScope,
         now: OffsetDateTime,
     ) -> AppResult<RequestDetail> {
         let mode = SignMode::parse(mode).ok_or_else(|| {
@@ -990,15 +1114,26 @@ impl SignContext<'_> {
             signers: inputs,
         };
         request::validate_new(&requester, &new)?;
+        let state = permissions::load_state(self.db())?;
+        peer_sync::check_scope_rules(
+            self.db(),
+            state.as_ref(),
+            self.guests,
+            &me,
+            &new.signers,
+            scope,
+        )?;
 
         let at = now_str(now);
+        let original_size = original.as_ref().map_or(0, |b| b.len() as u64);
         let req = SignRequest::new(random_id(), new, me, file_hash.to_owned(), &at);
         let identity = self.identity;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         repo::save_request(&tx, &req)?;
-        store_event(
+        repo::set_scope(&tx, &req.id, scope)?;
+        let created = store_event(
             identity,
             &tx,
             &EventRecord {
@@ -1011,6 +1146,27 @@ impl SignContext<'_> {
                 ..new_event(identity, Some(&req.id), EventKind::Created, &at)
             },
         )?;
+        let payload = Payload::Request(RequestPayload {
+            id: req.id.clone(),
+            title: req.title.clone(),
+            mode: req.mode,
+            requested_by: req.requested_by.clone(),
+            team_id: scope.team_id.clone(),
+            project_id: scope.project_id.clone(),
+            original_hash: req.original_hash.clone(),
+            original_size,
+            created_at: req.created_at.clone(),
+            signers: req
+                .signers
+                .iter()
+                .map(|s| WireSigner {
+                    public_key: s.public_key.clone(),
+                    display_name: s.display_name.clone(),
+                })
+                .collect(),
+            created,
+        });
+        peer_sync::store_own(&tx, identity, &payload, &at)?;
         tx.commit()?;
         self.outbox.request_created(&req)?;
         self.detail(&req)
@@ -1085,7 +1241,8 @@ impl SignContext<'_> {
                 "File hasil tanda tangan tidak memuat penanda dokumen Mira untuk permintaan ini. Ulangi tanda tangan dari layar Mira.",
             ));
         }
-        match blob_integrity(self.store, &req.current_hash) {
+        let current = self.store.get(&req.current_hash).unwrap_or(None);
+        match seal::check_bytes(&req.current_hash, current.as_deref()) {
             Integrity::Intact => {}
             Integrity::Changed => {
                 return Err(err(
@@ -1106,6 +1263,10 @@ impl SignContext<'_> {
                 "File hasil tanda tangan sama persis dengan versi sebelumnya, jadi tanda tangan belum masuk. Tempatkan tanda tangan lalu simpan lagi.",
             ));
         }
+        // Bukti stempel: versi baru hanya boleh menambah stempel (dan halaman
+        // catatan) di atas versi sebelumnya. Laptop rekan memeriksa hal sama.
+        increment::check_increment(current.as_deref().unwrap_or_default(), bytes)
+            .map_err(|e| err(e.code, e.message))?;
         let new_hash = self.store.put(bytes)?;
         let before = req.current_hash.clone();
         req.record_signature(&me, &signed_at, &new_hash)?;
@@ -1121,18 +1282,18 @@ impl SignContext<'_> {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         repo::save_request(&tx, &req)?;
-        store_event(
+        let signed = store_event(
             identity,
             &tx,
             &EventRecord {
-                hash_before: Some(before),
+                hash_before: Some(before.clone()),
                 hash_after: Some(new_hash.clone()),
                 detail: format!("penanda tangan ke-{position} dari {total}"),
                 ..new_event(identity, Some(&req.id), EventKind::Signed, &signed_at)
             },
         )?;
-        if req.status == RequestStatus::Completed {
-            store_event(
+        let completed = if req.status == RequestStatus::Completed {
+            Some(store_event(
                 identity,
                 &tx,
                 &EventRecord {
@@ -1140,8 +1301,21 @@ impl SignContext<'_> {
                     detail: format!("{total} penanda tangan"),
                     ..new_event(identity, Some(&req.id), EventKind::Completed, &signed_at)
                 },
-            )?;
-        }
+            )?)
+        } else {
+            None
+        };
+        let at = now_str(now);
+        peer_sync::cache_proof(&tx, &before, &new_hash, Ok(()), &at)?;
+        let payload = Payload::Signed(SignedPayload {
+            request_id: req.id.clone(),
+            hash_before: before,
+            hash_after: new_hash.clone(),
+            size: bytes.len() as u64,
+            signed,
+            completed,
+        });
+        peer_sync::store_own(&tx, identity, &payload, &at)?;
         tx.commit()?;
         self.outbox.version_signed(&req, &me, &new_hash)?;
         self.detail(&req)
@@ -1158,7 +1332,7 @@ impl SignContext<'_> {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         repo::save_request(&tx, &req)?;
-        store_event(
+        let cancelled = store_event(
             identity,
             &tx,
             &EventRecord {
@@ -1166,6 +1340,11 @@ impl SignContext<'_> {
                 ..new_event(identity, Some(&req.id), EventKind::Cancelled, &at)
             },
         )?;
+        let payload = Payload::Cancelled(CancelledPayload {
+            request_id: req.id.clone(),
+            cancelled,
+        });
+        peer_sync::store_own(&tx, identity, &payload, &at)?;
         tx.commit()?;
         self.outbox.request_cancelled(&req)?;
         self.detail(&req)

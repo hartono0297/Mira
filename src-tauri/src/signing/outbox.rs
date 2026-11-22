@@ -1,47 +1,25 @@
 //! Titik sambung jaringan untuk tanda tangan PDF.
 //!
-//! `service.rs` memanggil `SignOutbox` setelah perubahan lokal tersimpan
-//! (permintaan dibuat, satu versi ditandatangani, permintaan dibatalkan).
-//! Bagian lokal Tahap 5 memakai `LocalOnlyOutbox`, yang tidak mengirim apa
-//! pun. Setelah jaringan Tahap 1 digabung, implementasi jaringan menggantikan
-//! `LocalOnlyOutbox` di `signing::commands`.
+//! Record sinkron (`signing::peer_sync`) ditulis `service.rs` di transaksi
+//! yang sama dengan perubahan lokal, jadi record dan perubahan selalu
+//! tersimpan bersama. Setelah transaksi selesai, `service.rs` memanggil
+//! `SignOutbox` supaya jaringan menawarkan record baru ke laptop rekan.
 //!
-//! Yang harus dilakukan implementasi jaringan:
+//! Penting: `SignContext` berjalan di dalam `MiraState::with_core` (kunci
+//! `Mutex` yang tidak reentrant), jadi implementasi trait ini TIDAK boleh
+//! mengambil kunci itu. `HubOutbox` hanya memanggil
+//! `FeatureHub::notify_changed`, yang murah dan tidak menyentuh database.
 //!
-//! - **Antre dulu, kirim kemudian.** Metode di sini dipanggil di dalam alur
-//!   perintah, jadi jangan menunggu jaringan. Simpan pesan ke antrean di
-//!   SQLite lalu kirim di latar belakang, dengan percobaan ulang kalau laptop
-//!   tujuan sedang mati. Kembalikan `Err` hanya kalau antrean lokal pun tidak
-//!   bisa ditulis; perubahan lokal sudah tersimpan saat metode ini dipanggil.
-//! - **`request_created`:** kirim data permintaan (judul, urutan penanda
-//!   tangan, mode) beserta file versi `original_hash` dan catatan jejak audit
-//!   `created` yang bertanda tangan. Mode berurutan: hanya ke penanda tangan
-//!   pertama; mode bebas: ke semua penanda tangan.
-//! - **`version_signed`:** kirim file versi `file_hash` dan catatan `signed`
-//!   (dan `completed` kalau sudah selesai) ke penanda tangan berikutnya (mode
-//!   berurutan) dan ke pengirim permintaan, supaya semua memegang versi
-//!   terbaru. Setelah selesai, versi final dikirim ke semua yang terlibat.
-//! - **`request_cancelled`:** beri tahu semua penanda tangan yang belum dan
-//!   yang sudah, lewat catatan `cancelled` yang bertanda tangan.
-//!
-//! Di sisi penerima (bukan tugas trait ini, tetapi wajib ada):
-//!
-//! - Verifikasi setiap catatan jejak audit dengan `seal::verify_event`
-//!   memakai kunci publik pelaku, dan pastikan pelaku memang anggota aktif
-//!   organisasi menurut log keanggotaan.
-//! - Hitung hash BLAKE3 file yang diterima dan cocokkan dengan `hash_after`
-//!   catatan; tolak kalau beda. `hash_before` harus sama dengan versi terakhir
-//!   yang dikenal penerima.
-//! - Periksa urutan dan hak dengan `request::SignRequest::can_sign` untuk
-//!   pelaku, dan `request::validate_new` untuk pengirim permintaan (Tamu tidak
-//!   boleh meminta tanda tangan; Tamu boleh menandatangani kalau tercantum).
-//!   Setelah dokumen punya proyek (Tahap 4), Tamu hanya menerima dokumen dari
-//!   proyek yang diizinkan untuknya.
+//! Yang dikirim, ke siapa, dan apa yang diperiksa penerima: lihat
+//! `signing::peer_sync` dan `docs/plans/sinkron-dokumen-ttd.md` bagian 5.
+
+use std::sync::Arc;
 
 use super::request::SignRequest;
 use crate::error::AppResult;
+use crate::network::feature::{FeatureHub, TOPIC_SIGN};
 
-/// Tujuan pesan tanda tangan ke laptop lain. Lihat dokumentasi modul.
+/// Pemberitahuan perubahan lokal. Lihat dokumentasi modul.
 pub trait SignOutbox: Send + Sync {
     /// Permintaan baru tersimpan (status berjalan, belum ada tanda tangan).
     fn request_created(&self, request: &SignRequest) -> AppResult<()>;
@@ -54,7 +32,7 @@ pub trait SignOutbox: Send + Sync {
     fn request_cancelled(&self, request: &SignRequest) -> AppResult<()>;
 }
 
-/// Bagian lokal Tahap 5: tidak mengirim apa pun.
+/// Tidak mengirim apa pun (tes, atau sebelum hub tersedia).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LocalOnlyOutbox;
 
@@ -74,5 +52,41 @@ impl SignOutbox for LocalOnlyOutbox {
 
     fn request_cancelled(&self, _request: &SignRequest) -> AppResult<()> {
         Ok(())
+    }
+}
+
+/// Memberi tahu jaringan lewat `FeatureHub::notify_changed("sign")`.
+#[derive(Clone)]
+pub struct HubOutbox {
+    hub: Arc<FeatureHub>,
+}
+
+impl HubOutbox {
+    pub fn new(hub: Arc<FeatureHub>) -> Self {
+        Self { hub }
+    }
+
+    fn changed(&self) -> AppResult<()> {
+        self.hub.notify_changed(TOPIC_SIGN);
+        Ok(())
+    }
+}
+
+impl SignOutbox for HubOutbox {
+    fn request_created(&self, _request: &SignRequest) -> AppResult<()> {
+        self.changed()
+    }
+
+    fn version_signed(
+        &self,
+        _request: &SignRequest,
+        _signer: &str,
+        _file_hash: &str,
+    ) -> AppResult<()> {
+        self.changed()
+    }
+
+    fn request_cancelled(&self, _request: &SignRequest) -> AppResult<()> {
+        self.changed()
     }
 }
