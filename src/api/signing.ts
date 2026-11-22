@@ -20,6 +20,9 @@ export type SavedSignatureInfo = {
   failedAttempts: number;
   lockedUntil: string | null;
   attemptsLeft: number;
+  // Diisi kalau tanda tangan dibuat setelah dihapus tanpa PIN (lupa PIN):
+  // baru bisa dipakai mulai waktu ini (24 jam setelah penghapusan).
+  usableAfter: string | null;
 };
 
 export type RequestSummary = {
@@ -147,7 +150,9 @@ export const signingApi = {
   overview: () => call<SignOverview>("sign_overview"),
   saveSignature: (png: Uint8Array, pin: string) =>
     call<SavedSignatureInfo>("sign_save_signature", { pin, pngBase64: bytesToBase64(png) }),
-  deleteSignature: () => call<null>("sign_delete_signature"),
+  // Dengan PIN lama: tanda tangan baru bisa langsung dipakai. Tanpa PIN (lupa
+  // PIN): tanda tangan baru baru bisa dipakai 24 jam setelah penghapusan.
+  deleteSignature: (pin?: string) => call<null>("sign_delete_signature", { pin: pin ?? null }),
   unlock: async (pin: string): Promise<Unlocked> => {
     const r = await call<{ token: string; pngBase64: string; signedAt: string; width: number; height: number }>(
       "sign_unlock",
