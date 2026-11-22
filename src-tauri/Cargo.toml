@@ -60,3 +60,11 @@ proptest = "1.12.0"
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Security_Credentials", "Win32_Foundation"] }
 winreg = "0.56.0"
+
+# Argon2 dan BLAKE2 sangat lambat tanpa optimasi; tes dan `tauri dev` memakai
+# profil dev, jadi keduanya dioptimasi juga di sana (hanya dua crate ini).
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
