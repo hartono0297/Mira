@@ -57,6 +57,24 @@ function check(name, ok, detail = "") {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// PID Excel yang dijalankan sebagai server otomatisasi (bukan Excel yang dibuka user).
+function automationExcelPids() {
+  try {
+    const out = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process -Filter \"Name='EXCEL.EXE'\" | Where-Object { $_.CommandLine -match '(?i)/automation' } | ForEach-Object { $_.ProcessId }",
+      ],
+      { encoding: "utf8" },
+    );
+    return new Set(out.split(/\s+/).filter(Boolean).map(Number));
+  } catch {
+    return new Set();
+  }
+}
+
 async function launch() {
   const child = spawn(exe, [], {
     env: {
@@ -118,16 +136,24 @@ async function waitFor(fn, timeoutMs, label) {
 const rowButton = (page, fileName, label) =>
   page.getByRole("button", { name: `${label} ${fileName}`, exact: true });
 
+let app = null;
+let page = null;
 try {
   // Jalankan 1
-  let app = await launch();
-  let { page } = app;
+  app = await launch();
+  page = app.page;
   await page.getByLabel("Nama tampilan").waitFor({ timeout: 20000 });
   await page.getByLabel("Nama tampilan").fill("Rina Uji");
   await page.getByRole("button", { name: "Simpan nama" }).click();
   await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
   await page.getByLabel("Nama organisasi").fill("Kantor Uji");
   await page.getByRole("button", { name: "Buat organisasi" }).click();
+  // Langkah firewall dari Tahap 1 (kalau ada) dilewati.
+  const skipFirewall = page.getByRole("button", { name: /Lewati, atur nanti/ });
+  await Promise.race([
+    skipFirewall.waitFor({ timeout: 10000 }).then(() => skipFirewall.click()),
+    page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 10000 }),
+  ]).catch(() => {});
   await page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: "Pengaturan" }).click();
   await page.getByLabel("Terang").check();
@@ -156,18 +182,44 @@ try {
   const working = join(dataDir, "working", xlsxDoc.id, XLSX);
   check("Salinan kerja disiapkan", existsSync(working), working);
 
-  let excelOk = false;
-  try {
-    const out = execFileSync(
-      "powershell",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", excelSave, "-Path", working, "-HoldSeconds", "3"],
-      { encoding: "utf8", timeout: 120000 },
-    );
-    excelOk = out.includes("saved");
-  } catch (err) {
-    check("Excel (COM) menyimpan file", false, String(err?.message ?? err).slice(0, 200));
+  if (process.env.MIRA_E2E_REAL_EXCEL === "1") {
+    // Excel asli lewat COM (butuh Office berlisensi; Office tanpa lisensi
+    // membuka dialog kunci produk yang menahan otomatisasi).
+    const excelBefore = automationExcelPids();
+    try {
+      const out = execFileSync(
+        "powershell",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", excelSave, "-Path", working],
+        { encoding: "utf8", timeout: 120000 },
+      );
+      check("Excel (COM) membuka, menyimpan, dan menutup salinan kerja", out.includes("saved"));
+    } catch (err) {
+      check("Excel (COM) menyimpan file", false, String(err?.message ?? err).slice(0, 200));
+    }
+    // Excel otomatisasi yang dibuat langkah ini saja yang ditutup kalau masih ada.
+    for (const pid of automationExcelPids()) {
+      if (!excelBefore.has(pid)) {
+        try {
+          execFileSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore" });
+        } catch {
+          /* sudah berhenti */
+        }
+      }
+    }
+  } else {
+    // Pola simpan Excel ditiru urutannya: kunci ~$, file sementara 8 karakter
+    // tanpa ekstensi, file asli diganti nama, file sementara jadi nama asli.
+    const xdir = dirname(working);
+    const xlock = join(xdir, "~$" + XLSX);
+    writeFileSync(xlock, "Rina Uji");
+    await sleep(1000);
+    writeFileSync(join(xdir, "A1B2C3D4"), Buffer.concat([readFileSync(working), Buffer.from("baris baru")]));
+    renameSync(working, join(xdir, "5E6F7A8B"));
+    renameSync(join(xdir, "A1B2C3D4"), working);
+    unlinkSync(join(xdir, "5E6F7A8B"));
+    await sleep(2500);
+    unlinkSync(xlock);
   }
-  if (excelOk) check("Excel (COM) membuka, menyimpan, dan menutup salinan kerja", true);
 
   const afterSave = await waitFor(
     async () => {
@@ -225,9 +277,14 @@ try {
     "versi 2 docx",
   );
   check("Pola simpan Word membuat tepat satu versi baru", wordV2.versionCount === 2 && wordV2.editing.length === 1);
-  const finishWhileOpen = await invoke(page, "finish_edit", { documentId: docxDoc.id }).then(
-    () => "ok",
-    (e) => e.code,
+  // Error ditangkap di dalam halaman supaya kodenya tidak hilang di page.evaluate.
+  const finishWhileOpen = await page.evaluate(
+    (id) =>
+      window.__TAURI_INTERNALS__.invoke("finish_edit", { documentId: id }).then(
+        () => "ok",
+        (e) => e?.code ?? String(e),
+      ),
+    docxDoc.id,
   );
   check("Selesai mengedit ditolak selama file masih terbuka", finishWhileOpen === "document_editing", finishWhileOpen);
   unlinkSync(lock);
@@ -276,8 +333,17 @@ try {
   await page.getByText(/Versi 4/).first().waitFor({ timeout: 10000 });
   check("Riwayat versi tetap ada setelah restart", true);
   await stop(app);
+  app = null;
 } catch (err) {
   check("Skrip berjalan tanpa error", false, String(err?.message ?? err));
+  if (page) {
+    const shot = join(tmpdir(), "mira-docs-e2e-gagal.png");
+    await page.screenshot({ path: shot }).catch(() => {});
+    const text = await page.locator("body").innerText().catch(() => "");
+    console.log(`Screenshot saat gagal: ${shot}
+Isi layar: ${text.slice(0, 600)}`);
+  }
+  if (app) await stop(app);
 }
 
 for (const target of miraCredentials()) {
@@ -289,7 +355,11 @@ for (const target of miraCredentials()) {
     }
   }
 }
-rmSync(dataDir, { recursive: true, force: true });
+try {
+  rmSync(dataDir, { recursive: true, force: true });
+} catch (err) {
+  console.log(`Folder data uji tidak bisa dihapus: ${dataDir} (${err.code})`);
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} pemeriksaan lulus.`);
