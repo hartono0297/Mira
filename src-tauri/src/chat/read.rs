@@ -1,0 +1,506 @@
+//! Building the views of `view.rs` from the derived tables.
+
+use std::collections::HashMap;
+
+use rusqlite::{Connection, OptionalExtension, params};
+
+use super::audience::{ConvInfo, Ctx, Directory, Scope};
+use super::fetch::{self, FetchKind};
+use super::store::envelope::ACKED;
+use super::view::{
+    ChannelScopeView, ConversationKind, ConversationSummary, DeliveryState, FileState, FileView,
+    MessageStatus, MessageView, Person, ReceiptView, ReplyPreview, ScopeKind, truncate_chars,
+};
+use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
+use crate::error::{AppError, AppResult};
+
+/// Longest `lastPreview` and reply preview.
+pub const PREVIEW_CHARS: usize = 80;
+pub const DELETED_TEXT: &str = "Pesan dihapus";
+pub const FILE_TEXT: &str = "Mengirim file";
+
+pub fn person(dir: &Directory, pk: &str) -> Person {
+    Person {
+        public_key: pk.to_owned(),
+        name: dir.name(pk),
+    }
+}
+
+pub fn not_found_conv() -> AppError {
+    AppError::NotFound("Percakapan ini tidak ditemukan atau sudah dihapus.".into())
+}
+
+/// The conversation if this laptop may read it: a channel it is in, or a chat
+/// pribadi it takes part in (kept readable after the other side left).
+pub fn readable(ctx: &Ctx, conv: &str) -> AppResult<ConvInfo> {
+    let info = ctx
+        .conv(conv)?
+        .filter(|i| !i.deleted)
+        .ok_or_else(not_found_conv)?;
+    let ok = match &info.scope {
+        Scope::Direct(a, b) => a == ctx.me() || b == ctx.me(),
+        _ => ctx.in_audience(&info, ctx.me())?,
+    };
+    if ok {
+        Ok(info)
+    } else {
+        Err(AppError::Forbidden(
+            "Kamu bukan anggota percakapan ini.".into(),
+        ))
+    }
+}
+
+/// Other side of a chat pribadi.
+pub fn dm_peer<'i>(info: &'i ConvInfo, me: &str) -> Option<&'i str> {
+    match &info.scope {
+        Scope::Direct(a, b) => Some(if a == me { b } else { a }),
+        _ => None,
+    }
+}
+
+pub fn can_post(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
+    Ok(!info.archived && !info.deleted && ctx.in_audience(info, ctx.me())?)
+}
+
+pub fn can_admin_channel(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
+    Ok(info.is_channel()
+        && info.scope != Scope::Umum
+        && !info.deleted
+        && ctx.is_admin(info, ctx.me())?)
+}
+
+fn scope_view(info: &ConvInfo) -> Option<ChannelScopeView> {
+    let (kind, id) = match &info.scope {
+        Scope::Umum | Scope::Org => (ScopeKind::Org, None),
+        Scope::Team(t) => (ScopeKind::Team, Some(t.clone())),
+        Scope::Project(p) => (ScopeKind::Project, Some(p.clone())),
+        Scope::Direct(..) => return None,
+    };
+    Some(ChannelScopeView {
+        kind,
+        id,
+        name: info.scope_name.clone(),
+    })
+}
+
+pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
+    let me = ctx.me();
+    let conn = ctx.conn;
+    let peer = dm_peer(info, me).map(|p| person(&ctx.dir, p));
+    let (unread, mention_unread) = unread_counts(conn, &info.conv, me)?;
+    let (last_at, last_preview) = last_message(ctx, &info.conv)?;
+    let admin = can_admin_channel(ctx, info)?;
+    Ok(ConversationSummary {
+        id: info.conv.clone(),
+        kind: if info.is_channel() {
+            ConversationKind::Channel
+        } else {
+            ConversationKind::Dm
+        },
+        name: peer
+            .as_ref()
+            .map_or_else(|| info.name.clone(), |p| p.name.clone()),
+        scope: scope_view(info),
+        peer,
+        is_umum: info.scope == Scope::Umum,
+        archived: info.archived,
+        muted: super::sync::is_muted(conn, &info.conv)?,
+        unread,
+        mention_unread,
+        last_at,
+        last_preview,
+        can_post: can_post(ctx, info)?,
+        can_archive: admin,
+        can_delete: admin,
+    })
+}
+
+const UNREAD_SQL: &str =
+    "FROM chat_messages m WHERE m.conv = ?1 AND m.author != ?2 AND m.deleted = 0
+     AND NOT EXISTS (SELECT 1 FROM chat_receipts r
+                     WHERE r.message_id = m.id AND r.reader = ?2 AND r.state = 'read')";
+
+fn unread_counts(conn: &Connection, conv: &str, me: &str) -> AppResult<(u32, u32)> {
+    let unread: i64 = conn.query_row(
+        &format!("SELECT count(*) {UNREAD_SQL}"),
+        params![conv, me],
+        |r| r.get(0),
+    )?;
+    let mentions: i64 = conn.query_row(
+        &format!("SELECT count(*) {UNREAD_SQL} AND m.mentions LIKE ?3"),
+        params![conv, me, format!("%\"{me}\"%")],
+        |r| r.get(0),
+    )?;
+    Ok((to_u32(unread), to_u32(mentions)))
+}
+
+/// Ids of unread messages from others in `conv`, oldest first.
+pub fn unread_ids(conn: &Connection, conv: &str, me: &str) -> AppResult<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("SELECT m.id {UNREAD_SQL} ORDER BY m.at, m.rowid"))?;
+    let rows = stmt
+        .query_map(params![conv, me], |r| r.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    Ok(rows)
+}
+
+fn to_u32(n: i64) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+fn last_message(ctx: &Ctx, conv: &str) -> AppResult<(Option<String>, Option<String>)> {
+    let row: Option<(String, String, bool, String, i64)> = ctx
+        .conn
+        .query_row(
+            "SELECT author, text, deleted, at,
+                    (SELECT count(*) FROM chat_files f WHERE f.message_id = m.id)
+             FROM chat_messages m WHERE conv = ?1 ORDER BY at DESC, rowid DESC LIMIT 1",
+            [conv],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                    r.get(3)?,
+                    r.get(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((author, text, deleted, at, files)) = row else {
+        return Ok((None, None));
+    };
+    let preview = if deleted {
+        DELETED_TEXT.to_owned()
+    } else {
+        let content = if text.trim().is_empty() && files > 0 {
+            FILE_TEXT.to_owned()
+        } else {
+            text.trim().to_owned()
+        };
+        truncate_chars(
+            &format!("{}: {content}", ctx.dir.name(&author)),
+            PREVIEW_CHARS,
+        )
+    };
+    Ok((Some(at), Some(preview)))
+}
+
+/// One row of `chat_messages`.
+#[derive(Debug, Clone)]
+pub struct MessageRow {
+    pub id: String,
+    pub conv: String,
+    pub author: String,
+    pub at: String,
+    pub text: String,
+    pub reply_to: Option<String>,
+    pub mentions: Vec<String>,
+    pub deleted: bool,
+}
+
+const MESSAGE_COLS: &str = "id, conv, author, at, text, reply_to, mentions, deleted";
+
+fn map_message(r: &rusqlite::Row) -> rusqlite::Result<MessageRow> {
+    let mentions: String = r.get(6)?;
+    Ok(MessageRow {
+        id: r.get(0)?,
+        conv: r.get(1)?,
+        author: r.get(2)?,
+        at: r.get(3)?,
+        text: r.get(4)?,
+        reply_to: r.get(5)?,
+        mentions: serde_json::from_str(&mentions).unwrap_or_default(),
+        deleted: r.get::<_, i64>(7)? != 0,
+    })
+}
+
+pub fn message_row(conn: &Connection, id: &str) -> AppResult<Option<MessageRow>> {
+    Ok(conn
+        .query_row(
+            &format!("SELECT {MESSAGE_COLS} FROM chat_messages WHERE id = ?1"),
+            [id],
+            map_message,
+        )
+        .optional()?)
+}
+
+/// A page of messages, oldest first, and whether older ones exist.
+pub fn message_page(
+    conn: &Connection,
+    conv: &str,
+    before: Option<&str>,
+    limit: u32,
+) -> AppResult<(Vec<MessageRow>, bool)> {
+    let limit = i64::from(limit.clamp(1, 500));
+    let anchor: Option<(String, i64)> = match before {
+        Some(id) => conn
+            .query_row(
+                "SELECT at, rowid FROM chat_messages WHERE id = ?1 AND conv = ?2",
+                params![id, conv],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?,
+        None => None,
+    };
+    let (at, rowid) = anchor.unwrap_or_else(|| ("9999".to_owned(), i64::MAX));
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {MESSAGE_COLS} FROM chat_messages
+         WHERE conv = ?1 AND (at, rowid) < (?2, ?3) ORDER BY at DESC, rowid DESC LIMIT ?4"
+    ))?;
+    let mut rows = stmt
+        .query_map(params![conv, at, rowid, limit + 1], map_message)?
+        .collect::<Result<Vec<_>, _>>()?;
+    let has_more = rows.len() as i64 > limit;
+    rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    rows.reverse();
+    Ok((rows, has_more))
+}
+
+pub fn file_state(
+    conn: &Connection,
+    blobs: &BlobStore,
+    hash: &str,
+    size: u64,
+) -> AppResult<FileState> {
+    if BlobHash::parse(hash).is_ok_and(|h| blobs.contains(&h)) {
+        return Ok(FileState::Local);
+    }
+    let queued = match fetch::queue_state(conn, hash, FetchKind::Plain)? {
+        Some(q) => Some(q),
+        None => fetch::cipher_state_for_plain(conn, hash)?,
+    };
+    Ok(match queued {
+        Some(q) if q.failed => FileState::Missing,
+        Some(_) => FileState::Fetching,
+        None if should_auto_replicate(size) => FileState::Missing,
+        None => FileState::Remote,
+    })
+}
+
+pub fn files_of(conn: &Connection, blobs: &BlobStore, message: &str) -> AppResult<Vec<FileView>> {
+    let mut stmt = conn.prepare(
+        "SELECT hash, size, name, mime FROM chat_files WHERE message_id = ?1 ORDER BY idx",
+    )?;
+    let rows = stmt
+        .query_map([message], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(hash, size, name, mime)| {
+            let size = u64::try_from(size).unwrap_or(0);
+            Ok(FileView {
+                state: file_state(conn, blobs, &hash, size)?,
+                auto_download: should_auto_replicate(size),
+                hash,
+                name,
+                size,
+                mime,
+            })
+        })
+        .collect()
+}
+
+/// Delivery state of `message` for each of `recipients`.
+pub fn recipient_states(
+    conn: &Connection,
+    message: &str,
+    recipients: &[String],
+) -> AppResult<Vec<(String, DeliveryState)>> {
+    let mut receipts: HashMap<String, DeliveryState> = HashMap::new();
+    let mut stmt = conn.prepare("SELECT reader, state FROM chat_receipts WHERE message_id = ?1")?;
+    for row in stmt.query_map([message], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })? {
+        let (reader, state) = row?;
+        let s = if state == "read" {
+            DeliveryState::Read
+        } else {
+            DeliveryState::Delivered
+        };
+        let e = receipts.entry(reader).or_insert(s);
+        *e = (*e).max(s);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT recipient, deposited, acked, ack_failed FROM chat_envelopes WHERE message_id = ?1",
+    )?;
+    for row in stmt.query_map([message], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
+        ))
+    })? {
+        let (recipient, deposited, acked, ack_failed) = row?;
+        // An ack for an envelope the recipient could not open says nothing
+        // about the message arriving.
+        let s = if acked == ACKED && ack_failed == 0 {
+            DeliveryState::Delivered
+        } else if deposited != 0 && acked == 0 {
+            DeliveryState::Deposited
+        } else {
+            continue;
+        };
+        let e = receipts.entry(recipient).or_insert(s);
+        *e = (*e).max(s);
+    }
+    Ok(recipients
+        .iter()
+        .map(|r| {
+            (
+                r.clone(),
+                receipts.get(r).copied().unwrap_or(DeliveryState::Pending),
+            )
+        })
+        .collect())
+}
+
+/// Combined status: the lowest state among recipients. With nobody else in
+/// the conversation the message counts as delivered.
+pub fn status(states: &[(String, DeliveryState)]) -> MessageStatus {
+    let count =
+        |min: DeliveryState| to_u32(states.iter().filter(|(_, s)| *s >= min).count() as i64);
+    MessageStatus {
+        state: states
+            .iter()
+            .map(|(_, s)| *s)
+            .min()
+            .unwrap_or(DeliveryState::Delivered),
+        read: count(DeliveryState::Read),
+        delivered: count(DeliveryState::Delivered),
+        deposited: to_u32(
+            states
+                .iter()
+                .filter(|(_, s)| *s == DeliveryState::Deposited)
+                .count() as i64,
+        ),
+        total: to_u32(states.len() as i64),
+    }
+}
+
+fn reply_preview(ctx: &Ctx, row: &MessageRow) -> AppResult<Option<ReplyPreview>> {
+    let Some(id) = &row.reply_to else {
+        return Ok(None);
+    };
+    let target = message_row(ctx.conn, id)?;
+    Ok(match target {
+        // A reply into another conversation is ignored.
+        Some(t) if t.conv != row.conv => None,
+        Some(t) => Some(ReplyPreview {
+            id: id.clone(),
+            author: Some(person(&ctx.dir, &t.author)),
+            preview: if t.deleted {
+                DELETED_TEXT.to_owned()
+            } else if t.text.trim().is_empty() {
+                FILE_TEXT.to_owned()
+            } else {
+                truncate_chars(t.text.trim(), PREVIEW_CHARS)
+            },
+            deleted: t.deleted,
+        }),
+        None => Some(ReplyPreview {
+            id: id.clone(),
+            author: None,
+            preview: "Pesan asli belum ada di laptop ini".to_owned(),
+            deleted: false,
+        }),
+    })
+}
+
+/// Shared per-conversation facts for building many messages.
+pub struct ConvFacts {
+    pub recipients: Vec<String>,
+    pub admin: bool,
+    pub direct: bool,
+}
+
+pub fn conv_facts(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConvFacts> {
+    let me = ctx.me().to_owned();
+    let recipients = ctx
+        .audience(info)?
+        .into_iter()
+        .filter(|p| *p != me)
+        .collect();
+    Ok(ConvFacts {
+        recipients,
+        admin: ctx.is_admin(info, &me)?,
+        direct: !info.is_channel(),
+    })
+}
+
+pub fn message_view(
+    ctx: &Ctx,
+    blobs: &BlobStore,
+    facts: &ConvFacts,
+    row: &MessageRow,
+) -> AppResult<MessageView> {
+    let mine = row.author == ctx.me();
+    let status = if mine && !row.deleted {
+        Some(status(&recipient_states(
+            ctx.conn,
+            &row.id,
+            &facts.recipients,
+        )?))
+    } else {
+        None
+    };
+    Ok(MessageView {
+        id: row.id.clone(),
+        conv: row.conv.clone(),
+        author: person(&ctx.dir, &row.author),
+        at: row.at.clone(),
+        text: if row.deleted {
+            String::new()
+        } else {
+            row.text.clone()
+        },
+        mentions: row.mentions.iter().map(|m| person(&ctx.dir, m)).collect(),
+        reply_to: if row.deleted {
+            None
+        } else {
+            reply_preview(ctx, row)?
+        },
+        files: if row.deleted {
+            Vec::new()
+        } else {
+            files_of(ctx.conn, blobs, &row.id)?
+        },
+        deleted: row.deleted,
+        mine,
+        status,
+        can_delete: !row.deleted && (mine || (!facts.direct && facts.admin)),
+    })
+}
+
+pub fn receipts_for(ctx: &Ctx, info: &ConvInfo, row: &MessageRow) -> AppResult<Vec<ReceiptView>> {
+    let recipients: Vec<String> = ctx
+        .audience(info)?
+        .into_iter()
+        .filter(|p| *p != row.author)
+        .collect();
+    let mut out: Vec<ReceiptView> = recipient_states(ctx.conn, &row.id, &recipients)?
+        .into_iter()
+        .map(|(pk, state)| ReceiptView {
+            person: person(&ctx.dir, &pk),
+            state,
+        })
+        .collect();
+    out.sort_by(|a, b| a.person.name.cmp(&b.person.name));
+    Ok(out)
+}
+
+pub fn people(dir: &Directory, keys: &[String]) -> Vec<Person> {
+    let mut out: Vec<Person> = keys.iter().map(|k| person(dir, k)).collect();
+    out.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.public_key.cmp(&b.public_key))
+    });
+    out
+}

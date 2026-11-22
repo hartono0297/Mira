@@ -10,8 +10,10 @@ pub const MIGRATIONS: &[&str] = &[
     crate::documents::schema::MIGRATION,
     // Tahap 5 (tanda tangan PDF), v5.
     crate::signing::schema::SIGNING_SCHEMA,
-    // Sinkron board (record id, pending, rejected, doc_code), v6 on this branch.
+    // Sinkron board (record id, pending, rejected, doc_code), v6.
     crate::board::schema::BOARD_SYNC_SCHEMA,
+    // Tahap 2 (chat), v7.
+    crate::chat::schema::CHAT_SCHEMA,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.

@@ -67,6 +67,21 @@ pub fn migrate(conn: &mut Connection) -> AppResult<()> {
     }
 }
 
+/// Test helper: opens `<data_dir>/mira.db` and applies only the first
+/// `version` migrations, to build a database "from an older Mira".
+#[cfg(test)]
+pub(crate) fn open_at_version(data_dir: &Path, version: u32) -> AppResult<Connection> {
+    let mut conn = Connection::open(data_dir.join(DB_FILE_NAME))?;
+    configure(&conn)?;
+    for (i, m) in migrations::MIGRATIONS.iter().enumerate().take(version as usize) {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(m)?;
+        tx.pragma_update(None, "user_version", i as u32 + 1)?;
+        tx.commit()?;
+    }
+    Ok(conn)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

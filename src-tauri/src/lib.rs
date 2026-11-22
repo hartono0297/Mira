@@ -5,6 +5,7 @@
 
 pub mod blobs;
 pub mod board;
+pub mod chat;
 pub mod clock;
 pub mod commands;
 pub mod db;
@@ -109,6 +110,10 @@ pub fn run() {
             app.manage(documents.clone());
             documents.spawn_recovery();
             app.manage(signing::session::SignSessions::default());
+            // Chat (Tahap 2): registers with the FeatureHub and starts the
+            // attachment downloader.
+            let chat = chat::runtime::ChatRuntime::install(app.handle());
+            app.manage(chat);
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
                 Ok(d) => d.from_env.then(|| d.path.clone()),
@@ -178,6 +183,22 @@ pub fn run() {
             signing::commands::sign_cancel,
             signing::commands::sign_export,
             signing::commands::sign_verify_file,
+            chat::commands::chat_overview,
+            chat::commands::chat_messages,
+            chat::commands::chat_send,
+            chat::commands::chat_delete_message,
+            chat::commands::chat_mark_read,
+            chat::commands::chat_create_channel,
+            chat::commands::chat_set_archived,
+            chat::commands::chat_delete_channel,
+            chat::commands::chat_open_dm,
+            chat::commands::chat_message_receipts,
+            chat::commands::chat_pick_files,
+            chat::commands::chat_file_open,
+            chat::commands::chat_file_save,
+            chat::commands::chat_file_download,
+            chat::commands::chat_set_notify,
+            chat::commands::chat_set_muted,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
