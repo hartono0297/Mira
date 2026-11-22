@@ -166,6 +166,22 @@ impl BoardDoc {
         Ok(BoardDoc { doc })
     }
 
+    /// Stores the nonce that binds the project id to its creator and team
+    /// (`store::derive_project_id`). Staged, part of the first change.
+    pub fn set_project_nonce(&mut self, nonce: &str) -> AppResult<()> {
+        let project = self.obj(&ROOT, "project").ok_or_else(|| {
+            AppError::Internal("Dokumen proyek tidak lengkap: data proyek tidak ada.".into())
+        })?;
+        self.doc.put(&project, "nonce", nonce).map_err(am)
+    }
+
+    /// The nonce of [`BoardDoc::set_project_nonce`]; `None` for projects made
+    /// before ids were bound.
+    pub fn project_nonce(&self) -> Option<String> {
+        self.obj(&ROOT, "project")
+            .and_then(|p| self.str(&p, "nonce"))
+    }
+
     /// Loads a snapshot made by [`BoardDoc::save`].
     pub fn load(bytes: &[u8], actor: &[u8]) -> AppResult<BoardDoc> {
         let doc = AutoCommit::load(bytes)

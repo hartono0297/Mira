@@ -898,3 +898,40 @@ proptest! {
         prop_assert_eq!(total, stored_changes(&b.conn, &p.id).unwrap().len());
     }
 }
+
+#[test]
+fn a_forged_first_change_cannot_take_over_a_project_id() {
+    let (mut a, b) = pair();
+    let mut c = Laptop::joined(&a, "Citra");
+    // B may create projects on C's laptop (superadmin there).
+    add_member(&c.conn, &b.pk(), "Budi", "superadmin");
+    let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+        .unwrap()
+        .value;
+    assert!(store::is_syncable(&a.conn, &p.id).unwrap(), "bound id");
+
+    // B forges a first change with A's project id under B's own key.
+    let meta = crate::board::doc::ProjectMeta {
+        id: p.id.clone(),
+        code: "PX".into(),
+        name: "Palsu".into(),
+        team_id: None,
+    };
+    let mut forged = BoardDoc::create(&actor_of(&b.id), &meta).unwrap();
+    forged.set_project_nonce(&"ab".repeat(16)).unwrap();
+    forged.commit(1).unwrap();
+    let fake: Vec<SignedChange> = forged
+        .changes_after(&[])
+        .iter()
+        .map(|ch| sign_change(&b.id, &p.id, ch))
+        .collect();
+    let r = import_project(&mut c.conn, &LocalRolePolicy, &p.id, None, fake).unwrap();
+    assert_eq!(r.applied, 0);
+    assert_eq!(r.rejected, 1);
+    assert!(store::project(&c.conn, &p.id).is_err());
+
+    // The real project still imports afterwards.
+    let r = send(&a, &mut c, &p.id);
+    assert_eq!(r.applied, 1);
+    assert_eq!(store::project(&c.conn, &p.id).unwrap().name, "Alfa");
+}

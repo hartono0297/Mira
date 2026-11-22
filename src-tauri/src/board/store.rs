@@ -153,11 +153,35 @@ pub(crate) fn claim_code(
     unreachable!("an unused code always exists")
 }
 
-/// Whether a project's id is bound to its creator and team (so nobody else
-/// can claim the id with other data). Placeholder until ids are derived:
-/// always true.
-pub(crate) fn project_id_matches(_meta: &ProjectMeta, _creator: &str) -> bool {
-    true
+/// A project id bound to its creator and team: the first 32 hex characters
+/// of BLAKE3 over `mira-board-project-v1`, creator, team (or empty) and
+/// nonce, each followed by a newline except the last. Nobody can present
+/// another creator's or team's project under that id, so a forged first
+/// change cannot take over a project.
+pub fn derive_project_id(creator: &str, team_id: Option<&str>, nonce: &str) -> String {
+    let input = format!(
+        "mira-board-project-v1\n{creator}\n{}\n{nonce}",
+        team_id.unwrap_or("")
+    );
+    blake3::hash(input.as_bytes()).to_hex()[..32].to_owned()
+}
+
+/// Whether the project in `doc` (its first change by `creator`) has a bound
+/// id. Projects made before ids were bound have no nonce and stay on the
+/// laptop that made them.
+pub fn project_id_matches(doc: &BoardDoc, creator: &str) -> bool {
+    let meta = doc.project();
+    doc.project_nonce().is_some_and(|nonce| {
+        crate::org::is_lower_hex(&nonce, 32)
+            && derive_project_id(creator, meta.team_id.as_deref(), &nonce) == meta.id
+    })
+}
+
+/// Whether a stored project may be offered to other laptops (bound id).
+pub fn is_syncable(conn: &Connection, project_id: &str) -> AppResult<bool> {
+    let row = project(conn, project_id)?;
+    let doc = load_doc(conn, project_id, &[0; 32])?;
+    Ok(project_id_matches(&doc, &row.created_by))
 }
 
 /// Creates a project and its document. Permission is checked by the caller.
@@ -180,7 +204,8 @@ pub fn create_project(
             "Tim yang dipilih tidak ditemukan. Pilih tim lain atau buat proyek tanpa tim.".into(),
         ));
     }
-    let id = random_id();
+    let nonce = random_id();
+    let id = derive_project_id(identity.public_key_hex(), team_id, &nonce);
     ensure_code_free(&tx, &code, &id)?;
     let now = clock::now();
     let at = clock::format_rfc3339(now);
@@ -200,6 +225,7 @@ pub fn create_project(
         team_id: row.team_id.clone(),
     };
     let mut doc = BoardDoc::create(&actor_of(identity), &meta)?;
+    doc.set_project_nonce(&nonce)?;
     tx.execute(
         "INSERT INTO board_projects (id, code, doc_code, name, team_id, created_by, created_at, doc, updated_at)
          VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, x'', ?7)",

@@ -326,7 +326,7 @@ pub fn import_project(
             && validate_project_name(&meta.name).is_ok_and(|n| n == meta.name)
             && validate_project_code(&meta.code).is_ok_and(|c| c == meta.code)
             && meta.team_id.as_deref().is_none_or(|t| crate::org::is_lower_hex(t, 32))
-            && store::project_id_matches(&meta, &creator);
+            && store::project_id_matches(&probe, &creator);
         if !meta_ok {
             log(
                 &tx,
