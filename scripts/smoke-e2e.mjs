@@ -123,15 +123,21 @@ try {
   await page.screenshot({ path: join(shots, "02-pilih-organisasi.png") });
 
   await page.getByRole("button", { name: /Gabung dengan kode/ }).click();
-  await page.getByRole("heading", { name: "Gabung dengan kode" }).waitFor();
+  // Sejak Tahap 1: panduan firewall dulu (dilewati tanpa mengubah pengaturan
+  // Windows), lalu isian kode undangan sungguhan.
+  await page.getByRole("heading", { name: "Izinkan Mira di jaringan kantor" }).waitFor();
+  await page.getByRole("button", { name: /^(Lewati, atur nanti|Lanjut ke kode undangan)$/ }).click();
+  await page.getByRole("heading", { name: "Gabung dengan kode undangan" }).waitFor();
   await page.screenshot({ path: join(shots, "03-gabung-dengan-kode.png") });
-  check("Gabung dengan kode menampilkan keterangan", true);
+  check("Gabung dengan kode menampilkan isian kode undangan", true);
   await page.getByRole("button", { name: /Kembali/ }).click();
 
   await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
   await page.getByLabel("Nama organisasi").fill("Kantor Uji");
   await page.screenshot({ path: join(shots, "04-buat-organisasi.png") });
   await page.getByRole("button", { name: "Buat organisasi" }).click();
+  // Panduan firewall (Tahap 1): dilewati tanpa mengubah pengaturan Windows.
+  await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
   await page.getByRole("button", { name: "Pengaturan" }).waitFor({ timeout: 10000 });
   const body1 = await page.locator("body").innerText();
   check(
