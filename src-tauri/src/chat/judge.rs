@@ -13,6 +13,12 @@
 //! envelopes) are accepted for any conversation their kind allows, while
 //! admin records (archive, channel delete, deleting someone else's message)
 //! are refused because the admin right cannot be checked any more.
+//!
+//! A verdict never depends on which other chat records happen to be here
+//! already (only on channels and membership): a reply target, the message a
+//! delete names and the envelope an ack names are checked when the record is
+//! applied or shown, so every laptop stores the same records whatever order
+//! they arrive in.
 
 use rusqlite::OptionalExtension;
 use time::OffsetDateTime;
@@ -86,17 +92,15 @@ pub fn judge(ctx: &Ctx, rec: &VerifiedRecord, now: OffsetDateTime) -> AppResult<
         Body::ChannelArchive { conv, .. } | Body::ChannelDelete { conv } => {
             channel_admin(ctx, rec, st, conv)
         }
-        Body::Message { conv, reply_to, .. } => {
+        // A `reply_to` into another conversation is accepted and ignored
+        // when shown (`read::reply_preview`): whether this laptop knows the
+        // target must not decide what it stores.
+        Body::Message { conv, .. } => {
             let Some(info) = ctx.conv(conv)? else {
                 return Ok(Verdict::Defer);
             };
             if info.deleted {
                 return Ok(Verdict::Accept);
-            }
-            if let Some(reply) = reply_to
-                && reply_in_other_conv(ctx, reply, conv)?
-            {
-                return Ok(forbidden("balasan menunjuk pesan di percakapan lain"));
             }
             may_post(ctx, &info, author, rec.at, st)
         }
@@ -111,40 +115,17 @@ pub fn judge(ctx: &Ctx, rec: &VerifiedRecord, now: OffsetDateTime) -> AppResult<
         }
         Body::MessageDelete {
             conv,
-            message,
             message_author,
             ..
-        } => message_delete(ctx, rec, st, conv, message, message_author),
+        } => message_delete(ctx, rec, st, conv, message_author),
         Body::Envelope {
             to, cipher_files, ..
         } => envelope(ctx, rec, st, to, cipher_files, now),
-        Body::EnvelopeAck { envelope } => {
-            let recipient: Option<String> = ctx
-                .conn
-                .query_row(
-                    "SELECT recipient FROM chat_envelopes WHERE id = ?1",
-                    [envelope],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            Ok(match recipient {
-                Some(r) if r != author => forbidden("tanda terima titipan bukan dari penerimanya"),
-                _ => Verdict::Accept,
-            })
-        }
+        // Accepted from any member: an ack counts only when its author is
+        // the envelope's recipient, checked when applied
+        // (`envelope::apply_ack`), whether or not the envelope is known here.
+        Body::EnvelopeAck { .. } => Ok(Verdict::Accept),
     }
-}
-
-fn reply_in_other_conv(ctx: &Ctx, reply: &str, conv: &str) -> AppResult<bool> {
-    let stored: Option<String> = ctx
-        .conn
-        .query_row(
-            "SELECT conv FROM chat_messages WHERE id = ?1 AND placeholder = 0",
-            [reply],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(stored.is_some_and(|c| c != conv))
 }
 
 /// Envelope rights: author and recipient are active members who share a
@@ -306,7 +287,6 @@ fn message_delete(
     rec: &VerifiedRecord,
     st: Standing,
     conv: &str,
-    message: &str,
     claimed_author: &str,
 ) -> AppResult<Verdict> {
     let Some(info) = ctx.conv(conv)? else {
@@ -320,22 +300,10 @@ fn message_delete(
     if post != Verdict::Accept {
         return Ok(post);
     }
-    let stored: Option<(String, String)> = ctx
-        .conn
-        .query_row(
-            "SELECT author, conv FROM chat_messages WHERE id = ?1 AND placeholder = 0",
-            [message],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    if let Some((real_author, real_conv)) = &stored {
-        if real_conv != conv {
-            return Ok(forbidden("pesan tidak ada di percakapan itu"));
-        }
-        if real_author != claimed_author {
-            return Ok(forbidden("pembuat pesan yang disebut tidak cocok"));
-        }
-    }
+    // Judged by its claims only. Whether it removes the real message (same
+    // conversation, author or admin) is decided when applied
+    // (`delete_applies`), so every laptop stores the same records whether or
+    // not it has the message yet.
     if author == claimed_author {
         return Ok(Verdict::Accept);
     }

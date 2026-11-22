@@ -11,13 +11,20 @@
 //! `chat_blobs` exists because the blob store is shared with documents and
 //! signing: chat serves only blobs it put there itself, and deletes only
 //! those it created (never one that was already present) once nothing
-//! references them.
+//! references them. `chat_blobs.convs` records for which conversations a
+//! plain blob came in (attached by this laptop, fetched or decrypted for a
+//! message there); `sync::ChatSync::blob_path_for` serves by that record,
+//! never just because some message names the hash.
+//!
+//! Hashing and copying a file into the store happens outside the core lock
+//! ([`copy_in`]); only the bookkeeping ([`track_copy`]) runs inside.
 
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 
 use crate::blobs::{BlobHash, BlobInfo, BlobStore};
@@ -112,6 +119,138 @@ pub fn unqueue(conn: &Connection, hash: &str, kind: FetchKind) -> AppResult<()> 
         params![hash, kind.as_str()],
     )?;
     Ok(())
+}
+
+/// One conversation a plain blob is held for (`chat_blobs.convs`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobConv {
+    pub conv: String,
+    /// Attached by this laptop to its own message there.
+    #[serde(default)]
+    pub own: bool,
+}
+
+/// Conversations plain blob `hash` is held for; empty when untracked.
+pub fn blob_convs(conn: &Connection, hash: &str) -> AppResult<Vec<BlobConv>> {
+    let json: Option<String> = conn
+        .query_row(
+            "SELECT convs FROM chat_blobs WHERE hash = ?1",
+            [hash],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(json
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default())
+}
+
+fn set_blob_convs(conn: &Connection, hash: &str, convs: &[BlobConv]) -> AppResult<()> {
+    let json = serde_json::to_string(convs).unwrap_or_else(|_| "[]".into());
+    conn.execute(
+        "UPDATE chat_blobs SET convs = ?2 WHERE hash = ?1",
+        params![hash, json],
+    )?;
+    Ok(())
+}
+
+/// Notes that this laptop holds plain blob `hash` (tracked already) for
+/// `conv`: attached to its own message there (`own`), or fetched or
+/// decrypted for a message there.
+pub fn add_blob_conv(conn: &Connection, hash: &str, conv: &str, own: bool) -> AppResult<()> {
+    let mut convs = blob_convs(conn, hash)?;
+    match convs.iter_mut().find(|c| c.conv == conv) {
+        Some(c) => c.own |= own,
+        None => convs.push(BlobConv {
+            conv: conv.to_owned(),
+            own,
+        }),
+    }
+    set_blob_convs(conn, hash, &convs)
+}
+
+fn queued_convs(conn: &Connection, hash: &str) -> AppResult<Vec<String>> {
+    let json: Option<String> = conn
+        .query_row(
+            "SELECT convs FROM chat_fetch_queue WHERE hash = ?1 AND kind = 'plain'",
+            [hash],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(json
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default())
+}
+
+fn set_queued_convs(conn: &Connection, hash: &str, convs: &[String]) -> AppResult<()> {
+    let json = serde_json::to_string(convs).unwrap_or_else(|_| "[]".into());
+    conn.execute(
+        "UPDATE chat_fetch_queue SET convs = ?2 WHERE hash = ?1 AND kind = 'plain'",
+        params![hash, json],
+    )?;
+    Ok(())
+}
+
+/// Notes that the queued plain download of `hash` (queued already) is for a
+/// message in `conv`.
+pub fn queue_for_conv(conn: &Connection, hash: &str, conv: &str) -> AppResult<()> {
+    let mut convs = queued_convs(conn, hash)?;
+    if !convs.iter().any(|c| c == conv) {
+        convs.push(conv.to_owned());
+        set_queued_convs(conn, hash, &convs)?;
+    }
+    Ok(())
+}
+
+/// A plain download landed (and is tracked): the conversations it was queued
+/// for become the conversations the blob is held for. Call before `unqueue`.
+pub fn land_fetch_convs(conn: &Connection, hash: &str) -> AppResult<()> {
+    for conv in queued_convs(conn, hash)? {
+        add_blob_conv(conn, hash, &conv, false)?;
+    }
+    Ok(())
+}
+
+/// Forgets that `hash` is held or queued for `conv` (its messages there are
+/// gone).
+pub fn forget_conv(conn: &Connection, hash: &str, conv: &str) -> AppResult<()> {
+    let mut held = blob_convs(conn, hash)?;
+    let before = held.len();
+    held.retain(|c| c.conv != conv);
+    if held.len() != before {
+        set_blob_convs(conn, hash, &held)?;
+    }
+    let mut queued = queued_convs(conn, hash)?;
+    let before = queued.len();
+    queued.retain(|c| c != conv);
+    if queued.len() != before {
+        set_queued_convs(conn, hash, &queued)?;
+    }
+    Ok(())
+}
+
+/// A peer came online: every waiting job is due again.
+pub fn reset_backoff(conn: &Connection) -> AppResult<()> {
+    conn.execute(
+        "UPDATE chat_fetch_queue SET next_try_at = NULL WHERE next_try_at IS NOT NULL",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Whether an unacked envelope lists `hash` among its cipher files.
+pub fn live_envelope_lists(conn: &Connection, hash: &str) -> AppResult<bool> {
+    let mut stmt =
+        conn.prepare_cached("SELECT cipher_files FROM chat_envelopes WHERE acked = 0")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let json: String = row.get(0)?;
+        let files: Vec<super::model::CipherFileRef> =
+            serde_json::from_str(&json).unwrap_or_default();
+        if files.iter().any(|f| f.hash == hash) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub fn queue_state(
@@ -262,34 +401,40 @@ pub fn track(
     Ok(())
 }
 
-pub fn is_tracked(conn: &Connection, hash: &str) -> AppResult<bool> {
-    let n: i64 = conn.query_row(
-        "SELECT count(*) FROM chat_blobs WHERE hash = ?1",
-        [hash],
-        |r| r.get(0),
-    )?;
-    Ok(n > 0)
+/// A file copied into the blob store outside the core lock, waiting for
+/// [`track_copy`].
+#[derive(Debug, Clone)]
+pub struct Copied {
+    pub info: BlobInfo,
+    /// The blob was in the store before this copy.
+    pub preexisting: bool,
 }
 
-/// Copies a file into the store and tracks it.
-pub fn put_tracked_file(
+/// Copies `path`, whose BLAKE3 is `hash`, into the store. No database work:
+/// call it before taking the core lock.
+pub fn copy_in(blobs: &BlobStore, path: &Path, hash: &BlobHash) -> AppResult<Copied> {
+    let pre = blobs.contains(hash);
+    let info = blobs.put_file(path)?;
+    let preexisting = pre && info.hash == *hash;
+    Ok(Copied { info, preexisting })
+}
+
+/// Records a [`copy_in`] inside the transaction. If chat released and removed
+/// the blob in between, it is copied again (rare; the only copy under lock).
+pub fn track_copy(
     conn: &Connection,
     blobs: &BlobStore,
+    copied: &Copied,
     path: &Path,
     kind: FetchKind,
     now: &str,
-) -> AppResult<BlobInfo> {
-    let (hash, _) = hash_file(path)?;
-    let pre = blobs.contains(&hash);
-    let info = blobs.put_file(path)?;
-    track(
-        conn,
-        info.hash.as_str(),
-        kind,
-        pre && info.hash == hash,
-        now,
-    )?;
-    Ok(info)
+) -> AppResult<()> {
+    let mut preexisting = copied.preexisting;
+    if !blobs.contains(&copied.info.hash) {
+        blobs.put_file(path)?;
+        preexisting = false;
+    }
+    track(conn, copied.info.hash.as_str(), kind, preexisting, now)
 }
 
 pub fn put_tracked_bytes(
@@ -319,16 +464,14 @@ pub fn release(conn: &Connection, hash: &str) -> AppResult<bool> {
     if created != Some(true) {
         return Ok(false);
     }
-    let pattern = format!("%\"{hash}\"%");
     let refs: i64 = conn.query_row(
         "SELECT (SELECT count(*) FROM chat_files WHERE hash = ?1)
-              + (SELECT count(*) FROM chat_envelopes WHERE acked = 0 AND cipher_files LIKE ?2)
               + (SELECT count(*) FROM document_versions WHERE blob_hash = ?1)
               + (SELECT count(*) FROM sign_requests WHERE original_hash = ?1 OR current_hash = ?1)",
-        params![hash, pattern],
+        params![hash],
         |r| r.get(0),
     )?;
-    if refs > 0 {
+    if refs > 0 || live_envelope_lists(conn, hash)? {
         return Ok(false);
     }
     conn.execute("DELETE FROM chat_blobs WHERE hash = ?1", [hash])?;

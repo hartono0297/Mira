@@ -105,7 +105,7 @@ export function MessageItem({ message, grouped, me, kind, flash, replyLoaded, on
               <ul className="conv-files" aria-label="Lampiran">
                 {message.files.map((f) => (
                   <li key={f.hash}>
-                    <FileCard file={f} onDownloaded={onReload} />
+                    <FileCard messageId={message.id} file={f} onDownloaded={onReload} />
                   </li>
                 ))}
               </ul>

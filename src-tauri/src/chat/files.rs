@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::audience::Ctx;
 use super::fetch::{self, FetchJob, FetchKind, PRIORITY_USER};
@@ -21,12 +21,14 @@ use crate::permissions::format::format_time;
 /// Folder under the data folder where opened attachments are copied.
 pub const OPEN_DIR: &str = "chat-files";
 
-/// A message file this laptop may see: name, size, mime, message author.
+/// A message file this laptop may see: name, size, mime, message author and
+/// conversation.
 struct FileRow {
     name: String,
     size: u64,
     mime: String,
     author: String,
+    conv: String,
 }
 
 fn file_row(ctx: &Ctx, hash: &str) -> AppResult<FileRow> {
@@ -37,25 +39,46 @@ fn file_row(ctx: &Ctx, hash: &str) -> AppResult<FileRow> {
     )?;
     let rows = stmt
         .query_map([hash], |r| {
-            Ok((
-                FileRow {
-                    name: r.get(0)?,
-                    size: u64::try_from(r.get::<_, i64>(1)?).unwrap_or(0),
-                    mime: r.get(2)?,
-                    author: r.get(3)?,
-                },
-                r.get::<_, String>(4)?,
-            ))
+            Ok(FileRow {
+                name: r.get(0)?,
+                size: u64::try_from(r.get::<_, i64>(1)?).unwrap_or(0),
+                mime: r.get(2)?,
+                author: r.get(3)?,
+                conv: r.get(4)?,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    for (row, conv) in rows {
-        if readable(ctx, &conv).is_ok() {
+    for row in rows {
+        if readable(ctx, &row.conv).is_ok() {
             return Ok(row);
         }
     }
     Err(AppError::NotFound(
         "File tidak ditemukan di percakapan yang bisa kamu buka.".into(),
     ))
+}
+
+/// Name of file `hash` in message `message_id`, if this laptop may read the
+/// message and the file is in it.
+fn message_file_name(ctx: &Ctx, message_id: &str, hash: &str) -> AppResult<String> {
+    let missing = || AppError::NotFound("File tidak ditemukan di pesan ini.".into());
+    let row = read::message_row(ctx.conn, message_id)?
+        .filter(|m| !m.deleted)
+        .ok_or_else(missing)?;
+    readable(ctx, &row.conv)?;
+    ctx.conn
+        .query_row(
+            "SELECT name FROM chat_files WHERE message_id = ?1 AND hash = ?2 ORDER BY idx LIMIT 1",
+            params![message_id, hash],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(missing)
+}
+
+/// Folder that holds opened copies of blob `hash`.
+pub fn open_dir(data_dir: &Path, hash: &str) -> PathBuf {
+    data_dir.join(OPEN_DIR).join(hash)
 }
 
 fn parse_hash(hash: &str) -> AppResult<BlobHash> {
@@ -102,25 +125,22 @@ impl ChatSync {
         })
     }
 
-    /// Copies the file to `<data_dir>/chat-files/<hash>/<stored name>` if it
-    /// is not there yet and returns that path; the caller opens it. The name
-    /// argument is ignored: the stored name of the file is used.
-    pub fn open_file_path(&self, hash: &str, _name: &str) -> AppResult<PathBuf> {
+    /// Copies file `hash` of message `message_id` to
+    /// `<data_dir>/chat-files/<hash>/<name in that message>` if it is not
+    /// there yet and returns that path; the caller opens it. The message must
+    /// be readable by this laptop, not deleted, and carry the file.
+    pub fn open_file_path(&self, message_id: &str, hash: &str) -> AppResult<PathBuf> {
         let blob = parse_hash(hash)?;
         let name = self.with_ctx(|ctx, _, _| {
             require_member(ctx)?;
-            Ok(file_row(ctx, hash)?.name)
+            message_file_name(ctx, message_id, hash)
         })?;
         if !self.blobs.contains(&blob) {
             return Err(AppError::NotFound(
                 "File belum ada di laptop ini. Unduh dulu.".into(),
             ));
         }
-        let path = self
-            .data_dir()?
-            .join(OPEN_DIR)
-            .join(hash)
-            .join(safe_file_name(&name));
+        let path = open_dir(&self.data_dir()?, hash).join(safe_file_name(&name));
         if !path.is_file() {
             self.blobs.copy_to(&blob, &path)?;
         }
@@ -161,6 +181,7 @@ impl ChatSync {
                 PRIORITY_USER,
                 &now,
             )?;
+            fetch::queue_for_conv(ctx.conn, hash, &row.conv)?;
             fx.queued = true;
             fx.visible = true;
             Ok(())
@@ -184,31 +205,40 @@ impl ChatSync {
         })
     }
 
-    /// A download finished into `downloaded`. The file is re-hashed here; a
-    /// mismatch counts as a failed try.
+    /// A download finished into `downloaded`. The file is re-hashed and
+    /// copied into the blob store before the core lock is taken; a mismatch
+    /// counts as a failed try. A plain file becomes held for the
+    /// conversations it was queued for.
     pub fn fetch_done(&self, job: &FetchJob, downloaded: &Path) -> AppResult<()> {
-        let check = fetch::hash_file(downloaded);
-        let ok = matches!(&check, Ok((h, size)) if h.as_str() == job.hash && *size == job.size);
-        if !ok {
-            let _ = std::fs::remove_file(downloaded);
-            self.fetch_failed(job, "isi file tidak cocok dengan hash")?;
-            return Err(AppError::InvalidInput(
-                "File yang diunduh tidak cocok dengan aslinya.".into(),
-            ));
-        }
-        let result = self.with_ctx(|ctx, identity, fx| {
-            let now = clock::now();
-            fetch::put_tracked_file(
-                ctx.conn,
-                &self.blobs,
-                downloaded,
-                job.kind,
-                &format_time(now),
-            )?;
-            fetch::unqueue(ctx.conn, &job.hash, job.kind)?;
-            envelope::complete(ctx, identity, &self.blobs, now, fx)?;
-            fx.visible = true;
-            Ok(())
+        let hash = match fetch::hash_file(downloaded) {
+            Ok((h, size)) if h.as_str() == job.hash && size == job.size => h,
+            _ => {
+                let _ = std::fs::remove_file(downloaded);
+                self.fetch_failed(job, "isi file tidak cocok dengan hash")?;
+                return Err(AppError::InvalidInput(
+                    "File yang diunduh tidak cocok dengan aslinya.".into(),
+                ));
+            }
+        };
+        let result = fetch::copy_in(&self.blobs, downloaded, &hash).and_then(|copied| {
+            self.with_ctx(|ctx, identity, fx| {
+                let now = clock::now();
+                fetch::track_copy(
+                    ctx.conn,
+                    &self.blobs,
+                    &copied,
+                    downloaded,
+                    job.kind,
+                    &format_time(now),
+                )?;
+                if job.kind == FetchKind::Plain {
+                    fetch::land_fetch_convs(ctx.conn, &job.hash)?;
+                }
+                fetch::unqueue(ctx.conn, &job.hash, job.kind)?;
+                envelope::complete(ctx, identity, &self.blobs, now, fx)?;
+                fx.visible = true;
+                Ok(())
+            })
         });
         let _ = std::fs::remove_file(downloaded);
         result
@@ -243,11 +273,7 @@ fn still_needed(conn: &Connection, job: &FetchJob) -> AppResult<bool> {
             params![job.hash],
             |r| r.get(0),
         )?,
-        FetchKind::Cipher => conn.query_row(
-            "SELECT count(*) FROM chat_envelopes WHERE acked = 0 AND cipher_files LIKE ?1",
-            params![format!("%\"{}\"%", job.hash)],
-            |r| r.get(0),
-        )?,
+        FetchKind::Cipher => i64::from(fetch::live_envelope_lists(conn, &job.hash)?),
     };
     Ok(n > 0)
 }

@@ -326,17 +326,21 @@ pub fn recipient_states(
         let e = receipts.entry(reader).or_insert(s);
         *e = (*e).max(s);
     }
-    let mut stmt = conn
-        .prepare("SELECT recipient, deposited, acked FROM chat_envelopes WHERE message_id = ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT recipient, deposited, acked, ack_failed FROM chat_envelopes WHERE message_id = ?1",
+    )?;
     for row in stmt.query_map([message], |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, i64>(1)?,
             r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
         ))
     })? {
-        let (recipient, deposited, acked) = row?;
-        let s = if acked == ACKED {
+        let (recipient, deposited, acked, ack_failed) = row?;
+        // An ack for an envelope the recipient could not open says nothing
+        // about the message arriving.
+        let s = if acked == ACKED && ack_failed == 0 {
             DeliveryState::Delivered
         } else if deposited != 0 && acked == 0 {
             DeliveryState::Deposited

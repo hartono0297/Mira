@@ -31,12 +31,14 @@ const KIND_ICONS: Record<FileKind, Icon> = {
 type Busy = "open" | "save" | "download" | null;
 
 type Props = {
+  // Pesan yang membawa file ini; dipakai untuk membukanya.
+  messageId: string;
   file: FileView;
   // Dipanggil setelah unduhan selesai supaya keadaan file dimuat ulang.
   onDownloaded: () => void;
 };
 
-export function FileCard({ file, onDownloaded }: Props) {
+export function FileCard({ messageId, file, onDownloaded }: Props) {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<{ action: Busy; error: AppError } | null>(null);
   const [saved, setSaved] = useState(false);
@@ -68,7 +70,7 @@ export function FileCard({ file, onDownloaded }: Props) {
 
   const openFile = () =>
     run("open", async () => {
-      await chatApi.fileOpen(file.hash, file.name);
+      await chatApi.fileOpen(messageId, file.hash);
       return true;
     });
 

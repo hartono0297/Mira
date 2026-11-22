@@ -92,8 +92,17 @@ pub fn mime_for(name: &str) -> &'static str {
     }
 }
 
-/// Copies one picked file into the blob store and describes it.
-fn attach(ctx: &Ctx, blobs: &BlobStore, path: &Path, now: &str) -> AppResult<FileRef> {
+/// A picked file, checked and copied into the blob store before the core
+/// lock is taken.
+struct Picked {
+    path: PathBuf,
+    name: String,
+    copied: fetch::Copied,
+}
+
+/// Checks one picked file and copies it into the blob store. Runs outside
+/// the core lock: hashing and copying a large file must not block chat.
+fn pick(blobs: &BlobStore, path: &Path) -> AppResult<Picked> {
     let meta = std::fs::metadata(path).map_err(|_| {
         invalid(&format!(
             "File {} tidak bisa dibaca. Pastikan file masih ada.",
@@ -114,13 +123,63 @@ fn attach(ctx: &Ctx, blobs: &BlobStore, path: &Path, now: &str) -> AppResult<Fil
         .map(|n| n.to_string_lossy().into_owned())
         .filter(|n| model::is_file_name(n))
         .ok_or_else(|| invalid("Nama file tidak bisa dipakai. Ganti nama filenya dulu."))?;
-    let info = fetch::put_tracked_file(ctx.conn, blobs, path, FetchKind::Plain, now)?;
-    Ok(FileRef {
-        hash: info.hash.to_string(),
-        size: info.size,
-        mime: mime_for(&name).to_owned(),
+    let (hash, _) = fetch::hash_file(path)?;
+    let copied = fetch::copy_in(blobs, path, &hash)?;
+    Ok(Picked {
+        path: path.to_owned(),
         name,
+        copied,
     })
+}
+
+/// Records a picked file as attached by this laptop to its message in
+/// `conv`, and describes it.
+fn attach(ctx: &Ctx, blobs: &BlobStore, p: &Picked, conv: &str, now: &str) -> AppResult<FileRef> {
+    fetch::track_copy(ctx.conn, blobs, &p.copied, &p.path, FetchKind::Plain, now)?;
+    let hash = p.copied.info.hash.to_string();
+    fetch::add_blob_conv(ctx.conn, &hash, conv, true)?;
+    Ok(FileRef {
+        hash,
+        size: p.copied.info.size,
+        mime: mime_for(&p.name).to_owned(),
+        name: p.name.clone(),
+    })
+}
+
+/// Checks that this laptop may send `text` with `files` files to `conv`.
+/// Returns the conversation and the cleaned text.
+fn check_send(
+    ctx: &Ctx,
+    conv: &str,
+    text: &str,
+    files: usize,
+    reply_to: Option<&str>,
+) -> AppResult<(super::audience::ConvInfo, String)> {
+    require_member(ctx)?;
+    let info = readable(ctx, conv)?;
+    if info.archived {
+        return Err(forbidden(
+            "Channel ini diarsipkan. Kembalikan dulu sebelum mengirim pesan.",
+        ));
+    }
+    if !read::can_post(ctx, &info)? {
+        return Err(forbidden(
+            "Kamu tidak bisa mengirim pesan di percakapan ini.",
+        ));
+    }
+    let text = clean_text(text)?;
+    if files > MAX_FILES {
+        return Err(invalid("Maksimal 10 file dalam satu pesan."));
+    }
+    if text.is_empty() && files == 0 {
+        return Err(invalid("Tulis pesan atau lampirkan file dulu."));
+    }
+    if let Some(r) = reply_to
+        && read::message_row(ctx.conn, r)?.is_none_or(|m| m.conv != conv || m.deleted)
+    {
+        return Err(invalid("Pesan yang dibalas tidak ditemukan."));
+    }
+    Ok((info, text))
 }
 
 /// Encrypts the small files once for all envelopes of a message.
@@ -238,31 +297,19 @@ impl ChatSync {
         files: Vec<PathBuf>,
     ) -> AppResult<MessageView> {
         let connected = self.hooks.connected_peers();
+        // Cheap checks first, so a refused send copies nothing; then the
+        // files are hashed and copied without holding the core lock.
+        if !files.is_empty() {
+            self.with_ctx(|ctx, _, _| {
+                check_send(ctx, conv, text, files.len(), reply_to.as_deref()).map(|_| ())
+            })?;
+        }
+        let copies = files
+            .iter()
+            .map(|p| pick(&self.blobs, p))
+            .collect::<AppResult<Vec<_>>>()?;
         self.with_ctx(|ctx, identity, fx| {
-            require_member(ctx)?;
-            let info = readable(ctx, conv)?;
-            if info.archived {
-                return Err(forbidden(
-                    "Channel ini diarsipkan. Kembalikan dulu sebelum mengirim pesan.",
-                ));
-            }
-            if !read::can_post(ctx, &info)? {
-                return Err(forbidden(
-                    "Kamu tidak bisa mengirim pesan di percakapan ini.",
-                ));
-            }
-            let text = clean_text(text)?;
-            if files.len() > MAX_FILES {
-                return Err(invalid("Maksimal 10 file dalam satu pesan."));
-            }
-            if text.is_empty() && files.is_empty() {
-                return Err(invalid("Tulis pesan atau lampirkan file dulu."));
-            }
-            if let Some(r) = &reply_to
-                && read::message_row(ctx.conn, r)?.is_none_or(|m| m.conv != conv || m.deleted)
-            {
-                return Err(invalid("Pesan yang dibalas tidak ditemukan."));
-            }
+            let (info, text) = check_send(ctx, conv, text, copies.len(), reply_to.as_deref())?;
             let audience = ctx.audience(&info)?;
             let mut picked: Vec<String> = Vec::new();
             for m in mentions {
@@ -272,9 +319,9 @@ impl ChatSync {
             }
             let now = clock::now();
             let now_s = format_time(now);
-            let refs = files
+            let refs = copies
                 .iter()
-                .map(|p| attach(ctx, &self.blobs, p, &now_s))
+                .map(|p| attach(ctx, &self.blobs, p, conv, &now_s))
                 .collect::<AppResult<Vec<_>>>()?;
             let body = Body::Message {
                 conv: conv.to_owned(),

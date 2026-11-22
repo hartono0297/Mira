@@ -139,7 +139,15 @@ pub enum Body {
     },
     EnvelopeAck {
         envelope: String,
+        /// The recipient could not open the envelope (it acks anyway so
+        /// custodians drop it). Left out when false.
+        #[serde(default, skip_serializing_if = "is_false")]
+        failed: bool,
     },
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl Body {
@@ -262,25 +270,53 @@ pub fn random_hex32() -> String {
     hex::encode(b)
 }
 
-/// Channel id of a `channel_create`: first 32 hex of
-/// `blake3("mira-chat-channel-v1\n" + org + "\n" + author + "\n" + nonce)`.
-/// Derived, not chosen, so nobody can create a channel whose id collides with
-/// `#umum`, a team channel, a project channel or another member's channel.
-pub fn derive_channel_id(org: &str, author: &str, nonce: &str) -> String {
-    let hash =
-        blake3::hash(format!("mira-chat-channel-v1\n{org}\n{author}\n{nonce}").as_bytes());
-    hash.to_hex()[..32].to_owned()
+/// Channel id of a `channel_create`: first 32 hex of BLAKE3 over
+/// `"mira-chat-channel-v2"`, org, author, nonce, `at`, name, scope kind and
+/// scope id, one per line. Derived, not chosen, so nobody can create a
+/// channel whose id collides with `#umum`, a team channel, a project channel
+/// or another member's channel. Name, time and scope are part of the input so
+/// one nonce cannot back two different channels.
+pub fn derive_channel_id(
+    org: &str,
+    author: &str,
+    nonce: &str,
+    at: &str,
+    name: &str,
+    scope: &ChannelScope,
+) -> String {
+    let (kind, id) = match scope {
+        ChannelScope::Org => ("org", ""),
+        ChannelScope::Team { id } => ("team", id.as_str()),
+        ChannelScope::Project { id } => ("project", id.as_str()),
+    };
+    let input = format!(
+        "mira-chat-channel-v2
+{org}
+{author}
+{nonce}
+{at}
+{name}
+{kind}
+{id}"
+    );
+    blake3::hash(input.as_bytes()).to_hex()[..32].to_owned()
 }
 
 /// Signs `body` as `identity` for organization `org` at `at`. For
 /// `channel_create` the `channel` field is replaced by
 /// [`derive_channel_id`]; pass any value.
-pub fn sign_record(identity: &Identity, org: &str, at: OffsetDateTime, body: Body) -> VerifiedRecord {
+pub fn sign_record(
+    identity: &Identity,
+    org: &str,
+    at: OffsetDateTime,
+    body: Body,
+) -> VerifiedRecord {
     let author = identity.public_key_hex().to_owned();
     let nonce = random_hex32();
+    let at_text = format_time(at);
     let body = match body {
         Body::ChannelCreate { name, scope, .. } => Body::ChannelCreate {
-            channel: derive_channel_id(org, &author, &nonce),
+            channel: derive_channel_id(org, &author, &nonce, &at_text, &name, &scope),
             name,
             scope,
         },
@@ -290,7 +326,7 @@ pub fn sign_record(identity: &Identity, org: &str, at: OffsetDateTime, body: Bod
         v: CHAT_VERSION,
         org: org.to_owned(),
         author,
-        at: format_time(at),
+        at: at_text,
         nonce,
         body,
     };
@@ -417,7 +453,7 @@ fn validate_body(p: &Payload) -> Result<(), String> {
             name,
             scope,
         } => {
-            if *channel != derive_channel_id(&p.org, author, &p.nonce) {
+            if *channel != derive_channel_id(&p.org, author, &p.nonce, &p.at, name, scope) {
                 return Err("id channel bukan turunan pembuat dan nonce".into());
             }
             if !is_channel_name(name) {
@@ -452,7 +488,10 @@ fn validate_body(p: &Payload) -> Result<(), String> {
             if text.trim().is_empty() && files.is_empty() {
                 return Err("pesan kosong".into());
             }
-            if text.chars().any(|c| is_bad_text_char(c) || is_bidi_control(c)) {
+            if text
+                .chars()
+                .any(|c| is_bad_text_char(c) || is_bidi_control(c))
+            {
                 return Err("teks berisi karakter kontrol".into());
             }
             if let Some(r) = reply_to
@@ -517,7 +556,7 @@ fn validate_body(p: &Payload) -> Result<(), String> {
                 }
             }
         }
-        Body::EnvelopeAck { envelope } => {
+        Body::EnvelopeAck { envelope, .. } => {
             if !is_key(envelope) {
                 return Err("envelope harus 64 hex".into());
             }
@@ -626,7 +665,11 @@ pub fn normalize_channel_name(input: &str) -> Option<String> {
             out.push('-');
         }
     }
-    let out: String = out.trim_matches('-').chars().take(MAX_CHANNEL_NAME_CHARS).collect();
+    let out: String = out
+        .trim_matches('-')
+        .chars()
+        .take(MAX_CHANNEL_NAME_CHARS)
+        .collect();
     let out = out.trim_end_matches('-').to_owned();
     is_channel_name(&out).then_some(out)
 }
@@ -649,10 +692,62 @@ pub fn is_file_name(name: &str) -> bool {
 /// attachments are offered for saving only, never opened from Mira.
 pub fn is_executable_name(name: &str) -> bool {
     const EXT: &[&str] = &[
-        "exe", "com", "bat", "cmd", "scr", "pif", "msi", "msp", "msc", "lnk", "url", "hta", "js",
-        "jse", "vbs", "vbe", "wsf", "wsh", "ps1", "psm1", "reg", "cpl", "jar", "appref-ms",
-        "application", "gadget", "inf", "scf", "chm", "dll", "sys", "iso", "img", "vhd", "vhdx",
-        "library-ms", "settingcontent-ms", "xll", "appx", "msix", "diagcab",
+        "exe",
+        "com",
+        "bat",
+        "cmd",
+        "scr",
+        "pif",
+        "msi",
+        "msp",
+        "msc",
+        "lnk",
+        "url",
+        "hta",
+        "js",
+        "jse",
+        "vbs",
+        "vbe",
+        "wsf",
+        "wsh",
+        "ps1",
+        "psm1",
+        "reg",
+        "cpl",
+        "jar",
+        "appref-ms",
+        "application",
+        "gadget",
+        "inf",
+        "scf",
+        "chm",
+        "dll",
+        "sys",
+        "iso",
+        "img",
+        "vhd",
+        "vhdx",
+        "library-ms",
+        "settingcontent-ms",
+        "xll",
+        "appx",
+        "msix",
+        "diagcab",
+        // Opened by the browser or the Windows shell, can run script.
+        "htm",
+        "html",
+        "xhtml",
+        "svg",
+        "mht",
+        "mhtml",
+        "xbap",
+        "search-ms",
+        "website",
+        "xml",
+        "hlp",
+        "ws",
+        "shb",
+        "shs",
     ];
     name.rsplit_once('.')
         .map(|(_, ext)| EXT.contains(&ext.to_ascii_lowercase().as_str()))
@@ -744,13 +839,23 @@ mod tests {
         let (_t, id) = identity();
         let rec = sign_record(&id, ORG, now(), message(&umum(), "halo"));
         let tampered = rec.body_json.replace("halo", "hai!");
-        assert_eq!(verify_record(&tampered, ORG, now()).unwrap_err().code, "bad_signature");
+        assert_eq!(
+            verify_record(&tampered, ORG, now()).unwrap_err().code,
+            "bad_signature"
+        );
 
         let mut signed: SignedRecord = serde_json::from_str(&rec.body_json).unwrap();
-        let flip = if signed.sig.starts_with('0') { "1" } else { "0" };
+        let flip = if signed.sig.starts_with('0') {
+            "1"
+        } else {
+            "0"
+        };
         signed.sig.replace_range(0..1, flip);
         let body = serde_json::to_string(&signed).unwrap();
-        assert_eq!(verify_record(&body, ORG, now()).unwrap_err().code, "bad_signature");
+        assert_eq!(
+            verify_record(&body, ORG, now()).unwrap_err().code,
+            "bad_signature"
+        );
     }
 
     #[test]
@@ -761,7 +866,10 @@ mod tests {
         let forged = rec
             .body_json
             .replace(a.public_key_hex(), b.public_key_hex());
-        assert_eq!(verify_record(&forged, ORG, now()).unwrap_err().code, "bad_signature");
+        assert_eq!(
+            verify_record(&forged, ORG, now()).unwrap_err().code,
+            "bad_signature"
+        );
     }
 
     #[test]
@@ -769,22 +877,40 @@ mod tests {
         let (_t, id) = identity();
         let rec = sign_record(&id, ORG, now(), message(&umum(), "halo"));
         let other = "f".repeat(32);
-        assert_eq!(verify_record(&rec.body_json, &other, now()).unwrap_err().code, "wrong_org");
+        assert_eq!(
+            verify_record(&rec.body_json, &other, now())
+                .unwrap_err()
+                .code,
+            "wrong_org"
+        );
 
         let later = now() + time::Duration::minutes(11);
         let future = sign_record(&id, ORG, later, message(&umum(), "halo"));
-        assert_eq!(verify_record(&future.body_json, ORG, now()).unwrap_err().code, "future");
+        assert_eq!(
+            verify_record(&future.body_json, ORG, now())
+                .unwrap_err()
+                .code,
+            "future"
+        );
         assert!(verify_record(&future.body_json, ORG, later).is_ok());
 
-        assert_eq!(verify_record("{}", ORG, now()).unwrap_err().code, "bad_format");
-        assert_eq!(verify_record("bukan json", ORG, now()).unwrap_err().code, "bad_format");
+        assert_eq!(
+            verify_record("{}", ORG, now()).unwrap_err().code,
+            "bad_format"
+        );
+        assert_eq!(
+            verify_record("bukan json", ORG, now()).unwrap_err().code,
+            "bad_format"
+        );
     }
 
     #[test]
     fn unknown_fields_and_kinds_are_refused() {
         let (_t, id) = identity();
         let rec = sign_record(&id, ORG, now(), message(&umum(), "halo"));
-        let body = rec.body_json.replace("\\\"kind\\\":\\\"message\\\"", "\\\"kind\\\":\\\"poll\\\"");
+        let body = rec
+            .body_json
+            .replace("\\\"kind\\\":\\\"message\\\"", "\\\"kind\\\":\\\"poll\\\"");
         assert_ne!(body, rec.body_json);
         assert!(verify_record(&body, ORG, now()).is_err());
     }
@@ -833,47 +959,63 @@ mod tests {
         };
         assert!(check(dup).is_err());
 
-        assert!(check(Body::ChannelCreate {
-            channel: "1".repeat(32),
-            name: "proyek-a".into(),
-            scope: ChannelScope::Team { id: "2".repeat(32) },
-        })
-        .is_ok(), "sign_record derives the channel id");
-        assert!(check(Body::ChannelCreate {
-            channel: "1".repeat(32),
-            name: "Proyek A".into(),
-            scope: ChannelScope::Org,
-        })
-        .is_err());
-        assert!(check(Body::ChannelArchive {
-            conv: dm_conv(&"a".repeat(64), &"b".repeat(64)),
-            archived: true,
-        })
-        .is_err());
-        assert!(check(Body::Receipt {
-            conv: umum(),
-            state: ReceiptState::Read,
-            messages: vec![],
-        })
-        .is_err());
-        assert!(check(Body::Envelope {
-            to: id.public_key_hex().to_owned(),
-            sealed: "AAAA".into(),
-            cipher_files: vec![],
-        })
-        .is_err(), "envelope to self");
-        assert!(check(Body::Envelope {
-            to: "b".repeat(64),
-            sealed: "bukan base64!".into(),
-            cipher_files: vec![],
-        })
-        .is_err());
-        assert!(check(Body::Envelope {
-            to: "b".repeat(64),
-            sealed: "AAAA".into(),
-            cipher_files: vec![],
-        })
-        .is_ok());
+        assert!(
+            check(Body::ChannelCreate {
+                channel: "1".repeat(32),
+                name: "proyek-a".into(),
+                scope: ChannelScope::Team { id: "2".repeat(32) },
+            })
+            .is_ok(),
+            "sign_record derives the channel id"
+        );
+        assert!(
+            check(Body::ChannelCreate {
+                channel: "1".repeat(32),
+                name: "Proyek A".into(),
+                scope: ChannelScope::Org,
+            })
+            .is_err()
+        );
+        assert!(
+            check(Body::ChannelArchive {
+                conv: dm_conv(&"a".repeat(64), &"b".repeat(64)),
+                archived: true,
+            })
+            .is_err()
+        );
+        assert!(
+            check(Body::Receipt {
+                conv: umum(),
+                state: ReceiptState::Read,
+                messages: vec![],
+            })
+            .is_err()
+        );
+        assert!(
+            check(Body::Envelope {
+                to: id.public_key_hex().to_owned(),
+                sealed: "AAAA".into(),
+                cipher_files: vec![],
+            })
+            .is_err(),
+            "envelope to self"
+        );
+        assert!(
+            check(Body::Envelope {
+                to: "b".repeat(64),
+                sealed: "bukan base64!".into(),
+                cipher_files: vec![],
+            })
+            .is_err()
+        );
+        assert!(
+            check(Body::Envelope {
+                to: "b".repeat(64),
+                sealed: "AAAA".into(),
+                cipher_files: vec![],
+            })
+            .is_ok()
+        );
     }
 
     #[test]
@@ -881,10 +1023,24 @@ mod tests {
         let (_t, id) = identity();
         let rec = sign_record(&id, ORG, now(), message(&umum(), "halo"));
         let signed: SignedRecord = serde_json::from_str(&rec.body_json).unwrap();
-        let spaced = format!("{{ \"payload\": {}, \"sig\": \"{}\" }}", serde_json::to_string(&signed.payload).unwrap(), signed.sig);
-        assert_eq!(verify_record(&spaced, ORG, now()).unwrap_err().code, "not_canonical");
-        let swapped = format!("{{\"sig\":\"{}\",\"payload\":{}}}", signed.sig, serde_json::to_string(&signed.payload).unwrap());
-        assert_eq!(verify_record(&swapped, ORG, now()).unwrap_err().code, "not_canonical");
+        let spaced = format!(
+            "{{ \"payload\": {}, \"sig\": \"{}\" }}",
+            serde_json::to_string(&signed.payload).unwrap(),
+            signed.sig
+        );
+        assert_eq!(
+            verify_record(&spaced, ORG, now()).unwrap_err().code,
+            "not_canonical"
+        );
+        let swapped = format!(
+            "{{\"sig\":\"{}\",\"payload\":{}}}",
+            signed.sig,
+            serde_json::to_string(&signed.payload).unwrap()
+        );
+        assert_eq!(
+            verify_record(&swapped, ORG, now()).unwrap_err().code,
+            "not_canonical"
+        );
     }
 
     #[test]
@@ -900,8 +1056,20 @@ mod tests {
                 scope: ChannelScope::Org,
             },
         );
-        let Body::ChannelCreate { channel, .. } = rec.body() else { panic!() };
-        assert_eq!(*channel, derive_channel_id(ORG, id.public_key_hex(), &rec.payload.nonce));
+        let Body::ChannelCreate { channel, .. } = rec.body() else {
+            panic!()
+        };
+        assert_eq!(
+            *channel,
+            derive_channel_id(
+                ORG,
+                id.public_key_hex(),
+                &rec.payload.nonce,
+                &rec.payload.at,
+                "desain",
+                &ChannelScope::Org
+            )
+        );
         assert!(verify_record(&rec.body_json, ORG, now()).is_ok());
 
         // A record that claims a chosen id fails validation (signed by hand).
@@ -918,7 +1086,95 @@ mod tests {
             sig: hex::encode(sig.to_bytes()),
         })
         .unwrap();
-        assert_eq!(verify_record(&body, ORG, now()).unwrap_err().code, "bad_format");
+        assert_eq!(
+            verify_record(&body, ORG, now()).unwrap_err().code,
+            "bad_format"
+        );
+    }
+
+    #[test]
+    fn one_nonce_cannot_back_two_channels() {
+        let a = "a".repeat(64);
+        let n = "1".repeat(32);
+        let t1 = "2026-11-22T08:00:00Z";
+        let t2 = "2026-11-22T08:00:01Z";
+        let team = ChannelScope::Team { id: "2".repeat(32) };
+        let project = ChannelScope::Project { id: "2".repeat(32) };
+        let base = derive_channel_id(ORG, &a, &n, t1, "desain", &ChannelScope::Org);
+        for other in [
+            derive_channel_id(ORG, &a, &n, t2, "desain", &ChannelScope::Org),
+            derive_channel_id(ORG, &a, &n, t1, "desain-2", &ChannelScope::Org),
+            derive_channel_id(ORG, &a, &n, t1, "desain", &team),
+            derive_channel_id(ORG, &a, &n, t1, "desain", &project),
+        ] {
+            assert_ne!(base, other);
+        }
+        assert_ne!(
+            derive_channel_id(ORG, &a, &n, t1, "desain", &team),
+            derive_channel_id(ORG, &a, &n, t1, "desain", &project)
+        );
+
+        // Reusing a signed record's nonce and channel id for another name or
+        // scope fails validation.
+        let (_t, id) = identity();
+        let rec = sign_record(
+            &id,
+            ORG,
+            now(),
+            Body::ChannelCreate {
+                channel: String::new(),
+                name: "desain".into(),
+                scope: ChannelScope::Org,
+            },
+        );
+        let Body::ChannelCreate { channel, .. } = rec.body().clone() else {
+            panic!()
+        };
+        for (name, scope) in [("lain", ChannelScope::Org), ("desain", team.clone())] {
+            let mut payload = rec.payload.clone();
+            payload.body = Body::ChannelCreate {
+                channel: channel.clone(),
+                name: name.into(),
+                scope,
+            };
+            let payload_json = serde_json::to_string(&payload).unwrap();
+            let sig = id.sign(signed_message(&payload_json).as_bytes());
+            let body = serde_json::to_string(&SignedRecord {
+                payload: payload_json,
+                sig: hex::encode(sig.to_bytes()),
+            })
+            .unwrap();
+            assert_eq!(
+                verify_record(&body, ORG, now()).unwrap_err().code,
+                "bad_format"
+            );
+        }
+    }
+
+    #[test]
+    fn web_and_script_files_count_as_executable() {
+        for ext in [
+            "htm",
+            "html",
+            "xhtml",
+            "svg",
+            "mht",
+            "mhtml",
+            "xbap",
+            "search-ms",
+            "website",
+            "xml",
+            "hlp",
+            "ws",
+            "shb",
+            "shs",
+        ] {
+            assert!(is_executable_name(&format!("berkas.{ext}")), "{ext}");
+            let upper = format!("BERKAS.{}", ext.to_ascii_uppercase());
+            assert!(is_executable_name(&upper), "{upper}");
+        }
+        assert!(!is_executable_name("gambar.png"));
+        assert!(!is_executable_name("catatan.txt"));
     }
 
     #[test]
@@ -937,7 +1193,13 @@ mod tests {
         ] {
             assert!(!is_file_name(bad), "{bad:?}");
         }
-        for good in ["Laporan Q3.xlsx", "kontrak (final).pdf", "console.log", "COM10.txt", ".gitignore"] {
+        for good in [
+            "Laporan Q3.xlsx",
+            "kontrak (final).pdf",
+            "console.log",
+            "COM10.txt",
+            ".gitignore",
+        ] {
             assert!(is_file_name(good), "{good:?}");
         }
         assert!(is_executable_name("Laporan.pdf.exe"));
@@ -948,8 +1210,16 @@ mod tests {
         let (_t, id) = identity();
         let rec = sign_record(&id, ORG, now(), message(&umum(), "abc\u{202E}def"));
         assert!(verify_record(&rec.body_json, ORG, now()).is_err());
-        let emoji = sign_record(&id, ORG, now(), message(&umum(), "keluarga \u{1F468}\u{200D}\u{1F469}"));
-        assert!(verify_record(&emoji.body_json, ORG, now()).is_ok(), "ZWJ in text stays allowed");
+        let emoji = sign_record(
+            &id,
+            ORG,
+            now(),
+            message(&umum(), "keluarga \u{1F468}\u{200D}\u{1F469}"),
+        );
+        assert!(
+            verify_record(&emoji.body_json, ORG, now()).is_ok(),
+            "ZWJ in text stays allowed"
+        );
     }
 
     #[test]
@@ -957,7 +1227,10 @@ mod tests {
         let a = "a".repeat(64);
         let b = "b".repeat(64);
         assert_eq!(dm_conv(&a, &b), dm_conv(&b, &a));
-        assert_eq!(parse_conv(&dm_conv(&b, &a)), Some(Conv::Direct(a.clone(), b.clone())));
+        assert_eq!(
+            parse_conv(&dm_conv(&b, &a)),
+            Some(Conv::Direct(a.clone(), b.clone()))
+        );
         assert_eq!(parse_conv(&format!("dm:{b}:{a}")), None, "unsorted");
         assert_eq!(parse_conv(&format!("dm:{a}:{a}")), None, "same key");
         assert_eq!(parse_conv(&umum()), Some(Conv::Channel("a".repeat(32))));
@@ -967,8 +1240,14 @@ mod tests {
 
     #[test]
     fn channel_names() {
-        assert_eq!(normalize_channel_name("  #Proyek A "), Some("proyek-a".into()));
-        assert_eq!(normalize_channel_name("Desain__Interior 2026"), Some("desain-interior-2026".into()));
+        assert_eq!(
+            normalize_channel_name("  #Proyek A "),
+            Some("proyek-a".into())
+        );
+        assert_eq!(
+            normalize_channel_name("Desain__Interior 2026"),
+            Some("desain-interior-2026".into())
+        );
         assert_eq!(normalize_channel_name("---"), None);
         assert_eq!(normalize_channel_name("!!!"), None);
         assert_eq!(normalize_channel_name(&"a".repeat(60)).unwrap().len(), 40);
@@ -985,6 +1264,7 @@ mod tests {
         };
         let ack = Body::EnvelopeAck {
             envelope: "1".repeat(64),
+            failed: false,
         };
         assert!(create.apply_rank() < message(&umum(), "x").apply_rank());
         assert!(message(&umum(), "x").apply_rank() < ack.apply_rank());

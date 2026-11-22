@@ -6,6 +6,9 @@
 //! that could not be obtained), because the ack is what lets custodians drop
 //! the envelope. An ack counts only when its author is the envelope's
 //! recipient; one that arrives first waits in `chat_records` for its envelope.
+//! Acks from anyone else are stored like any record and do nothing. An ack
+//! says whether the recipient could open the envelope (`failed`), so the
+//! sender shows "Diterima laptopnya" only for envelopes that were opened.
 
 use rusqlite::{OptionalExtension, params};
 use time::OffsetDateTime;
@@ -42,7 +45,8 @@ pub(super) fn apply_envelope(
         return Ok(());
     };
     let conn = ctx.conn;
-    let acked = has_valid_ack(ctx, &rec.id, to)?;
+    let ack = valid_ack(ctx, &rec.id, to)?;
+    let acked = ack.is_some();
     let expired = envelope_expired(rec.at, now);
     let state = if acked {
         ACKED
@@ -53,15 +57,17 @@ pub(super) fn apply_envelope(
     };
     insert_record(conn, rec, state == LIVE, from, now)?;
     conn.execute(
-        "INSERT OR IGNORE INTO chat_envelopes (id, author, recipient, at, cipher_files, acked)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR IGNORE INTO chat_envelopes
+           (id, author, recipient, at, cipher_files, acked, ack_failed)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             rec.id,
             rec.author(),
             to,
             crate::permissions::format::format_time(rec.at),
             serde_json::to_string(cipher_files).unwrap_or_else(|_| "[]".into()),
-            state
+            state,
+            ack == Some(true)
         ],
     )?;
     if state == LIVE && to != ctx.me() && rec.author() != ctx.me() {
@@ -114,19 +120,33 @@ fn queue_ciphers(
     Ok(())
 }
 
-fn has_valid_ack(ctx: &Ctx, envelope: &str, recipient: &str) -> AppResult<bool> {
-    let n: i64 = ctx.conn.query_row(
-        "SELECT count(*) FROM chat_records WHERE target = ?1 AND kind = 'envelope_ack' AND author = ?2",
-        params![envelope, recipient],
-        |r| r.get(0),
+/// The recipient's stored ack for `envelope`, if any: `Some(failed)`.
+fn valid_ack(ctx: &Ctx, envelope: &str, recipient: &str) -> AppResult<Option<bool>> {
+    let mut stmt = ctx.conn.prepare(
+        "SELECT body FROM chat_records WHERE target = ?1 AND kind = 'envelope_ack' AND author = ?2",
     )?;
-    Ok(n > 0)
+    let bodies = stmt
+        .query_map(params![envelope, recipient], |r| {
+            r.get::<_, Option<String>>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut out = None;
+    for body in bodies {
+        let failed = body
+            .as_deref()
+            .and_then(|b| parse_stored(b).ok())
+            .is_some_and(|r| matches!(r.body(), Body::EnvelopeAck { failed: true, .. }));
+        // Any successful ack wins over a failed one.
+        out = Some(out.unwrap_or(true) && failed);
+    }
+    Ok(out)
 }
 
 pub(super) fn apply_ack(
     ctx: &Ctx,
     author: &str,
     envelope: &str,
+    failed: bool,
     fx: &mut Effects,
 ) -> AppResult<()> {
     let row: Option<(String, i64)> = ctx
@@ -137,10 +157,24 @@ pub(super) fn apply_ack(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    if let Some((recipient, LIVE)) = row
-        && recipient == author
-    {
+    let Some((recipient, acked)) = row else {
+        return Ok(());
+    };
+    if recipient != author {
+        return Ok(());
+    }
+    if acked == LIVE {
         purge(ctx, envelope, ACKED, fx)?;
+        ctx.conn.execute(
+            "UPDATE chat_envelopes SET ack_failed = ?2 WHERE id = ?1",
+            params![envelope, failed],
+        )?;
+    } else if acked == ACKED && !failed {
+        ctx.conn.execute(
+            "UPDATE chat_envelopes SET ack_failed = 0 WHERE id = ?1",
+            [envelope],
+        )?;
+        fx.visible = true;
     }
     Ok(())
 }
@@ -160,13 +194,7 @@ pub fn purge(ctx: &Ctx, envelope: &str, state: i64, fx: &mut Effects) -> AppResu
     )?;
     let ciphers: Vec<CipherFileRef> = serde_json::from_str(&ciphers).unwrap_or_default();
     for c in ciphers {
-        let pattern = format!("%\"{}\"%", c.hash);
-        let live: i64 = conn.query_row(
-            "SELECT count(*) FROM chat_envelopes WHERE acked = 0 AND cipher_files LIKE ?1",
-            [&pattern],
-            |r| r.get(0),
-        )?;
-        if live > 0 {
+        if fetch::live_envelope_lists(conn, &c.hash)? {
             continue;
         }
         fetch::unqueue(conn, &c.hash, FetchKind::Cipher)?;
@@ -349,7 +377,8 @@ pub fn complete(
 ) -> AppResult<()> {
     let mut stmt = ctx.conn.prepare(
         "SELECT e.id, e.author, e.cipher_files,
-                CASE WHEN m.deleted = 0 THEN e.file_keys ELSE NULL END
+                CASE WHEN m.deleted = 0 THEN e.file_keys ELSE NULL END,
+                e.open_error IS NOT NULL, m.conv
          FROM chat_envelopes e LEFT JOIN chat_messages m ON m.id = e.message_id
          WHERE e.recipient = ?1 AND e.opened = 1 AND e.acked = 0",
     )?;
@@ -360,25 +389,31 @@ pub fn complete(
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
+                r.get::<_, bool>(4)?,
+                r.get::<_, Option<String>>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     // A deleted (or purged) message needs none of its files.
-    for (id, author, ciphers, keys) in rows {
+    for (id, author, ciphers, keys, failed, conv) in rows {
         let keys: Vec<FileKey> = keys
             .and_then(|k| serde_json::from_str(&k).ok())
             .unwrap_or_default();
         let ciphers: Vec<CipherFileRef> = serde_json::from_str(&ciphers).unwrap_or_default();
         let mut pending = Vec::new();
         for k in &keys {
-            match plain_ready(ctx, blobs, k, now)? {
+            match plain_ready(ctx, blobs, k, conv.as_deref(), now)? {
                 Ready::Yes => {}
                 Ready::GiveUp => drop_key(ctx, &id, &k.cipher)?,
                 Ready::No => pending.extend(ciphers.iter().filter(|c| c.hash == k.cipher).cloned()),
             }
         }
         if pending.is_empty() {
-            create(ctx, identity, Body::EnvelopeAck { envelope: id }, now, fx)?;
+            let ack = Body::EnvelopeAck {
+                envelope: id,
+                failed,
+            };
+            create(ctx, identity, ack, now, fx)?;
         } else {
             let prefer = prefer_list(&[Some(author.as_str())]);
             let plain_of = |cipher: &str| {
@@ -398,7 +433,15 @@ enum Ready {
     GiveUp,
 }
 
-fn plain_ready(ctx: &Ctx, blobs: &BlobStore, k: &FileKey, now: OffsetDateTime) -> AppResult<Ready> {
+/// Whether the plain file of `k` is here, decrypting it when its cipher file
+/// is. A decrypted file is held for `conv`, the conversation of its message.
+fn plain_ready(
+    ctx: &Ctx,
+    blobs: &BlobStore,
+    k: &FileKey,
+    conv: Option<&str>,
+    now: OffsetDateTime,
+) -> AppResult<Ready> {
     let now_s = crate::permissions::format::format_time(now);
     let (Ok(plain), Ok(cipher)) = (BlobHash::parse(&k.hash), BlobHash::parse(&k.cipher)) else {
         return Ok(Ready::GiveUp);
@@ -417,6 +460,9 @@ fn plain_ready(ctx: &Ctx, blobs: &BlobStore, k: &FileKey, now: OffsetDateTime) -
     match seal::decrypt_file(&key, &bytes) {
         Ok(p) if BlobHash::of_bytes(&p) == plain => {
             fetch::put_tracked_bytes(ctx.conn, blobs, &p, FetchKind::Plain, &now_s)?;
+            if let Some(conv) = conv {
+                fetch::add_blob_conv(ctx.conn, &k.hash, conv, false)?;
+            }
             fx_unqueue_plain(ctx, &k.hash)?;
             Ok(Ready::Yes)
         }

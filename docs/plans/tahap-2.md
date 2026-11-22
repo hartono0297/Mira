@@ -114,7 +114,7 @@ Alur:
 
 - Kirim: file dipilih lewat dialog, disalin ke blob store (`put_file`), dicatat di pesan.
 - Terima: file kecil masuk antrean unduh lokal (`chat_fetch_queue`) dan diunduh otomatis lewat `FeatureHub::fetch_blob` (mencoba pembuat pesan dan laptop pengirim batch lebih dulu). File besar diunduh saat diklik (`chat_file_download`).
-- `BlobSource::blob_path_for(peer, hash)`: diizinkan kalau blob ada di laptop ini dan (a) dirujuk pesan yang belum dihapus di percakapan yang peer menjadi anggotanya, atau (b) file sandi titipan yang belum di-ack (semua anggota aktif).
+- `BlobSource::blob_path_for(peer, hash)` (diperketat setelah review): chat hanya menyajikan blob yang ia buat atau unduh sendiri. Setiap blob mencatat percakapan asalnya (dikirim laptop ini, diunduh untuk pesan di percakapan itu, atau dibuka dari titipan). File biasa hanya ke anggota percakapan asal selama masih ada pesan di sana yang memuatnya; blob yang sudah ada di blob store sebelum chat menyentuhnya (misalnya file dokumen) hanya disajikan kalau laptop ini sendiri melampirkannya. File sandi titipan hanya kalau dibuat chat dan masih tercantum di titipan yang belum diserahkan.
 - Antrean dicoba lagi saat `peer_connected` dan setiap 60 detik.
 
 ## 9. Notifikasi Windows
@@ -137,8 +137,9 @@ Semua perintah di `chat/commands.rs`, data camelCase. Setiap perubahan lokal mem
 | `chat_delete_channel` | `conv` | null |
 | `chat_open_dm` | `publicKey` | `ConversationSummary` |
 | `chat_message_receipts` | `messageId` | `ReceiptView[]` |
-| `chat_file_open` | `hash`, `name` | null (salin ke `<data>/chat-files/<hash>/<nama>` lalu buka) |
-| `chat_file_save` | `hash`, `dest` | null |
+| `chat_file_open` | `messageId`, `hash` | null (nama dari pesan itu; salin ke `<data>/chat-files/<hash>/<nama>`, beri Mark of the Web, lalu buka; file yang bisa menjalankan program ditolak) |
+| `chat_file_save` | `hash` | boolean (dialog Simpan dibuka di sisi Rust; false kalau dibatalkan) |
+| `chat_pick_files` | | `PickedFile[]` (dialog pilih file di sisi Rust; hanya path dari sini yang diterima `chat_send`) |
 | `chat_file_download` | `hash` | `FileView` |
 | `chat_set_notify` | `mode` | null |
 | `chat_set_muted` | `conv`, `muted` | null |

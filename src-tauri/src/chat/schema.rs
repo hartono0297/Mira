@@ -13,8 +13,15 @@
 //! is live, 1 once its recipient acked it, 2 when it expired unopened.
 //!
 //! `chat_blobs` lists the blobs chat put into the blob store (sent, fetched,
-//! decrypted) and whether the blob was already there. Chat serves only these
-//! to peers and deletes only those it created itself.
+//! decrypted) and whether the blob was already there. Chat deletes only those
+//! it created itself. `chat_blobs.convs` (JSON `[{"conv":..,"own":..}]`) says
+//! for which conversations this laptop holds a plain blob: `own` when it
+//! attached the file to its own message there, otherwise fetched or
+//! decrypted for a message there. A plain blob is served only to members of
+//! those conversations, and a preexisting one only through an `own` entry.
+//! `chat_fetch_queue.convs` (JSON list) keeps the conversations a queued
+//! plain download is for until it lands. `chat_envelopes.ack_failed` is 1 when the recipient acked
+//! an envelope it could not open.
 
 pub const CHAT_SCHEMA: &str = r#"
 CREATE TABLE chat_records (
@@ -89,6 +96,7 @@ CREATE TABLE chat_envelopes (
     deposited     INTEGER NOT NULL DEFAULT 0,
     opened        INTEGER NOT NULL DEFAULT 0,
     acked         INTEGER NOT NULL DEFAULT 0 CHECK (acked IN (0, 1, 2)),
+    ack_failed    INTEGER NOT NULL DEFAULT 0,
     open_error    TEXT
 ) STRICT;
 CREATE INDEX chat_envelopes_recipient ON chat_envelopes (recipient, opened, acked);
@@ -107,6 +115,7 @@ CREATE TABLE chat_fetch_queue (
     next_try_at   TEXT,
     first_error_at TEXT,
     last_error    TEXT,
+    convs         TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (hash, kind)
 ) STRICT;
 
@@ -114,7 +123,8 @@ CREATE TABLE chat_blobs (
     hash          TEXT PRIMARY KEY CHECK (length(hash) = 64),
     kind          TEXT NOT NULL CHECK (kind IN ('plain', 'cipher')),
     preexisting   INTEGER NOT NULL,
-    added_at      TEXT NOT NULL
+    added_at      TEXT NOT NULL,
+    convs         TEXT NOT NULL DEFAULT '[]'
 ) STRICT;
 
 CREATE TABLE chat_conv_settings (

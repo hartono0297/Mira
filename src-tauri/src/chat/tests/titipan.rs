@@ -124,7 +124,7 @@ fn titipan_with_small_attachment_goes_encrypted_through_custodian() {
     assert_eq!(view.state, FileState::Fetching);
     assert_eq!(run_fetches(c, &[b]), 1);
     assert_eq!(c.chat.file_view(&hash).unwrap().state, FileState::Local);
-    let path = c.chat.open_file_path(&hash, "nama-lain.exe").unwrap();
+    let path = c.chat.open_file_path(&m.id, &hash).unwrap();
     assert!(path.ends_with("kontrak.txt"));
     assert_eq!(std::fs::read(&path).unwrap(), file_secret);
 
@@ -190,13 +190,18 @@ fn acks_count_only_from_the_recipient_even_when_early() {
         now,
         Body::EnvelopeAck {
             envelope: env.clone(),
+            failed: false,
         },
     );
-    // Known envelope, wrong author: refused.
+    // Known envelope, wrong author: stored (every laptop keeps the same
+    // records) but it does nothing.
+    let got = a.chat_ingest(&b.pk, vec![fake.to_feature_record()]);
+    assert_eq!((got.accepted, got.rejected), (1, 0));
+    assert!(a.rejected_codes().is_empty());
     assert_eq!(
-        a.chat_ingest(&b.pk, vec![fake.to_feature_record()])
-            .rejected,
-        1
+        a.count("SELECT count(*) FROM chat_envelopes WHERE acked = 0"),
+        1,
+        "still live on the sender"
     );
     // Unknown envelope: stored, but it does nothing when the envelope arrives.
     assert_eq!(
@@ -235,7 +240,10 @@ fn early_ack_from_someone_else_leaves_the_envelope_live() {
         a,
         &o.org_id,
         crate::clock::now(),
-        Body::EnvelopeAck { envelope: env },
+        Body::EnvelopeAck {
+            envelope: env,
+            failed: false,
+        },
     );
     assert_eq!(
         b.chat_ingest(&a.pk, vec![fake.to_feature_record()])

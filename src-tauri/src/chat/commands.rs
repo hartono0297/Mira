@@ -142,10 +142,10 @@ pub async fn chat_message_receipts(
 pub async fn chat_file_open(
     app: AppHandle,
     rt: State<'_, ChatRuntime>,
+    message_id: String,
     hash: String,
-    name: String,
 ) -> AppResult<()> {
-    let path = run(&rt, move |c| c.open_file_path(&hash, &name)).await?;
+    let path = run(&rt, move |c| c.open_file_path(&message_id, &hash)).await?;
     let stored_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

@@ -126,7 +126,8 @@ export const chatApi = {
   deleteChannel: (conv: string) => call<null>("chat_delete_channel", { conv }),
   openDm: (publicKey: string) => call<ConversationSummary>("chat_open_dm", { publicKey }),
   messageReceipts: (messageId: string) => call<ReceiptView[]>("chat_message_receipts", { messageId }),
-  fileOpen: (hash: string, name: string) => call<null>("chat_file_open", { hash, name }),
+  // Membuka file lampiran pesan itu; nama file diambil inti Rust dari pesannya.
+  fileOpen: (messageId: string, hash: string) => call<null>("chat_file_open", { messageId, hash }),
   // Membuka dialog "Simpan sebagai" di sisi Rust. false kalau dibatalkan.
   fileSave: (hash: string) => call<boolean>("chat_file_save", { hash }),
   // Membuka dialog pilih file di sisi Rust. Daftar kosong kalau dibatalkan.

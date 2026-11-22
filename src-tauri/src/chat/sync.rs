@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use time::OffsetDateTime;
 
 use super::audience::{Ctx, ProjectAudience};
@@ -63,12 +63,20 @@ impl ChatSync {
         Ok(self.state.data_dir()?.to_path_buf())
     }
 
-    /// After a committed change: remove released blobs, then call the hooks
-    /// (outside the core lock, since hooks may call back into chat).
+    /// After a committed change: remove released blobs and opened copies of
+    /// files no message carries any more, then call the hooks (outside the
+    /// core lock, since hooks may call back into chat).
     pub(crate) fn finish(&self, fx: Effects) {
         for h in &fx.drop_blobs {
             if let Ok(hash) = BlobHash::parse(h) {
                 let _ = self.blobs.remove(&hash);
+            }
+        }
+        if let Ok(dir) = self.state.data_dir() {
+            for h in fx.drop_blobs.iter().chain(&fx.drop_open) {
+                if BlobHash::parse(h).is_ok() {
+                    let _ = std::fs::remove_dir_all(super::files::open_dir(dir, h));
+                }
             }
         }
         if fx.created {
@@ -247,6 +255,9 @@ impl ChatSync {
                     [&row.id],
                     |r| r.get(0),
                 )?;
+                // "Dititipkan" means handed to a custodian. Whether that
+                // laptop actually stored it is not knowable from here; an
+                // ack or a delivered receipt later replaces the state.
                 if row.kind == "envelope"
                     && row.author == me
                     && row.recipient.as_deref() != Some(peer)
@@ -397,6 +408,8 @@ fn auto_downloads(
                 continue;
             };
             if blobs.contains(&hash) {
+                // Already here (another message, documents): not fetched for
+                // this conversation, so it is not served to it either.
                 fetch::track(ctx.conn, &f.hash, FetchKind::Plain, true, &now_s)?;
                 continue;
             }
@@ -417,6 +430,7 @@ fn auto_downloads(
                 0,
                 &now_s,
             )?;
+            fetch::queue_for_conv(ctx.conn, &f.hash, &m.conv)?;
             queued = true;
         }
     }
@@ -433,12 +447,19 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
     if mode == NotifyMode::Off {
         return Ok(());
     }
-    // One notification per conversation: its latest new message.
+    // One notification per conversation: its latest new message that the
+    // mode lets through (in "mentions" mode, the latest that mentions me).
+    let me = ctx.me().to_owned();
     let mut latest: BTreeMap<String, usize> = BTreeMap::new();
     for (i, m) in fx.new_messages.iter().enumerate() {
+        if mode == NotifyMode::Mentions {
+            let direct = ctx.conv(&m.conv)?.is_some_and(|c| !c.is_channel());
+            if !direct && !m.mentions.contains(&me) {
+                continue;
+            }
+        }
         latest.insert(m.conv.clone(), i);
     }
-    let me = ctx.me().to_owned();
     let mut out = Vec::new();
     for (conv, i) in latest {
         let m = &fx.new_messages[i];
@@ -448,10 +469,6 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
         let Some(info) = ctx.conv(&conv)? else {
             continue;
         };
-        let mention = !info.is_channel() || m.mentions.contains(&me);
-        if mode == NotifyMode::Mentions && !mention {
-            continue;
-        }
         let sender = ctx.dir.name(&m.author);
         let title = if info.is_channel() {
             format!("{sender} di #{}", info.name)
@@ -512,11 +529,23 @@ impl FeatureSync for ChatSync {
     }
 
     fn peer_connected(&self, _peer: &str) {
+        // The new peer may hold what failed before: try every job now.
+        let _ = self.state.with_core(|core| fetch::reset_backoff(&core.db));
         self.hooks.wake_fetcher();
     }
 }
 
 impl ChatSync {
+    /// Chat serves only blobs it holds on purpose (see schema.rs, fetch.rs):
+    /// - a cipher file it created (`preexisting = 0`) that an unacked
+    ///   envelope lists, to any active member;
+    /// - a plain file to a member of a conversation it holds the file for
+    ///   (attached by this laptop, fetched or decrypted for a message there)
+    ///   while a message there still carries it. A blob that was in the store
+    ///   before chat touched it (documents, signing) is served only where this
+    ///   laptop attached it to its own message.
+    ///
+    /// A message naming a hash is never enough on its own.
     fn blob_allowed(&self, peer: &str, hash: &str) -> AppResult<Option<PathBuf>> {
         let Ok(parsed) = BlobHash::parse(hash) else {
             return Ok(None);
@@ -525,39 +554,58 @@ impl ChatSync {
             return Ok(None);
         }
         let allowed = self.state.with_core(|core| {
-            if !fetch::is_tracked(&core.db, hash)? {
+            let tracked: Option<(String, bool)> = core
+                .db
+                .query_row(
+                    "SELECT kind, preexisting != 0 FROM chat_blobs WHERE hash = ?1",
+                    [hash],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((kind, preexisting)) = tracked else {
                 return Ok(false);
-            }
+            };
             let me = core.identity.public_key_hex().to_owned();
             let Some(ctx) = Ctx::load(&core.db, &me, self.projects.as_ref())? else {
                 return Ok(false);
             };
-            if !ctx.dir.is_active(peer) {
+            if !ctx.dir.is_active(peer) || peer == me {
                 return Ok(false);
             }
-            let mut stmt = core.db.prepare(
-                "SELECT DISTINCT m.conv FROM chat_files f JOIN chat_messages m ON m.id = f.message_id
-                 WHERE f.hash = ?1 AND m.deleted = 0",
-            )?;
-            let convs = stmt.query_map([hash], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
-            for conv in convs {
-                if let Some(info) = ctx.conv(&conv)?
-                    && !info.deleted
-                    && ctx.in_audience(&info, peer)?
-                {
-                    return Ok(true);
-                }
+            if kind == FetchKind::Cipher.as_str() {
+                return Ok(!preexisting && fetch::live_envelope_lists(&core.db, hash)?);
             }
-            let pattern = format!("%\"{hash}\"%");
-            let live: i64 = core.db.query_row(
-                "SELECT count(*) FROM chat_envelopes WHERE acked = 0 AND cipher_files LIKE ?1",
-                [pattern],
-                |r| r.get(0),
-            )?;
-            Ok(live > 0)
+            plain_allowed(&ctx, peer, hash, preexisting)
         })?;
         Ok(allowed.then(|| self.blobs.path_of(&parsed)))
     }
+}
+
+fn plain_allowed(ctx: &Ctx, peer: &str, hash: &str, preexisting: bool) -> AppResult<bool> {
+    for held in fetch::blob_convs(ctx.conn, hash)? {
+        if preexisting && !held.own {
+            continue;
+        }
+        // A message there must still carry the file (for a preexisting blob,
+        // this laptop's own message).
+        let live: bool = ctx.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM chat_files f JOIN chat_messages m ON m.id = f.message_id
+                            WHERE f.hash = ?1 AND m.conv = ?2 AND m.deleted = 0
+                              AND (?3 = 0 OR m.author = ?4))",
+            params![hash, held.conv, preexisting, ctx.me()],
+            |r| r.get(0),
+        )?;
+        if !live {
+            continue;
+        }
+        if let Some(info) = ctx.conv(&held.conv)?
+            && !info.deleted
+            && ctx.in_audience(&info, peer)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 impl BlobSource for ChatSync {

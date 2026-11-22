@@ -284,7 +284,7 @@ describe("Percakapan: kartu file", () => {
     withFiles();
     renderConv();
     await user.click(await screen.findByRole("button", { name: "Buka kontrak.pdf" }));
-    expect(chat.fileOpen).toHaveBeenCalledWith("1".repeat(64), "kontrak.pdf");
+    expect(chat.fileOpen).toHaveBeenCalledWith("f1", "1".repeat(64));
     await user.click(screen.getByRole("button", { name: "Simpan kontrak.pdf sebagai" }));
     expect(chat.fileSave).toHaveBeenCalledWith("1".repeat(64));
     expect(await screen.findByText("kontrak.pdf tersimpan.")).toBeInTheDocument();

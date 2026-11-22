@@ -47,6 +47,9 @@ pub struct Effects {
     pub queued: bool,
     /// Blobs chat created that nothing references any more.
     pub drop_blobs: Vec<String>,
+    /// Files no message carries any more: their opened copies under
+    /// `<data_dir>/chat-files/<hash>/` are removed.
+    pub drop_open: Vec<String>,
     pub notifications: Vec<MessageNotification>,
 }
 
@@ -75,7 +78,7 @@ pub fn unknown_ids(conn: &Connection, ids: &[String]) -> AppResult<Vec<String>> 
 fn target_of(body: &Body) -> Option<&str> {
     match body {
         Body::MessageDelete { message, .. } => Some(message),
-        Body::EnvelopeAck { envelope } => Some(envelope),
+        Body::EnvelopeAck { envelope, .. } => Some(envelope),
         _ => None,
     }
 }
@@ -180,9 +183,9 @@ pub fn apply(
             fx.visible = true;
         }
         Body::Envelope { .. } => envelope::apply_envelope(ctx, rec, from, now, fx)?,
-        Body::EnvelopeAck { envelope } => {
+        Body::EnvelopeAck { envelope, failed } => {
             insert_record(conn, rec, true, from, now)?;
-            envelope::apply_ack(ctx, rec.author(), envelope, fx)?;
+            envelope::apply_ack(ctx, rec.author(), envelope, *failed, fx)?;
         }
     }
     Ok(())
@@ -248,7 +251,7 @@ fn channel_delete(ctx: &Ctx, conv: &str, fx: &mut Effects) -> AppResult<()> {
     )?;
     conn.execute("DELETE FROM chat_messages WHERE conv = ?1", [conv])?;
     conn.execute("DELETE FROM chat_receipts WHERE conv = ?1", [conv])?;
-    release_files(conn, &hashes, fx)?;
+    release_files(conn, conv, &hashes, fx)?;
     ctx.forget(conv);
     Ok(())
 }
@@ -261,9 +264,25 @@ fn file_hashes(conn: &Connection, sql: &str, arg: &str) -> AppResult<Vec<String>
     Ok(rows)
 }
 
-/// Drops downloads and chat-created blobs no message needs any more.
-fn release_files(conn: &Connection, hashes: &[String], fx: &mut Effects) -> AppResult<()> {
+/// After messages of `conv` lost their files: forgets that a file is held for
+/// `conv` when no message there carries it, and drops downloads, opened
+/// copies and chat-created blobs no message needs any more.
+fn release_files(
+    conn: &Connection,
+    conv: &str,
+    hashes: &[String],
+    fx: &mut Effects,
+) -> AppResult<()> {
     for h in hashes {
+        let in_conv: i64 = conn.query_row(
+            "SELECT count(*) FROM chat_files f JOIN chat_messages m ON m.id = f.message_id
+             WHERE f.hash = ?1 AND m.conv = ?2 AND m.deleted = 0",
+            params![h, conv],
+            |r| r.get(0),
+        )?;
+        if in_conv == 0 {
+            fetch::forget_conv(conn, h, conv)?;
+        }
         let still: i64 = conn.query_row(
             "SELECT count(*) FROM chat_files WHERE hash = ?1",
             [h],
@@ -272,6 +291,7 @@ fn release_files(conn: &Connection, hashes: &[String], fx: &mut Effects) -> AppR
         if still > 0 {
             continue;
         }
+        fx.drop_open.push(h.clone());
         fetch::unqueue(conn, h, FetchKind::Plain)?;
         if fetch::release(conn, h)? {
             fx.drop_blobs.push(h.clone());
@@ -392,16 +412,26 @@ fn message_delete(
     let conn = ctx.conn;
     insert_record(conn, rec, true, from, now)?;
     fx.visible = true;
-    let row: Option<bool> = conn
+    let row: Option<(bool, String, String)> = conn
         .query_row(
-            "SELECT placeholder FROM chat_messages WHERE id = ?1",
+            "SELECT placeholder, author, conv FROM chat_messages WHERE id = ?1",
             [message],
-            |r| Ok(r.get::<_, i64>(0)? != 0),
+            |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
     match row {
-        // The judge checked the real author against this delete.
-        Some(false) => {
+        // Checked against the real message the same way as a message that
+        // arrives after its delete (`valid_delete_exists`): a delete naming
+        // another conversation, or by someone who may not delete the real
+        // author's message, is stored and does nothing.
+        Some((false, real_author, real_conv)) => {
+            let applies = match ctx.conv(&real_conv)? {
+                Some(info) => judge::delete_applies(ctx, &info, conv, rec.author(), &real_author)?,
+                None => false,
+            };
+            if !applies {
+                return Ok(());
+            }
             let hashes = file_hashes(
                 conn,
                 "SELECT hash FROM chat_files WHERE message_id = ?1",
@@ -414,9 +444,9 @@ fn message_delete(
             )?;
             conn.execute("DELETE FROM chat_files WHERE message_id = ?1", [message])?;
             purge_record(conn, message)?;
-            release_files(conn, &hashes, fx)?;
+            release_files(conn, &real_conv, &hashes, fx)?;
         }
-        Some(true) => {}
+        Some((true, ..)) => {}
         None => {
             // Shown as "Pesan dihapus" until the message itself arrives and
             // the delete is checked against its real author.
