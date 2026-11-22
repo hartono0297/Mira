@@ -27,3 +27,6 @@ npm-debug.log*
 # Data Mira saat pengujian lokal
 .mira-data/
 .claude/worktrees/
+
+# Obsidian: tata letak lokal
+obsidian/.obsidian/workspace*.json
