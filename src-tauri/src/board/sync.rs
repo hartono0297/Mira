@@ -13,17 +13,39 @@
 //! 1. already known: `Duplicate`;
 //! 2. envelope (hex fields, size, uncompressed chunk, signature;
 //!    `sign::verify_envelope`), wrong project: `Rejected`;
-//! 3. the author may write in the project now. If not, an author who was
-//!    never a member is `Held` without parsing anything; otherwise the change
-//!    is parsed and judged at its own time (`BoardPolicy::check_at`): the
-//!    right counts when the author lost it after the change was made;
+//! 3. an author who may not write now and was never a member is `Held`
+//!    without parsing anything;
 //! 4. parsing (`sign::parse_change`): `Rejected` on failure;
-//! 5. applied alone, in dependency order, with the document shape checked
-//!    (`BoardDoc::apply_remote`, `Rejected` on failure), then the meaning:
-//!    tasks it deletes need `DeleteTask` and a changed project name or code
-//!    needs `ManageProject` (at the change's time, otherwise `Held` and the
-//!    document is restored); a changed project id or team is `Rejected`;
-//! 6. whatever still misses a parent change: `MissingDeps`.
+//! 5. the author may write in the project (see "Rights lost later" below),
+//!    otherwise `Held`;
+//! 6. applied alone, in dependency order. Only the project's first change
+//!    (the one `import_project` picked) skips `rules::judge`; any other
+//!    change without dependencies is `Rejected`. Every other change is
+//!    judged by its operations (`Rejected` when refused), tasks it deletes
+//!    need `DeleteTask` and a changed project name or code needs
+//!    `ManageProject` (see below, otherwise `Held`). Then the document shape
+//!    is checked (`BoardDoc::apply_remote`) and the project id must still be
+//!    the stored one; on failure `Rejected` and the document is restored;
+//! 7. whatever still misses a parent change: `MissingDeps`.
+//!
+//! Rights lost later. Each right (write, delete a task, manage the project,
+//! create the project for the first change) is checked against the current
+//! membership first. When the author lacks it now, the change is accepted
+//! only when both hold:
+//! - the author had the right when the change was made
+//!   (`BoardPolicy::check_at`, `access::RightsHistory::allowed_at`); and
+//! - the change is supported: another change of the same batch, written by
+//!   someone else who may write in the project now, depends on it directly
+//!   or through a chain of dependencies inside the batch.
+//!
+//! The change's time is the author's own clock, so the history alone would
+//! let someone who lost a right backdate a change. A colleague who still has
+//! the right and built on the change has seen it before the loss reached
+//! them, which a backdated change cannot get. This applies to everyone:
+//! members moved out of a team or demoted, and people removed from the
+//! organization. An unsupported change stays `Held`; it is accepted in a
+//! later batch that also holds a supporting change (the caller retries held
+//! changes together with the project's other pending changes).
 //!
 //! `Rejected` changes are logged in `rejected_changes`; `Held` ones are not
 //! (the caller logs them once, it knows whether this is a retry). Neither is
@@ -36,10 +58,13 @@
 //! adds them to the team. The caller retries held changes when the
 //! membership changes.
 
+use std::collections::{HashMap, HashSet};
+
 use automerge::{Change, ChangeHash};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use time::OffsetDateTime;
 
+use super::access::{ProjectRef, Rights};
 use super::doc::{BoardDoc, ProjectMeta};
 use super::rules;
 use super::model::{validate_project_code, validate_project_name};
@@ -194,6 +219,7 @@ pub fn apply_remote_changes(
         &mut doc,
         from_peer,
         changes,
+        None,
         clock::now(),
         &mut report,
     )?;
@@ -202,6 +228,79 @@ pub fn apply_remote_changes(
     }
     tx.commit()?;
     Ok(report)
+}
+
+/// The parsed changes of one batch and who builds on whom, to tell whether
+/// a change is supported (module docs, "Rights lost later").
+struct BatchGraph {
+    /// `(hash, author)` per change.
+    nodes: Vec<(String, String)>,
+    /// Dependency hash -> changes of the batch that list it.
+    children: HashMap<String, Vec<usize>>,
+}
+
+impl BatchGraph {
+    fn new<'a>(changes: impl IntoIterator<Item = (&'a SignedChange, &'a Change)>) -> BatchGraph {
+        let mut nodes = Vec::new();
+        let mut children: HashMap<String, Vec<usize>> = HashMap::new();
+        for (sc, change) in changes {
+            let i = nodes.len();
+            nodes.push((change.hash().to_string(), sc.author.clone()));
+            for dep in change.deps() {
+                children.entry(dep.to_string()).or_default().push(i);
+            }
+        }
+        BatchGraph { nodes, children }
+    }
+
+    /// Whether a change of the batch that depends on `hash`, directly or
+    /// through other changes of the batch, was written by someone other
+    /// than `author` for whom `writes_now` holds.
+    fn supported(&self, hash: &str, author: &str, writes_now: impl Fn(&str) -> bool) -> bool {
+        let mut seen: HashSet<usize> = HashSet::new();
+        let mut todo = vec![hash];
+        while let Some(h) = todo.pop() {
+            for &i in self.children.get(h).into_iter().flatten() {
+                if !seen.insert(i) {
+                    continue;
+                }
+                let (child, by) = &self.nodes[i];
+                if by != author && writes_now(by) {
+                    return true;
+                }
+                todo.push(child);
+            }
+        }
+        false
+    }
+}
+
+/// Appended to the reason when a right the author had at the change's time
+/// still lacks a colleague's support.
+const UNSUPPORTED: &str = "Perubahan ini dibuat saat penulis masih berhak, dan akan diterima begitu ada rekan yang masih berhak melanjutkannya.";
+
+/// `Ok(Ok(()))` when `author` may do `action` now, or had the right at `at`
+/// and `supported()` holds (module docs, "Rights lost later"); otherwise
+/// `Ok(Err(reason))`.
+fn may_do(
+    tx: &Transaction<'_>,
+    policy: &dyn BoardPolicy,
+    author: &str,
+    action: &BoardAction,
+    at: i64,
+    supported: impl FnOnce() -> bool,
+) -> AppResult<Result<(), String>> {
+    let Err(now) = policy.check(tx, author, action) else {
+        return Ok(Ok(()));
+    };
+    if let Err(e) = policy.check_at(tx, author, action, at) {
+        return Ok(Err(e.to_string()));
+    }
+    if supported() {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(format!("{now} {UNSUPPORTED}")))
+    }
 }
 
 /// Whether `pk` was ever a member of the organization (active or removed).
@@ -223,50 +322,12 @@ fn held(code: &'static str, detail: impl Into<String>) -> ChangeOutcome {
     }
 }
 
-/// Result of step 3 and 4 of the module docs.
-enum Gate {
-    /// The author may write; the parsed change.
-    Ok(Box<Change>),
-    /// Not allowed (yet).
-    Held(ChangeOutcome),
-    /// The change cannot be parsed.
-    Bad(ChangeRejection),
-}
-
-/// Steps 3 and 4 of the module docs.
-fn author_may_write(
-    tx: &Transaction<'_>,
-    policy: &dyn BoardPolicy,
-    sc: &SignedChange,
-    action: &BoardAction,
-) -> AppResult<Gate> {
-    let now = policy.check(tx, &sc.author, action);
-    if now.is_err() && !ever_member(tx, &sc.author)? {
-        return Ok(Gate::Held(held(
-            "board_forbidden",
-            format!("penulis {} bukan anggota organisasi", short(&sc.author)),
-        )));
-    }
-    let change = match parse_change(sc) {
-        Ok(c) => c,
-        Err(r) => return Ok(Gate::Bad(r)),
-    };
-    if now.is_err()
-        && let Err(e) = policy.check_at(tx, &sc.author, action, change.timestamp())
-    {
-        return Ok(Gate::Held(held(
-            "board_forbidden",
-            format!("penulis {}: {e}", short(&sc.author)),
-        )));
-    }
-    Ok(Gate::Ok(Box::new(change)))
-}
-
 /// Creates a project from its changes as received from a peer. The first
 /// change (the one without dependencies) defines the project: its author is
-/// the creator and must have been allowed to create projects for that team
-/// when the change was made, and its timestamp is the creation time. When
-/// the project already exists this is `apply_remote_changes`.
+/// the creator and must be allowed to create projects for that team (now,
+/// or at the change's time with a colleague's support, module docs), and its
+/// timestamp is the creation time. When the project already exists this is
+/// `apply_remote_changes`.
 ///
 /// When the project cannot be created yet (first change missing or held),
 /// nothing is stored and every change gets `NoProject` (the first change
@@ -293,30 +354,62 @@ pub fn import_project(
         }
     };
 
-    // Candidates for the first change: right project, valid envelope, no
-    // dependencies. Authors who were never members are not parsed. Every
-    // candidate is tried in hash order, so a bogus first change sent ahead of
-    // the real one cannot block the import, and every laptop picks the same.
-    let mut candidates: Vec<(SignedChange, Change)> = Vec::new();
+    // Every change of the batch with the right project and a valid envelope
+    // is parsed (authors who were never members are not), to tell whether a
+    // first change is supported. Candidates for the first change are those
+    // without dependencies. Every candidate is tried in hash order, so a
+    // bogus first change sent ahead of the real one cannot block the import,
+    // and every laptop picks the same.
+    let mut parsed: Vec<(SignedChange, Change)> = Vec::new();
     for sc in &changes {
         if sc.project_id != project_id || verify_envelope(sc).is_err() {
             continue;
         }
-        if !ever_member(&tx, &sc.author)? {
+        if parsed.iter().any(|(x, _)| x.hash == sc.hash) || !ever_member(&tx, &sc.author)? {
             continue;
         }
-        if let Ok(c) = parse_change(sc)
-            && c.deps().is_empty()
-            && !candidates.iter().any(|(x, _)| x.hash == sc.hash)
-        {
-            candidates.push((sc.clone(), c));
+        if let Ok(c) = parse_change(sc) {
+            parsed.push((sc.clone(), c));
         }
     }
+    let graph = BatchGraph::new(parsed.iter().map(|(sc, c)| (sc, c)));
+    let mut candidates: Vec<(SignedChange, Change)> = parsed
+        .into_iter()
+        .filter(|(_, c)| c.deps().is_empty())
+        .collect();
     candidates.sort_by(|a, b| a.0.hash.cmp(&b.0.hash));
+    let mut rights: Option<Rights> = None;
     let mut root: Option<(SignedChange, i64, ProjectMeta)> = None;
     let mut logged = false;
     for (sc, change) in candidates {
         let creator = sc.author.clone();
+        // Refused before anything is applied, as `rules::judge` does for
+        // every later change.
+        if change.len() > rules::MAX_CHANGE_OPS {
+            log(
+                &tx,
+                from_peer,
+                &ChangeRejection::new(
+                    "board_bad_project",
+                    format!(
+                        "proyek {} perubahan {}: perubahan pertama berisi {} operasi, lebih dari batas {}",
+                        short(project_id),
+                        short(&sc.hash),
+                        change.len(),
+                        rules::MAX_CHANGE_OPS
+                    ),
+                ),
+                now,
+            )?;
+            logged = true;
+            report.push(
+                &sc.hash,
+                ChangeOutcome::Rejected {
+                    code: "board_bad_project",
+                },
+            );
+            continue;
+        }
         let mut probe = BoardDoc::empty(&MERGE_ACTOR);
         let time = change.timestamp();
         let probe_ok = probe.apply_remote(change, &creator).is_ok();
@@ -353,7 +446,25 @@ pub fn import_project(
         let create = BoardAction::CreateProject {
             team_id: meta.team_id.clone(),
         };
-        if let Err(e) = policy.check_at(&tx, &creator, &create, time) {
+        if rights.is_none() {
+            rights = Some(Rights::load(&tx)?);
+        }
+        let writes_now = |pk: &str| {
+            rights.as_ref().is_some_and(|r| {
+                r.can_write(
+                    pk,
+                    ProjectRef {
+                        id: project_id,
+                        team_id: meta.team_id.as_deref(),
+                        created_by: &creator,
+                    },
+                )
+            })
+        };
+        let allowed = may_do(&tx, policy, &creator, &create, time, || {
+            graph.supported(&sc.hash, &creator, writes_now)
+        })?;
+        if let Err(e) = allowed {
             report.push(
                 &sc.hash,
                 held(
@@ -412,6 +523,7 @@ pub fn import_project(
         &mut doc,
         from_peer,
         changes,
+        Some(&root_sc.hash),
         now,
         &mut report,
     )?;
@@ -448,6 +560,9 @@ fn log(
     permissions::log_rejection(conn, from_peer, None, r.code, &r.detail, now)
 }
 
+/// Steps 1 to 7 of the module docs for one batch. `root` is the hash of the
+/// project's first change when `import_project` creates the project now: the
+/// only change allowed to skip `rules::judge`.
 #[allow(clippy::too_many_arguments)]
 fn ingest(
     tx: &Transaction<'_>,
@@ -456,15 +571,19 @@ fn ingest(
     doc: &mut BoardDoc,
     from_peer: Option<&str>,
     changes: Vec<SignedChange>,
+    root: Option<&str>,
     now: OffsetDateTime,
     report: &mut ApplyReport,
 ) -> AppResult<()> {
-    let mut pending: Vec<(SignedChange, Change)> = Vec::new();
     let write = BoardAction::RemoteChange {
         project_id: row.id.clone(),
     };
+    // Steps 1 to 4: every change that may be judged further is parsed, also
+    // when its author may not write now, so support can be told.
+    let mut parsed: Vec<(SignedChange, Change)> = Vec::new();
+    let mut writes_now: HashMap<String, bool> = HashMap::new();
     for sc in changes {
-        if report.outcome(&sc.hash).is_some() || pending.iter().any(|(p, _)| p.hash == sc.hash) {
+        if report.outcome(&sc.hash).is_some() || parsed.iter().any(|(p, _)| p.hash == sc.hash) {
             // The same change twice in one batch: counted, reported once.
             report.duplicates += 1;
             continue;
@@ -490,15 +609,51 @@ fn ingest(
             reject(tx, report, row, &sc, from_peer, r, now)?;
             continue;
         }
-        match author_may_write(tx, policy, &sc, &write)? {
-            Gate::Ok(change) => pending.push((sc, *change)),
-            Gate::Bad(r) => reject(tx, report, row, &sc, from_peer, r, now)?,
-            Gate::Held(outcome) => report.push(&sc.hash, outcome),
+        let writer = match writes_now.get(&sc.author) {
+            Some(w) => *w,
+            None => {
+                let w = policy.check(tx, &sc.author, &write).is_ok();
+                writes_now.insert(sc.author.clone(), w);
+                w
+            }
+        };
+        if !writer && !ever_member(tx, &sc.author)? {
+            report.push(
+                &sc.hash,
+                held(
+                    "board_forbidden",
+                    format!("penulis {} bukan anggota organisasi", short(&sc.author)),
+                ),
+            );
+            continue;
+        }
+        match parse_change(&sc) {
+            Ok(change) => parsed.push((sc, change)),
+            Err(r) => reject(tx, report, row, &sc, from_peer, r, now)?,
+        }
+    }
+    let graph = BatchGraph::new(parsed.iter().map(|(sc, c)| (sc, c)));
+    let writer = |pk: &str| writes_now.get(pk).copied().unwrap_or(false);
+    let supported = |sc: &SignedChange| graph.supported(&sc.hash, &sc.author, writer);
+
+    // Step 5: the write right.
+    let mut pending: Vec<(SignedChange, Change)> = Vec::new();
+    for (sc, change) in parsed {
+        if writer(&sc.author) {
+            pending.push((sc, change));
+            continue;
+        }
+        match may_do(tx, policy, &sc.author, &write, change.timestamp(), || supported(&sc))? {
+            Ok(()) => pending.push((sc, change)),
+            Err(e) => report.push(
+                &sc.hash,
+                held("board_forbidden", format!("penulis {}: {e}", short(&sc.author))),
+            ),
         }
     }
 
-    // Apply in dependency order, one change at a time, so a bad change is
-    // refused alone; whatever still misses a dependency waits.
+    // Step 6: apply in dependency order, one change at a time, so a bad
+    // change is refused alone; whatever still misses a dependency waits.
     let mut applied_any = false;
     loop {
         let ready = pending
@@ -509,10 +664,19 @@ fn ingest(
         let time = change.timestamp();
         // A project document is born from its first change, which
         // `import_project` validated; every later change is judged by its
-        // operations before it touches the document.
-        let first = doc.project().id.is_empty();
-        let needs = if first {
+        // operations before it touches the document. Every change of a
+        // project builds on its first change, so any other change without
+        // dependencies is refused whatever it contains.
+        let is_root = root == Some(sc.hash.as_str());
+        let needs = if is_root {
             rules::Needs::default()
+        } else if change.deps().is_empty() {
+            let r = ChangeRejection::new(
+                "board_not_allowed",
+                "perubahan tanpa induk, padahal bukan perubahan pertama proyek",
+            );
+            reject(tx, report, row, &sc, from_peer, r, now)?;
+            continue;
         } else {
             match rules::judge(doc, &change) {
                 Ok(n) => n,
@@ -528,7 +692,7 @@ fn ingest(
             let manage = BoardAction::ManageProject {
                 project_id: row.id.clone(),
             };
-            if let Err(e) = policy.check_at(tx, &sc.author, &manage, time) {
+            if let Err(e) = may_do(tx, policy, &sc.author, &manage, time, || supported(&sc))? {
                 refusal = Some(format!("mengubah proyek: {e}"));
             }
         }
@@ -541,7 +705,7 @@ fn ingest(
                 task_id: task_id.clone(),
                 created_by: created_by.clone(),
             };
-            if let Err(e) = policy.check_at(tx, &sc.author, &delete, time) {
+            if let Err(e) = may_do(tx, policy, &sc.author, &delete, time, || supported(&sc))? {
                 refusal = Some(format!("menghapus task {}: {e}", short(task_id)));
             }
         }
@@ -555,17 +719,27 @@ fn ingest(
             );
             continue;
         }
-        let backup = (!needs.new_comments.is_empty() || !needs.new_activity.is_empty())
+        let backup = (is_root || !needs.new_comments.is_empty() || !needs.new_activity.is_empty())
             .then(|| doc.fork());
+        let applied_hash = change.hash();
         if let Err((code, detail)) = doc.apply_remote(change, &sc.author) {
             reject(tx, report, row, &sc, from_peer, ChangeRejection::new(code, detail), now)?;
             continue;
         }
-        if let Err(detail) = rules::check_new_authorship(doc, &needs, &sc.author) {
-            if let Some(b) = backup {
-                *doc = b;
-            }
-            let r = ChangeRejection::new("board_not_allowed", detail);
+        let after = if doc.project().id != row.id {
+            Err(ChangeRejection::new(
+                "board_invalid_doc",
+                "perubahan mengubah id proyek di dokumen",
+            ))
+        } else {
+            rules::check_new_authorship(doc, &needs, &sc.author)
+                .map_err(|detail| ChangeRejection::new("board_not_allowed", detail))
+        };
+        if let Err(r) = after {
+            *doc = match backup {
+                Some(b) => b,
+                None => without_change(doc, applied_hash)?,
+            };
             reject(tx, report, row, &sc, from_peer, r, now)?;
             continue;
         }
@@ -580,6 +754,18 @@ fn ingest(
         store::save_doc(tx, row, doc, now)?;
     }
     Ok(())
+}
+
+/// `doc` rebuilt without `hash`, the change applied last (nothing depends on
+/// it yet), for a refusal after applying without a backup at hand.
+fn without_change(doc: &mut BoardDoc, hash: ChangeHash) -> AppResult<BoardDoc> {
+    let mut out = BoardDoc::empty(&MERGE_ACTOR);
+    for change in doc.changes_after(&[]) {
+        if change.hash() != hash {
+            out.apply(change)?;
+        }
+    }
+    Ok(out)
 }
 
 fn reject(
