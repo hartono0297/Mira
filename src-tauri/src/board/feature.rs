@@ -7,13 +7,17 @@
 //! - Offering: only changes of projects the peer may read now
 //!   (`access::Rights::can_read`), checked again for every requested id.
 //!   Received changes that are not applied (`board_pending`) or refused
-//!   (`board_rejected`) are never offered.
+//!   (`board_rejected`) are never offered. One `records_for` call returns at
+//!   most [`MAX_RECORDS_FOR_BYTES`] of bodies; the peer asks for the rest
+//!   in its next round (they are still unknown there).
 //! - Receiving: the record shape and envelope (signature) are checked first;
 //!   a failure is refused for good. The rest goes per project through
 //!   `sync::import_project` (which hands known projects to
 //!   `apply_remote_changes`), together with what is still pending for that
 //!   project, so a waiting chain continues when its missing link arrives.
-//!   The outcome of each change decides where it goes:
+//!   Changes are handed to `sync` one sending peer at a time, so its logs
+//!   and `received_from` name the peer that sent each change. The outcome of
+//!   each change decides where it goes:
 //!
 //!   | outcome | stored in |
 //!   |---|---|
@@ -21,16 +25,26 @@
 //!   | missing parent, over the batch limit | `board_pending`, reason `deps` |
 //!   | project unknown | `board_pending`, reason `project` |
 //!   | author (a member) lacks the right | `board_pending`, reason `rights`, logged once |
-//!   | author never seen as a member | nothing (offered and checked again later) |
-//!   | author is a guest | `board_rejected`, logged |
+//!   | author is a guest now and lacks the right | nothing |
 //!   | refused | `board_rejected` (logged by `sync` or here) |
+//!
+//!   Only authors this laptop has seen as members (a row in `members`,
+//!   active or removed) get a `board_pending` row. For anyone else nothing is
+//!   stored or logged, whatever the outcome: the op admitting them may still
+//!   be on its way, so the record is offered and checked again later, and
+//!   keys outside the organization cannot fill the table. A held change of
+//!   someone who is a guest here is treated the same way: the op making them
+//!   a member may still be on its way, and refusing it for good would leave
+//!   this laptop without a change the others accept.
 //!
 //! - Held changes (`rights`) are retried when the membership log changes,
 //!   checked in `ingest`, `record_ids_for` and `peer_connected`.
 //! - `board_pending` is bounded: [`MAX_PENDING_ROWS`] and
-//!   [`MAX_PENDING_BYTES`] in total, [`MAX_PENDING_PER_SENDER`] rows per
-//!   sending peer; `deps` and `project` rows older than [`PENDING_MAX_AGE`]
-//!   are dropped at the next `ingest`.
+//!   [`MAX_PENDING_BYTES`] in total, [`MAX_PENDING_PER_SENDER`] rows and
+//!   [`MAX_PENDING_BYTES_PER_SENDER`] per sending peer. At the next `ingest`,
+//!   `deps` and `project` rows older than [`PENDING_MAX_AGE`] and `rights`
+//!   rows older than [`PENDING_RIGHTS_MAX_AGE`] are dropped (age counts from
+//!   the first receipt, also after the reason changed).
 //! - After changes were applied to a project, duplicate task numbers are
 //!   resolved (`numbers::renumber_duplicates`) and the hook is told: it
 //!   checks the reminders and offers the new changes to the other peers
@@ -39,10 +53,10 @@
 //! [`BoardSyncNotifier`] is the hook for local changes: the reminders plus
 //! `FeatureHub::notify_changed`. [`register`] wires both into the app.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 use tauri::Manager;
 use time::OffsetDateTime;
 
@@ -68,8 +82,15 @@ pub const MAX_PENDING_ROWS: i64 = 20_000;
 pub const MAX_PENDING_BYTES: i64 = 64 * 1024 * 1024;
 /// Most rows in `board_pending` received from one peer.
 pub const MAX_PENDING_PER_SENDER: i64 = 5_000;
+/// Most body bytes in `board_pending` received from one peer.
+pub const MAX_PENDING_BYTES_PER_SENDER: i64 = 8 * 1024 * 1024;
 /// Pending `deps` and `project` rows older than this are dropped.
 pub const PENDING_MAX_AGE: time::Duration = time::Duration::days(30);
+/// Pending `rights` rows older than this are dropped; the right is not
+/// coming (peers offer the change again if it is ever allowed).
+pub const PENDING_RIGHTS_MAX_AGE: time::Duration = time::Duration::days(90);
+/// Most body bytes one `records_for` call returns.
+pub const MAX_RECORDS_FOR_BYTES: usize = 8 * 1024 * 1024;
 /// Safety cap on apply rounds for one project in one call.
 const MAX_ROUNDS: usize = 64;
 
@@ -228,44 +249,42 @@ impl FeatureSync for BoardFeature {
             if readable.is_empty() {
                 return Ok(Vec::new());
             }
-            let mut stmt = core.db.prepare(
-                "SELECT rowid, project_id, hash, author, seq, bytes, sig FROM board_changes
-                 WHERE record_id = ?1",
-            )?;
+            // Rows first, without their bytes: only what fits is loaded.
+            let mut find =
+                core.db.prepare("SELECT rowid, project_id FROM board_changes WHERE record_id = ?1")?;
             let mut seen = HashSet::new();
-            let mut found: Vec<(i64, SignedChange)> = Vec::new();
+            let mut rowids = Vec::new();
             for id in ids {
                 if !seen.insert(id.as_str()) {
                     continue;
                 }
-                let row = stmt
-                    .query_row([id], |r| {
-                        let seq: i64 = r.get(4)?;
-                        Ok((
-                            r.get::<_, i64>(0)?,
-                            SignedChange {
-                                project_id: r.get(1)?,
-                                hash: r.get(2)?,
-                                author: r.get(3)?,
-                                seq: u64::try_from(seq).unwrap_or_default(),
-                                bytes: r.get(5)?,
-                                sig: r.get(6)?,
-                            },
-                        ))
-                    })
+                let row = find
+                    .query_row([id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
                     .optional()?;
-                if let Some((rowid, sc)) = row
-                    && readable.contains(&sc.project_id)
+                if let Some((rowid, project_id)) = row
+                    && readable.contains(&project_id)
                 {
-                    found.push((rowid, sc));
+                    rowids.push(rowid);
                 }
             }
             // Stored order is causal order: parents before children.
-            found.sort_by_key(|(rowid, _)| *rowid);
-            Ok(found
-                .into_iter()
-                .map(|(_, sc)| FeatureRecord::new(sc.record_body()))
-                .collect())
+            rowids.sort_unstable();
+            let mut load = core.db.prepare(
+                "SELECT project_id, hash, author, seq, bytes, sig FROM board_changes WHERE rowid = ?1",
+            )?;
+            let mut out = Vec::new();
+            let mut total = 0usize;
+            for rowid in rowids {
+                let body = load.query_row([rowid], |r| change_at(r, 0))?.record_body();
+                // The rest stays unknown on the peer, which asks again next
+                // round. The first record always goes, so every call helps.
+                if !out.is_empty() && total.saturating_add(body.len()) > MAX_RECORDS_FOR_BYTES {
+                    break;
+                }
+                total = total.saturating_add(body.len());
+                out.push(FeatureRecord::new(body));
+            }
+            Ok(out)
         })
     }
 
@@ -347,7 +366,11 @@ fn process_project(
     }
     let existed = store::project(&core.db, project_id).is_ok();
     let mut outcomes: BTreeMap<usize, ChangeOutcome> = BTreeMap::new();
-    let mut waiting: BTreeSet<usize> = BTreeSet::new();
+    // Waiting change -> `applied` right after its last try. A waiting change
+    // already saw everything applied in its own import; it is tried again
+    // once something was applied after that.
+    let mut waiting: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut applied = 0usize;
     let mut todo: Vec<usize> = (0..items.len()).collect();
     let mut last_applied: Option<usize> = None;
     for _ in 0..MAX_ROUNDS {
@@ -362,45 +385,44 @@ fn process_project(
             .copied()
             .filter(|&i| hashes.insert(items[i].sc.hash.clone()))
             .collect();
-        // Logs and `received_from` name one peer per call: the sender of the
-        // first change (records received now come first).
-        let from = items[batch[0]].from.clone();
-        let changes = batch.iter().map(|&i| items[i].sc.clone()).collect();
-        let report = sync::import_project(&mut core.db, policy, project_id, from.as_deref(), changes)?;
-        // A project that could not be created rolls back the rejections
-        // `sync` logged with it (except a bad first change, which is kept).
-        let rolled_back = !existed && store::project(&core.db, project_id).is_err();
         let mut deferred = Vec::new();
-        for &i in &batch {
-            let Some(outcome) = report.outcome(&items[i].sc.hash) else {
-                continue;
-            };
-            waiting.remove(&i);
-            match outcome {
-                ChangeOutcome::Deferred => deferred.push(i),
-                ChangeOutcome::MissingDeps | ChangeOutcome::NoProject => {
-                    waiting.insert(i);
+        // One import per sending peer, so `sync` logs refusals and stores
+        // `received_from` under the peer that sent each change. Records
+        // received now come first.
+        for group in by_sender(&items, &batch) {
+            let from = items[group[0]].from.clone();
+            let changes = group.iter().map(|&i| items[i].sc.clone()).collect();
+            let report = sync::import_project(&mut core.db, policy, project_id, from.as_deref(), changes)?;
+            applied += report.applied;
+            // A project that could not be created rolls back the rejections
+            // `sync` logged with it (except a bad first change, which is kept).
+            let rolled_back = !existed && store::project(&core.db, project_id).is_err();
+            for &i in &group {
+                let Some(outcome) = report.outcome(&items[i].sc.hash) else {
+                    continue;
+                };
+                waiting.remove(&i);
+                match outcome {
+                    ChangeOutcome::Deferred => deferred.push(i),
+                    ChangeOutcome::MissingDeps | ChangeOutcome::NoProject => {
+                        waiting.insert(i, applied);
+                    }
+                    ChangeOutcome::Applied => last_applied = Some(i),
+                    ChangeOutcome::Rejected { code } if rolled_back && *code != "board_bad_project" => {
+                        let detail = format!(
+                            "proyek {} perubahan {}: ditolak ({code})",
+                            short(project_id),
+                            short(&items[i].sc.hash)
+                        );
+                        permissions::log_rejection(&core.db, items[i].from.as_deref(), None, code, &detail, clock::now())?;
+                    }
+                    _ => {}
                 }
-                ChangeOutcome::Applied => last_applied = Some(i),
-                ChangeOutcome::Rejected { code } if rolled_back && *code != "board_bad_project" => {
-                    let detail = format!(
-                        "proyek {} perubahan {}: ditolak ({code})",
-                        short(project_id),
-                        short(&items[i].sc.hash)
-                    );
-                    permissions::log_rejection(&core.db, items[i].from.as_deref(), None, code, &detail, clock::now())?;
-                }
-                _ => {}
+                outcomes.insert(i, outcome.clone());
             }
-            outcomes.insert(i, outcome.clone());
         }
-        // Waiting changes of this batch already saw everything it applied;
-        // older waiting ones may be ready now.
         todo = deferred;
-        if report.applied > 0 {
-            let in_batch: HashSet<usize> = batch.iter().copied().collect();
-            todo.extend(waiting.iter().copied().filter(|i| !in_batch.contains(i)));
-        }
+        todo.extend(waiting.iter().filter(|&(_, &seen)| seen < applied).map(|(&i, _)| i));
     }
 
     let now = clock::now();
@@ -418,13 +440,16 @@ fn process_project(
                 }
             }
             ChangeOutcome::Duplicate => unpend(&tx, &item.record_id)?,
-            ChangeOutcome::MissingDeps | ChangeOutcome::Deferred => {
-                if keep(&tx, item, Reason::Deps, &mut usage, now)? && fresh {
-                    tally.accepted += 1;
-                }
-            }
-            ChangeOutcome::NoProject => {
-                if keep(&tx, item, Reason::Project, &mut usage, now)? && fresh {
+            ChangeOutcome::MissingDeps | ChangeOutcome::Deferred | ChangeOutcome::NoProject => {
+                let reason = if matches!(outcome, ChangeOutcome::NoProject) {
+                    Reason::Project
+                } else {
+                    Reason::Deps
+                };
+                // Kept only for authors seen as members (see the module doc).
+                if !ever_member(&tx, &item.sc.author)? {
+                    unpend(&tx, &item.record_id)?;
+                } else if keep(&tx, item, reason, &mut usage, now)? && fresh {
                     tally.accepted += 1;
                 }
             }
@@ -436,21 +461,11 @@ fn process_project(
                     short(&item.sc.hash)
                 );
                 let log = (!logged).then_some((code, detail.as_str()));
-                // Someone this laptop has never seen as a member: maybe the
-                // op that admits them is still on its way. Nothing is stored
-                // (random keys cannot fill the pending table) and nothing is
-                // logged; the record is offered and checked again next time.
-                if !ever_member(&tx, &item.sc.author)? {
-                    tx.execute(
-                        "DELETE FROM board_pending WHERE record_id = ?1",
-                        [&item.record_id],
-                    )?;
-                } else if rights.is_guest(&item.sc.author) {
-                    // A guest only reads: refused for good.
-                    refuse(&tx, &item.record_id, item.from.as_deref(), log, now)?;
-                    if fresh {
-                        tally.rejected += 1;
-                    }
+                // Someone this laptop has never seen as a member, or knows
+                // only as a guest: nothing is stored or logged (see the
+                // module doc).
+                if !ever_member(&tx, &item.sc.author)? || rights.is_guest(&item.sc.author) {
+                    unpend(&tx, &item.record_id)?;
                 } else if keep(&tx, item, Reason::Rights, &mut usage, now)? {
                     if let Some((code, detail)) = log {
                         permissions::log_rejection(&tx, item.from.as_deref(), None, code, detail, now)?;
@@ -514,7 +529,14 @@ fn load_pending(conn: &Connection, project_id: &str, include_rights: bool) -> Ap
 struct Usage {
     rows: i64,
     bytes: i64,
-    per_sender: HashMap<String, i64>,
+    per_sender: HashMap<String, SenderUsage>,
+}
+
+/// Rows and body bytes in `board_pending` received from one peer.
+#[derive(Debug, Clone, Copy, Default)]
+struct SenderUsage {
+    rows: i64,
+    bytes: i64,
 }
 
 impl Usage {
@@ -531,22 +553,23 @@ impl Usage {
         })
     }
 
-    fn sender(&mut self, conn: &Connection, from: &str) -> AppResult<&mut i64> {
+    fn sender(&mut self, conn: &Connection, from: &str) -> AppResult<&mut SenderUsage> {
         if !self.per_sender.contains_key(from) {
-            let n: i64 = conn.query_row(
-                "SELECT count(*) FROM board_pending WHERE received_from = ?1",
+            let (rows, bytes) = conn.query_row(
+                "SELECT count(*), coalesce(sum(length(CAST(body AS BLOB))), 0) FROM board_pending
+                 WHERE received_from = ?1",
                 [from],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            self.per_sender.insert(from.to_owned(), n);
+            self.per_sender.insert(from.to_owned(), SenderUsage { rows, bytes });
         }
         Ok(self.per_sender.entry(from.to_owned()).or_default())
     }
 }
 
 /// Stores or updates `item` in `board_pending`; `false` when a new row does
-/// not fit the limits (total rows and bytes, rows per sender), then it is not
-/// kept at all.
+/// not fit the limits (rows and bytes, in total and per sender), then it is
+/// not kept at all.
 fn keep(
     conn: &Connection,
     item: &Item,
@@ -565,10 +588,13 @@ fn keep(
     if usage.rows >= MAX_PENDING_ROWS || usage.bytes.saturating_add(size) > MAX_PENDING_BYTES {
         return Ok(false);
     }
-    if let Some(from) = &item.from
-        && *usage.sender(conn, from)? >= MAX_PENDING_PER_SENDER
-    {
-        return Ok(false);
+    if let Some(from) = &item.from {
+        let sender = *usage.sender(conn, from)?;
+        if sender.rows >= MAX_PENDING_PER_SENDER
+            || sender.bytes.saturating_add(size) > MAX_PENDING_BYTES_PER_SENDER
+        {
+            return Ok(false);
+        }
     }
     let n = conn.execute(
         "INSERT OR IGNORE INTO board_pending
@@ -589,20 +615,41 @@ fn keep(
         usage.rows += 1;
         usage.bytes = usage.bytes.saturating_add(size);
         if let Some(from) = &item.from {
-            *usage.sender(conn, from)? += 1;
+            let sender = usage.sender(conn, from)?;
+            sender.rows += 1;
+            sender.bytes = sender.bytes.saturating_add(size);
         }
     }
     Ok(true)
 }
 
-/// Drops `deps` and `project` rows older than [`PENDING_MAX_AGE`]; their
-/// missing changes are not coming (peers offer them again if they have them).
+/// Drops `deps` and `project` rows older than [`PENDING_MAX_AGE`] and
+/// `rights` rows older than [`PENDING_RIGHTS_MAX_AGE`]: what they wait for is
+/// not coming (peers offer the changes again if they have them).
 fn drop_stale_pending(conn: &Connection, now: OffsetDateTime) -> AppResult<()> {
     conn.execute(
-        "DELETE FROM board_pending WHERE reason IN ('deps', 'project') AND received_at < ?1",
-        [clock::format_rfc3339(now - PENDING_MAX_AGE)],
+        "DELETE FROM board_pending
+         WHERE (reason IN ('deps', 'project') AND received_at < ?1)
+            OR (reason = 'rights' AND received_at < ?2)",
+        params![
+            clock::format_rfc3339(now - PENDING_MAX_AGE),
+            clock::format_rfc3339(now - PENDING_RIGHTS_MAX_AGE)
+        ],
     )?;
     Ok(())
+}
+
+/// Splits `batch` by sending peer, in order of first appearance.
+fn by_sender(items: &[Item], batch: &[usize]) -> Vec<Vec<usize>> {
+    let mut groups: Vec<(Option<&str>, Vec<usize>)> = Vec::new();
+    for &i in batch {
+        let from = items[i].from.as_deref();
+        match groups.iter_mut().find(|(f, _)| *f == from) {
+            Some((_, group)) => group.push(i),
+            None => groups.push((from, vec![i])),
+        }
+    }
+    groups.into_iter().map(|(_, group)| group).collect()
 }
 
 /// Whether `pk` has a row in `members` (active or removed).
@@ -658,21 +705,8 @@ fn backfill_record_ids(conn: &Connection) -> AppResult<()> {
             "SELECT rowid, project_id, hash, author, seq, bytes, sig FROM board_changes
              WHERE record_id IS NULL",
         )?;
-        stmt.query_map([], |r| {
-            let seq: i64 = r.get(4)?;
-            Ok((
-                r.get(0)?,
-                SignedChange {
-                    project_id: r.get(1)?,
-                    hash: r.get(2)?,
-                    author: r.get(3)?,
-                    seq: u64::try_from(seq).unwrap_or_default(),
-                    bytes: r.get(5)?,
-                    sig: r.get(6)?,
-                },
-            ))
-        })?
-        .collect::<Result<_, _>>()?
+        stmt.query_map([], |r| Ok((r.get(0)?, change_at(r, 1)?)))?
+            .collect::<Result<_, _>>()?
     };
     for (rowid, sc) in rows {
         conn.execute(
@@ -681,6 +715,20 @@ fn backfill_record_ids(conn: &Connection) -> AppResult<()> {
         )?;
     }
     Ok(())
+}
+
+/// A stored change from the columns `project_id, hash, author, seq, bytes,
+/// sig`, starting at column `at`.
+fn change_at(r: &Row<'_>, at: usize) -> rusqlite::Result<SignedChange> {
+    let seq: i64 = r.get(at + 3)?;
+    Ok(SignedChange {
+        project_id: r.get(at)?,
+        hash: r.get(at + 1)?,
+        author: r.get(at + 2)?,
+        seq: u64::try_from(seq).unwrap_or_default(),
+        bytes: r.get(at + 4)?,
+        sig: r.get(at + 5)?,
+    })
 }
 
 /// Ids of the projects whose changes may be offered to `peer` now.
