@@ -12,6 +12,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 
 use super::discovery::{self, Discovery};
+use super::feature::{FeatureHub, OfflineLink};
+use super::feature_blob::BlobState;
+use super::feature_net::{self, FeatureNet, NetLink};
 use super::join::{self, RateLimiter};
 use super::route;
 use super::tls::{self, ALPN_JOIN, ALPN_MEMBER, SERVER_NAME, TlsIdentity};
@@ -39,7 +42,7 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A whole sync session, either side.
-const SYNC_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const SYNC_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 const SYNC_INTERVAL: Duration = Duration::from_secs(30);
 const STARTING_PERIOD: Duration = Duration::from_secs(5);
 /// Time to let a `Removed` message reach the peer before closing.
@@ -61,8 +64,22 @@ const MAX_HELLO_ADDRS: usize = 16;
 const MAX_HELLO_FRAME: usize = 64 * 1024;
 /// A `Removed` push carries one op of at most 16 KiB payload.
 const MAX_PUSH_FRAME: usize = 256 * 1024;
+/// First frame of a stream from a member: `SyncHave` (at most
+/// `SYNC_ID_CHUNK` ids, about 670 KB), `FeatureHave` (at most
+/// `MAX_IDS_PER_FRAME` ids, about 550 KB) or `BlobGet`. A smaller limit than
+/// `MAX_FRAME` keeps a junk frame from decoding into millions of strings.
+const MAX_FIRST_FRAME: usize = 1024 * 1024;
 /// Rejection log entries per remote IP per minute.
 const REJECTION_LOGS_PER_MINUTE: usize = 10;
+/// Op-sync responder sessions (`respond_sync`) running at once for one
+/// member connection. The peer's `schedule_sync` runs one session at a time
+/// (a follow-up starts only after it ends); the second slot covers a session
+/// the peer gave up on while ours is still winding down.
+const MAX_OP_SYNC_RESPONDERS: usize = 2;
+/// Reset code for a feature session that hit `SYNC_SESSION_TIMEOUT`, so the
+/// initiator sees an aborted session and retries instead of a normal end.
+/// Same value as `RESET_ABORTED` in `feature_net.rs`.
+const FEATURE_RESET_ABORTED: u32 = 0x22;
 
 pub(crate) const PORT_RANGE: std::ops::RangeInclusive<u16> = 47800..=47809;
 
@@ -175,6 +192,10 @@ pub(crate) struct Inner {
     /// cannot stop this laptop from dialing its colleagues.
     out_slots: Arc<Semaphore>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
+    /// Feature sync sessions, scheduling and the hub (`feature_net`).
+    pub(crate) features: FeatureNet,
+    /// Blob downloads and uploads (`feature_blob`).
+    pub(crate) blobs: BlobState,
 }
 
 fn bind_socket(port: Option<u16>) -> Result<UdpSocket, String> {
@@ -201,6 +222,7 @@ impl Inner {
         cfg: NetConfig,
         backend: Arc<dyn SyncBackend>,
         events: Arc<dyn Fn(NetEvent) + Send + Sync>,
+        hub: Arc<FeatureHub>,
     ) -> Result<Arc<Inner>, String> {
         let identity = TlsIdentity::new(&cfg.identity_secret)?;
         if identity.public_key() != cfg.public_key {
@@ -253,6 +275,8 @@ impl Inner {
             joins_by_ip: IpCounter::new(join::MAX_JOINS_PER_IP),
             out_slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
             tasks: Mutex::new(Vec::new()),
+            features: FeatureNet::new(hub),
+            blobs: BlobState::new(),
         });
 
         if cfg.mdns_enabled {
@@ -269,6 +293,7 @@ impl Inner {
         tasks.push(tokio::spawn(accept_loop(weak.clone(), endpoint)));
         tasks.push(tokio::spawn(discovery::dial_loop(weak.clone())));
         tasks.push(tokio::spawn(sync_loop(weak.clone())));
+        tasks.push(tokio::spawn(feature_net::feature_loop(weak.clone())));
         tasks.push(tokio::spawn(async move {
             tokio::time::sleep(STARTING_PERIOD).await;
             if let Some(inner) = weak.upgrade() {
@@ -276,6 +301,10 @@ impl Inner {
             }
         }));
         lock(&inner.tasks).extend(tasks);
+        inner
+            .features
+            .hub
+            .set_link(Arc::new(NetLink::new(Arc::downgrade(&inner))));
         Ok(inner)
     }
 
@@ -324,6 +353,19 @@ impl Inner {
             .collect();
         v.sort();
         v
+    }
+
+    /// The live member connection to `pk`, if any.
+    pub(crate) fn peer_conn(&self, pk: &str) -> Option<Connection> {
+        lock(&self.peers)
+            .get(pk)
+            .filter(|e| e.conn.close_reason().is_none())
+            .map(|e| e.conn.clone())
+    }
+
+    /// `true` when the backend says `pk` is an active member right now.
+    pub(crate) fn is_member(&self, pk: &str) -> bool {
+        matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. })
     }
 
     pub(crate) fn connected_addresses(&self) -> HashSet<SocketAddr> {
@@ -398,6 +440,7 @@ impl Inner {
             me.disc.reset_backoff();
             discovery::dial_pass(&me);
             me.sync_all(None);
+            me.feature_sync_all(None);
         });
     }
 
@@ -405,6 +448,7 @@ impl Inner {
         if self.closing.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.features.hub.set_link(Arc::new(OfflineLink));
         for t in lock(&self.tasks).drain(..) {
             t.abort();
         }
@@ -557,6 +601,7 @@ impl Inner {
         self.emit(NetEvent::StatusChanged);
         tokio::spawn(self.clone().drive(conn, pk.clone(), slot));
         self.schedule_sync(&pk);
+        self.feature_peer_up(&pk);
         Ok(pk)
     }
 
@@ -732,6 +777,7 @@ impl Inner {
     /// Serves the peer's streams until the connection ends.
     async fn drive(self: Arc<Self>, conn: Connection, pk: String, slot: ConnSlot) {
         let streams = Arc::new(Semaphore::new(tls::MAX_BIDI_STREAMS as usize));
+        let op_syncs = Arc::new(Semaphore::new(MAX_OP_SYNC_RESPONDERS));
         while let Ok((mut send, mut recv)) = conn.accept_bi().await {
             let Ok(slot) = streams.clone().try_acquire_owned() else {
                 let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
@@ -740,8 +786,9 @@ impl Inner {
             };
             let me = self.clone();
             let pk = pk.clone();
+            let op_syncs = op_syncs.clone();
             tokio::spawn(async move {
-                me.handle_stream(&pk, send, recv).await;
+                me.handle_stream(&pk, &op_syncs, send, recv).await;
                 drop(slot);
             });
         }
@@ -767,19 +814,50 @@ impl Inner {
         }
     }
 
-    async fn handle_stream(self: &Arc<Self>, pk: &str, mut send: SendStream, mut recv: RecvStream) {
+    /// One bidirectional stream from member `pk`. `op_syncs` limits the
+    /// op-sync responder sessions of this connection.
+    async fn handle_stream(
+        self: &Arc<Self>,
+        pk: &str,
+        op_syncs: &Arc<Semaphore>,
+        mut send: SendStream,
+        mut recv: RecvStream,
+    ) {
         if !matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. }) {
             let _ = send.reset(VarInt::from_u32(code::NOT_MEMBER));
             self.recheck_peers();
             return;
         }
-        match wire::read_msg_timeout(&mut recv, MAX_FRAME, READ_TIMEOUT).await {
+        match wire::read_msg_timeout(&mut recv, MAX_FIRST_FRAME, READ_TIMEOUT).await {
             Ok(Some(Msg::SyncHave { ids })) => {
+                let Ok(_permit) = op_syncs.clone().try_acquire_owned() else {
+                    let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
+                    let _ = recv.stop(VarInt::from_u32(code::PROTOCOL));
+                    return;
+                };
                 let _ = tokio::time::timeout(
                     SYNC_SESSION_TIMEOUT,
                     self.respond_sync(pk, ids, &mut send, &mut recv),
                 )
                 .await;
+                let _ = send.finish();
+            }
+            Ok(Some(Msg::FeatureHave { topic, ids })) => {
+                let done = tokio::time::timeout(
+                    SYNC_SESSION_TIMEOUT,
+                    self.respond_feature(pk, topic, ids, &mut send, &mut recv),
+                )
+                .await;
+                if done.is_ok() {
+                    let _ = send.finish();
+                } else {
+                    let _ = send.reset(VarInt::from_u32(FEATURE_RESET_ABORTED));
+                    let _ = recv.stop(VarInt::from_u32(FEATURE_RESET_ABORTED));
+                }
+            }
+            Ok(Some(Msg::BlobGet { hash })) => {
+                // Has its own time limits (a large file takes a while).
+                self.serve_blob(pk, hash, &mut send, &mut recv).await;
                 let _ = send.finish();
             }
             _ => {
@@ -864,6 +942,9 @@ impl Inner {
         self.recheck_peers();
         discovery::refresh_mdns(self).await;
         self.sync_all(from);
+        // Membership decides feature scoping too (a new team member may now
+        // receive that team's records).
+        self.feature_sync_all(None);
     }
 
     /// Re-checks every connected peer against the backend and drops those
@@ -1172,5 +1253,25 @@ fn describe_close_code(c: u64) -> &'static str {
         x if x == u64::from(code::DUPLICATE) => "Sudah tersambung lewat koneksi lain.",
         x if x == u64::from(code::SHUTDOWN) => "Laptop rekan sedang menutup Mira.",
         _ => "Laptop rekan menutup koneksi.",
+    }
+}
+
+#[cfg(test)]
+mod first_frame_tests {
+    use super::*;
+    use crate::network::feature::MAX_IDS_PER_FRAME;
+
+    #[test]
+    fn largest_first_frames_fit_the_first_frame_limit() {
+        let id = "f".repeat(64);
+        let have = Msg::SyncHave {
+            ids: vec![id.clone(); SYNC_ID_CHUNK],
+        };
+        let feature = Msg::FeatureHave {
+            topic: "abcdefghijklmnop".into(),
+            ids: vec![id; MAX_IDS_PER_FRAME],
+        };
+        assert!(wire::encoded_len(&have) <= MAX_FIRST_FRAME);
+        assert!(wire::encoded_len(&feature) <= MAX_FIRST_FRAME);
     }
 }
