@@ -24,6 +24,9 @@ pub const MAX_FILE_NAME_CHARS: usize = 200;
 pub const MAX_MIME_CHARS: usize = 100;
 pub const MAX_FILES: usize = 10;
 pub const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Largest encrypted attachment in an envelope: only small files travel with
+/// envelopes (`blobs::AUTO_REPLICATE_MAX_BYTES` plus nonce and tag).
+pub const MAX_CIPHER_FILE_BYTES: u64 = crate::blobs::AUTO_REPLICATE_MAX_BYTES + 40;
 pub const MAX_MENTIONS: usize = 50;
 pub const MAX_RECEIPT_MESSAGES: usize = 500;
 /// Envelope `sealed` field, base64 characters. Leaves room for the payload
@@ -259,14 +262,36 @@ pub fn random_hex32() -> String {
     hex::encode(b)
 }
 
-/// Signs `body` as `identity` for organization `org` at `at`.
+/// Channel id of a `channel_create`: first 32 hex of
+/// `blake3("mira-chat-channel-v1\n" + org + "\n" + author + "\n" + nonce)`.
+/// Derived, not chosen, so nobody can create a channel whose id collides with
+/// `#umum`, a team channel, a project channel or another member's channel.
+pub fn derive_channel_id(org: &str, author: &str, nonce: &str) -> String {
+    let hash =
+        blake3::hash(format!("mira-chat-channel-v1\n{org}\n{author}\n{nonce}").as_bytes());
+    hash.to_hex()[..32].to_owned()
+}
+
+/// Signs `body` as `identity` for organization `org` at `at`. For
+/// `channel_create` the `channel` field is replaced by
+/// [`derive_channel_id`]; pass any value.
 pub fn sign_record(identity: &Identity, org: &str, at: OffsetDateTime, body: Body) -> VerifiedRecord {
+    let author = identity.public_key_hex().to_owned();
+    let nonce = random_hex32();
+    let body = match body {
+        Body::ChannelCreate { name, scope, .. } => Body::ChannelCreate {
+            channel: derive_channel_id(org, &author, &nonce),
+            name,
+            scope,
+        },
+        other => other,
+    };
     let payload = Payload {
         v: CHAT_VERSION,
         org: org.to_owned(),
-        author: identity.public_key_hex().to_owned(),
+        author,
         at: format_time(at),
-        nonce: random_hex32(),
+        nonce,
         body,
     };
     let payload_json = serde_json::to_string(&payload).expect("chat payload always serializes");
@@ -302,6 +327,13 @@ pub fn verify_record(
     }
     let signed: SignedRecord = serde_json::from_str(body_json)
         .map_err(|e| Rejection::new("bad_format", format!("bukan record chat: {e}")))?;
+    // The id is BLAKE3 of the body but the signature covers only `payload`.
+    // Without this check a relaying laptop could re-encode the outer JSON
+    // (spaces, key order, escapes) and give a signed record a new id, which
+    // would dodge deletes and acks that name the original id.
+    if serde_json::to_string(&signed).ok().as_deref() != Some(body_json) {
+        return Err(Rejection::new("not_canonical", "record bukan bentuk baku"));
+    }
     if !is_lower_hex(&signed.sig, 128) {
         return Err(Rejection::new(
             "bad_signature",
@@ -373,19 +405,20 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
     if !(MIN_YEAR..=MAX_YEAR).contains(&at.year()) {
         return Err("tahun di luar 2020 sampai 2100".into());
     }
-    validate_body(&p.body, &p.author)?;
+    validate_body(p)?;
     Ok(at)
 }
 
-fn validate_body(body: &Body, author: &str) -> Result<(), String> {
-    match body {
+fn validate_body(p: &Payload) -> Result<(), String> {
+    let author = p.author.as_str();
+    match &p.body {
         Body::ChannelCreate {
             channel,
             name,
             scope,
         } => {
-            if !is_lower_hex(channel, 32) {
-                return Err("id channel harus 32 hex".into());
+            if *channel != derive_channel_id(&p.org, author, &p.nonce) {
+                return Err("id channel bukan turunan pembuat dan nonce".into());
             }
             if !is_channel_name(name) {
                 return Err("nama channel tidak sah".into());
@@ -419,7 +452,7 @@ fn validate_body(body: &Body, author: &str) -> Result<(), String> {
             if text.trim().is_empty() && files.is_empty() {
                 return Err("pesan kosong".into());
             }
-            if text.chars().any(is_bad_text_char) {
+            if text.chars().any(|c| is_bad_text_char(c) || is_bidi_control(c)) {
                 return Err("teks berisi karakter kontrol".into());
             }
             if let Some(r) = reply_to
@@ -479,7 +512,7 @@ fn validate_body(body: &Body, author: &str) -> Result<(), String> {
                 return Err("terlalu banyak file titipan".into());
             }
             for f in cipher_files {
-                if !is_key(&f.hash) || f.size == 0 || f.size > MAX_FILE_BYTES + 64 {
+                if !is_key(&f.hash) || f.size == 0 || f.size > MAX_CIPHER_FILE_BYTES {
                     return Err("file titipan tidak sah".into());
                 }
             }
@@ -524,6 +557,42 @@ fn is_bad_text_char(c: char) -> bool {
     c.is_control() && c != '\n' && c != '\t'
 }
 
+/// Bidi embedding, override, isolate and mark characters: they make text or
+/// a file name display differently from what it is (`kontrak\u{202E}fdp.exe`).
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}'
+    )
+}
+
+/// Unicode format characters (category Cf) that matter in file names: bidi
+/// controls, zero-width characters, soft hyphen, BOM, interlinear and tag
+/// characters.
+fn is_format_char(c: char) -> bool {
+    is_bidi_control(c)
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200D}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0001}'
+                | '\u{E0020}'..='\u{E007F}'
+        )
+}
+
+/// Windows device names, with or without extension (`CON`, `nul.txt`, `COM1`).
+fn is_reserved_windows_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
+}
+
 fn is_base64(s: &str) -> bool {
     data_encoding::BASE64.decode(s.as_bytes()).is_ok()
 }
@@ -563,16 +632,31 @@ pub fn normalize_channel_name(input: &str) -> Option<String> {
 }
 
 /// 1 to 200 characters, no path separators, no characters Windows refuses in
-/// file names, no control characters, not `.` or `..`.
+/// file names, no control or format characters, no Windows device names, no
+/// trailing dot or space, not `.` or `..`.
 pub fn is_file_name(name: &str) -> bool {
     let len = name.chars().count();
     (1..=MAX_FILE_NAME_CHARS).contains(&len)
-        && name != "."
-        && name != ".."
         && name.trim() == name
+        && !name.ends_with('.')
+        && !is_reserved_windows_name(name)
         && !name
             .chars()
-            .any(|c| c.is_control() || "\\/:*?\"<>|".contains(c))
+            .any(|c| c.is_control() || is_format_char(c) || "\\/:*?\"<>|".contains(c))
+}
+
+/// Extensions Windows runs or interprets as code when a file is opened. Such
+/// attachments are offered for saving only, never opened from Mira.
+pub fn is_executable_name(name: &str) -> bool {
+    const EXT: &[&str] = &[
+        "exe", "com", "bat", "cmd", "scr", "pif", "msi", "msp", "msc", "lnk", "url", "hta", "js",
+        "jse", "vbs", "vbe", "wsf", "wsh", "ps1", "psm1", "reg", "cpl", "jar", "appref-ms",
+        "application", "gadget", "inf", "scf", "chm", "dll", "sys", "iso", "img", "vhd", "vhdx",
+        "library-ms", "settingcontent-ms", "xll", "appx", "msix", "diagcab",
+    ];
+    name.rsplit_once('.')
+        .map(|(_, ext)| EXT.contains(&ext.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
 }
 
 /// A conversation id, parsed.
@@ -754,7 +838,7 @@ mod tests {
             name: "proyek-a".into(),
             scope: ChannelScope::Team { id: "2".repeat(32) },
         })
-        .is_ok());
+        .is_ok(), "sign_record derives the channel id");
         assert!(check(Body::ChannelCreate {
             channel: "1".repeat(32),
             name: "Proyek A".into(),
@@ -790,6 +874,82 @@ mod tests {
             cipher_files: vec![],
         })
         .is_ok());
+    }
+
+    #[test]
+    fn re_encoded_body_is_refused() {
+        let (_t, id) = identity();
+        let rec = sign_record(&id, ORG, now(), message(&umum(), "halo"));
+        let signed: SignedRecord = serde_json::from_str(&rec.body_json).unwrap();
+        let spaced = format!("{{ \"payload\": {}, \"sig\": \"{}\" }}", serde_json::to_string(&signed.payload).unwrap(), signed.sig);
+        assert_eq!(verify_record(&spaced, ORG, now()).unwrap_err().code, "not_canonical");
+        let swapped = format!("{{\"sig\":\"{}\",\"payload\":{}}}", signed.sig, serde_json::to_string(&signed.payload).unwrap());
+        assert_eq!(verify_record(&swapped, ORG, now()).unwrap_err().code, "not_canonical");
+    }
+
+    #[test]
+    fn channel_id_is_derived_and_cannot_be_chosen() {
+        let (_t, id) = identity();
+        let rec = sign_record(
+            &id,
+            ORG,
+            now(),
+            Body::ChannelCreate {
+                channel: "0".repeat(32),
+                name: "desain".into(),
+                scope: ChannelScope::Org,
+            },
+        );
+        let Body::ChannelCreate { channel, .. } = rec.body() else { panic!() };
+        assert_eq!(*channel, derive_channel_id(ORG, id.public_key_hex(), &rec.payload.nonce));
+        assert!(verify_record(&rec.body_json, ORG, now()).is_ok());
+
+        // A record that claims a chosen id fails validation (signed by hand).
+        let mut payload = rec.payload.clone();
+        payload.body = Body::ChannelCreate {
+            channel: "a".repeat(32),
+            name: "desain".into(),
+            scope: ChannelScope::Org,
+        };
+        let payload_json = serde_json::to_string(&payload).unwrap();
+        let sig = id.sign(signed_message(&payload_json).as_bytes());
+        let body = serde_json::to_string(&SignedRecord {
+            payload: payload_json,
+            sig: hex::encode(sig.to_bytes()),
+        })
+        .unwrap();
+        assert_eq!(verify_record(&body, ORG, now()).unwrap_err().code, "bad_format");
+    }
+
+    #[test]
+    fn dangerous_file_names_and_text() {
+        for bad in [
+            "kontrak\u{202E}fdp.exe",
+            "a\u{200B}b.pdf",
+            "CON",
+            "nul.txt",
+            "COM1.pdf",
+            "laporan.",
+            "laporan ",
+            " laporan",
+            "..",
+            ".",
+        ] {
+            assert!(!is_file_name(bad), "{bad:?}");
+        }
+        for good in ["Laporan Q3.xlsx", "kontrak (final).pdf", "console.log", "COM10.txt", ".gitignore"] {
+            assert!(is_file_name(good), "{good:?}");
+        }
+        assert!(is_executable_name("Laporan.pdf.exe"));
+        assert!(is_executable_name("pintasan.LNK"));
+        assert!(!is_executable_name("laporan.pdf"));
+        assert!(!is_executable_name("tanpa-ekstensi"));
+
+        let (_t, id) = identity();
+        let rec = sign_record(&id, ORG, now(), message(&umum(), "abc\u{202E}def"));
+        assert!(verify_record(&rec.body_json, ORG, now()).is_err());
+        let emoji = sign_record(&id, ORG, now(), message(&umum(), "keluarga \u{1F468}\u{200D}\u{1F469}"));
+        assert!(verify_record(&emoji.body_json, ORG, now()).is_ok(), "ZWJ in text stays allowed");
     }
 
     #[test]
