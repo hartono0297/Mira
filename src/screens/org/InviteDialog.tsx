@@ -30,7 +30,7 @@ type ProjectsState =
 const ROLE_DESC: Record<InviteRole, string> = {
   member: "Chat, buat dan kerjakan task di semua proyek tim",
   team_admin: "Semua izin di tim ini, termasuk mengatur anggota",
-  guest: "Lihat board dan komentar di proyek yang dipilih, tanpa bisa mengubah apa pun",
+  guest: "Melihat board dan membaca komentar di proyek yang dipilih. Tidak bisa mengubah task atau berkomentar.",
 };
 
 const VALIDITY_HINT: Record<InviteValidity, string> = {
@@ -101,6 +101,8 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
   }, [open, isGuest, projectsAttempt]);
 
   const team = teams.find((t) => t.id === teamId);
+  // Superadmin yang bukan anggota tim ini tidak menerima sinkron proyek tim itu.
+  const inTeam = !!team?.members.some((m) => m.publicKey === ctx.dir.me.publicKey);
   const teamProjects = projects.status === "ready" ? projects.list.filter((p) => p.teamId === teamId) : [];
   // Centang dari tim lain tidak ikut terkirim kalau timnya diganti.
   const pickedHere = picked.filter((id) => teamProjects.some((p) => p.id === id));
@@ -244,11 +246,14 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
                 <p className="notice-plain">
                   {team ? teamLabel(team.name) : "Tim ini"} belum punya proyek yang terlihat di laptop ini. Buat proyek
                   untuk tim ini dulu di menu Board, lalu undang Tamu ke proyek itu.
+                  {isSA && !inTeam && (
+                    <> Kalau tim ini sudah punya proyek, masuk dulu ke tim itu supaya proyeknya terlihat.</>
+                  )}
                 </p>
               )}
               {teamProjects.length > 0 && (
                 <ul className="guest-pick" ref={pickRef}>
-                  {teamProjects.map((p) => {
+                  {teamProjects.map((p, i) => {
                     const checked = pickedHere.includes(p.id);
                     return (
                       <li key={p.id}>
@@ -257,6 +262,8 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
                             type="checkbox"
                             checked={checked}
                             disabled={busy || (!checked && atMax)}
+                            aria-invalid={i === 0 && pickError ? true : undefined}
+                            aria-describedby={i === 0 && pickError ? pickErrId : undefined}
                             onChange={(e) => {
                               setPickError(null);
                               setPicked(e.target.checked ? [...pickedHere, p.id] : pickedHere.filter((id) => id !== p.id));

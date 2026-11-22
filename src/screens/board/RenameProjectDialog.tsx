@@ -19,6 +19,8 @@ type Props = {
 // isian mengikutinya selama belum diketik dan tidak sedang difokus.
 export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
+  // Nama dari server saat ketikan dimulai, untuk tahu kalau rekan menggantinya sementara itu.
+  const [base, setBase] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [server, setServer] = useState<AppError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,6 +30,8 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
   const hintId = useId();
   const errId = useId();
   const value = draft ?? held.value;
+  // Rekan mengganti nama selama dialog terbuka: yang tampil (atau dasar ketikan) bukan nama terbaru.
+  const moved = (draft === null ? held.value : (base ?? project.name)) !== project.name;
 
   function reset() {
     setDraft(null);
@@ -39,7 +43,14 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
-    const clean = value.trim();
+    // Belum diketik: tidak ada yang diubah. Nama yang ditampilkan bisa sudah usang,
+    // jadi tidak dikirim supaya tidak menimpa nama baru dari rekan.
+    if (draft === null) {
+      reset();
+      onOpenChange(false);
+      return;
+    }
+    const clean = draft.trim();
     setServer(null);
     const bad = projectNameProblem(clean);
     setProblem(bad);
@@ -91,6 +102,7 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
             onFocus={held.hold}
             onBlur={held.release}
             onChange={(e) => {
+              if (draft === null) setBase(held.value);
               setDraft(e.target.value);
               setProblem(null);
             }}
@@ -103,6 +115,14 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
           </p>
           <div id={errId} aria-live="polite">
             {problem && <FieldError text={problem} />}
+            {moved && (
+              <p className="np-moved">
+                Nama ini baru diubah di laptop lain menjadi "{project.name}".{" "}
+                {draft === null
+                  ? "Simpan nama tidak mengubah apa pun selama Anda belum mengetik."
+                  : "Simpan nama mengganti nama itu dengan ketikan Anda."}
+              </p>
+            )}
           </div>
         </div>
         <div aria-live="polite">

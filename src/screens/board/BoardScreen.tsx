@@ -1,10 +1,12 @@
 import { IconListCheck, IconPlus } from "@tabler/icons-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../../api";
 import { boardApi, type ProjectSummary } from "../../api/board";
+import { useLive } from "../../api/useLive";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { teamLabel } from "./format";
 import { MyTasks } from "./MyTasks";
-import { NewProjectDialog } from "./NewProjectDialog";
+import { NewProjectDialog, teamChoices } from "./NewProjectDialog";
 import { ProjectBoard, type ProjectBoardHandle } from "./ProjectBoard";
 import { TaskDetail } from "./TaskDetail";
 import { useBoardLive } from "./useBoardLive";
@@ -13,6 +15,8 @@ import "./board.css";
 // Pilihan terakhir di sub-menu Board, per laptop.
 export const BOARD_SELECTION_KEY = "mira.board.selection";
 export const MY_TASKS = "__mine__";
+// Direktori organisasi (siapa admin tim mana) dibaca ulang lewat event; polling hanya cadangan.
+const DIRECTORY_POLL_MS = 30000;
 
 function readSelection(): string | null {
   try {
@@ -38,6 +42,7 @@ type OpenTask = { projectId: string; taskId: string };
 
 export function BoardScreen() {
   const live = useBoardLive(boardApi.listProjects, "projects");
+  const dirLive = useLive(api.getDirectory, "mira://directory", DIRECTORY_POLL_MS);
   const projects = validProjects(live.data);
   const [selected, setSelected] = useState<string | null>(readSelection);
   const [creating, setCreating] = useState(false);
@@ -92,12 +97,23 @@ export function BoardScreen() {
   const lostShown = projects && lost && current === lost.id && !currentProject ? lost : null;
   const nextProject = projects?.[0] ?? null;
 
-  // Fokus yang tertinggal di board yang hilang dipindah ke penjelasannya.
+  // Fokus yang tertinggal di board yang hilang dipindah ke penjelasannya, juga
+  // setelah dialog detail task ditutup (kartu pembukanya sudah tidak ada).
+  // Ditunda satu giliran supaya dialog selesai mengembalikan fokusnya dulu.
+  const taskIsOpen = !!openTask;
   useEffect(() => {
-    if (!lostShown) return;
-    const active = document.activeElement;
-    if (!active || active === document.body) lostHeadingRef.current?.focus();
-  }, [lostShown]);
+    if (!lostShown || taskIsOpen) return;
+    const timer = window.setTimeout(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body) lostHeadingRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [lostShown, taskIsOpen]);
+
+  // Tombol Proyek baru hanya untuk yang bisa membuat proyek di tim mana pun atau
+  // tanpa tim. Selama direktori belum terbaca, tombol tetap tampil; dialognya menjelaskan.
+  const choices = dirLive.data ? teamChoices(dirLive.data) : null;
+  const canCreateProject = !choices || choices.teams.length > 0 || choices.allowOrg;
 
   return (
     <main className="bd" aria-labelledby="page-title">
@@ -149,7 +165,7 @@ export function BoardScreen() {
             ))}
           </ul>
         )}
-        {projects && (
+        {projects && canCreateProject && (
           <button type="button" className="btn btn-ghost btn-sm bd-new" onClick={() => setCreating(true)}>
             <IconPlus size={16} aria-hidden="true" />
             Proyek baru
@@ -158,6 +174,9 @@ export function BoardScreen() {
       </nav>
 
       <div className="bd-main">
+        <div className="sr-only" role="status">
+          {lostShown ? `Proyek ${lostShown.code} ${lostShown.name} tidak tersedia lagi.` : ""}
+        </div>
         {!projects && !live.loading && (
           <div className="bd-pad bd-narrow" role="alert">
             <ErrorAlert title="Daftar proyek belum terbaca">
@@ -197,8 +216,8 @@ export function BoardScreen() {
             </h2>
             <p>
               {lostShown.teamName
-                ? `Proyek ini milik ${teamLabel(lostShown.teamName)} dan tidak ada lagi di daftar Anda. Ini terjadi kalau Anda dikeluarkan dari tim itu, atau akses Tamu Anda ke proyek ini dicabut.`
-                : "Proyek ini tidak ada lagi di daftar Anda. Ini terjadi kalau peran Anda di organisasi berubah, misalnya menjadi Tamu."}
+                ? `Proyek ini milik ${teamLabel(lostShown.teamName)} dan tidak ada lagi di daftar Anda. Biasanya karena Anda dikeluarkan dari tim itu, atau akses Tamu Anda ke proyek ini dicabut.`
+                : "Proyek ini tidak ada lagi di daftar Anda. Biasanya karena peran Anda di organisasi berubah, misalnya menjadi Tamu."}
             </p>
             <p>
               {lostShown.teamName
@@ -214,15 +233,22 @@ export function BoardScreen() {
         )}
         {projects && projects.length === 0 && current !== MY_TASKS && !lostShown && (
           <div className="bd-empty">
-            <h2 className="bd-empty-title">Belum ada proyek</h2>
+            <h2 className="bd-empty-title">{canCreateProject ? "Belum ada proyek" : "Belum ada proyek yang bisa Anda lihat"}</h2>
             <p>
               Satu proyek punya satu board dengan kolom To do, Dikerjakan, dan Selesai. Task diberi nomor dari kode
               proyeknya, misalnya PA-1 untuk proyek berkode PA.
             </p>
-            <button type="button" className="btn" onClick={() => setCreating(true)}>
-              <IconPlus size={16} aria-hidden="true" />
-              Buat proyek pertama
-            </button>
+            {canCreateProject ? (
+              <button type="button" className="btn" onClick={() => setCreating(true)}>
+                <IconPlus size={16} aria-hidden="true" />
+                Buat proyek pertama
+              </button>
+            ) : (
+              <p>
+                Proyek dibuat oleh superadmin atau admin tim. Board proyek tim Anda muncul di sini setelah proyeknya
+                dibuat.
+              </p>
+            )}
           </div>
         )}
       </div>

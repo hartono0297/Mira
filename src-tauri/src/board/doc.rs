@@ -38,6 +38,9 @@ use crate::error::{AppError, AppResult};
 
 pub const DOC_VERSION: i64 = 1;
 
+/// Largest task number a document may hold, so `+ 1` never overflows.
+pub const MAX_TASK_NUMBER: i64 = 1_000_000_000;
+
 /// Activity kinds stored in `activity[].kind`.
 pub mod kind {
     pub const CREATED: &str = "created";
@@ -259,6 +262,11 @@ impl BoardDoc {
         }
     }
 
+    /// Read access to the Automerge document, for `rules`.
+    pub(crate) fn automerge(&self) -> &AutoCommit {
+        &self.doc
+    }
+
     /// What a remote change may not alter about existing tasks:
     /// task id -> (created_by, deleted).
     fn shape_guard(&self) -> HashMap<String, (String, bool)> {
@@ -282,13 +290,24 @@ impl BoardDoc {
         author: &str,
     ) -> Result<(), String> {
         let root_ok = matches!(self.field(&ROOT, "v"), Some(Field::Int(_)))
-            && matches!(self.field(&ROOT, "next_number"), Some(Field::Int(_)))
+            && matches!(self.field(&ROOT, "next_number"), Some(Field::Int(n)) if (1..=MAX_TASK_NUMBER + 1).contains(&n))
             && matches!(self.field(&ROOT, "project"), Some(Field::Obj(ObjType::Map)))
             && matches!(self.field(&ROOT, "tasks"), Some(Field::Obj(ObjType::Map)));
         if !root_ok {
             return Err("struktur utama dokumen board rusak".into());
         }
         let tasks = self.tasks_obj().map_err(|e| e.to_string())?;
+        let present: std::collections::HashSet<String> = self.doc.keys(&tasks).collect();
+        if let Some(gone) = before.keys().find(|id| !present.contains(*id)) {
+            return Err(format!("task {gone}: dihapus dari dokumen"));
+        }
+        let meta = self.project();
+        if !meta.id.is_empty()
+            && (super::model::validate_project_name(&meta.name).ok().as_deref() != Some(meta.name.as_str())
+                || super::model::validate_project_code(&meta.code).ok().as_deref() != Some(meta.code.as_str()))
+        {
+            return Err("nama atau kode proyek tidak valid".into());
+        }
         for id in self.doc.keys(&tasks) {
             let bad = |what: &str| Err(format!("task {id}: {what}"));
             let Some(t) = self.obj(&tasks, &id) else {
@@ -301,7 +320,7 @@ impl BoardDoc {
             let is_str = |k: &str| matches!(f(k), Some(Field::Str(_)));
             let is_obj = |k: &str, ty: ObjType| f(k) == Some(Field::Obj(ty));
             let str_or_null = |k: &str| matches!(f(k), Some(Field::Str(_) | Field::Null));
-            let fields_ok = matches!(f("number"), Some(Field::Int(_)))
+            let fields_ok = matches!(f("number"), Some(Field::Int(n)) if (1..=MAX_TASK_NUMBER).contains(&n))
                 && is_obj("title", ObjType::Text)
                 && is_obj("description", ObjType::Text)
                 && matches!(f("column"), Some(Field::Str(c)) if ColumnId::parse(&c).is_some())
@@ -400,7 +419,7 @@ impl BoardDoc {
             .and_then(|(v, _)| v.as_i64())
             .unwrap_or(1);
         let max_number = existing.iter().map(|t| t.number).max().unwrap_or(0);
-        let number = stored_next.max(max_number + 1).max(1);
+        let number = stored_next.max(max_number.saturating_add(1)).clamp(1, MAX_TASK_NUMBER);
         let column = init.column.unwrap_or(ColumnId::Todo);
         let last_rank = existing
             .iter()

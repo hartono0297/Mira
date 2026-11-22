@@ -108,7 +108,7 @@ export function ProjectBoard({
   const titleId = useId();
   const { reload, setData } = live;
   // Rekan bisa memindah atau menghapus kartu yang sedang difokus; fokus pindah ke kartu terdekat.
-  const rescueFocus = useFocusRescue(rootRef, {
+  const rescue = useFocusRescue(rootRef, {
     spare: "[data-qa-open], [data-qa]",
     fallback: headingRef,
     paused: taskOpen,
@@ -348,7 +348,7 @@ export function ProjectBoard({
   const readOnly = !view.canCreate;
 
   return (
-    <div className="pb" ref={rootRef} onFocus={rescueFocus}>
+    <div className="pb" ref={rootRef} {...rescue}>
       <header className="pb-head">
         <h2 id={titleId} className="pb-title" ref={headingRef} tabIndex={-1}>
           <span className="pb-code">{project.code}</span>{" "}

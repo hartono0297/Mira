@@ -580,9 +580,19 @@
   font-size: 13px;
 }
 
+/* Rekan mengganti nama proyek selama dialog Ubah nama terbuka. Teks biasa, bukan error. */
+.np-moved {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 /* Siapa yang melihat board ini: nama tim atau seluruh organisasi. Teks, bukan warna. */
 .pb-team {
   font-weight: 600;
+  /* Nama tim panjang membungkus, tidak memotong atau mendorong tombol keluar. */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* Board baca-saja (Tamu). Latar --card seperti panel pintasan, teks --text. */

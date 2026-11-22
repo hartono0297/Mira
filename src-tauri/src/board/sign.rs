@@ -22,7 +22,10 @@ use crate::org::is_lower_hex;
 pub const BOARD_DOMAIN_V1: &[u8] = b"mira-board-v1\n";
 /// Largest accepted change. A local change with a full description (10000
 /// characters) and every other field stays far below this.
-pub const MAX_CHANGE_BYTES: usize = 256 * 1024;
+/// The record sent to other laptops carries the bytes as hex inside JSON and
+/// must fit `network::feature::MAX_RECORD_BYTES` (256 KiB), so a change may
+/// be at most a little under half of that.
+pub const MAX_CHANGE_BYTES: usize = 120 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedChange {

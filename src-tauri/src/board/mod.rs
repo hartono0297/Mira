@@ -16,6 +16,7 @@ pub mod numbers;
 pub mod policy;
 pub mod rank;
 pub mod reminder;
+pub mod rules;
 pub mod schema;
 pub mod sign;
 pub mod store;

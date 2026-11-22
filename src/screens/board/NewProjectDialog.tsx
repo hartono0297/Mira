@@ -120,7 +120,8 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (busy || cannotCreate || teamState.status === "loading") return;
+    // Tanpa daftar tim, pilihan tim tidak bisa ditentukan: proyek tidak dibuat sampai daftarnya terbaca.
+    if (busy || cannotCreate || teamState.status !== "ready") return;
     const cleanName = name.trim();
     const cleanCode = code.trim().toUpperCase();
     setServer(null);
@@ -138,7 +139,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     }
     setBusy(true);
     try {
-      const project = await boardApi.createProject(cleanName, cleanCode, choices && teamValue !== ORG ? teamValue : null);
+      const project = await boardApi.createProject(cleanName, cleanCode, teamValue !== ORG ? teamValue : null);
       reset();
       onCreated(project);
     } catch (err) {
@@ -171,7 +172,8 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     if (teamState.status === "error") {
       return (
         <p className="hint">
-          Daftar tim belum terbaca ({teamState.error.message}). Kalau Anda lanjut, proyek dibuat tanpa tim.{" "}
+          Daftar tim belum terbaca ({teamState.error.message}). Proyek bisa dibuat setelah daftar tim terbaca, supaya
+          tidak terlanjur terlihat oleh seluruh organisasi.{" "}
           <button type="button" className="link-btn" onClick={() => setTeamAttempt((n) => n + 1)}>
             Coba baca lagi
           </button>
@@ -292,7 +294,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
           <button
             type="submit"
             className="btn"
-            disabled={busy || cannotCreate || teamState.status === "loading"}
+            disabled={busy || cannotCreate || teamState.status !== "ready"}
             aria-busy={busy || undefined}
           >
             {busy ? "Membuat proyek..." : "Buat proyek"}

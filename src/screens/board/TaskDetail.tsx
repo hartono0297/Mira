@@ -50,9 +50,14 @@ type Props = {
 type SelectField = "status" | "assignee" | "priority";
 
 // Task atau proyeknya hilang saat muat ulang, biasanya karena perubahan dari laptop lain.
-type Gone = "task" | "project";
+// "revoked": izin mengubah dicabut saat masih ada draf yang belum tersimpan.
+type Gone = "task" | "project" | "revoked";
 
-const NOT_MEMBER = "(bukan anggota proyek lagi)";
+const GONE_TITLE: Record<Gone, string> = {
+  task: "Task ini dihapus di laptop lain.",
+  project: "Proyek task ini tidak bisa dibuka lagi.",
+  revoked: "Izin mengubah task ini baru dicabut.",
+};
 
 function errorTitle(field: Field, error: AppError): string {
   if (error.code === "forbidden") return "Anda tidak punya izin untuk ini";
@@ -112,6 +117,16 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   const goneCloseRef = useRef<HTMLButtonElement>(null);
   const hasTask = useRef(false);
   hasTask.current = task !== null;
+  const wasEditable = useRef(false);
+  wasEditable.current = task?.canEdit === true;
+  const hasDrafts = useRef(false);
+  hasDrafts.current =
+    titleDraft !== null ||
+    descDraft !== null ||
+    dueDraft !== null ||
+    labelDraft.trim() !== "" ||
+    comment.trim() !== "" ||
+    Object.values(selDraft).some((v) => v !== undefined);
   const alive = useRef(true);
   const seq = useRef(0);
   const applied = useRef(0);
@@ -140,8 +155,12 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     if (b.status === "fulfilled") setBoard(b.value);
     const boardErr = b.status === "rejected" ? toAppError(b.reason) : null;
     const taskErr = t.status === "rejected" ? toAppError(t.reason) : null;
-    if (!boardErr && !taskErr) {
-      setGone(null);
+    if (!boardErr && !taskErr && t.status === "fulfilled") {
+      // Izin mengubah dicabut (misalnya jadi Tamu) saat masih ada draf: draf
+      // ditampilkan untuk disalin, sama seperti saat task hilang.
+      const canEditNow = t.value.canEdit;
+      const revokedNow = wasEditable.current && !canEditNow && hasDrafts.current;
+      setGone((prev) => (revokedNow || (prev === "revoked" && !canEditNow) ? "revoked" : null));
       setLoadError(null);
     } else if (hasTask.current && boardErr && (boardErr.code === "not_found" || boardErr.code === "forbidden")) {
       setGone("project");
@@ -465,7 +484,11 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   // Penanggung jawab yang sudah tidak ada di daftar (misalnya dikeluarkan dari
   // tim) tetap tampil dengan keterangan, supaya tidak hilang diam-diam.
   const isFormer = (p: Person | null) => !!p && !!board && !people.some((x) => x.publicKey === p.publicKey);
-  const assigneeName = (p: Person) => (isFormer(p) ? `${nameOf(p)} ${NOT_MEMBER}` : nameOf(p));
+  // Satu pasang kurung saja: "Budi (tidak bisa ditugaskan lagi)", "Budi (Anda, tidak bisa ditugaskan lagi)".
+  const assigneeName = (p: Person) => {
+    if (!isFormer(p)) return nameOf(p);
+    return p.publicKey === me ? `${p.name} (Anda, tidak bisa ditugaskan lagi)` : `${p.name} (tidak bisa ditugaskan lagi)`;
+  };
 
   function body() {
     if (loading && !task) {
@@ -583,8 +606,8 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
             <div className="td-live" aria-live="polite">
               {titleMoved && (
                 <p className="td-moved">
-                  Judul ini baru diubah di laptop lain menjadi "{t.title}". Enter menyimpan ketikan Anda dan menggantinya,
-                  Escape memakai judul itu.
+                  Judul ini baru diubah di laptop lain menjadi "{t.title}". Ketikan Anda menggantinya kalau Anda menekan
+                  Enter, pindah dari kolom ini, atau menutup dialog. Tekan Escape untuk memakai judul itu.
                 </p>
               )}
             </div>
@@ -617,8 +640,8 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
             <div className="td-live" aria-live="polite">
               {descMoved && (
                 <p className="td-moved">
-                  Deskripsi ini baru diubah di laptop lain. Simpan deskripsi untuk menggantinya dengan ketikan Anda, atau
-                  batalkan perubahan untuk memakai versi terbaru.
+                  Deskripsi ini baru diubah di laptop lain. Ketikan Anda menggantinya kalau Anda menekan Simpan deskripsi
+                  atau menutup dialog. Pilih Batalkan perubahan untuk memakai versi terbaru.
                 </p>
               )}
             </div>
@@ -1126,7 +1149,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                 <IconAlertTriangle size={18} aria-hidden="true" />
                 <div>
                   <strong>
-                    {gone === "task" ? "Task ini dihapus di laptop lain." : "Proyek task ini tidak bisa dibuka lagi."}
+                    {GONE_TITLE[gone]}
                   </strong>
                   {gone === "project" && (
                     <p>Anda tidak punya akses lagi ke proyek ini, misalnya karena dikeluarkan dari timnya.</p>
@@ -1134,7 +1157,9 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                   <p>
                     {keptDrafts(task).length > 0
                       ? "Isian Anda yang belum tersimpan masih ada di bawah. Salin dulu kalau masih perlu."
-                      : "Yang tampil di bawah adalah isi terakhirnya. Perubahan tidak bisa disimpan lagi."}
+                      : gone === "revoked"
+                        ? "Task tetap bisa dibaca, tapi perubahan tidak bisa disimpan lagi."
+                        : "Yang tampil di bawah adalah isi terakhirnya. Perubahan tidak bisa disimpan lagi."}
                   </p>
                   <div className="td-row-actions">
                     <button ref={goneCloseRef} type="button" className="btn btn-ghost btn-sm" onClick={onClose}>

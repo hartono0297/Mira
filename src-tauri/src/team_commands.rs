@@ -169,6 +169,10 @@ pub async fn create_invite(
     let validity = Validity::parse(&validity)
         .ok_or_else(|| AppError::Forbidden("Masa berlaku undangan tidak dikenali.".into()))?;
     let (invite, code) = mutate(&state, &net, &app, |c| {
+        // Guest access only counts for projects of the invite's team.
+        if role == InviteRole::Guest {
+            crate::board::access::check_guest_projects(&c.db, &team_id, &project_ids)?;
+        }
         permissions::create_invite(
             &mut c.db,
             &c.identity,

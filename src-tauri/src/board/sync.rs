@@ -36,13 +36,12 @@
 //! adds them to the team. The caller retries held changes when the
 //! membership changes.
 
-use std::collections::HashMap;
-
 use automerge::{Change, ChangeHash};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use time::OffsetDateTime;
 
 use super::doc::{BoardDoc, ProjectMeta};
+use super::rules;
 use super::model::{validate_project_code, validate_project_name};
 use super::policy::{BoardAction, BoardPolicy};
 use super::sign::{ChangeRejection, SignedChange, parse_change, verify_envelope};
@@ -227,7 +226,7 @@ fn held(code: &'static str, detail: impl Into<String>) -> ChangeOutcome {
 /// Result of step 3 and 4 of the module docs.
 enum Gate {
     /// The author may write; the parsed change.
-    Ok(Change),
+    Ok(Box<Change>),
     /// Not allowed (yet).
     Held(ChangeOutcome),
     /// The change cannot be parsed.
@@ -260,7 +259,7 @@ fn author_may_write(
             format!("penulis {}: {e}", short(&sc.author)),
         )));
     }
-    Ok(Gate::Ok(change))
+    Ok(Gate::Ok(Box::new(change)))
 }
 
 /// Creates a project from its changes as received from a peer. The first
@@ -295,8 +294,10 @@ pub fn import_project(
     };
 
     // Candidates for the first change: right project, valid envelope, no
-    // dependencies. Authors who were never members are not parsed.
-    let mut root: Option<(SignedChange, Change)> = None;
+    // dependencies. Authors who were never members are not parsed. Every
+    // candidate is tried in hash order, so a bogus first change sent ahead of
+    // the real one cannot block the import, and every laptop picks the same.
+    let mut candidates: Vec<(SignedChange, Change)> = Vec::new();
     for sc in &changes {
         if sc.project_id != project_id || verify_envelope(sc).is_err() {
             continue;
@@ -306,73 +307,76 @@ pub fn import_project(
         }
         if let Ok(c) = parse_change(sc)
             && c.deps().is_empty()
+            && !candidates.iter().any(|(x, _)| x.hash == sc.hash)
         {
-            root = Some((sc.clone(), c));
-            break;
+            candidates.push((sc.clone(), c));
         }
     }
-    let Some((root_sc, root_change)) = root else {
+    candidates.sort_by(|a, b| a.0.hash.cmp(&b.0.hash));
+    let mut root: Option<(SignedChange, i64, ProjectMeta)> = None;
+    let mut logged = false;
+    for (sc, change) in candidates {
+        let creator = sc.author.clone();
+        let mut probe = BoardDoc::empty(&MERGE_ACTOR);
+        let time = change.timestamp();
+        let probe_ok = probe.apply_remote(change, &creator).is_ok();
+        let meta = probe.project();
+        let meta_ok = probe_ok
+            && meta.id == project_id
+            && validate_project_name(&meta.name).is_ok_and(|n| n == meta.name)
+            && validate_project_code(&meta.code).is_ok_and(|c| c == meta.code)
+            && meta.team_id.as_deref().is_none_or(|t| crate::org::is_lower_hex(t, 32))
+            && store::project_id_matches(&meta, &creator);
+        if !meta_ok {
+            log(
+                &tx,
+                from_peer,
+                &ChangeRejection::new(
+                    "board_bad_project",
+                    format!(
+                        "proyek {} perubahan {}: data proyek di perubahan pertama tidak valid",
+                        short(project_id),
+                        short(&sc.hash)
+                    ),
+                ),
+                now,
+            )?;
+            logged = true;
+            report.push(
+                &sc.hash,
+                ChangeOutcome::Rejected {
+                    code: "board_bad_project",
+                },
+            );
+            continue;
+        }
+        let create = BoardAction::CreateProject {
+            team_id: meta.team_id.clone(),
+        };
+        if let Err(e) = policy.check_at(&tx, &creator, &create, time) {
+            report.push(
+                &sc.hash,
+                held(
+                    "board_forbidden",
+                    format!("pembuat proyek {}: {e}", short(&creator)),
+                ),
+            );
+            continue;
+        }
+        root = Some((sc, time, meta));
+        break;
+    }
+    let Some((root_sc, root_time, meta)) = root else {
         no_project(&mut report, &changes, None);
         for sc in rest {
             report.push(&sc.hash, ChangeOutcome::Deferred);
         }
+        if logged {
+            tx.commit()?;
+        }
         return Ok(report);
     };
-
     let creator = root_sc.author.clone();
-    let mut probe = BoardDoc::empty(&MERGE_ACTOR);
-    let root_time = root_change.timestamp();
-    let probe_ok = probe.apply_remote(root_change, &creator).is_ok();
-    let meta = probe.project();
-    let meta_ok = probe_ok
-        && meta.id == project_id
-        && validate_project_name(&meta.name).is_ok_and(|n| n == meta.name)
-        && validate_project_code(&meta.code).is_ok_and(|c| c == meta.code)
-        && meta.team_id.as_deref().is_none_or(|t| crate::org::is_lower_hex(t, 32));
-    if !meta_ok {
-        log(
-            &tx,
-            from_peer,
-            &ChangeRejection::new(
-                "board_bad_project",
-                format!(
-                    "proyek {} perubahan {}: data proyek di perubahan pertama tidak valid",
-                    short(project_id),
-                    short(&root_sc.hash)
-                ),
-            ),
-            now,
-        )?;
-        report.push(
-            &root_sc.hash,
-            ChangeOutcome::Rejected {
-                code: "board_bad_project",
-            },
-        );
-        no_project(&mut report, &changes, Some(&root_sc.hash));
-        for sc in rest {
-            report.push(&sc.hash, ChangeOutcome::Deferred);
-        }
-        tx.commit()?;
-        return Ok(report);
-    }
-    let create = BoardAction::CreateProject {
-        team_id: meta.team_id.clone(),
-    };
-    if let Err(e) = policy.check_at(&tx, &creator, &create, root_time) {
-        report.push(
-            &root_sc.hash,
-            held(
-                "board_forbidden",
-                format!("pembuat proyek {}: {e}", short(&creator)),
-            ),
-        );
-        no_project(&mut report, &changes, Some(&root_sc.hash));
-        for sc in rest {
-            report.push(&sc.hash, ChangeOutcome::Deferred);
-        }
-        return Ok(report);
-    }
     let created_at = OffsetDateTime::from_unix_timestamp(root_time)
         .map(clock::format_rfc3339)
         .unwrap_or_else(|_| clock::format_rfc3339(now));
@@ -444,46 +448,6 @@ fn log(
     permissions::log_rejection(conn, from_peer, None, r.code, &r.detail, now)
 }
 
-/// What a change may not do without a right of its own.
-struct Meaning {
-    /// Tasks it turned from live to deleted: `(task id, created_by)`.
-    deleted: Vec<(String, String)>,
-    /// Name or code of the project changed.
-    project_changed: bool,
-    /// Project id or team changed (never allowed from another laptop).
-    owner_changed: bool,
-}
-
-fn meaning(
-    before_tasks: &HashMap<String, (String, bool)>,
-    before_meta: &ProjectMeta,
-    doc: &BoardDoc,
-) -> AppResult<Meaning> {
-    let after = doc.project();
-    let mut deleted = Vec::new();
-    for t in doc.tasks()? {
-        let was_live = before_tasks.get(&t.id).is_none_or(|(_, del)| !del);
-        if t.deleted && was_live {
-            deleted.push((t.id, t.created_by));
-        }
-    }
-    Ok(Meaning {
-        deleted,
-        project_changed: after.name != before_meta.name || after.code != before_meta.code,
-        owner_changed: after.id != before_meta.id || after.team_id != before_meta.team_id,
-    })
-}
-
-fn task_states(doc: &BoardDoc) -> HashMap<String, (String, bool)> {
-    doc.tasks()
-        .map(|ts| {
-            ts.into_iter()
-                .map(|t| (t.id, (t.created_by, t.deleted)))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 #[allow(clippy::too_many_arguments)]
 fn ingest(
     tx: &Transaction<'_>,
@@ -500,7 +464,9 @@ fn ingest(
         project_id: row.id.clone(),
     };
     for sc in changes {
-        if report.outcome(&sc.hash).is_some() {
+        if report.outcome(&sc.hash).is_some() || pending.iter().any(|(p, _)| p.hash == sc.hash) {
+            // The same change twice in one batch: counted, reported once.
+            report.duplicates += 1;
             continue;
         }
         let hash = sc.hash.parse::<ChangeHash>().ok();
@@ -508,7 +474,7 @@ fn ingest(
             Some(h) => doc.has_change(&h) || store::change_exists(tx, &sc.hash)?,
             None => false,
         };
-        if known || pending.iter().any(|(p, _)| p.hash == sc.hash) {
+        if known {
             report.push(&sc.hash, ChangeOutcome::Duplicate);
             continue;
         }
@@ -525,7 +491,7 @@ fn ingest(
             continue;
         }
         match author_may_write(tx, policy, &sc, &write)? {
-            Gate::Ok(change) => pending.push((sc, change)),
+            Gate::Ok(change) => pending.push((sc, *change)),
             Gate::Bad(r) => reject(tx, report, row, &sc, from_peer, r, now)?,
             Gate::Held(outcome) => report.push(&sc.hash, outcome),
         }
@@ -541,27 +507,24 @@ fn ingest(
         let Some(i) = ready else { break };
         let (sc, change) = pending.swap_remove(i);
         let time = change.timestamp();
-        let before_tasks = task_states(doc);
-        let before_meta = doc.project();
-        let backup = doc.fork();
-        if let Err((code, detail)) = doc.apply_remote(change, &sc.author) {
-            reject(tx, report, row, &sc, from_peer, ChangeRejection::new(code, detail), now)?;
-            continue;
-        }
-        // A project document is born from its first change.
-        let first = before_meta.id.is_empty();
-        let m = meaning(&before_tasks, &before_meta, doc)?;
-        if !first && m.owner_changed {
-            *doc = backup;
-            let r = ChangeRejection::new(
-                "board_owner_changed",
-                "perubahan mencoba mengganti id atau tim proyek",
-            );
-            reject(tx, report, row, &sc, from_peer, r, now)?;
-            continue;
-        }
+        // A project document is born from its first change, which
+        // `import_project` validated; every later change is judged by its
+        // operations before it touches the document.
+        let first = doc.project().id.is_empty();
+        let needs = if first {
+            rules::Needs::default()
+        } else {
+            match rules::judge(doc, &change) {
+                Ok(n) => n,
+                Err(detail) => {
+                    let r = ChangeRejection::new("board_not_allowed", detail);
+                    reject(tx, report, row, &sc, from_peer, r, now)?;
+                    continue;
+                }
+            }
+        };
         let mut refusal: Option<String> = None;
-        if !first && m.project_changed {
+        if needs.manage {
             let manage = BoardAction::ManageProject {
                 project_id: row.id.clone(),
             };
@@ -569,7 +532,7 @@ fn ingest(
                 refusal = Some(format!("mengubah proyek: {e}"));
             }
         }
-        for (task_id, created_by) in &m.deleted {
+        for (task_id, created_by) in &needs.delete {
             if refusal.is_some() {
                 break;
             }
@@ -583,7 +546,6 @@ fn ingest(
             }
         }
         if let Some(detail) = refusal {
-            *doc = backup;
             report.push(
                 &sc.hash,
                 held(
@@ -591,6 +553,20 @@ fn ingest(
                     format!("penulis {} {detail}", short(&sc.author)),
                 ),
             );
+            continue;
+        }
+        let backup = (!needs.new_comments.is_empty() || !needs.new_activity.is_empty())
+            .then(|| doc.fork());
+        if let Err((code, detail)) = doc.apply_remote(change, &sc.author) {
+            reject(tx, report, row, &sc, from_peer, ChangeRejection::new(code, detail), now)?;
+            continue;
+        }
+        if let Err(detail) = rules::check_new_authorship(doc, &needs, &sc.author) {
+            if let Some(b) = backup {
+                *doc = b;
+            }
+            let r = ChangeRejection::new("board_not_allowed", detail);
+            reject(tx, report, row, &sc, from_peer, r, now)?;
             continue;
         }
         store::insert_change(tx, &sc, time, from_peer, now)?;

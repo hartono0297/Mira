@@ -118,9 +118,10 @@ mod tests {
     #[test]
     fn database_before_documents_upgrades_and_keeps_data() {
         let tmp = tempfile::tempdir().unwrap();
-        // v1 foundation, v2 membership log, v3 board, v4 documents, v5 signing.
+        // v1 foundation, v2 membership log, v3 board, v4 documents, v5 signing,
+        // v6 board sync.
         let before = 3;
-        assert_eq!(db::latest_version(), 5, "update this test when a migration is added");
+        assert_eq!(db::latest_version(), 6, "update this test when a migration is added");
         let (pk, org_id) = {
             let mut conn = db::open(tmp.path()).unwrap();
             let mut me = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
@@ -129,6 +130,14 @@ mod tests {
             conn.execute(
                 "INSERT INTO settings (key, value, updated_at) VALUES ('theme.mode', 'dark', 't')",
                 [],
+            )
+            .unwrap();
+            // Undo v6 (board sync) so it can run again after documents.
+            conn.execute_batch(
+                "DROP TABLE board_pending; DROP TABLE board_rejected;
+                 DROP INDEX board_changes_record;
+                 ALTER TABLE board_changes DROP COLUMN record_id;
+                 ALTER TABLE board_projects DROP COLUMN doc_code;",
             )
             .unwrap();
             for t in SIGNING_TABLES_AFTER_DOCUMENTS {

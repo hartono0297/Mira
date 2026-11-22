@@ -283,6 +283,14 @@ impl BoardPolicy for BatchPolicy {
         if matches!(err, AppError::NotFound(_)) {
             return Err(err);
         }
+        // Only people removed from the organization are judged at the time
+        // of their change: they can no longer connect, so a late change
+        // reached us through a laptop that accepted it before the removal.
+        // Someone still in the organization (moved out of a team, demoted)
+        // can still send directly and could backdate; current rights apply.
+        if Rights::load(conn)?.is_active(actor) {
+            return Err(err);
+        }
         let owner = owner_for(conn, action)?;
         if self.history.get().is_none() {
             let loaded = RightsHistory::load(conn)?;

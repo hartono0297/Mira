@@ -63,7 +63,7 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
   const rootRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // Baris yang difokus bisa hilang saat muat ulang (task dihapus atau dialihkan rekan).
-  const rescueFocus = useFocusRescue(rootRef, { fallback: headingRef, paused: taskOpen });
+  const rescue = useFocusRescue(rootRef, { fallback: headingRef, paused: taskOpen });
   const now = new Date();
   const groups = live.data ? groupMyTasks(live.data, now) : [];
   const open = groups.filter((g) => g.id !== "done");
@@ -172,7 +172,7 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
   }
 
   return (
-    <section className="mt" aria-labelledby={`${ids}-page`} ref={rootRef} onFocus={rescueFocus}>
+    <section className="mt" aria-labelledby={`${ids}-page`} ref={rootRef} {...rescue}>
       <header className="page-head mt-head">
         <h2 id={`${ids}-page`} className="page-title" ref={headingRef} tabIndex={-1}>
           Task saya

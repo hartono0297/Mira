@@ -161,6 +161,29 @@ describe("Halaman Task saya", () => {
     expect(document.activeElement?.closest("li")?.dataset.rescue).toMatch(/-0+9$/);
   });
 
+  it("selama detail task terbuka, fokus tidak dipindah walau barisnya hilang", async () => {
+    render(<MyTasks taskOpen onOpenTask={vi.fn()} />);
+    const row = await screen.findByRole("button", { name: /PA-6/ });
+    act(() => row.focus());
+    board.myTasks.mockResolvedValue(sample.filter((i) => i.task.code !== "PA-6"));
+    await boardEvent();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /PA-6/ })).not.toBeInTheDocument());
+    // Fokus milik dialog detail; halaman ini tidak merebutnya.
+    expect(document.activeElement?.closest("li")).toBeNull();
+  });
+
+  it("fokus yang sengaja dipindah keluar oleh pengguna tidak direbut kembali", async () => {
+    render(<MyTasks onOpenTask={vi.fn()} />);
+    const row = await screen.findByRole("button", { name: /PA-6/ });
+    act(() => row.focus());
+    act(() => row.blur());
+    await act(async () => {});
+    board.myTasks.mockResolvedValue(sample.filter((i) => i.task.code !== "PA-6"));
+    await boardEvent();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /PA-6/ })).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(document.body);
+  });
+
   it("error membaca bisa dicoba lagi", async () => {
     const user = userEvent.setup();
     board.myTasks.mockRejectedValueOnce({ code: "database", message: "Database terkunci." });

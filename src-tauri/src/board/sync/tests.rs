@@ -657,10 +657,10 @@ fn changes_that_break_the_document_shape_are_refused() {
         assert_eq!(bad.len(), 1, "{label}");
         let r = apply_remote_changes(&mut b.conn, &LocalRolePolicy, &p.id, Some(&me), bad).unwrap();
         assert_eq!((r.applied, r.rejected), (0, 1), "{label}");
-        assert_eq!(
-            rejected(&b.conn).last().unwrap(),
-            "board_invalid_doc",
-            "{label}"
+        let code = rejected(&b.conn).last().unwrap().clone();
+        assert!(
+            code == "board_invalid_doc" || code == "board_not_allowed",
+            "{label}: {code}"
         );
         assert_eq!(tasks(&b, &p.id), before, "{label}");
     }

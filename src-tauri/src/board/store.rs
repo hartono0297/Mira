@@ -153,6 +153,13 @@ pub(crate) fn claim_code(
     unreachable!("an unused code always exists")
 }
 
+/// Whether a project's id is bound to its creator and team (so nobody else
+/// can claim the id with other data). Placeholder until ids are derived:
+/// always true.
+pub(crate) fn project_id_matches(_meta: &ProjectMeta, _creator: &str) -> bool {
+    true
+}
+
 /// Creates a project and its document. Permission is checked by the caller.
 pub fn create_project(
     conn: &mut Connection,
@@ -269,6 +276,12 @@ fn commit_and_sign(
     for change in doc.changes_after(before) {
         // Other laptops refuse bigger changes, so it must not be stored here.
         if change.raw_bytes().len() > MAX_CHANGE_BYTES {
+            return Err(AppError::InvalidInput(
+                "Perubahan ini terlalu besar untuk disimpan. Persingkat deskripsi atau komentarnya, lalu coba lagi."
+                    .into(),
+            ));
+        }
+        if change.len() > super::rules::MAX_CHANGE_OPS {
             return Err(AppError::InvalidInput(
                 "Perubahan ini terlalu besar untuk disimpan. Persingkat deskripsi atau komentarnya, lalu coba lagi."
                     .into(),
