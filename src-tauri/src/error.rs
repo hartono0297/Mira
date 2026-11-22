@@ -66,6 +66,8 @@ pub enum AppError {
     InvalidAddress(String),
     #[error("{0}")]
     Network(String),
+    #[error("{0}")]
+    InvalidInput(String),
 }
 
 impl AppError {
@@ -93,6 +95,7 @@ impl AppError {
             AppError::LastSuperadmin => "last_superadmin",
             AppError::InvalidAddress(_) => "invalid_address",
             AppError::Network(_) => "network",
+            AppError::InvalidInput(_) => "invalid_input",
         }
     }
 }
@@ -148,6 +151,7 @@ mod tests {
             (AppError::LastSuperadmin, "last_superadmin"),
             (AppError::InvalidAddress("x".into()), "invalid_address"),
             (AppError::Network("x".into()), "network"),
+            (AppError::InvalidInput("x".into()), "invalid_input"),
         ];
         for (err, code) in cases {
             assert_eq!(err.code(), code);
