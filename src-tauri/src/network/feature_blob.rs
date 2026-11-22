@@ -91,7 +91,9 @@ const TRANSFER_MAX: Duration = Duration::from_secs(30 * 60);
 /// Rolling throughput floor: at least `WINDOW_MIN_BYTES` (or what is left)
 /// in every `THROUGHPUT_WINDOW`.
 const THROUGHPUT_WINDOW: Duration = Duration::from_secs(30);
-const WINDOW_MIN_BYTES: u64 = 32 * 1024;
+/// About 34 KB/s: slow VPN links pass, a peer trickling bytes to hold a
+/// transfer slot does not.
+const WINDOW_MIN_BYTES: u64 = 1024 * 1024;
 /// The server checks membership and access again after this many bytes.
 const RECHECK_EVERY: u64 = 4 * 1024 * 1024;
 /// Largest header frame (`BlobHeader` or `BlobRefused`).
@@ -1473,7 +1475,7 @@ mod tests {
     fn throughput_floor_per_window() {
         let t0 = Instant::now();
         let w = THROUGHPUT_WINDOW;
-        let mut t = Throughput::new(1024 * 1024, t0);
+        let mut t = Throughput::new(10 * WINDOW_MIN_BYTES, t0);
         assert_eq!(t.deadline(), Some(t0 + w));
         t.record(WINDOW_MIN_BYTES, t0 + Duration::from_secs(5))
             .unwrap();
