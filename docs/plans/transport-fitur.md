@@ -103,3 +103,7 @@ A, B, dan C dikerjakan paralel di worktree terpisah dari commit kerangka, lalu d
 
 - Jangan menjalankan `cargo fmt` untuk seluruh crate (mengubah file lain). Pakai `rustfmt --edition 2024 <file>` hanya untuk file sendiri. Akhir baris LF (kecuali `lib.rs` yang CRLF).
 - Jangan mengubah `feature.rs` maupun tanda tangan kerangka di atas.
+
+## Perubahan setelah review
+
+Implementasi akhir menyimpang dari rencana di beberapa angka dan menambah tawaran delta (hanya id baru untuk perubahan lokal dan gosip), batas 30.000 id diminta per sesi, decode frame dua langkah, jendela stream 512 KiB, dan batas sesi op sync per peer. Rinciannya di `docs/progress/transport-fitur.md`.

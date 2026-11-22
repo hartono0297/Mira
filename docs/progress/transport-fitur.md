@@ -84,7 +84,35 @@ Empat putaran review oleh subagent terpisah:
 
 ## Hasil uji
 
-HASIL_UJI
+Semua dijalankan di satu PC Windows pada commit gabungan terakhir.
+
+| Pemeriksaan | Hasil |
+|---|---|
+| `cargo test` | 616 lulus, 0 gagal, 7 diabaikan (di `main` sebelumnya 534) |
+| `cargo test --lib network`, diulang dua kali lagi saat build release berjalan | 136 lulus, 0 gagal, 1 diabaikan, kedua kali |
+| Tes integrasi `network::feature_tests` | 13/13 lulus |
+| `cargo clippy --all-targets` | tanpa peringatan |
+| Vitest | 30 file, 378 tes lulus |
+| Build release (`npx tauri build --no-bundle`) | berhasil |
+| `npm run test:e2e-multi` (`scripts/e2e-multi.mjs` terhadap build release) | 25/25 lulus |
+
+Tes integrasi tiga node yang dibuat (QUIC loopback, fitur mainan `toy`, sumber blob mainan):
+
+1. Tiga laptop sampai ke gabungan record yang sama, event `FeatureChanged` muncul, `peer_connected` dipanggil untuk setiap rekan.
+2. Record baru lewat `notify_changed` sampai ke rekan dalam kurang dari 10 detik.
+3. Record yang disembunyikan dari satu rekan tidak pernah ditawarkan, dikirim, atau diterima rekan itu.
+4. Record palsu (id tidak cocok) dan record terlalu besar dibuang penerima dan dicatat sebagai `feature_records_dropped`.
+5. Record yang ditolak fitur tidak disimpan dan tidak menghentikan sinkron berikutnya.
+6. Topik yang tidak dikenal penerima diabaikan, koneksi tetap sama, topik lain tetap tersinkron.
+7. Blob berhasil diunduh, ukuran, isi, dan hash cocok.
+8. Blob yang tidak diizinkan ditolak, `dest` tidak ada.
+9. Blob dengan hash salah ditolak, tanpa `dest` dan tanpa file `.part-` tersisa.
+10. Blob melebihi `max_size` ditolak; dengan batas yang cukup berhasil di koneksi yang sama.
+11. Peer di `prefer` yang menolak diganti peer lain.
+12. Peer yang dikeluarkan tidak menerima record maupun blob lagi.
+13. Hub tanpa jaringan (sebelum mulai dan sesudah berhenti) tidak punya rekan dan unduhan gagal.
+
+Catatan uji: Vitest sempat menunjukkan error "Timeout waiting for worker to respond" saat beberapa build cargo berjalan bersamaan. Dijalankan ulang saat mesin sepi, semua lulus tanpa error. Tidak ada kode frontend yang diubah.
 
 ## Catatan merge
 
