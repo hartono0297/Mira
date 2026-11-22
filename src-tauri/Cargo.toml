@@ -40,6 +40,9 @@ qrcode = "0.15.0"
 blake3 = "1.8.7"
 data-encoding = "2.11.1"
 x509-parser = "0.18.1"
+# Tahap 5 (tanda tangan PDF): kunci turunan PIN dan enkripsi gambar tanda tangan.
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -52,6 +55,7 @@ strip = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
+proptest = "1.12.0"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Security_Credentials", "Win32_Foundation"] }

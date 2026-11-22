@@ -1,7 +1,12 @@
 //! Numbered schema migrations. Never edit a migration that has shipped; append
 //! a new one instead. Index 0 is schema version 1.
 
-pub const MIGRATIONS: &[&str] = &[V1_FOUNDATION, V2_MEMBERSHIP_LOG];
+pub const MIGRATIONS: &[&str] = &[
+    V1_FOUNDATION,
+    V2_MEMBERSHIP_LOG,
+    // Tahap 5 (tanda tangan PDF). Nomor final ditentukan saat merge.
+    crate::signing::schema::SIGNING_SCHEMA,
+];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.
 ///

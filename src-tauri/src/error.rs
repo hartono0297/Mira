@@ -66,6 +66,11 @@ pub enum AppError {
     InvalidAddress(String),
     #[error("{0}")]
     Network(String),
+    /// Tahap 5 (tanda tangan PDF): satu varian dengan kode sendiri, misalnya
+    /// `pin_wrong`, `pin_locked`, `not_your_turn`. Daftar kode ada di
+    /// `docs/plans/tahap-5-lokal.md`.
+    #[error("{message}")]
+    Signing { code: &'static str, message: String },
 }
 
 impl AppError {
@@ -93,6 +98,7 @@ impl AppError {
             AppError::LastSuperadmin => "last_superadmin",
             AppError::InvalidAddress(_) => "invalid_address",
             AppError::Network(_) => "network",
+            AppError::Signing { code, .. } => code,
         }
     }
 }

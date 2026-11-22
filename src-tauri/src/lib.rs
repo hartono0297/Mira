@@ -16,6 +16,7 @@ pub mod peers;
 pub mod permissions;
 pub mod qr;
 pub mod settings;
+pub mod signing;
 pub mod state;
 pub mod window_theme;
 
