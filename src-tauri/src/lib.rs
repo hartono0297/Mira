@@ -10,6 +10,7 @@ pub mod commands;
 pub mod db;
 pub mod documents;
 pub mod error;
+pub mod feature_bridge;
 pub mod firewall;
 pub mod identity;
 pub mod net_backend;
@@ -93,7 +94,17 @@ pub fn run() {
             app.manage(state);
             // Feature sync contract (network/feature.rs): chat, board, documents
             // and signing register here; the transport sets the real link.
-            app.manage(std::sync::Arc::new(network::feature::FeatureHub::default()));
+            let hub = std::sync::Arc::new(network::feature::FeatureHub::default());
+            // Test-only bridge between instances (MIRA_TEST_BRIDGE_DIR), until
+            // the feature transport is merged.
+            if let Ok(pk) = app
+                .state::<MiraState>()
+                .with_core(|core| Ok(core.identity.public_key_hex().to_owned()))
+                && let Some(link) = feature_bridge::link_from_env(&pk)
+            {
+                hub.set_link(link);
+            }
+            app.manage(hub);
             // Document library: managed even when the data folder is missing
             // (its commands then return the error). Edit sessions left from
             // the last run are recovered in the background.
@@ -172,6 +183,10 @@ pub fn run() {
             signing::commands::sign_cancel,
             signing::commands::sign_export,
             signing::commands::sign_verify_file,
+            feature_bridge::debug_feature_offer,
+            feature_bridge::debug_feature_ingest,
+            feature_bridge::debug_blob_serve,
+            feature_bridge::debug_peer_connected,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
