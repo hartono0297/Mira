@@ -7,11 +7,17 @@ pub mod clock;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod firewall;
 pub mod identity;
+pub mod network;
 pub mod org;
 pub mod paths;
+pub mod peers;
+pub mod permissions;
+pub mod qr;
 pub mod settings;
 pub mod state;
+pub mod window_theme;
 
 use tauri::{App, Manager, WebviewWindowBuilder};
 
