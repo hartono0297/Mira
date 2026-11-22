@@ -492,27 +492,28 @@ fn forged_changes_are_refused_and_not_asked_again() {
     let ids: Vec<String> = forged.iter().map(|r| r.id.clone()).collect();
     let before = o.sari.change_count(&pid);
     let got = ingest(&o.sari, &o.budi, forged.clone());
+    // The outsider's change is neither kept nor refused for good: this
+    // laptop has never seen that key as a member, and the op admitting it
+    // could still be on its way. It is simply asked for again later.
     assert_eq!(got, FeatureIngest {
         accepted: 0,
-        rejected: 4,
+        rejected: 3,
         changed: false,
     });
     assert_eq!(o.sari.change_count(&pid), before);
-    // The outsider was never a member: refused for good, not kept pending.
-    assert_eq!(o.sari.count("SELECT count(*) FROM board_rejected"), 4);
+    assert_eq!(o.sari.count("SELECT count(*) FROM board_rejected"), 3);
     assert_eq!(o.sari.count("SELECT count(*) FROM board_pending"), 0);
     let codes = o.sari.rejections();
-    assert_eq!(codes.len(), 4, "{codes:?}");
+    assert_eq!(codes.len(), 3, "{codes:?}");
     assert!(codes.contains(&"board_bad_format".to_owned()));
-    assert!(codes.contains(&"board_forbidden".to_owned()));
-    assert!(o.sari.f.unknown_ids(&ids).unwrap().is_empty());
+    assert_eq!(o.sari.f.unknown_ids(&ids).unwrap(), vec![ids[3].clone()]);
 
     // Offered again, or after a membership change: logged only once.
     let again = ingest(&o.sari, &o.budi, forged);
     assert_eq!(again, FeatureIngest::default());
     o.sari.core(|c| p::create_team(&mut c.db, &c.identity, "Gudang", org_ops::now()).map(|_| ()));
     o.sari.f.peer_connected(&o.budi.pk);
-    assert_eq!(o.sari.rejections().len(), 4);
+    assert_eq!(o.sari.rejections().len(), 3);
 
     // The real change still gets through.
     let (real_pull, _) = pull(o.budi.me(), o.sari.me()).unwrap();
