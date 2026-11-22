@@ -17,7 +17,7 @@ Bukan lingkup: mengirim permintaan dan file ke rekan (butuh jaringan, disambung 
 | Kunci gambar = BLAKE3 `derive_key("mira signature key v1", argon2id(PIN, salt) ‖ pepper)`. Argon2id m=64 MiB, t=3, p=1. Gambar PNG dienkripsi XChaCha20-Poly1305 (nonce acak 24 byte, AAD = `mira-signature-v1` + kunci publik pemilik). | PIN tidak pernah disimpan. Tag AEAD sekaligus menjadi pemeriksa PIN, jadi tidak perlu hash PIN terpisah yang bisa ditebak lepas. |
 | `pepper` = BLAKE3 dari tanda tangan Ed25519 kunci laptop atas `mira-signature-pepper-v1` ‖ salt (Ed25519 deterministik). | Mencuri `mira.db` saja tidak cukup untuk menebak PIN di komputer lain: penyerang juga butuh kunci laptop di Windows Credential Manager. Tidak perlu entri keyring baru. |
 | Batas percobaan: setelah 5 salah berturut-turut terkunci 1 menit, 10 salah 5 menit, 15 salah 15 menit, 20 salah ke atas 60 menit per 5 kesalahan. Benar sekali mereset hitungan. | Menahan tebakan di layar tanpa membuat pemilik terkunci lama karena salah ketik. |
-| Mengganti tanda tangan = hapus lalu buat baru (hapus tidak butuh PIN, dicatat di jejak audit). | Jalan keluar kalau lupa PIN. Gambar lama ikut hilang, jadi menghapus tidak memberi penyerang apa pun. |
+| Mengganti tanda tangan = hapus lalu buat baru. Hapus dengan PIN lama: tanda tangan baru langsung bisa dipakai. Hapus tanpa PIN (lupa PIN): tanda tangan baru baru bisa dipakai 24 jam setelah penghapusan. Keduanya tercatat di jejak audit, dan catatan yang terjadi selama permintaan berjalan tampil di jejak audit permintaan itu. | Diubah setelah review keamanan: tanpa masa tunggu, orang lain di laptop yang tidak terkunci bisa menghapus tanda tangan, membuat baru dengan PIN buatannya, lalu menandatangani atas nama pemilik. |
 | Setiap tindakan tanda tangan butuh PIN. Kotak tanda tangan ditempatkan dulu (rasio dari lebar dan tinggi gambar yang disimpan tanpa enkripsi), PIN diminta di akhir. | Sesuai alur PRD: tempatkan, masukkan PIN, selesai. |
 | `sign_unlock` membalas token sekali pakai berumur 5 menit plus gambar. `sign_complete` wajib membawa token itu. Token hanya di memori. | Stempel dikerjakan pdf-lib di frontend, jadi inti Rust butuh bukti bahwa PIN baru saja dimasukkan. |
 | Teks stempel dan halaman catatan memakai Helvetica bawaan pdf-lib; karakter di luar WinAnsi diganti `?`. | Tanpa menambah fontkit. Nama Indonesia umumnya huruf Latin. |
@@ -25,7 +25,7 @@ Bukan lingkup: mengirim permintaan dan file ke rekan (butuh jaringan, disambung 
 | Halaman catatan (F-SIGN-05) ditambahkan oleh penanda tangan terakhir sebelum mengirim versi final. | Hash final mencakup halaman catatan, jadi halaman itu ikut terkunci. |
 | Penyimpanan PDF lewat trait `DocumentStore`; implementasi sementara `FolderStore` di `<data_dir>/ttd-berkas/<2 hex>/<hash>.pdf`. | Blob store BLAKE3 Tahap 4 ada di branch lain; saat merge cukup ganti implementasi. |
 | Ekspor ke `MIRA_EXPORT_DIR` kalau diisi, kalau tidak ke folder Unduhan Windows. Nama `<judul> (ditandatangani).pdf`, tidak menimpa file yang ada. Lokasi ekspor dicatat dan diperiksa ulang setiap daftar dimuat. | Tidak perlu plugin dialog. File di luar Mira juga dijaga: kalau berubah, muncul peringatan. |
-| Batas ukuran PDF 50 MB, gambar tanda tangan 1 MB dan maksimal 2000 x 2000 piksel. | Wajar untuk kontrak; mencegah memori habis. |
+| Batas ukuran PDF 50 MB saat impor, 100 MB untuk versi bertanda tangan, gambar tanda tangan 1 MB dan maksimal 2000 x 2000 piksel. | Wajar untuk kontrak; mencegah memori habis. pdf-lib menyimpan ulang tanpa object stream, jadi hasil stempel bisa sekitar dua kali lebih besar. |
 | Byte PDF lewat IPC mentah Tauri 2 (`tauri::ipc::Request` dan `Response`), bukan JSON array. | PDF beberapa MB jadi ratusan ribu angka di JSON, lambat. |
 | Satu varian error baru `AppError::Signing { code, message }`. | Hanya satu baris enum dan satu baris `code()`, sehingga merge dengan tahap lain mudah. |
 | Layar "Tanda tangan" sendiri di sidebar (`src/screens/sign/`). | Layar Dokumen milik Tahap 4. Setelah merge, daftar "menunggu tanda tangan" bisa dipindah ke Dokumen. |
@@ -66,7 +66,7 @@ Argumen camelCase, hasil camelCase, error `{ code, message }`.
 |---|---|---|
 | `sign_overview` | - | `SignOverview` |
 | `sign_save_signature` | `{ pin, pngBase64 }` | `SavedSignatureInfo` |
-| `sign_delete_signature` | - | `null` |
+| `sign_delete_signature` | `{ pin: string \| null }` | `null` |
 | `sign_unlock` | `{ pin }` | `{ token, pngBase64, signedAt, width, height }` |
 | `sign_list_candidates` | - | `Candidate[]` |
 | `sign_import_pdf` | badan mentah = byte PDF, header `x-mira-file-name` (encodeURIComponent) | `{ fileHash, size, fileName, pageCount: null }` |
@@ -80,7 +80,7 @@ Argumen camelCase, hasil camelCase, error `{ code, message }`.
 
 Tipe:
 ```ts
-type SavedSignatureInfo = { width: number; height: number; createdAt: string; failedAttempts: number; lockedUntil: string | null; attemptsLeft: number };
+type SavedSignatureInfo = { width: number; height: number; createdAt: string; failedAttempts: number; lockedUntil: string | null; attemptsLeft: number; usableAfter: string | null };
 type MyState = "your_turn" | "waiting_others" | "signed" | "not_involved";
 type Integrity = "intact" | "changed" | "missing";
 type RequestSummary = { id: string; title: string; mode: "sequential" | "parallel"; status: "in_progress" | "completed" | "cancelled"; myState: MyState; signedCount: number; signerCount: number; createdAt: string; updatedAt: string; completedAt: string | null; integrity: Integrity; exportWarnings: number };
@@ -93,7 +93,7 @@ type RequestDetail = RequestSummary & { requestedBy: { publicKey: string; displa
 type VerifyResult = { state: "match_final" | "match_version" | "changed" | "unknown"; fileHash: string; requestId: string | null; title: string | null; completedAt: string | null; signers: { displayName: string; signedAt: string | null }[] };
 ```
 
-Kode error tanda tangan: `pin_invalid`, `pin_wrong`, `pin_locked`, `pin_mismatch` (frontend saja), `signature_missing`, `signature_exists`, `image_invalid`, `pdf_invalid`, `pdf_too_large`, `request_invalid`, `guest_cannot_request`, `not_a_signer`, `not_your_turn`, `already_signed`, `request_closed`, `not_requester`, `session_expired`, `version_conflict`, `tag_missing`, `export_failed`. Error lama dipakai ulang: `not_found`, `removed`, `database`, `internal`.
+Kode error tanda tangan: `pin_invalid`, `pin_wrong`, `pin_locked`, `signature_cooling`, `pin_mismatch` (frontend saja), `signature_missing`, `signature_exists`, `image_invalid`, `pdf_invalid`, `pdf_too_large`, `request_invalid`, `guest_cannot_request`, `not_a_signer`, `not_your_turn`, `already_signed`, `request_closed`, `not_requester`, `session_expired`, `version_conflict`, `tag_missing`, `export_failed`. Error lama dipakai ulang: `not_found`, `removed`, `database`, `internal`.
 
 ## 6. Frontend
 
