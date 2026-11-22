@@ -4,9 +4,11 @@
 //! and `permissions/` next to these without reshaping them.
 
 pub mod board;
+pub mod blobs;
 pub mod clock;
 pub mod commands;
 pub mod db;
+pub mod documents;
 pub mod error;
 pub mod firewall;
 pub mod identity;
@@ -35,6 +37,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = paths::resolve_data_dir(app.handle());
             let state = MiraState::new(
@@ -87,6 +90,15 @@ pub fn run() {
                 hook: std::sync::Arc::new(reminders),
             });
             app.manage(state);
+            // Document library: managed even when the data folder is missing
+            // (its commands then return the error). Edit sessions left from
+            // the last run are recovered in the background.
+            let documents = documents::runtime::DocumentsRuntime::new(
+                app.handle(),
+                app.state::<MiraState>().inner().clone(),
+            );
+            app.manage(documents.clone());
+            documents.spawn_recovery();
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
                 Ok(d) => d.from_env.then(|| d.path.clone()),
@@ -133,6 +145,15 @@ pub fn run() {
             board::commands::board_delete_task,
             board::commands::board_add_comment,
             board::commands::board_my_tasks,
+            documents::commands::list_documents,
+            documents::commands::get_document,
+            documents::commands::add_documents,
+            documents::commands::start_edit,
+            documents::commands::finish_edit,
+            documents::commands::open_read_only,
+            documents::commands::restore_version,
+            documents::commands::resolve_conflict,
+            documents::commands::export_version,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

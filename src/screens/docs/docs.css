@@ -1,0 +1,431 @@
+/* Layar Dokumen. Daftar file dan panel detail berdampingan kalau area isi
+   cukup lebar, bertumpuk kalau sempit (jendela minimum 960 px menyisakan
+   sekitar 750 px setelah sidebar). Semua warna lewat token peran. */
+
+.docs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
+
+.docs-head {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.docs-head-action {
+  margin-left: auto;
+}
+
+.docs-pad {
+  padding: 20px 24px 0;
+}
+
+.docs-narrow {
+  max-width: 720px;
+}
+
+.docs-retry {
+  margin-top: 8px;
+  background: var(--bg);
+}
+
+.docs-live {
+  padding: 16px 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 820px;
+}
+
+/* Wilayah aria-live tetap ada di pohon aksesibilitas saat kosong (tanpa
+   display: none), supaya pesan pertama tetap dibacakan pembaca layar. */
+.docs-live:empty {
+  padding: 0;
+}
+
+/* Tombol yang menunggu aksi lain selesai. Memakai aria-disabled supaya fokus
+   keyboard tidak hilang; tampilannya sama dengan .btn:disabled. Tombol yang
+   sedang berjalan tetap penuh supaya label "Membuka..." terbaca jelas. */
+.docs .btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.docs .btn[aria-disabled="true"]:hover {
+  filter: none;
+}
+
+.docs .btn-ghost[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.docs .btn[aria-busy="true"] {
+  cursor: progress;
+  opacity: 1;
+}
+
+.docs-ok {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  overflow-wrap: anywhere;
+}
+
+/* Keadaan kosong: satu penjelasan dan satu tombol. */
+
+.docs-empty {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.docs-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  padding: 20px 24px 32px;
+  align-items: start;
+}
+
+/* Berdampingan: panel detail ikut menempel saat daftar digulir, supaya riwayat
+   file di bawah daftar tetap terlihat setelah dipilih. Riwayat yang panjang
+   bergulir di dalam panel. */
+@container (min-width: 900px) {
+  .docs-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  }
+
+  .docs-detail {
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+}
+
+/* Daftar file. Baris = tombol pilih (ikon, nama, status) + tombol aksi. */
+
+.doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.doc-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.doc-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 6px 14px 6px 6px;
+}
+
+.doc-list > li:first-child {
+  border-radius: 11px 11px 0 0;
+}
+
+.doc-list > li:last-child {
+  border-radius: 0 0 11px 11px;
+}
+
+.doc-list > li:only-child {
+  border-radius: 11px;
+}
+
+.doc-row:hover {
+  background: var(--hover);
+}
+
+/* Terpilih: latar sorotan seperti menu aktif, ditambah garis kiri warna aksi
+   supaya pilihan tetap terlihat tanpa membedakan warna latar (aksi di atas
+   sorotan 4,41:1 terang, 5,19:1 gelap). */
+.doc-row.is-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* Garis tombol sekunder di atas latar sorotan tidak lolos 3:1 di mode terang,
+   jadi tombol di baris diberi latar halaman (seperti tombol di .notice). */
+.doc-row .btn-ghost {
+  background: var(--bg);
+}
+
+.doc-row .btn-ghost:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.docs .doc-row .btn-ghost[aria-disabled="true"]:hover {
+  background: var(--bg);
+}
+
+/* Mode kontras tinggi Windows membuang latar dan bayangan, jadi baris
+   terpilih diberi garis dengan warna sistem. */
+@media (forced-colors: active) {
+  .doc-row.is-selected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.doc-pick {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-kind {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.doc-pick .doc-kind {
+  margin-top: 1px;
+}
+
+.doc-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.doc-name {
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.doc-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.doc-status svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.doc-status-mine {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.doc-status-mine svg {
+  color: var(--accent-text);
+}
+
+/* Bentrok memakai token "state" (teks yang perlu tindakan Anda), selalu
+   bersama ikon dan kata "Bentrok". */
+.doc-status-conflict {
+  color: var(--state);
+  font-weight: 700;
+}
+
+.doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Panel detail file terpilih */
+
+.docs-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.detail-head-text {
+  min-width: 0;
+}
+
+.detail-title {
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.detail-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.detail-label {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 4px 0 0;
+}
+
+/* Kotak bentrok */
+
+.conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--state);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.conflict-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--state);
+}
+
+.conflict-title svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.conflict-heads {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.head-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  min-width: 0;
+}
+
+.head-num {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.head-meta {
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.head-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.conflict-note {
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* Riwayat versi */
+
+.ver-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ver {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 0;
+}
+
+.ver + .ver {
+  border-top: 1px solid var(--border);
+}
+
+.doc-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.ver-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ver-num {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.ver-origin {
+  font-size: 13px;
+}
+
+.ver-meta {
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.ver-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}

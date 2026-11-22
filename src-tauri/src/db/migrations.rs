@@ -4,7 +4,10 @@
 pub const MIGRATIONS: &[&str] = &[
     V1_FOUNDATION,
     V2_MEMBERSHIP_LOG,
+    // Tahap 3 (board), v3.
     crate::board::schema::BOARD_SCHEMA,
+    // Tahap 4 (dokumen), v4.
+    crate::documents::schema::MIGRATION,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.

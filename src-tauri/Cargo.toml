@@ -42,6 +42,8 @@ data-encoding = "2.11.1"
 x509-parser = "0.18.1"
 automerge = "0.12.0"
 tauri-plugin-notification = "2"
+notify = "9.0.0"
+tauri-plugin-dialog = "2.8.4"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

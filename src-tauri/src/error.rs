@@ -66,8 +66,18 @@ pub enum AppError {
     InvalidAddress(String),
     #[error("{0}")]
     Network(String),
+    /// Tahap 4: reading or writing files on this laptop failed (disk full, no access).
+    #[error("{0}")]
+    Storage(String),
+    /// Tahap 4: input from the frontend that cannot be used as is.
     #[error("{0}")]
     InvalidInput(String),
+    /// Tahap 4: the action needs the file to be closed in Office first.
+    #[error("{0}")]
+    DocumentEditing(String),
+    /// Tahap 4: Windows could not open the file in Office or another app.
+    #[error("{0}")]
+    OpenFailed(String),
 }
 
 impl AppError {
@@ -95,7 +105,10 @@ impl AppError {
             AppError::LastSuperadmin => "last_superadmin",
             AppError::InvalidAddress(_) => "invalid_address",
             AppError::Network(_) => "network",
+            AppError::Storage(_) => "storage",
             AppError::InvalidInput(_) => "invalid_input",
+            AppError::DocumentEditing(_) => "document_editing",
+            AppError::OpenFailed(_) => "open_failed",
         }
     }
 }
@@ -158,6 +171,20 @@ mod tests {
             let json = serde_json::to_value(&err).unwrap();
             assert_eq!(json["code"], code);
             assert!(!err.to_string().contains('\u{2014}'), "{code}");
+        }
+    }
+
+    #[test]
+    fn tahap_4_codes_are_stable() {
+        let cases = [
+            (AppError::Storage("x".into()), "storage"),
+            (AppError::InvalidInput("x".into()), "invalid_input"),
+            (AppError::DocumentEditing("x".into()), "document_editing"),
+            (AppError::OpenFailed("x".into()), "open_failed"),
+        ];
+        for (err, code) in cases {
+            assert_eq!(err.code(), code);
+            assert_eq!(serde_json::to_value(&err).unwrap()["code"], code);
         }
     }
 
