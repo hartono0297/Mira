@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use super::feature::FeatureRecord;
 use super::{JoinAccepted, JoinProof, WireOp};
 
 /// Protocol version carried in `Hello`.
@@ -60,6 +61,35 @@ pub enum Msg {
         code: String,
         message: String,
     },
+    /// Feature sync (`feature.rs`): ids of one topic the sender offers. The
+    /// first frame of a feature session's bidirectional stream.
+    FeatureHave {
+        topic: String,
+        ids: Vec<String>,
+    },
+    /// Answer to each `FeatureHave`: the offered ids the receiver lacks.
+    FeatureWant {
+        topic: String,
+        ids: Vec<String>,
+    },
+    /// Records the receiver asked for, at most `MAX_RECORDS_PER_BATCH`.
+    FeatureRecords {
+        topic: String,
+        records: Vec<FeatureRecord>,
+    },
+    /// First frame of a blob download stream.
+    BlobGet {
+        hash: String,
+    },
+    /// The blob follows as `size` raw bytes right after this frame.
+    BlobHeader {
+        size: u64,
+    },
+    /// No blob on this stream. Codes: `unavailable` (missing or not
+    /// allowed, deliberately the same), `busy`.
+    BlobRefused {
+        code: String,
+    },
 }
 
 #[derive(Debug)]
@@ -108,6 +138,40 @@ pub fn decode(body: &[u8]) -> Result<Msg, WireError> {
         return Err(WireError::Malformed("frame kosong".into()));
     }
     serde_json::from_slice(body).map_err(|e| WireError::Malformed(e.to_string()))
+}
+
+/// Splits records into `FeatureRecords` batches of at most `max_count`
+/// records whose serialized JSON stays under about `max_bytes`. A record
+/// that alone exceeds `max_bytes` gets a batch of its own; a record whose
+/// serialized size exceeds `MAX_FRAME / 2` is left out (it cannot be framed
+/// safely, and the receiver would drop it anyway).
+pub fn batch_records(
+    records: Vec<FeatureRecord>,
+    max_count: usize,
+    max_bytes: usize,
+) -> Vec<Vec<FeatureRecord>> {
+    let max_count = max_count.max(1);
+    let mut out: Vec<Vec<FeatureRecord>> = Vec::new();
+    let mut batch: Vec<FeatureRecord> = Vec::new();
+    let mut bytes = 0usize;
+    for r in records {
+        let size = serde_json::to_vec(&r)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        if size > MAX_FRAME / 2 {
+            continue;
+        }
+        if !batch.is_empty() && (batch.len() >= max_count || bytes + size > max_bytes) {
+            out.push(std::mem::take(&mut batch));
+            bytes = 0;
+        }
+        bytes += size + 1;
+        batch.push(r);
+    }
+    if !batch.is_empty() {
+        out.push(batch);
+    }
+    out
 }
 
 /// Serialized size of a message body, used to batch ops under the frame limit.
@@ -337,6 +401,85 @@ mod tests {
         let (_a, mut b) = tokio::io::duplex(1024);
         let r = read_msg_timeout(&mut b, MAX_FRAME, Duration::from_millis(50)).await;
         assert!(matches!(r, Err(WireError::Timeout)));
+    }
+
+    #[test]
+    fn feature_and_blob_messages_round_trip_with_snake_case_tags() {
+        let rec = FeatureRecord::new("{\"x\":1}");
+        let msgs = vec![
+            Msg::FeatureHave {
+                topic: "chat".into(),
+                ids: vec![rec.id.clone()],
+            },
+            Msg::FeatureWant {
+                topic: "chat".into(),
+                ids: vec![],
+            },
+            Msg::FeatureRecords {
+                topic: "chat".into(),
+                records: vec![rec],
+            },
+            Msg::BlobGet {
+                hash: "a".repeat(64),
+            },
+            Msg::BlobHeader { size: 12 },
+            Msg::BlobRefused {
+                code: "unavailable".into(),
+            },
+        ];
+        let tags = [
+            "feature_have",
+            "feature_want",
+            "feature_records",
+            "blob_get",
+            "blob_header",
+            "blob_refused",
+        ];
+        for (m, tag) in msgs.iter().zip(tags) {
+            let frame = encode(m).unwrap();
+            assert_eq!(decode(&frame[4..]).unwrap(), *m);
+            let json = String::from_utf8(frame[4..].to_vec()).unwrap();
+            assert!(json.starts_with(&format!("{{\"t\":\"{tag}\"")), "{json}");
+        }
+    }
+
+    #[test]
+    fn batch_records_respects_count_and_bytes() {
+        use crate::network::feature::{MAX_RECORD_BYTES, MAX_RECORDS_PER_BATCH};
+        let small: Vec<FeatureRecord> = (0..1300)
+            .map(|i| FeatureRecord::new(format!("r{i}")))
+            .collect();
+        let batches = batch_records(small.clone(), MAX_RECORDS_PER_BATCH, 1024 * 1024);
+        assert_eq!(
+            batches.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![512, 512, 276]
+        );
+        assert_eq!(batches.concat(), small);
+
+        // Byte budget: eight records of about 200 KiB under a 1 MiB budget.
+        let big: Vec<FeatureRecord> = (0..8)
+            .map(|i| FeatureRecord::new(format!("{i}{}", "x".repeat(200 * 1024))))
+            .collect();
+        let batches = batch_records(big.clone(), MAX_RECORDS_PER_BATCH, 1024 * 1024);
+        assert!(batches.len() >= 2);
+        for b in &batches {
+            let m = Msg::FeatureRecords {
+                topic: "docs".into(),
+                records: b.clone(),
+            };
+            assert!(encoded_len(&m) <= MAX_FRAME);
+        }
+        assert_eq!(batches.concat(), big);
+
+        // A maximal record with worst-case JSON escaping still fits a frame.
+        let nasty = FeatureRecord::new("\u{1}".repeat(MAX_RECORD_BYTES));
+        let batches = batch_records(vec![nasty], MAX_RECORDS_PER_BATCH, 1024 * 1024);
+        assert_eq!(batches.len(), 1);
+        let m = Msg::FeatureRecords {
+            topic: "docs".into(),
+            records: batches[0].clone(),
+        };
+        assert!(encoded_len(&m) <= MAX_FRAME);
     }
 
     #[test]

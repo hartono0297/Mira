@@ -12,6 +12,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::clock;
 use crate::error::{AppError, AppResult};
+use crate::network::feature::FeatureHub;
 use crate::network::{
     self, AddressSource, IngestOutcome, JoinAccepted, JoinChallenge, JoinProof, JoinReject,
     KnownAddress, NetConfig, NetEvent, Network, OrgRecord, PeerAuth, SyncBackend, WireOp,
@@ -26,6 +27,8 @@ pub const DISABLE_MDNS_ENV: &str = "MIRA_DISABLE_MDNS";
 
 pub const EVENT_NETWORK: &str = "mira://network";
 pub const EVENT_DIRECTORY: &str = "mira://directory";
+/// Feature data from a colleague changed; payload `{ "topic": "<topic>" }`.
+pub const EVENT_FEATURE: &str = "mira://feature";
 
 pub fn to_wire(op: SignedOp) -> WireOp {
     WireOp {
@@ -316,9 +319,18 @@ impl SyncBackend for MiraBackend {
 #[derive(Clone, Default)]
 pub struct AppNet {
     inner: Arc<AsyncMutex<Option<Network>>>,
+    /// The managed feature hub; the network sets its link on it.
+    features: Arc<FeatureHub>,
 }
 
 impl AppNet {
+    pub fn new(features: Arc<FeatureHub>) -> Self {
+        Self {
+            inner: Arc::default(),
+            features,
+        }
+    }
+
     /// The network, starting it if needed.
     pub async fn get(&self, state: &MiraState, app: &AppHandle) -> AppResult<Network> {
         let mut guard = self.inner.lock().await;
@@ -344,13 +356,15 @@ impl AppNet {
         let backend = Arc::new(MiraBackend::new(state.clone()));
         let handle = app.clone();
         let events = Arc::new(move |ev: NetEvent| {
-            let name = match ev {
-                NetEvent::StatusChanged => EVENT_NETWORK,
-                NetEvent::OrgChanged => EVENT_DIRECTORY,
+            let _ = match ev {
+                NetEvent::StatusChanged => handle.emit(EVENT_NETWORK, ()),
+                NetEvent::OrgChanged => handle.emit(EVENT_DIRECTORY, ()),
+                NetEvent::FeatureChanged { topic } => {
+                    handle.emit(EVENT_FEATURE, serde_json::json!({ "topic": topic }))
+                }
             };
-            let _ = handle.emit(name, ());
         });
-        let net = Network::start(cfg, backend.clone(), events)
+        let net = Network::start_with_features(cfg, backend.clone(), events, self.features.clone())
             .await
             .map_err(|e| AppError::Network(format!("Jaringan Mira tidak bisa dimulai: {e}")))?;
         backend.attach(net.clone());

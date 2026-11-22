@@ -12,6 +12,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 
 use super::discovery::{self, Discovery};
+use super::feature::{FeatureHub, OfflineLink};
+use super::feature_blob::BlobState;
+use super::feature_net::{self, FeatureNet, NetLink};
 use super::join::{self, RateLimiter};
 use super::route;
 use super::tls::{self, ALPN_JOIN, ALPN_MEMBER, SERVER_NAME, TlsIdentity};
@@ -39,7 +42,7 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A whole sync session, either side.
-const SYNC_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const SYNC_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 const SYNC_INTERVAL: Duration = Duration::from_secs(30);
 const STARTING_PERIOD: Duration = Duration::from_secs(5);
 /// Time to let a `Removed` message reach the peer before closing.
@@ -175,6 +178,10 @@ pub(crate) struct Inner {
     /// cannot stop this laptop from dialing its colleagues.
     out_slots: Arc<Semaphore>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
+    /// Feature sync sessions, scheduling and the hub (`feature_net`).
+    pub(crate) features: FeatureNet,
+    /// Blob downloads and uploads (`feature_blob`).
+    pub(crate) blobs: BlobState,
 }
 
 fn bind_socket(port: Option<u16>) -> Result<UdpSocket, String> {
@@ -201,6 +208,7 @@ impl Inner {
         cfg: NetConfig,
         backend: Arc<dyn SyncBackend>,
         events: Arc<dyn Fn(NetEvent) + Send + Sync>,
+        hub: Arc<FeatureHub>,
     ) -> Result<Arc<Inner>, String> {
         let identity = TlsIdentity::new(&cfg.identity_secret)?;
         if identity.public_key() != cfg.public_key {
@@ -253,6 +261,8 @@ impl Inner {
             joins_by_ip: IpCounter::new(join::MAX_JOINS_PER_IP),
             out_slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
             tasks: Mutex::new(Vec::new()),
+            features: FeatureNet::new(hub),
+            blobs: BlobState::new(),
         });
 
         if cfg.mdns_enabled {
@@ -269,6 +279,7 @@ impl Inner {
         tasks.push(tokio::spawn(accept_loop(weak.clone(), endpoint)));
         tasks.push(tokio::spawn(discovery::dial_loop(weak.clone())));
         tasks.push(tokio::spawn(sync_loop(weak.clone())));
+        tasks.push(tokio::spawn(feature_net::feature_loop(weak.clone())));
         tasks.push(tokio::spawn(async move {
             tokio::time::sleep(STARTING_PERIOD).await;
             if let Some(inner) = weak.upgrade() {
@@ -276,6 +287,10 @@ impl Inner {
             }
         }));
         lock(&inner.tasks).extend(tasks);
+        inner
+            .features
+            .hub
+            .set_link(Arc::new(NetLink::new(Arc::downgrade(&inner))));
         Ok(inner)
     }
 
@@ -324,6 +339,19 @@ impl Inner {
             .collect();
         v.sort();
         v
+    }
+
+    /// The live member connection to `pk`, if any.
+    pub(crate) fn peer_conn(&self, pk: &str) -> Option<Connection> {
+        lock(&self.peers)
+            .get(pk)
+            .filter(|e| e.conn.close_reason().is_none())
+            .map(|e| e.conn.clone())
+    }
+
+    /// `true` when the backend says `pk` is an active member right now.
+    pub(crate) fn is_member(&self, pk: &str) -> bool {
+        matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. })
     }
 
     pub(crate) fn connected_addresses(&self) -> HashSet<SocketAddr> {
@@ -398,6 +426,7 @@ impl Inner {
             me.disc.reset_backoff();
             discovery::dial_pass(&me);
             me.sync_all(None);
+            me.feature_sync_all(None);
         });
     }
 
@@ -405,6 +434,7 @@ impl Inner {
         if self.closing.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.features.hub.set_link(Arc::new(OfflineLink));
         for t in lock(&self.tasks).drain(..) {
             t.abort();
         }
@@ -557,6 +587,7 @@ impl Inner {
         self.emit(NetEvent::StatusChanged);
         tokio::spawn(self.clone().drive(conn, pk.clone(), slot));
         self.schedule_sync(&pk);
+        self.feature_peer_up(&pk);
         Ok(pk)
     }
 
@@ -782,6 +813,19 @@ impl Inner {
                 .await;
                 let _ = send.finish();
             }
+            Ok(Some(Msg::FeatureHave { topic, ids })) => {
+                let _ = tokio::time::timeout(
+                    SYNC_SESSION_TIMEOUT,
+                    self.respond_feature(pk, topic, ids, &mut send, &mut recv),
+                )
+                .await;
+                let _ = send.finish();
+            }
+            Ok(Some(Msg::BlobGet { hash })) => {
+                // Has its own time limits (a large file takes a while).
+                self.serve_blob(pk, hash, &mut send, &mut recv).await;
+                let _ = send.finish();
+            }
             _ => {
                 let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
                 let _ = recv.stop(VarInt::from_u32(code::PROTOCOL));
@@ -864,6 +908,9 @@ impl Inner {
         self.recheck_peers();
         discovery::refresh_mdns(self).await;
         self.sync_all(from);
+        // Membership decides feature scoping too (a new team member may now
+        // receive that team's records).
+        self.feature_sync_all(None);
     }
 
     /// Re-checks every connected peer against the backend and drops those

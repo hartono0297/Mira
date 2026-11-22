@@ -3,8 +3,8 @@
 //! Modules are split by concern so later stages can add `network/`, `sync/`
 //! and `permissions/` next to these without reshaping them.
 
-pub mod board;
 pub mod blobs;
+pub mod board;
 pub mod clock;
 pub mod commands;
 pub mod db;
@@ -68,7 +68,11 @@ pub fn run() {
             let background = state
                 .with_core(|core| Ok(window_theme::initial_background(Some(&core.db))))
                 .unwrap_or_else(|_| window_theme::initial_background(None));
-            let net = AppNet::default();
+            // Feature sync contract (network/feature.rs): chat, board, documents
+            // and signing register here; the network sets the real link.
+            let features = std::sync::Arc::new(network::feature::FeatureHub::default());
+            app.manage(features.clone());
+            let net = AppNet::new(features);
             app.manage(net.clone());
             // Start the network in the background; commands start it too if
             // this fails now (for example before the key problem is fixed).
@@ -91,9 +95,6 @@ pub fn run() {
                 hook: std::sync::Arc::new(reminders),
             });
             app.manage(state);
-            // Feature sync contract (network/feature.rs): chat, board, documents
-            // and signing register here; the transport sets the real link.
-            app.manage(std::sync::Arc::new(network::feature::FeatureHub::default()));
             // Document library: managed even when the data folder is missing
             // (its commands then return the error). Edit sessions left from
             // the last run are recovered in the background.

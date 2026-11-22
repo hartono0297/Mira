@@ -13,12 +13,16 @@
 
 mod discovery;
 pub mod feature;
+mod feature_blob;
+mod feature_net;
 mod join;
 mod node;
 pub mod route;
 pub mod tls;
 pub mod wire;
 
+#[cfg(test)]
+mod feature_tests;
 #[cfg(test)]
 pub mod testing;
 #[cfg(test)]
@@ -29,6 +33,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use feature::FeatureHub;
 use node::Inner;
 
 /// Settings for `Network::start`.
@@ -220,6 +225,9 @@ pub enum NetEvent {
     StatusChanged,
     /// New ops were applied.
     OrgChanged,
+    /// `FeatureSync::ingest` of `topic` reported `changed: true`
+    /// (`mira://feature` with `{ "topic": topic }`).
+    FeatureChanged { topic: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,7 +299,19 @@ impl Network {
         backend: Arc<dyn SyncBackend>,
         events: Arc<dyn Fn(NetEvent) + Send + Sync>,
     ) -> Result<Network, String> {
-        let inner = Inner::start(cfg, backend, events).await?;
+        Self::start_with_features(cfg, backend, events, Arc::new(FeatureHub::default())).await
+    }
+
+    /// `start` with the app's feature hub: the network sets its link on the
+    /// hub (and `OfflineLink` again on shutdown) and syncs the registered
+    /// features with connected members.
+    pub async fn start_with_features(
+        cfg: NetConfig,
+        backend: Arc<dyn SyncBackend>,
+        events: Arc<dyn Fn(NetEvent) + Send + Sync>,
+        features: Arc<FeatureHub>,
+    ) -> Result<Network, String> {
+        let inner = Inner::start(cfg, backend, events, features).await?;
         Ok(Network { inner })
     }
 
