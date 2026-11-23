@@ -743,6 +743,15 @@ async fn new_laptop_joins_by_request_through_a_member() {
             .and_then(|s| s.department_of(&n.pk).map(|(t, _)| t.id.clone())))
     });
     assert_eq!(dept.as_deref(), Some(keuangan.as_str()));
+    // The laptop profile is published at once (device_set), not on next start.
+    let device = n.core(|c| {
+        Ok(permissions::load_state(&c.db)?
+            .and_then(|s| s.member(&n.pk).and_then(|m| m.device.clone())))
+    });
+    assert_eq!(
+        device.map(|d| d.app_version),
+        Some(crate::device::current().app_version)
+    );
     // The typed address became a manual address.
     let manual = n.core(|c| peers::manual_addresses(&c.db));
     assert!(manual.iter().any(|m| m.address == b.addr().to_string()));

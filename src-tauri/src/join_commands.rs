@@ -697,7 +697,9 @@ async fn send_and_record(
         // answered for the office could have sent them. The person sees the
         // reason and decides (another department, cancel, or wait).
         let err = refusal_error(refusal);
-        state.with_core(|c| permissions::mark_join_sent(&c.db, clock::now(), Some(&err.to_string())))?;
+        state.with_core(|c| {
+            permissions::mark_join_sent(&c.db, clock::now(), Some(&err.to_string()))
+        })?;
         return Err(err);
     }
     state.with_core(|c| {
@@ -943,6 +945,7 @@ pub async fn poll(
                         }
                     }
                     settings::set(&c.db, SETTING_ADDRESSES, "[]")?;
+                    publish_device(c);
                     Ok(info)
                 });
                 match installed {
@@ -1035,6 +1038,17 @@ pub async fn poll(
         .with_core(|c| permissions::outgoing_join_request(&c.db))?
         .unwrap_or(out);
     Ok(JoinPoll::Pending { request })
+}
+
+/// Publishes this laptop's name, OS and version (`device_set`) right after
+/// it became a member, so the superadmin's user list shows them now
+/// instead of after the next start. A failure is only logged.
+pub fn publish_device(c: &mut crate::state::Core) {
+    if let Err(e) =
+        permissions::ensure_device_op(&mut c.db, &c.identity, &device::current(), clock::now())
+    {
+        eprintln!("Mira: profil laptop belum diterbitkan [{}]: {e}", e.code());
+    }
 }
 
 /// `join_cancel`.
@@ -1242,11 +1256,20 @@ mod tests {
         let addr: SocketAddr = "192.168.1.9:47800".parse().unwrap();
         for n in 1..=(MAX_OFFICES as u8 + 5) {
             let at = t0 + Duration::from_secs(u64::from(n));
-            st.record(&format!("{n:02x}").repeat(32), addr, genesis(n), Vec::new(), at);
+            st.record(
+                &format!("{n:02x}").repeat(32),
+                addr,
+                genesis(n),
+                Vec::new(),
+                at,
+            );
         }
         assert_eq!(st.offices.len(), MAX_OFFICES);
         // The newest stay, the oldest went first.
-        assert!(st.offices.contains_key(&office_key(&genesis(MAX_OFFICES as u8 + 5))));
+        assert!(
+            st.offices
+                .contains_key(&office_key(&genesis(MAX_OFFICES as u8 + 5)))
+        );
         assert!(!st.offices.contains_key(&office_key(&genesis(1))));
         st.prune(t0 + MEMBER_TTL + Duration::from_secs(100));
         assert!(st.offices.is_empty());
