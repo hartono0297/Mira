@@ -25,7 +25,9 @@ const parent = resolve(process.argv[4] ?? tmpdir());
 mkdirSync(shots, { recursive: true });
 mkdirSync(parent, { recursive: true });
 const dataDir = mkdtempSync(join(parent, "mira-board-sync-"));
-const PORT = 9351;
+// Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
+const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
+const PORT = 9351 + PORT_OFFSET;
 
 const PROJECT = "Proyek Klien";
 // Nama baru tetap mengandung nama lama, jadi pencarian /Proyek Klien/ tetap cocok setelah diubah.
@@ -80,6 +82,7 @@ async function launch() {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      ...(PORT_OFFSET ? { MIRA_PORT: String(47800 + PORT_OFFSET) } : {}),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
     },
     stdio: ["ignore", "ignore", "pipe"],

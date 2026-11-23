@@ -58,10 +58,12 @@ const PIN = "246810";
 
 // Port sendiri (bukan 4786x/936x milik e2e-fitur-multi.mjs), supaya tidak
 // bentrok dengan uji lain yang mungkin berjalan di PC yang sama.
+// Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
+const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
 const NODES = {
-  A: { name: "Ayu Uji", port: 47871, cdp: 9371, dir: join(root, "laptop-a") },
-  B: { name: "Budi Uji", port: 47872, cdp: 9372, dir: join(root, "laptop-b") },
-  C: { name: "Citra Uji", port: 47873, cdp: 9373, dir: join(root, "laptop-c") },
+  A: { name: "Ayu Uji", port: 47871 + PORT_OFFSET, cdp: 9371 + PORT_OFFSET, dir: join(root, "laptop-a") },
+  B: { name: "Budi Uji", port: 47872 + PORT_OFFSET, cdp: 9372 + PORT_OFFSET, dir: join(root, "laptop-b") },
+  C: { name: "Citra Uji", port: 47873 + PORT_OFFSET, cdp: 9373 + PORT_OFFSET, dir: join(root, "laptop-c") },
 };
 const addr = (id) => `127.0.0.1:${NODES[id].port}`;
 // Satu putaran sinkron cadangan (60 dtk) ditambah sedikit jeda.

@@ -34,7 +34,9 @@ const filesDir = resolve(process.argv[4] ?? "test-files");
 const excelSave = join(dirname(fileURLToPath(import.meta.url)), "excel-save.ps1");
 mkdirSync(shots, { recursive: true });
 const dataDir = mkdtempSync(join(tmpdir(), "mira-docs-"));
-const PORT = 9341;
+// Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
+const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
+const PORT = 9341 + PORT_OFFSET;
 const XLSX = "RAB-proyek-a.xlsx";
 const DOCX = "laporan-bulanan.docx";
 const PDF = "kontrak-draft.pdf";
@@ -80,6 +82,7 @@ async function launch() {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      ...(PORT_OFFSET ? { MIRA_PORT: String(47800 + PORT_OFFSET) } : {}),
       MIRA_TEST_NO_LAUNCH: "1",
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
     },
