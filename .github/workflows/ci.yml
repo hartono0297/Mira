@@ -57,6 +57,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: npx vite build
 
+      # macOS hanya punya 127.0.0.1 di lo0. Tes banjir handshake di src/network/tests.rs
+      # memakai 127.0.0.2 sebagai alamat penyerang, jadi alamat itu ditambahkan dulu.
+      - name: Alias loopback 127.0.0.2 (macOS)
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: sudo ifconfig lo0 alias 127.0.0.2 up
+
       - name: cargo test
         if: ${{ !cancelled() }}
         working-directory: src-tauri
