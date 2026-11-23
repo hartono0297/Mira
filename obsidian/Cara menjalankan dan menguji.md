@@ -29,7 +29,11 @@ cd src-tauri; cargo clippy --all-targets   # lint Rust
 
 Beberapa tes Rust sengaja diabaikan karena butuh keyring, firewall, atau mDNS sungguhan. Saat mesin sibuk build Rust, worker Vitest kadang gagal mulai; laporan tahap menjalankan ulang dengan `--maxWorkers=1`.
 
-Hasil terakhir pada kode gabungan di branch `integrasi-fitur`: 781 tes Rust dan 499 tes tampilan lulus, clippy bersih.
+Hasil terakhir pada kode gabungan (branch `integrasi-dokumen`), di satu PC:
+- `cargo test`: 861 lulus, 0 gagal, 7 diabaikan.
+- `cargo clippy`: 0 peringatan.
+- `tsc`: bersih.
+- Vitest: 37 file, 557 tes lulus.
 
 ## Build
 
@@ -51,6 +55,7 @@ Skrip di `scripts/` menjalankan `mira.exe` sungguhan dan mengendalikan WebView2 
 | `npm run test:e2e` | release | Alur dasar: nama, organisasi, tema, restart |
 | `npm run test:e2e-multi` | release | Empat instance: bergabung, kode ditolak, dikeluarkan, menyusul (25 pemeriksaan) |
 | `npm run test:e2e-fitur-multi` | release | Tiga instance lewat jaringan sungguhan: chat, titipan, board, lampiran (20 pemeriksaan) |
+| `npm run test:e2e-sync` | release | Tiga instance lewat jaringan sungguhan: dokumen dan tanda tangan (37 pemeriksaan) |
 | `npm run test:e2e:docs` | debug | Dokumen: tambah, edit, versi, pulihkan |
 | `npm run test:e2e-ttd` | debug | Tanda tangan PDF |
 | `npm run test:e2e-chat` | debug | Chat di satu laptop |
@@ -58,6 +63,22 @@ Skrip di `scripts/` menjalankan `mira.exe` sungguhan dan mengendalikan WebView2 
 | `node scripts/board-sync-e2e.mjs <exe> <folder screenshot>` | release atau debug | Fondasi sinkron board di satu laptop |
 
 `test:e2e-fitur-multi` menjalankan tiga laptop: A dan B di tim yang sama, C di tim lain. Isinya: pesan #umum, channel tim yang tidak sampai ke C, chat pribadi dengan status Dibaca, titipan saat B mati dan A juga mati, hapus pesan, proyek dan task yang sampai ke B tapi tidak ke C, pindah kolom, dan lampiran lewat dialog Windows. Hasil terakhir 20/20.
+
+`test:e2e-sync` juga menjalankan tiga laptop. Isinya: dokumen yang muncul di laptop rekan dengan isi sama persis sampai ke byte, versi baru, tanda "Sedang diedit", bentrok offline yang tampil di kedua laptop, file 21 MB yang tidak disalin otomatis lalu diunduh saat diklik, permintaan tanda tangan berurutan B lalu A, versi yang diubah diam-diam ditolak, jejak audit sah di kedua laptop, anggota yang tidak terlibat tidak menerima permintaan, dan anggota yang dikeluarkan tidak menerima dokumen baru. Hasil terakhir 37/37.
+
+Hasil terakhir semua skrip pada build release dari kode gabungan:
+
+| Skrip | Hasil |
+|---|---|
+| `smoke-e2e` | 11/11 |
+| `board-e2e` | 11/11 |
+| `board-sync-e2e` | 23/23 |
+| `chat-e2e` | 19/19 |
+| `smoke-docs-e2e` | 15/15 |
+| `sign-e2e` | 15/15 |
+| `e2e-multi` | 25/25 |
+| `e2e-fitur-multi` | 20/20 |
+| `sync-e2e` | 37/37 |
 
 ## Beberapa laptop di satu PC
 

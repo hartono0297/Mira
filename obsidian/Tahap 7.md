@@ -20,6 +20,7 @@ Kriteria selesai: tim pilot memakai Mira untuk pekerjaan nyata selama seminggu t
 - Peringatan kalau superadmin baru satu (dari [[Tahap 1]]).
 - Perintah firewall untuk admin IT di aplikasi (dari [[Tahap 1]]).
 - Installer NSIS per pengguna, kecil dan offline (dari [[Tahap 0]]).
+- Rilis internal `v0.1.0` untuk uji coba, lihat [[Rilis]].
 
 ## Yang dibutuhkan sebelum pilot
 

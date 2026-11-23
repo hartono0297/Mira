@@ -13,7 +13,7 @@ Stack: Tauri 2, React 19, TypeScript, Vite, dan inti Rust.
 Gambaran teknis
 - [[Arsitektur]]: lapisan aplikasi, migrasi SQLite, blob store, jaringan, log keanggotaan, kontrak sinkron fitur.
 - [[Keamanan dan izin]]: kunci, record bertanda tangan, rantai kepercayaan, peran, pembatasan data.
-- [[Transport sinkron fitur]]: cara record fitur dan file berpindah antar laptop.
+- [[Transport sinkron fitur]]: cara record fitur dan file berpindah antar laptop, untuk chat, board, dokumen, dan tanda tangan.
 
 Tahapan
 - [[Tahap 0]]: fondasi
@@ -26,6 +26,7 @@ Tahapan
 - [[Tahap 7]]: uji coba kantor
 
 Kerja sehari-hari
+- [[Rilis]]: v0.1.0, build internal pertama untuk uji coba
 - [[Cara menjalankan dan menguji]]
 - [[Belum diuji]]
 - [[Keputusan]]: keputusan desain dan yang masih terbuka
@@ -38,12 +39,14 @@ Kerja sehari-hari
 | [[Tahap 1]] | Selesai |
 | [[Tahap 2]] | Selesai |
 | [[Tahap 3]] | Selesai, termasuk sinkron antar laptop dan Tamu per proyek |
-| [[Tahap 4]] | Bagian lokal selesai. Sinkron sedang dikerjakan di branch lain. |
-| [[Tahap 5]] | Bagian lokal selesai. Sinkron sedang dikerjakan di branch lain. |
-| [[Tahap 6]] | Belum dikerjakan sebagai tahap |
-| [[Tahap 7]] | Belum dikerjakan |
+| [[Tahap 4]] | Selesai, termasuk sinkron antar laptop. Layar Dokumen baru bisa menambah file ke Pustaka Umum. |
+| [[Tahap 5]] | Tanda tangan dan sinkron antar laptop selesai. Komentar, stabilo, dan kotak teks di PDF belum dibuat. |
+| [[Tahap 6]] | Belum dimulai |
+| [[Tahap 7]] | Belum dimulai |
 
-Pemeriksaan akhir pada kode gabungan di branch `integrasi-fitur`: 781 tes Rust dan 499 tes tampilan lulus, clippy bersih, dan uji tiga instance lewat jaringan sungguhan lulus 20/20. Semua di satu PC, lihat [[Belum diuji]].
+Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`): `cargo test` 861 lulus, 0 gagal, 7 diabaikan; clippy tanpa peringatan; tsc bersih; Vitest 557 tes di 37 file lulus. Semua uji ujung ke ujung pada build release lulus, termasuk chat dan board tiga instance (20/20) serta dokumen dan tanda tangan tiga instance (37/37). Semua di satu PC, lihat [[Belum diuji]]. Rincian per skrip ada di [[Cara menjalankan dan menguji]].
+
+Rilis pertama, `v0.1.0`, sudah terbit sebagai build internal untuk uji coba. Lihat [[Rilis]].
 
 ## Sumber di repo
 

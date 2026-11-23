@@ -4,7 +4,7 @@ tags: [mira, jaringan, sinkron]
 
 # Transport sinkron fitur
 
-Transport memberi kontrak `network/feature.rs` jalur sungguhan di atas koneksi anggota [[Tahap 1]]. Chat dan board sudah memakainya. Dokumen dan tanda tangan belum tersambung. Status: selesai dan sudah digabung di branch `integrasi-fitur`.
+Transport memberi kontrak `network/feature.rs` jalur sungguhan di atas koneksi anggota [[Tahap 1]]. Chat, board, dokumen, dan tanda tangan memakainya. Status: selesai dan sudah digabung di branch `integrasi-fitur`. Sinkron dokumen dan tanda tangan ikut tersambung saat digabung di branch `integrasi-dokumen`; jembatan khusus uji yang dulu dipakai sudah dihapus ([[Tahap 4]], [[Tahap 5]]).
 
 ## Sesi sinkron
 

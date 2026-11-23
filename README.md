@@ -25,17 +25,22 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 - Halaman "Task saya" dan pengingat tenggat lewat notifikasi Windows.
 - Perubahan dari beberapa laptop digabung dengan Automerge. Data proyek hanya dikirim ke anggota tim pemilik proyek dan Tamu yang diundang ke proyek itu.
 
-### Dokumen (masih di satu laptop)
+### Dokumen
 
 - Tambah file, Edit di Word atau Excel, tanda "Sedang diedit", versi baru setiap kali file disimpan, riwayat versi, dan pulihkan.
-- Model "bentrok" (dua versi berdampingan) beserta tampilannya sudah ada.
+- Dokumen, versi baru, dan tanda "Sedang diedit" sampai ke laptop rekan yang berhak melihatnya.
+- File sampai 20 MB disalin otomatis ke laptop rekan. File yang lebih besar diunduh lewat tombol "Unduh dari rekan".
+- Kalau dua laptop menyimpan versi saat offline, kedua versi disimpan berdampingan dan tampil sebagai bentrok di kedua laptop.
+- Layar Dokumen baru bisa menambah file ke Pustaka Umum, belum ke proyek atau tim tertentu.
 
-### Tanda tangan PDF (masih di satu laptop)
+### Tanda tangan PDF
 
 - Tanda tangan digambar atau diimpor, disimpan terenkripsi, dan hanya bisa dipakai dengan PIN 6 sampai 12 angka.
 - Kotak tanda tangan ditempatkan dengan mouse atau keyboard. Penanda tangan terakhir menambahkan halaman catatan.
 - Hasilnya dikunci. Kalau satu karakter berubah, Mira langsung memberi peringatan.
 - Permintaan tanda tangan berurutan atau bebas. Tamu boleh menandatangani, tapi tidak bisa meminta tanda tangan.
+- Permintaan, versi bertanda tangan, dan pembatalan sampai ke laptop rekan yang terlibat. Urutan penanda tangan dijaga di semua laptop, dan penanda tangan mendapat notifikasi saat gilirannya tiba.
+- Stempel setiap penanda tangan ditambahkan sebagai incremental update PDF. Versi yang mengubah isi selain stempel ditolak di semua laptop (`version_changes_content`).
 
 ### Organisasi dan jaringan
 
@@ -64,27 +69,34 @@ Tema Bata dengan mode Terang, Gelap, dan Ikuti Windows. Seluruh antarmuka berbah
 | 1 | Jaringan dan tim | Selesai | [tahap-1.md](docs/progress/tahap-1.md) |
 | 2 | Chat dasar | Selesai | [tahap-2.md](docs/progress/tahap-2.md) |
 | 3 | Board dasar | Selesai, termasuk sinkron antar laptop dan Tamu per proyek | [tahap-3-lokal.md](docs/progress/tahap-3-lokal.md), [sinkron-board.md](docs/progress/sinkron-board.md) |
-| 4 | Dokumen dan edit file | Bagian lokal selesai. Sinkron antar laptop sedang dikerjakan di branch lain. | [tahap-4-lokal.md](docs/progress/tahap-4-lokal.md) |
-| 5 | Tanda tangan PDF | Bagian lokal selesai. Sinkron antar laptop sedang dikerjakan di branch lain. | [tahap-5-lokal.md](docs/progress/tahap-5-lokal.md) |
-| 6 | Fitur lengkap | Belum dikerjakan sebagai tahap. Prioritas dan label board sudah ada sejak Tahap 3. | |
-| 7 | Uji coba kantor | Belum dikerjakan | |
+| 4 | Dokumen dan edit file | Selesai, termasuk sinkron antar laptop. Layar Dokumen baru bisa menambah file ke Pustaka Umum. | [tahap-4-lokal.md](docs/progress/tahap-4-lokal.md), [sinkron-dokumen-ttd.md](docs/progress/sinkron-dokumen-ttd.md) |
+| 5 | Tanda tangan PDF | Tanda tangan dan sinkron antar laptop selesai. Komentar, stabilo, dan kotak teks di PDF belum dibuat. | [tahap-5-lokal.md](docs/progress/tahap-5-lokal.md), [sinkron-dokumen-ttd.md](docs/progress/sinkron-dokumen-ttd.md) |
+| 6 | Fitur lengkap | Belum dimulai. Prioritas dan label board sudah ada sejak Tahap 3. | |
+| 7 | Uji coba kantor | Belum dimulai | |
 
 Pekerjaan lintas tahap:
 - Transport sinkron fitur (chat, board, dokumen, tanda tangan di atas koneksi Tahap 1): selesai. Laporan: [transport-fitur.md](docs/progress/transport-fitur.md).
-- Penggabungan bagian lokal Tahap 3, 4, dan 5: [integrasi-tahap-3-4-5.md](docs/progress/integrasi-tahap-3-4-5.md).
+- Sinkron dokumen dan tanda tangan antar laptop: selesai dan sudah digabung, berjalan di atas transport fitur yang asli. Jembatan khusus uji sudah dihapus. Laporan: [sinkron-dokumen-ttd.md](docs/progress/sinkron-dokumen-ttd.md).
+- Penggabungan bagian lokal Tahap 3, 4, dan 5: [integrasi-tahap-3-4-5.md](docs/progress/integrasi-tahap-3-4-5.md). Penggabungan sinkron dokumen dan tanda tangan: [integrasi-dokumen.md](docs/progress/integrasi-dokumen.md).
 - Rencana setiap tahap ada di [`docs/plans/`](docs/plans/).
 
-Pemeriksaan akhir pada kode gabungan di branch `integrasi-fitur`:
-- 781 tes Rust dan 499 tes tampilan lulus. `cargo clippy` bersih.
-- Uji ujung ke ujung tiga instance lewat jaringan sungguhan (`npm run test:e2e-fitur-multi`) lulus 20/20.
-- Semuanya diuji di satu PC. Lihat [Belum diuji](#belum-diuji).
+Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di satu PC:
+- `cargo test`: 861 lulus, 0 gagal, 7 diabaikan. `cargo clippy` tanpa peringatan. `tsc` bersih.
+- Vitest: 557 tes di 37 file lulus.
+- Uji ujung ke ujung pada build release, semuanya lulus: `smoke-e2e` 11/11, `board-e2e` 11/11, `board-sync-e2e` 23/23, `chat-e2e` 19/19, `smoke-docs-e2e` 15/15, `sign-e2e` 15/15, `e2e-multi` 25/25, `e2e-fitur-multi` 20/20 (chat dan board, tiga instance), dan `sync-e2e` 37/37 (dokumen dan tanda tangan, tiga instance).
+- `sync-e2e` memeriksa: dokumen muncul di laptop rekan dengan isi yang sama persis sampai ke byte, versi baru, tanda "Sedang diedit", bentrok offline yang tampil di kedua laptop, file 21 MB yang tidak disalin otomatis lalu diunduh saat diklik, permintaan tanda tangan berurutan B lalu A, versi yang diubah diam-diam ditolak, jejak audit sah di kedua laptop, anggota yang tidak terlibat tidak menerima permintaan, dan anggota yang dikeluarkan tidak menerima dokumen baru.
+- Lihat [Belum diuji](#belum-diuji).
+
+## Rilis
+
+`v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini privat dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
 
 ## Memasang
 
-1. Unduh `Mira_0.1.0_x64-setup.exe` (installer NSIS) dari halaman GitHub Releases proyek.
+1. Unduh `Mira_0.1.0_x64-setup.exe` (installer NSIS, 7,86 MB) dari rilis `v0.1.0` di [halaman Releases](../../releases). Repositorinya privat, jadi butuh akses ke repositori.
 2. Jalankan installer. Installer terpasang per pengguna di `%LOCALAPPDATA%\Mira`, jadi tidak butuh hak admin.
 3. Kalau WebView2 belum ada, installer mengunduhnya. Untuk laptop tanpa WebView2 dan tanpa internet, buat varian offline dengan `npm run build:installer-offline` (sekitar 286 MB).
-4. Installer belum ditandatangani, jadi Windows SmartScreen akan memberi peringatan.
+4. Installer belum ditandatangani dengan sertifikat penandatanganan kode, jadi Windows SmartScreen bisa memberi peringatan saat memasang.
 5. Saat pertama dibuka: isi nama, pilih "Buat organisasi baru" atau "Gabung dengan kode", lalu ikuti panduan firewall.
 
 Data disimpan di `%LOCALAPPDATA%\id.mira.desktop`. Kunci privat laptop ada di Windows Credential Manager dengan nama `device-key-<kunci publik>.id.mira.desktop`.
@@ -131,6 +143,7 @@ Skrip menjalankan `mira.exe` sungguhan dan mengendalikannya lewat DevTools Proto
 | `npm run test:e2e` | release | Alur dasar: isi nama, buat organisasi, tema, restart |
 | `npm run test:e2e-multi` | release | Empat instance: bergabung, kode ditolak, dikeluarkan, menyusul |
 | `npm run test:e2e-fitur-multi` | release | Tiga instance lewat jaringan sungguhan: chat, titipan, board, lampiran |
+| `npm run test:e2e-sync` | release | Tiga instance lewat jaringan sungguhan: dokumen, file besar, bentrok, tanda tangan berurutan, batas akses |
 | `npm run test:e2e:docs` | debug | Dokumen: tambah, edit, versi, pulihkan, restart |
 | `npm run test:e2e-ttd` | debug | Tanda tangan: gambar, tempatkan, PIN, kunci, deteksi perubahan |
 | `npm run test:e2e-chat` | debug | Chat di satu laptop |
@@ -185,12 +198,12 @@ Modul Rust di `src-tauri/src/`:
 | `permissions/` | Log keanggotaan bertanda tangan, perhitungan status organisasi, undangan |
 | `peers/` | Alamat rekan: diingat, diisi manual, terakhir terlihat |
 | `network/` | QUIC, mDNS, jabat tangan, bergabung, sinkron op, transport sinkron fitur dan unduh blob |
-| `db/` | Koneksi SQLite dan migrasi bernomor v1 sampai v7 |
+| `db/` | Koneksi SQLite dan migrasi bernomor v1 sampai v8 |
 | `blobs/` | Penyimpanan isi file beralamat hash BLAKE3 |
 | `chat/` | Channel, pesan, tanda terima, titipan tersegel, lampiran, notifikasi |
 | `board/` | Dokumen Automerge per proyek, aturan akses, sinkron, pengingat tenggat |
-| `documents/` | Pustaka dokumen, graf versi, pemantau simpan Office |
-| `signing/` | Tanda tangan PDF: PIN, permintaan, jejak audit, deteksi perubahan |
+| `documents/` | Pustaka dokumen, graf versi, pemantau simpan Office, cakupan akses, sinkron antar laptop (`peer_sync.rs`) |
+| `signing/` | Tanda tangan PDF: PIN, permintaan, jejak audit, deteksi perubahan, bukti stempel, sinkron antar laptop (`peer_sync.rs`) |
 | `commands.rs`, `team_commands.rs`, `network_commands.rs` | Command Tauri untuk tampilan |
 | `net_backend.rs` | Adapter antara jaringan dan database |
 | `firewall.rs` | Pemeriksaan dan aturan Windows Firewall |
@@ -200,16 +213,18 @@ Modul Rust di `src-tauri/src/`:
 
 ## Belum diuji
 
-- Semua uji berjalan di satu PC. Mira belum diuji di beberapa laptop sungguhan di jaringan kantor.
+- Semua uji berjalan di satu PC, termasuk uji sinkron dokumen dan tanda tangan tiga instance. Mira belum diuji di beberapa laptop sungguhan di jaringan kantor.
 - Belum diuji lewat VPN. Deteksi VPN memakai nama adaptor Windows, jadi adaptor VPN tertentu bisa tampil sebagai LAN.
 - Belum diuji dengan Microsoft Office berlisensi. Uji dokumen meniru pola simpan Word dan Excel.
 - Tombol "Izinkan lewat Windows Firewall" (UAC) belum pernah dijalankan.
+- Installer belum punya sertifikat penandatanganan kode, jadi Windows SmartScreen bisa memberi peringatan saat memasang.
 
 Yang belum dibuat:
-- Sinkron dokumen dan tanda tangan antar laptop (sedang dikerjakan di branch lain).
+- Menambah file ke proyek atau tim tertentu dari layar Dokumen. Inti Rust sudah mendukung cakupan proyek, tapi layar Dokumen baru bisa menambah ke Pustaka Umum.
 - Task dari pesan chat, tanda "sudah digabung" di kartu task, kartu task tanda tangan yang pindah ke Selesai otomatis.
 - Komentar, stabilo, dan kotak teks di PDF.
 - Halaman Keamanan untuk perubahan yang ditolak.
+- Tahap 6 (fitur lengkap) dan Tahap 7 (uji coba kantor) belum dimulai.
 
 ## Keputusan yang masih terbuka
 
@@ -217,4 +232,5 @@ Yang belum dibuat:
 - Sertifikat penandatanganan kode untuk installer.
 - Kebijakan PIN tanda tangan: tetap 6 sampai 12 angka, minimal 8 angka, atau Windows Hello.
 - Nama penerbit di installer. Saat ini masih isian sementara "Mira".
-- Jawaban tim jaringan kantor soal mDNS dan pertanyaan lain di Lampiran A PRD.
+- Jawaban tim jaringan kantor soal mDNS, aturan firewall, dan pertanyaan lain di Lampiran A PRD.
+- Visibilitas repositori. Saat ini privat.

@@ -1,6 +1,6 @@
 ---
 tags: [mira, tahap, tanda-tangan]
-status: lokal-selesai
+status: sebagian
 ---
 
 # Tahap 5: Tanda tangan PDF
@@ -19,17 +19,25 @@ Penampil PDF dengan komentar, stabilo, dan kotak teks, tanda tangan dengan PIN, 
 - Permintaan tanda tangan berurutan atau bebas. Tamu boleh menandatangani, tidak bisa meminta.
 - Menu "Tanda tangan" di sidebar, layar di `src/screens/sign/`. Migrasi v5.
 
+## Yang dibuat (sinkron antar laptop)
+
+- `signing/peer_sync.rs`: record `request`, `signed`, dan `cancelled`. Penerima memeriksa setiap catatan audit, pengirim, penanda tangan, dan aturan Tamu. Keadaan permintaan dihitung ulang dari semua record sah, jadi hasilnya sama di semua laptop yang memegang record yang sama. Migrasi v8.
+- Urutan berurutan ditegakkan di semua laptop. Penanda tangan mendapat notifikasi Windows "Giliran Anda menandatangani".
+- PDF disimpan di blob store [[Tahap 4]]. File sampai 20 MB diunduh otomatis; file lebih besar lewat tombol unduh.
+- Bukti stempel (`signing/increment.rs`): stempel ditambahkan sebagai incremental update PDF, jadi byte versi lama tetap utuh di dalam file baru. Inti Rust menolak versi yang mengubah isi selain stempel, dengan kode `version_changes_content`.
+- Permintaan bisa dikaitkan ke proyek. Aturan proyek dan Tamu sama dengan aturan board, lihat [[Keamanan dan izin]].
+
 ## Status
 
-Bagian lokal selesai dan sudah digabung. Pengiriman permintaan dan file ke laptop rekan sedang dikerjakan di branch lain; di branch ini outbox masih `LocalOnlyOutbox` dan PDF masih disimpan di `FolderStore`, belum di blob store. Kriteria tiga penanda tangan belum terpenuhi karena butuh jaringan. Deteksi perubahan satu karakter sudah teruji di satu laptop.
+Tanda tangan dan sinkron antar laptop selesai dan sudah digabung, di atas transport fitur yang asli. Uji `npm run test:e2e-sync` dengan tiga instance di satu PC memeriksa permintaan berurutan B lalu A, versi yang diubah diam-diam ditolak, jejak audit sah di kedua laptop, dan anggota yang tidak terlibat tidak menerima permintaan. Kriteria tiga penanda tangan di rencana diuji lewat tes Rust tiga laptop; uji ujung ke ujung memakai dua penanda tangan.
 
-Belum dibuat: komentar, stabilo, dan kotak teks di PDF, serta kartu task tanda tangan yang pindah otomatis. Inti Rust belum bisa membuktikan bahwa versi baru sama dengan versi sebelumnya ditambah stempel.
+Belum dibuat: komentar, stabilo, dan kotak teks di PDF, serta kartu task tanda tangan yang pindah otomatis. Belum dicoba dengan PDF dari Word, Acrobat, atau pemindai.
 
 Kebijakan panjang PIN masih terbuka, lihat [[Keputusan]].
 
 ## Rujukan
 
-- Laporan: [docs/progress/tahap-5-lokal.md](../docs/progress/tahap-5-lokal.md)
-- Rencana: [docs/plans/tahap-5-lokal.md](../docs/plans/tahap-5-lokal.md)
+- Laporan: [docs/progress/tahap-5-lokal.md](../docs/progress/tahap-5-lokal.md), [docs/progress/sinkron-dokumen-ttd.md](../docs/progress/sinkron-dokumen-ttd.md)
+- Rencana: [docs/plans/tahap-5-lokal.md](../docs/plans/tahap-5-lokal.md), [docs/plans/sinkron-dokumen-ttd.md](../docs/plans/sinkron-dokumen-ttd.md)
 
 Sebelumnya: [[Tahap 4]]. Berikutnya: [[Tahap 6]]. Kembali ke [[Beranda]].

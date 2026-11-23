@@ -4,7 +4,7 @@ tags: [mira, uji, risiko]
 
 # Belum diuji
 
-Semua uji sejauh ini berjalan di satu PC Windows. Daftar ini mengumpulkan yang belum teruji dan yang belum dibuat, dari laporan setiap tahap.
+Semua uji sejauh ini berjalan di satu PC Windows, termasuk uji sinkron dokumen dan tanda tangan dengan tiga instance (`npm run test:e2e-sync`, 37/37). Daftar ini mengumpulkan yang belum teruji dan yang belum dibuat, dari laporan setiap tahap.
 
 ## Lingkungan yang belum dicoba
 
@@ -19,12 +19,14 @@ Semua uji sejauh ini berjalan di satu PC Windows. Daftar ini mengumpulkan yang b
 - "Ikuti Windows" diuji dengan emulasi `prefers-color-scheme`, bukan dengan mengganti tema Windows.
 - Notifikasi Windows tidak dilihat langsung di layar. Plugin notifikasi di Windows selalu melaporkan berhasil.
 - Layar HiDPI (skala 150%), pena sungguhan, dan PDF dari Word atau Acrobat sungguhan belum dicoba di aplikasi.
-- Bentrok dokumen belum bisa dibuat lewat aplikasi; diuji lewat tes unit.
 - Uji multi-instance menjalankan exe dari `target/release`, bukan aplikasi hasil instal.
+- Installer `v0.1.0` belum punya sertifikat penandatanganan kode, jadi Windows SmartScreen bisa memberi peringatan saat memasang. Lihat [[Rilis]].
+- Bukti stempel belum dicoba dengan PDF dari Word, Acrobat, atau pemindai.
 
 ## Fitur yang belum dibuat
 
-- Sinkron dokumen dan tanda tangan antar laptop. Sedang dikerjakan di branch lain; jangan dianggap bekerja.
+- Menambah file ke proyek atau tim tertentu dari layar Dokumen. Inti Rust sudah mendukung cakupan proyek, tapi layar Dokumen baru bisa menambah ke Pustaka Umum. ([[Tahap 4]])
+- [[Tahap 6]] (fitur lengkap) dan [[Tahap 7]] (uji coba kantor) belum dimulai.
 - Task dari pesan chat (F-TASK-03).
 - Tanda "sudah digabung" di kartu task (F-TASK-04); nilainya selalu `false`.
 - Kartu task tanda tangan pindah ke Selesai otomatis (F-SIGN-06).

@@ -38,8 +38,8 @@ blob store (folder blobs/)                  |
 | `blobs/` | Isi file beralamat hash BLAKE3 |
 | `chat/` | Channel, pesan, tanda terima, titipan, lampiran |
 | `board/` | Dokumen Automerge per proyek, akses, sinkron, pengingat |
-| `documents/` | Pustaka dokumen, graf versi, pemantau Office |
-| `signing/` | PIN, permintaan, jejak audit, deteksi perubahan |
+| `documents/` | Pustaka dokumen, graf versi, pemantau Office, cakupan akses (`scope.rs`), sinkron (`peer_sync.rs`) |
+| `signing/` | PIN, permintaan, jejak audit, deteksi perubahan, bukti stempel (`increment.rs`), sinkron (`peer_sync.rs`) |
 | `net_backend.rs` | Adapter `network::SyncBackend` di atas `permissions` dan `peers` |
 | `firewall.rs`, `qr.rs`, `window_theme.rs` | Platform Windows |
 
@@ -56,12 +56,13 @@ Satu file database per laptop, dengan `journal_mode=WAL` dan `synchronous=FULL`.
 | v5 | [[Tahap 5]] tanda tangan | `sign_saved_signature`, `sign_pin_resets`, `sign_requests`, `sign_signers`, `sign_events`, `sign_exports` |
 | v6 | Sinkron board ([[Tahap 3]]) | Kolom `record_id` dan `doc_code`, tabel `board_pending`, `board_rejected` |
 | v7 | [[Tahap 2]] chat | `chat_records`, `chat_channels`, `chat_messages`, `chat_files`, `chat_receipts`, `chat_envelopes`, `chat_fetch_queue`, `chat_blobs`, `chat_conv_settings` |
+| v8 | Sinkron dokumen dan tanda tangan ([[Tahap 4]], [[Tahap 5]]) | `docs_sync_records`, `sign_sync_records`, `sign_proof_checks`, `sign_notified`, kolom `team_id` dan `project_id` di `sign_requests`. Entri `documents::sync_schema::SYNC_SCHEMA`. |
 
-Catatan: laporan Tahap 2 dan laporan sinkron board sama-sama menyebut migrasinya v6, karena dikerjakan di branch terpisah. Urutan final di kode adalah sinkron board v6 dan chat v7.
+Catatan: laporan Tahap 2 dan laporan sinkron board sama-sama menyebut migrasinya v6, karena dikerjakan di branch terpisah. Urutan final di kode adalah sinkron board v6 dan chat v7. Sinkron dokumen dan tanda tangan menjadi v8 saat digabung.
 
 ## Blob store
 
-Modul `blobs/` menyimpan isi file sekali di `<data>/blobs/<2 hex>/<hash>`, dengan hash BLAKE3. File ditulis lewat file sementara lalu di-rename, dan bersifat read-only. Versi dokumen dengan isi sama memakai blob yang sama. Chat memakai blob store untuk lampiran. Tanda tangan PDF masih memakai penyimpanan sementara `FolderStore` di `<data>/ttd-berkas/`.
+Modul `blobs/` menyimpan isi file sekali di `<data>/blobs/<2 hex>/<hash>`, dengan hash BLAKE3. File ditulis lewat file sementara lalu di-rename, dan bersifat read-only. Versi dokumen dengan isi sama memakai blob yang sama. Chat memakai blob store untuk lampiran. Tanda tangan PDF juga memakai blob store; file lama di `<data>/ttd-berkas/` dipindah saat pertama dibaca.
 
 ## Jaringan
 
@@ -79,13 +80,15 @@ Setiap perubahan keanggotaan adalah op JSON yang ditandatangani kunci laptop pem
 
 Kontrak ada di `src-tauri/src/network/feature.rs`. Setiap fitur mendaftarkan `FeatureSync` (dan `BlobSource` kalau punya file) ke `FeatureHub`. Fitur menentukan record apa yang boleh diterima setiap rekan dan memeriksa semua yang masuk. Transport yang mengurus kapan sinkron dan cara pengiriman.
 
-| Topik | Fitur | Keadaan di branch ini |
+| Topik | Fitur | Keadaan |
 |---|---|---|
 | `chat` | `ChatSync` | Terdaftar dan tersinkron |
 | `board` | `BoardFeature` | Terdaftar dan tersinkron |
-| `docs` | Dokumen | Belum tersambung (`NoSync`), dikerjakan di branch lain |
-| `sign` | Tanda tangan | Belum tersambung (`LocalOnlyOutbox`), dikerjakan di branch lain |
+| `docs` | `DocsPeerSync` (`documents/peer_sync.rs`) | Terdaftar dan tersinkron, termasuk unduh file |
+| `sign` | `SignSync` (`signing/peer_sync.rs`) | Terdaftar dan tersinkron, termasuk unduh file |
+
+Dokumen dan tanda tangan berjalan di atas transport fitur yang sama dengan chat dan board. Jembatan khusus uji yang dulu dipakai sebelum transport digabung sudah dihapus.
 
 Cara kerja transport ada di [[Transport sinkron fitur]].
 
-Laporan terkait: [tahap-1.md](../docs/progress/tahap-1.md), [transport-fitur.md](../docs/progress/transport-fitur.md), [integrasi-tahap-3-4-5.md](../docs/progress/integrasi-tahap-3-4-5.md).
+Laporan terkait: [tahap-1.md](../docs/progress/tahap-1.md), [transport-fitur.md](../docs/progress/transport-fitur.md), [integrasi-tahap-3-4-5.md](../docs/progress/integrasi-tahap-3-4-5.md), [sinkron-dokumen-ttd.md](../docs/progress/sinkron-dokumen-ttd.md), [integrasi-dokumen.md](../docs/progress/integrasi-dokumen.md).

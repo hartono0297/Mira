@@ -54,6 +54,9 @@ Keputusan desain yang sudah berlaku, dikumpulkan dari PRD dan laporan tahap. Ala
 - Pulihkan selalu membuat versi baru.
 - Nomor versi hanya untuk tampilan per laptop; identitas versi memakai id acak.
 - File jenis program tidak pernah dibuka dari Mira.
+- File sampai 20 MB disalin otomatis ke laptop rekan; yang lebih besar diunduh saat diklik.
+- Id dokumen, versi, dan permintaan diturunkan dari kunci penulis ditambah salt acak, supaya rekan tidak bisa lebih dulu memakai id milik orang lain.
+- Dokumen dan tanda tangan memakai aturan akses proyek dan Tamu milik board. Tamu tidak melihat Pustaka Umum.
 
 ## Tanda tangan ([[Tahap 5]])
 
@@ -62,16 +65,20 @@ Keputusan desain yang sudah berlaku, dikumpulkan dari PRD dan laporan tahap. Ala
 - Setelah PIN benar, inti Rust memberi token sekali pakai berumur 5 menit untuk menyimpan versi bertanda tangan.
 - Teks stempel memakai Helvetica bawaan pdf-lib; huruf di luar Latin diganti `?`.
 - Batas 50 MB saat impor dan 100 MB untuk versi bertanda tangan.
+- Stempel ditambahkan sebagai incremental update PDF. Versi lama harus menjadi awalan byte yang persis dari versi baru, dan setiap objek yang berubah harus masuk daftar yang diizinkan. Versi yang mengubah isi selain stempel ditolak (`version_changes_content`).
+- Halaman tambahan hanya boleh dari penanda tangan terakhir (halaman catatan), supaya penanda tangan di tengah tidak bisa menyisipkan adendum.
+- Mode bebas, dua tanda tangan bersamaan saat offline: yang waktunya paling awal menang, lalu kunci terkecil. Hasilnya sama di semua laptop.
 
 ## Yang masih terbuka
 
 | Keputusan | Keadaan sekarang |
 |---|---|
 | Logo final | Masih logo sementara dari `design/logo-sementara.svg` |
-| Sertifikat penandatanganan kode | Installer belum ditandatangani, SmartScreen memberi peringatan |
+| Sertifikat penandatanganan kode | Installer `v0.1.0` belum ditandatangani, SmartScreen bisa memberi peringatan |
 | Kebijakan PIN tanda tangan | 6 sampai 12 angka. Pilihan: tetap, minimal 8 angka, atau Windows Hello |
 | Nama penerbit di installer | Isian sementara "Mira" dan "Hak cipta (c) 2026 Mira" |
-| Jawaban tim jaringan kantor | Soal mDNS, isolasi Wi-Fi, VLAN, dan VPN (Lampiran A PRD) belum ada |
+| Jawaban tim jaringan kantor | Soal mDNS, aturan firewall, isolasi Wi-Fi, VLAN, dan VPN (Lampiran A PRD) belum ada |
+| Visibilitas repositori | Saat ini privat. Lihat [[Rilis]] |
 
 Pertanyaan lain yang pernah diajukan di laporan [[Tahap 1]]. Repo tidak mencatat apakah sudah dijawab:
 - Apakah Tamu boleh melihat direktori organisasi.
