@@ -235,7 +235,7 @@ async function settleUi(id) {
   await sleep(1500);
   const skip = page(id).getByRole("button", { name: /Lewati, atur nanti/ });
   if (await skip.isVisible().catch(() => false)) await skip.click();
-  await page(id).getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
+  await page(id).getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: /^Pengaturan\s*(,|$)/ }).waitFor({ timeout: 20000 });
 }
 
 // Klik tombol sampai target muncul (tombol aria-disabled baru aktif setelah file terbuka).
@@ -282,9 +282,13 @@ async function simulateExcelSave(working, extra, who) {
 // Memulai edit (salinan kerja disiapkan, tanda "Sedang diedit" dikirim).
 async function beginEdit(id, docId) {
   await must(id, "start_edit", { documentId: docId, fromVersionId: null });
-  const working = join(NODES[id].dir, "working", docId, XLSX);
-  await waitFor(`salinan kerja ${id} disiapkan`, async () => existsSync(working), 15000);
-  return working;
+  // Mira memendekkan nama salinan kerja kalau path lengkapnya lebih dari 200
+  // karakter (batas Office), jadi namanya dibaca dari folder.
+  const dir = join(NODES[id].dir, "working", docId);
+  return waitFor(`salinan kerja ${id} disiapkan`, async () => {
+    const files = existsSync(dir) ? readdirSync(dir).filter((f) => !f.startsWith("~")) : [];
+    return files.length === 1 ? join(dir, files[0]) : null;
+  }, 15000);
 }
 
 // Menyimpan lewat pola Excel, lalu menunggu versi baru dan sesi edit selesai.
