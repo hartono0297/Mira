@@ -87,9 +87,7 @@ pub fn outside_projects(
 }
 
 #[tauri::command]
-pub async fn board_outside_projects(
-    state: State<'_, MiraState>,
-) -> AppResult<Vec<OutsideProject>> {
+pub async fn board_outside_projects(state: State<'_, MiraState>) -> AppResult<Vec<OutsideProject>> {
     state.with_core(|c| {
         let Some(s) = permissions::load_state(&c.db)? else {
             return Ok(Vec::new());
@@ -147,21 +145,12 @@ mod tests {
 
         let bstate = permissions::load_state(&b.conn).unwrap().unwrap();
         assert!(
-            outside_projects(&b.conn, &bstate, &bpk)
-                .unwrap()
-                .is_empty(),
+            outside_projects(&b.conn, &bstate, &bpk).unwrap().is_empty(),
             "only superadmins may add themselves"
         );
 
         // After joining, the project is no longer outside.
-        permissions::add_project_member(
-            &mut f.conn,
-            &f.id,
-            &row.id,
-            &fpk,
-            org_ops::now(),
-        )
-        .unwrap();
+        permissions::add_project_member(&mut f.conn, &f.id, &row.id, &fpk, org_ops::now()).unwrap();
         let state = permissions::load_state(&f.conn).unwrap().unwrap();
         assert!(outside_projects(&f.conn, &state, &fpk).unwrap().is_empty());
     }

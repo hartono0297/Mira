@@ -489,6 +489,8 @@ pub async fn board_list_projects(state: State<'_, MiraState>) -> AppResult<Vec<P
 /// `members`: the people picked in the dialog besides the creator. The new
 /// `project_create` op is synced right away (`after_change`, which also
 /// emits `mira://directory`), so members' laptops accept the board.
+// Tauri passes each JS argument as its own parameter; three of them are app state.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn board_create_project(
     app: AppHandle,
