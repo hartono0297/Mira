@@ -57,7 +57,7 @@ describe("NameWithLabels", () => {
 
   it("suffix ditulis sesudah nama dan sebelum label", () => {
     const { container } = render(<NameWithLabels name="Andi" labels={labels("Senior")} suffix=" (Anda)" />);
-    expect(container.querySelector(".nwl-name")?.textContent).toBe("Andi (Anda)");
+    expect(container.querySelector(".nwl-name")?.textContent).toBe("Andi (Anda), label ");
     expect(container.querySelector(".nwl-suffix")?.textContent).toBe(" (Anda)");
     expect(container.textContent).toBe("Andi (Anda), label Senior");
   });

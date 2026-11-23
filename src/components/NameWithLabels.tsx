@@ -26,10 +26,11 @@ export function NameWithLabels({ name, labels, max = MAX_LABELS_SHOWN, suffix, c
       <span className="nwl-name">
         {name}
         {suffix && <span className="nwl-suffix">{suffix}</span>}
+        {/* Di dalam span nama, supaya nama aksesibel jadi "Rina, label ..." tanpa spasi sebelum koma. */}
+        {shown.length > 0 && <span className="sr-only">, label </span>}
       </span>
       {shown.length > 0 && (
         <span className="nwl-labels">
-          <span className="sr-only">, label </span>
           {shown.map((l, i) => (
             <span key={l.id} className="lab">
               {l.name}

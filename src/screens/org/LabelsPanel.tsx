@@ -183,7 +183,10 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
                     }}
                     onClick={() => setDialog({ kind: "assign", label: l })}
                   >
-                    Atur orang<span className="sr-only">, label {l.name}</span>
+                    <span>
+                      Atur orang
+                      <span className="sr-only">, label {l.name}</span>
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -191,7 +194,10 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
                     disabled={busy}
                     onClick={() => setDialog({ kind: "rename", label: l })}
                   >
-                    Ganti nama<span className="sr-only">, label {l.name}</span>
+                    <span>
+                      Ganti nama
+                      <span className="sr-only">, label {l.name}</span>
+                    </span>
                   </button>
                   <button
                     type="button"

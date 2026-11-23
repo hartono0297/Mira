@@ -121,7 +121,8 @@ describe("Pengguna: data", () => {
     expect(within(me).getByText("(Anda)", { exact: false })).toBeInTheDocument();
     expect(within(me).getByText("Superadmin")).toBeInTheDocument();
     // IP laptop ini dan statusnya.
-    expect(within(me).getAllByText("Laptop ini")).toHaveLength(2);
+    expect(within(me).getByText("Laptop ini")).toBeInTheDocument();
+    expect(within(me).getByText("Tidak dicatat")).toBeInTheDocument();
 
     const wulan = rowOf("Wulan");
     expect(within(wulan).getByText("Admin departemen")).toBeInTheDocument();

@@ -64,10 +64,10 @@ pub fn next_alert(
     if fresh.is_empty() {
         return None;
     }
-    if let Some(last) = st.last {
-        if now - last < ALERT_GAP {
-            return None;
-        }
+    if let Some(last) = st.last
+        && now - last < ALERT_GAP
+    {
+        return None;
     }
     st.last = Some(now);
     let title = "Permintaan bergabung baru".to_string();

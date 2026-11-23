@@ -764,7 +764,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
                           <span className="ut-muted">Belum dilaporkan</span>
                         )}
                         <span className={u.lastIp ? "mono ut-mono ut-sub" : "ut-sub"}>
-                          {u.lastIp ?? (u.isMe ? "Laptop ini" : "Belum terlihat")}
+                          {u.lastIp ?? (u.isMe ? "Tidak dicatat" : "Belum terlihat")}
                         </span>
                       </td>
                       <td role="cell" className="ut-sys">
