@@ -263,7 +263,8 @@ export function PeoplePicker({
             ))}
           </ul>
         )}
-        <p className="hint pp-summary">{summary(picked)}</p>
+        {/* Tanpa orang yang bisa dipilih, emptyText di atas sudah menjelaskan. */}
+        {offered.length > 0 && <p className="hint pp-summary">{summary(picked)}</p>}
       </div>
     </fieldset>
   );
