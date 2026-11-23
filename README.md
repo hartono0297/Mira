@@ -89,7 +89,7 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 
 ## Rilis
 
-`v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini privat dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
+`v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini publik dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
 
 ## Memasang
 
@@ -101,11 +101,11 @@ irm https://raw.githubusercontent.com/hartono0297/Mira/main/install.ps1 | iex
 
 Skrip [install.ps1](install.ps1) mencari rilis terbaru, mengunduh installer, mencocokkan checksum SHA-256 dengan yang dicatat GitHub, menutup Mira kalau sedang jalan, memasang tanpa jendela installer, lalu membuka Mira. Perintah yang sama dipakai untuk memperbarui. Data dan kunci laptop tidak tersentuh.
 
-Perintah ini baru jalan setelah repositori dibuat publik, karena GitHub menolak mengunduh skrip dan installer dari repositori privat tanpa login. Selama masih privat, pakai cara manual di bawah.
+Kalau kebijakan kantor memblokir perintah ini di PowerShell, pakai cara manual di bawah.
 
 Cara manual:
 
-1. Unduh `Mira_0.1.0_x64-setup.exe` (installer NSIS, 7,86 MB) dari rilis `v0.1.0` di [halaman Releases](../../releases). Repositorinya privat, jadi butuh akses ke repositori.
+1. Unduh `Mira_0.1.0_x64-setup.exe` (installer NSIS, 7,86 MB) dari rilis `v0.1.0` di [halaman Releases](../../releases).
 2. Jalankan installer. Installer terpasang per pengguna di `%LOCALAPPDATA%\Mira`, jadi tidak butuh hak admin.
 3. Kalau WebView2 belum ada, installer mengunduhnya. Untuk laptop tanpa WebView2 dan tanpa internet, buat varian offline dengan `npm run build:installer-offline` (sekitar 286 MB).
 4. Installer belum ditandatangani dengan sertifikat penandatanganan kode, jadi Windows SmartScreen bisa memberi peringatan saat memasang.
@@ -245,4 +245,4 @@ Yang belum dibuat:
 - Kebijakan PIN tanda tangan: tetap 6 sampai 12 angka, minimal 8 angka, atau Windows Hello.
 - Nama penerbit di installer. Saat ini masih isian sementara "Mira".
 - Jawaban tim jaringan kantor soal mDNS, aturan firewall, dan pertanyaan lain di Lampiran A PRD.
-- Visibilitas repositori. Saat ini privat.
+- Visibilitas repositori: sudah publik sejak 23 November 2026, supaya perintah pasang satu baris bisa dipakai siapa saja.

@@ -78,7 +78,7 @@ Keputusan desain yang sudah berlaku, dikumpulkan dari PRD dan laporan tahap. Ala
 | Kebijakan PIN tanda tangan | 6 sampai 12 angka. Pilihan: tetap, minimal 8 angka, atau Windows Hello |
 | Nama penerbit di installer | Isian sementara "Mira" dan "Hak cipta (c) 2026 Mira" |
 | Jawaban tim jaringan kantor | Soal mDNS, aturan firewall, isolasi Wi-Fi, VLAN, dan VPN (Lampiran A PRD) belum ada |
-| Visibilitas repositori | Saat ini privat. Lihat [[Rilis]] |
+| Visibilitas repositori | Publik sejak 23 November 2026, supaya perintah pasang satu baris jalan. Lihat [[Rilis]] |
 
 Pertanyaan lain yang pernah diajukan di laporan [[Tahap 1]]. Repo tidak mencatat apakah sudah dijawab:
 - Apakah Tamu boleh melihat direktori organisasi.
