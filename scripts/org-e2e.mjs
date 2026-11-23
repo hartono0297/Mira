@@ -25,9 +25,11 @@ const root = mkdtempSync(join(tmpdir(), "mira-org-"));
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appVersion = readFileSync(join(repo, "src-tauri", "Cargo.toml"), "utf8").match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 
+// E2E_PORT_OFFSET menggeser semua port supaya tidak bentrok dengan uji lain yang sedang berjalan.
+const OFF = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
 const NODES = {
-  A: { name: "Ayu Uji", port: 47871, cdp: 9371, dir: join(root, "laptop-a") },
-  B: { name: "Budi Uji", port: 47872, cdp: 9372, dir: join(root, "laptop-b") },
+  A: { name: "Ayu Uji", port: 47871 + OFF, cdp: 9371 + OFF, dir: join(root, "laptop-a") },
+  B: { name: "Budi Uji", port: 47872 + OFF, cdp: 9372 + OFF, dir: join(root, "laptop-b") },
 };
 const addr = (id) => `127.0.0.1:${NODES[id].port}`;
 
@@ -341,6 +343,9 @@ try {
   // B bukan superadmin: tab Anggota, tanpa Pengguna dan Label.
   await reload("B");
   await openOrg("B");
+  // Tab dan daftar dimuat sesudah judul; tunggu dulu supaya tidak membaca layar yang masih kosong.
+  await pg("B").locator("nav.org-tabs-wrap").getByRole("button", { name: "Anggota", exact: true }).waitFor({ timeout: 15000 }).catch(() => {});
+  await pg("B").locator("main").getByText("Drafter").first().waitFor({ timeout: 15000 }).catch(() => {});
   const bTabs = await pg("B").locator("nav.org-tabs-wrap button").allInnerTexts();
   check(
     "B (Anggota) melihat tab Anggota, tidak melihat Pengguna dan Label",
