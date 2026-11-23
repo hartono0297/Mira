@@ -20,6 +20,7 @@ import {
   checkSignablePdf,
   formatSignedAt,
   normalizeAngle,
+  signatureImageProblem,
   stampSignature,
   toWinAnsiSafe,
   type AuditInfo,
@@ -778,5 +779,131 @@ describe("incremental update", () => {
         await task.destroy();
       }
     }, 120_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batas bukti stempel (sama dengan signing::increment di inti Rust)
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const b of bytes) {
+    c ^= b;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(12 + data.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, data.length);
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(data, 8);
+  view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+
+async function zlibDeflate(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/** PNG RGBA 8 bit dari fungsi piksel (x, y) -> [r, g, b, a]. */
+async function makePng(w: number, h: number, pixel: (x: number, y: number) => number[]): Promise<Uint8Array> {
+  const raw = new Uint8Array(h * (1 + w * 4));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) raw.set(pixel(x, y), y * (1 + w * 4) + 1 + x * 4);
+  }
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, w);
+  view.setUint32(4, h);
+  ihdr[8] = 8; // kedalaman bit
+  ihdr[9] = 6; // RGBA
+  const parts = [
+    Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", await zlibDeflate(raw)),
+    pngChunk("IEND", new Uint8Array(0)),
+  ];
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+describe("batas bukti stempel", () => {
+  it("signatureImageProblem: tanpa SMask, terlalu padat, dan bidang putih legap ditolak", () => {
+    const dark = new Uint8Array([30, 30, 30, 30, 30, 30]);
+    expect(signatureImageProblem(dark, new Uint8Array([255, 0]), 2)).toBeNull();
+    expect(signatureImageProblem(dark, null, 2)).toMatch(/tidak berlatar transparan/);
+    expect(signatureImageProblem(dark, new Uint8Array([255, 200]), 2)).toMatch(/separuh/);
+    const white = new Uint8Array([255, 255, 255, 30, 30, 30]);
+    expect(signatureImageProblem(white, new Uint8Array([255, 0]), 2)).toMatch(/bagian putih/);
+    // Putih yang hampir transparan (tepi tinta hasil impor) bukan penutup.
+    expect(signatureImageProblem(white, new Uint8Array([127, 0]), 2)).toBeNull();
+  });
+
+  it("menolak PNG legap, padat, atau berbidang putih sebelum menstempel", async () => {
+    const pdf = await makePdf();
+    const placement: PdfRect = { pageIndex: 0, x: 72, y: 740, width: 160, height: 40 };
+    const opaque = await makePng(8, 2, () => [255, 255, 255, 255]);
+    await expect(stampSignature(pdf, { ...baseOpts, png: opaque, placement })).rejects.toThrow(
+      "tidak berlatar transparan",
+    );
+    const dense = await makePng(8, 2,(x) => (x < 7 ? [20, 20, 20, 255] : [0, 0, 0, 0]));
+    await expect(stampSignature(pdf, { ...baseOpts, png: dense, placement })).rejects.toThrow("separuh");
+    const patch = await makePng(8, 2,(_x, y) => (y === 0 ? [255, 255, 255, 255] : [0, 0, 0, 0]));
+    await expect(stampSignature(pdf, { ...baseOpts, png: patch, placement })).rejects.toThrow("bagian putih");
+  });
+
+  it("kotak sangat besar diperkecil dengan titik tengah tetap", async () => {
+    const pdf = await makePdf();
+    // Selebar halaman A4: tanpa batas, gambar 2:1 akan seluas 35% halaman.
+    const placement: PdfRect = { pageIndex: 0, x: 0, y: 200, width: 595.28, height: 420 };
+    const doc = await PDFDocument.load(await stampSignature(pdf, { ...baseOpts, placement }), {
+      updateMetadata: false,
+    });
+    const { images, texts } = stampDraws(doc, 0);
+    expect(images).toHaveLength(1);
+    const b = unitSquareBounds(images[0].ctm);
+    expectInside(b, placement);
+    const page = 595.28 * 841.89;
+    const area = (b.x1 - b.x0) * (b.y1 - b.y0);
+    expect(area).toBeLessThan(0.12 * page);
+    expect(area).toBeGreaterThan(0.05 * page);
+    expect((b.x0 + b.x1) / 2).toBeCloseTo(placement.x + placement.width / 2, 3);
+    expect((b.y0 + b.y1) / 2).toBeCloseTo(placement.y + placement.height / 2, 3);
+    // Keterangan ikut kotak yang diperkecil: di bawah gambar, tetapi masih
+    // di dalam kotak asli, bukan di bawah tepinya.
+    const captions = texts.filter((t) => t.origin.y < b.y0 && t.origin.x < 590);
+    expect(captions.length).toBeGreaterThan(0);
+    for (const t of captions) {
+      expect(t.origin.y).toBeGreaterThan(placement.y);
+      expect(b.y0 - t.origin.y).toBeLessThan(60);
+    }
+  });
+
+  it("keterangan paling banyak 100 huruf dan tidak lebih lebar dari kotak", async () => {
+    const pdf = await makePdf();
+    const placement: PdfRect = { pageIndex: 0, x: 200, y: 300, width: 160, height: 60 };
+    const out = await stampSignature(pdf, {
+      ...baseOpts,
+      signerName: "Nama Sangat Panjang ".repeat(12),
+      placement,
+    });
+    const doc = await PDFDocument.load(out, { updateMetadata: false });
+    // Dua Tj terakhir di halaman 1 adalah keterangan.
+    const lines = [...pageContentBytes(doc, 0).matchAll(/<([0-9A-Fa-f]*)> Tj/g)]
+      .slice(-2)
+      .map((m) => String.fromCharCode(...(m[1].match(/../g) ?? []).map((h) => parseInt(h, 16))));
+    expect(lines).toHaveLength(2);
+    expect(lines.join("").length).toBeLessThanOrEqual(104);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    for (const l of lines) expect(font.widthOfTextAtSize(l, 10)).toBeLessThanOrEqual(placement.width + EPS);
   });
 });

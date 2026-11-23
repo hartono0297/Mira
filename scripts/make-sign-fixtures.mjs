@@ -12,10 +12,13 @@
 //   <asli>-stamped1.pdf                           penanda tangan pertama
 //   <asli>-stamped2.pdf                           penanda tangan kedua (halaman lain)
 //   <asli>-audit.pdf                              + halaman catatan
-//   large-stamp.pdf                               kotak tanda tangan selebar halaman (sah)
+//   large-stamp.pdf                               kotak tanda tangan selebar halaman (sah;
+//                                                 stamp.ts mengecilkannya ke batas luas stempel)
 //   tampered-text.pdf                             stempel + angka di teks halaman 1 diganti
 //   tampered-cover.pdf                            stempel + persegi putih menutup halaman 1
 //   tampered-mediabox.pdf                         stempel + MediaBox halaman 2 diubah
+//   tampered-whiteout.pdf                         stempel + gambar putih legap menutup total
+//                                                 di halaman 1, lalu total lain ditulis di atasnya
 // large-stamp dan semua tampered-* dibangun di atas original-objstm.pdf.
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -63,15 +66,19 @@ function pngChunk(type, data) {
 
 /** PNG 64x32 RGBA: dua garis coretan hitam di atas latar transparan. */
 function signaturePng() {
-  const w = 64;
   const h = 32;
+  return rgbaPng(64, h, (x, y) => {
+    const onStroke = Math.abs(y - (h - 1 - (x * (h - 1)) / 63)) < 1.5 || Math.abs(y - 16 - 6 * Math.sin(x / 6)) < 1;
+    return onStroke ? [0, 0, 0, 255] : [0, 0, 0, 0];
+  });
+}
+
+/** PNG RGBA 8 bit dari fungsi piksel (x, y) -> [r, g, b, a]. */
+function rgbaPng(w, h, pixel) {
   const rows = [];
   for (let y = 0; y < h; y++) {
     const row = Buffer.alloc(1 + w * 4); // filter 0
-    for (let x = 0; x < w; x++) {
-      const onStroke = Math.abs(y - (h - 1 - (x * (h - 1)) / (w - 1))) < 1.5 || Math.abs(y - 16 - 6 * Math.sin(x / 6)) < 1;
-      if (onStroke) row[1 + x * 4 + 3] = 255;
-    }
+    for (let x = 0; x < w; x++) row.set(pixel(x, y), 1 + x * 4);
     rows.push(row);
   }
   const ihdr = Buffer.alloc(13);
@@ -173,7 +180,7 @@ async function chain(prefix, original) {
 async function stampWith(original, edit) {
   const embedPng = PDFDocument.prototype.embedPng;
   PDFDocument.prototype.embedPng = async function (png) {
-    await edit(this);
+    await edit(this, (doc, other) => embedPng.call(doc, other));
     return embedPng.call(this, png);
   };
   try {
@@ -191,8 +198,9 @@ await chain("original-objstm", objstm);
 const indirect = await save(await indirectDoc(), false);
 await chain("original-indirect", indirect.subarray(0, Buffer.from(indirect).toString("latin1").trimEnd().length));
 
-// Kotak tanda tangan selebar halaman (PlacementBox mengizinkannya): luas
-// gambar 50% halaman, tetapi sebagian besar transparan.
+// Kotak tanda tangan selebar halaman (PlacementBox mengizinkannya). stamp.ts
+// mengecilkannya dengan titik tengah tetap sampai gambar dan keterangan muat
+// dalam batas luas stempel.
 write(
   "large-stamp.pdf",
   await stampSignature(objstm, {
@@ -236,6 +244,20 @@ write(
   "tampered-mediabox.pdf",
   await stampWith(objstm, (doc) => {
     doc.getPage(1).setMediaBox(0, 0, 300, 300);
+  }),
+);
+
+// Tip-ex: gambar yang separuh atasnya putih legap (rata-rata alpha 0,5, jadi
+// lolos batas rata-rata) menutup total di halaman 1, lalu total lain ditulis
+// di atasnya.
+write(
+  "tampered-whiteout.pdf",
+  await stampWith(objstm, async (doc, embedPng) => {
+    const page = doc.getPage(0);
+    const patch = await embedPng(doc, rgbaPng(16, 8, (_x, y) => (y < 4 ? [255, 255, 255, 255] : [0, 0, 0, 0])));
+    page.drawImage(patch, { x: 70, y: 735, width: 300, height: 40 });
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    page.drawText("Kontrak kerja sama. Total: Rp 9.000.000", { x: 72, y: 760, size: 14, font });
   }),
 );
 
