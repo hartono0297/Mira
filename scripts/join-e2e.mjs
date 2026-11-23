@@ -23,6 +23,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { mainNav } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/v03-a");
@@ -196,7 +197,7 @@ async function requestOnA(name, timeoutMs = 30000) {
 
 async function goOrganization(id) {
   try {
-    await running[id].page.getByRole("button", { name: "Organisasi", exact: true }).click({ timeout: 5000 });
+    await mainNav(running[id].page, "Organisasi").click({ timeout: 5000 });
     await sleep(1500);
   } catch {
     /* menu belum ada: screenshot layar yang sedang terbuka */
@@ -281,6 +282,8 @@ try {
   check(`N menemukan kantor lewat mDNS: "Kantor ditemukan: ${ORG}"`, nHeading === `Kantor ditemukan: ${ORG}`, nHeading);
   await shot("N", "j04-n-kantor-ditemukan.png");
   const nBody = await bodyText("N");
+  const fpA = await must("A", "org_fingerprint");
+  check("N: sidik organisasi di layar sama dengan sidik di header Organisasi A", nBody.includes(fpA), fpA);
   check("N: pilihan \"Siapkan Mira untuk kantor baru\" tidak ada saat kantor terlihat", !nBody.includes("Siapkan Mira untuk kantor baru"));
   const deptOptions = await running.N.page.locator('select[name="team"] option').allInnerTexts();
   check("N: departemen kantor muncul di pilihan", deptOptions.includes(DEPT), JSON.stringify(deptOptions));
@@ -293,10 +296,29 @@ try {
   check("A melihat permintaan N di org_join_requests", Boolean(nReq?.id), nReq?.error ?? `${nReq.teamName}, ${nReq.laptop}, ip ${nReq.ip}`);
   check("Kode cocok di A sama dengan kode di layar N", nReq?.code === nCode, `A ${nReq?.code} / N ${nCode}`);
   check("Permintaan N tertuju ke departemen yang dipilih", nReq?.teamId === dept.id);
-  // Halaman permintaan bergabung milik bagian B belum ada di sini; screenshot halaman Organisasi A.
+  // Kartu penyetuju di halaman Organisasi A (bagian B): angka di menu, sidik di header,
+  // kode yang sama di kartu, lalu Setujui lewat klik.
+  const pa = running.A.page;
+  const navCounted = await waitFor("menu Organisasi A membawa angka permintaan", async () =>
+    (await pa.locator('nav[aria-label="Menu utama"]').getByRole("button", { name: /^Organisasi\s*,\s*1 permintaan/ }).count()) > 0,
+  40000).catch(() => false);
+  check("Menu Organisasi A menampilkan 1 permintaan menunggu", navCounted === true);
   await goOrganization("A");
-  await shot("A", "j06-a-organisasi.png");
-  await must("A", "org_approve_join", { requestId: nReq.id });
+  const headText = await pa.locator("main.org header.page-head .org-fp").innerText({ timeout: 10000 }).catch(() => "");
+  check("Header Organisasi A menampilkan sidik organisasi", headText.includes(fpA), fpA);
+  let approvedByClick = false;
+  try {
+    await pa.locator("nav.org-tabs-wrap").getByRole("button", { name: /^Permintaan bergabung/ }).click({ timeout: 10000 });
+    await pa.getByText(nCode, { exact: true }).waitFor({ timeout: 15000 });
+    await shot("A", "j06-a-permintaan-bergabung.png");
+    await pa.getByRole("button", { name: `Setujui permintaan ${NODES.N.name}` }).click({ timeout: 10000 });
+    approvedByClick = true;
+  } catch (e) {
+    await shot("A", "j06-a-organisasi.png");
+    await must("A", "org_approve_join", { requestId: nReq.id });
+    console.log(`Catatan: kartu permintaan tidak bisa diklik: ${e.message}`);
+  }
+  check("A menyetujui N lewat kartu Permintaan bergabung (kode yang sama tampil)", approvedByClick);
   const nShell = await waitFor("Layar N berganti sendiri ke shell", () => shellVisible("N"), 40000, 500).catch(() => false);
   check("Layar N berganti sendiri ke shell setelah disetujui", nShell === true);
   const nState = await must("N", "get_app_state");
