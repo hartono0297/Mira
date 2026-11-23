@@ -12,7 +12,9 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 ### Chat
 
-- Channel #umum, channel tim, channel proyek, dan chat pribadi.
+- Sidebar dibagi lima: Umum (channel dibuat superadmin, semua boleh menulis, bisa dikunci hanya-baca), Departemen (otomatis), Proyek (hanya anggota proyek), Grup (siapa saja bisa membuat), dan Pesan pribadi.
+- Grup: pembuatnya jadi pemilik, anggota bisa menambah orang dan mengganti nama, hanya pemilik yang mengeluarkan orang, siapa saja bisa keluar.
+- Label keahlian tampil di samping nama.
 - Balas, mention, lampiran, hapus pesan (menyisakan "Pesan dihapus"), arsip dan hapus channel.
 - Status pesan: Menunggu, Dititipkan, Diterima laptopnya, Dibaca.
 - Titipan untuk rekan yang laptopnya mati: pesan disegel untuk penerima dan dipegang laptop lain yang online. Laptop perantara tidak bisa membaca isinya.
@@ -23,9 +25,10 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 - Satu board per proyek dengan kolom To do, Dikerjakan, Selesai, dan kode task seperti PA-12.
 - Task berisi judul, deskripsi, penanggung jawab, tenggat, prioritas, label, komentar, dan riwayat aktivitas.
-- Task dipindah dengan seret mouse, menu Pindahkan, atau Alt+Panah.
+- Task dipindah dengan seret mouse (pointer event, jalan di Windows dan macOS), menu Pindahkan, atau Alt+Panah.
 - Halaman "Task saya" dan pengingat tenggat lewat notifikasi Windows.
-- Perubahan dari beberapa laptop digabung dengan Automerge. Data proyek hanya dikirim ke anggota tim pemilik proyek dan Tamu yang diundang ke proyek itu.
+- Proyek punya anggota sendiri dari departemen mana pun, dipilih saat membuat proyek. Proyek dibuat oleh superadmin atau admin departemen.
+- Perubahan dari beberapa laptop digabung dengan Automerge. Data proyek hanya dikirim ke anggota proyek dan Tamu yang diundang ke proyek itu. Superadmin baru melihat isi proyek setelah menambahkan dirinya, dan langkah itu tercatat.
 
 ### Dokumen
 
@@ -33,7 +36,7 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 - Dokumen, versi baru, dan tanda "Sedang diedit" sampai ke laptop rekan yang berhak melihatnya.
 - File sampai 20 MB disalin otomatis ke laptop rekan. File yang lebih besar diunduh lewat tombol "Unduh dari rekan".
 - Kalau dua laptop menyimpan versi saat offline, kedua versi disimpan berdampingan dan tampil sebagai bentrok di kedua laptop.
-- Layar Dokumen baru bisa menambah file ke Pustaka Umum, belum ke proyek atau tim tertentu.
+- File ditaruh di Pustaka Umum atau di proyek tertentu (hanya terlihat oleh anggota proyek).
 
 ### Tanda tangan PDF
 
@@ -46,8 +49,11 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 ### Organisasi dan jaringan
 
-- Satu organisasi untuk seluruh kantor, dibagi per tim, dengan peran Superadmin, Admin tim, Anggota, dan Tamu.
-- Bergabung lewat kode undangan yang berlaku 24 jam, 7 hari, atau sekali pakai.
+- Satu organisasi untuk seluruh kantor, dibagi per departemen, dengan peran Superadmin, Admin departemen, Anggota, dan Tamu. Satu orang masuk satu departemen; hanya superadmin yang bisa memindah.
+- Bergabung: Mira mencari kantor di jaringan, orang baru mengisi nama dan memilih departemen, lalu superadmin atau admin departemen menyetujui. Kode cocok tampil di kedua layar. Pilihan membuat organisasi baru hanya muncul kalau belum ada kantor di jaringan. Kode undangan tetap bisa dipakai, misalnya dari VPN.
+- Halaman Organisasi: Pengguna (khusus superadmin: nama laptop, IP terakhir, sistem, versi, status), Departemen, Label, Permintaan bergabung, dan Undangan.
+- Angka di menu untuk pesan belum dibaca, task jatuh tempo, tanda tangan yang menunggu, dan permintaan bergabung.
+- Cek pembaruan dan pemasangan versi baru dari dalam aplikasi (Pengaturan > Tentang dan pembaruan), plus dialog Yang baru.
 - Rekan ditemukan lewat mDNS, alamat manual, QR, atau alamat terakhir yang diingat.
 - Status koneksi (LAN, VPN, atau tidak tersambung) dan panduan Windows Firewall.
 
@@ -92,6 +98,8 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 ## Rilis
 
 `v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini publik dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
+
+`v0.3.0` berisi departemen, bergabung dengan persetujuan, anggota proyek, chat lima bagian dengan grup, label keahlian, angka notifikasi, daftar pengguna untuk superadmin, cek pembaruan dari dalam aplikasi, dan perbaikan seret board serta tanda tangan PDF. Mulai versi ini pembaruan bisa dipasang dari dalam Mira. Laptop yang masih 0.1.0 atau 0.2.0 perlu menjalankan perintah pasang sekali lagi. Laporan penggabungan: [v03-a.md](docs/progress/v03-a.md), [v03-b.md](docs/progress/v03-b.md), [v03-c.md](docs/progress/v03-c.md), [v03-d.md](docs/progress/v03-d.md).
 
 `v0.2.0` menambah dukungan macOS. Rilis ini berisi `Mira_0.2.0_x64-setup.exe` untuk Windows dan `Mira_0.2.0_universal.dmg` untuk Mac (Apple Silicon dan Intel), keduanya dibangun GitHub Actions, masing-masing dengan file `.sha256`. `v0.1.0` hanya berisi installer Windows.
 
