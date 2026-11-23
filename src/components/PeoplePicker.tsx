@@ -145,7 +145,7 @@ export function PeoplePicker({
 
       {people.length === 0 ? (
         <div className="ppick-empty">
-          <p>Belum ada orang di organisasi ini. Orang baru masuk lewat kode undangan di halaman Organisasi.</p>
+          <p>Belum ada orang di organisasi ini. Orang baru masuk lewat permintaan bergabung atau kode undangan.</p>
         </div>
       ) : shown.length === 0 ? (
         <div className="ppick-empty">

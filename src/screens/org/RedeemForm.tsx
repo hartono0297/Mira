@@ -9,7 +9,7 @@ import type { OrgCtx } from "./context";
 
 // Pesan Rust lama masih bisa menyebut "tim"; di tampilan istilahnya departemen.
 function deTim(message: string): string {
-  return message.replace(/tim/g, "departemen").replace(/Tim/g, "Departemen");
+  return message.replace(/\btim\b/g, "departemen").replace(/\bTim\b/g, "Departemen");
 }
 
 function redeemErrorText(error: AppError): ErrorText {

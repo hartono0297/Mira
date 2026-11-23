@@ -259,8 +259,8 @@ describe("Label: atur orang", () => {
     expect(budi).toBeChecked();
     expect(sari).toBeChecked();
     expect(andi).not.toBeChecked();
-    expect(within(dialog).getByText("Tamu", { selector: ".row-sub" })).toBeInTheDocument();
-    expect(within(dialog).getAllByText("Drafting", { selector: ".row-sub" })).toHaveLength(2);
+    expect(within(dialog).getByText("Tamu", { selector: ".ppick-sub" })).toBeInTheDocument();
+    expect(within(dialog).getAllByText("Drafting", { selector: ".ppick-sub" })).toHaveLength(2);
 
     await user.click(sari);
     await user.click(andi);
