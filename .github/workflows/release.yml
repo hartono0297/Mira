@@ -3,6 +3,14 @@ name: Rilis
 on:
   push:
     tags: ["v*"]
+    # Uji build installer (tanpa rilis) saat konfigurasi paket berubah di cabang mana pun.
+    # Filter paths tidak berlaku untuk push tag.
+    branches: ["**"]
+    paths:
+      - .github/workflows/release.yml
+      - src-tauri/tauri.conf.json
+      - src-tauri/tauri.*.conf.json
+      - src-tauri/Info.plist
   workflow_dispatch:
     inputs:
       publish:
@@ -108,7 +116,7 @@ jobs:
   release:
     name: Draft rilis GitHub
     needs: build
-    if: github.event_name == 'push' || inputs.publish
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
