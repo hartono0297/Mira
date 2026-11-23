@@ -129,3 +129,12 @@ test('CLI: kode keluar 0 untuk cocok, 1 untuk tidak cocok', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('komentar tepercaya dengan dua kolom version ditolak', () => {
+  const key = makeKey();
+  const sig = makeSig(key, data, { trusted: 'timestamp:1\tversion:0.2.0\tversion:0.3.0' });
+  assert.throws(
+    () => verifyUpdaterSignature({ pubkey: key.pubkey, sig, data, expectVersion: '0.3.0' }),
+    /lebih dari satu kolom version/,
+  );
+});

@@ -108,12 +108,15 @@ export function verifyUpdaterSignature({ pubkey, sig, data, expectVersion }) {
     throw new SigError('Tanda tangan komentar tepercaya tidak cocok.');
   }
   if (expectVersion !== undefined) {
-    const fields = Object.fromEntries(
-      s.trustedComment.split('\t').map((f) => {
-        const i = f.indexOf(':');
-        return i < 0 ? [f, ''] : [f.slice(0, i), f.slice(i + 1)];
-      }),
-    );
+    const pairs = s.trustedComment.split('\t').map((f) => {
+      const i = f.indexOf(':');
+      return i < 0 ? [f, ''] : [f.slice(0, i), f.slice(i + 1)];
+    });
+    // Updater membaca kunci pertama, skrip ini kunci terakhir: kunci ganda ditolak supaya tidak ambigu.
+    if (pairs.filter(([k]) => k === 'version').length > 1) {
+      throw new SigError('Komentar tepercaya memuat lebih dari satu kolom version.');
+    }
+    const fields = Object.fromEntries(pairs);
     if (fields.version !== expectVersion) {
       throw new SigError(
         `Versi di komentar tepercaya ${fields.version === undefined ? 'tidak ada' : `"${fields.version}"`}, seharusnya "${expectVersion}".`,

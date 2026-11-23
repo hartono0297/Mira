@@ -68,9 +68,10 @@ Pengaturan per laptop (tabel `settings` lewat `get_setting` dan `set_setting` ya
 
 ## Alur rilis
 
-- `src-tauri/tauri.updater.conf.json`: `{ "bundle": { "createUpdaterArtifacts": true } }`, dipakai workflow lewat `--config`. Build lokal biasa (`npm run build:installer`) tetap jalan tanpa kunci.
+- `tauri build` berjalan **tanpa kunci** (tanpa `createUpdaterArtifacts`). Artefak pembaruan ditandatangani sesudahnya di langkah terpisah yang hanya menjalankan `npx tauri signer sign --app-version <v>`. Jadi kunci asli tidak pernah ada di lingkungan vite, cargo, build script, atau proc macro (temuan review keamanan).
 - Windows: artefak pembaruan adalah installer itu sendiri (`Mira_<v>_x64-setup.exe`, nama tidak berubah untuk `install.ps1`) plus `.sig`.
-- Mac: `Mira.app.tar.gz` diunggah sebagai `Mira_<v>_universal.app.tar.gz` plus `.sig`. `darwin-aarch64` dan `darwin-x86_64` di `latest.json` menunjuk berkas yang sama (bundel universal).
+- Mac: `Mira.app` dikemas dengan `COPYFILE_DISABLE=1 tar -czf ... -C bundle/macos Mira.app` menjadi `Mira_<v>_universal.app.tar.gz` plus `.sig` (format sama dengan buatan bundler Tauri: akar arsip `Mira.app/`, updater membuang komponen pertama). Workflow membongkar arsip itu lagi dan menjalankan `codesign --verify`. `darwin-aarch64` dan `darwin-x86_64` di `latest.json` menunjuk berkas yang sama (bundel universal).
+- Token workflow baca saja; hanya job `release` yang punya `contents: write`. `actions/checkout` tanpa menyimpan kredensial. Publish manual hanya dari `main`. Rilis yang sudah terbit tidak pernah ditimpa asetnya.
 - `scripts/release/make-latest-json.mjs`: membuat `latest.json` (versi, catatan dari `src/whats-new/<v>.md`, `pub_date`, URL `https://github.com/hartono0297/Mira/releases/download/v<v>/<aset>`, signature isi `.sig`).
 - `scripts/release/verify-updater-sig.mjs`: memeriksa `.sig` terhadap public key (format minisign: Ed25519 atas BLAKE2b-512, plus tanda tangan komentar tepercaya), memakai `node:crypto` saja.
 - Push tag: secret `TAURI_SIGNING_PRIVATE_KEY` wajib ada, pubkey di `tauri.conf.json` bukan placeholder, `src/whats-new/<v>.md` wajib ada, dan setiap `.sig` harus cocok dengan pubkey di `tauri.conf.json`. Kalau salah satu gagal, rilis berhenti.
