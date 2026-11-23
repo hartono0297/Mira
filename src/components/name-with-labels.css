@@ -1,0 +1,45 @@
+/* Nama dengan label profil (NameWithLabels). Label: teks pendek di kotak
+   lembut berwarna aksen, radius kecil supaya beda dari chip status. */
+
+.nwl {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  min-width: 0;
+}
+
+.nwl-name {
+  overflow-wrap: anywhere;
+}
+
+.nwl-suffix {
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.nwl-labels {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lab {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  white-space: nowrap;
+}
+
+.lab-more {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-sec);
+  line-height: 16px;
+}

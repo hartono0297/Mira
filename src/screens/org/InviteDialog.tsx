@@ -11,7 +11,6 @@ import {
 } from "../../api";
 import { boardApi, type ProjectSummary } from "../../api/board";
 import { formatDateTime } from "../../api/format";
-import { teamLabel } from "../board/format";
 import { CopyButton } from "../../components/CopyButton";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -28,8 +27,8 @@ type ProjectsState =
   | { status: "error"; error: AppError };
 
 const ROLE_DESC: Record<InviteRole, string> = {
-  member: "Chat, buat dan kerjakan task di semua proyek tim",
-  team_admin: "Semua izin di tim ini, termasuk mengatur anggota",
+  member: "Chat di departemen ini, buat dan kerjakan task di proyek yang ia ikuti",
+  team_admin: "Izin Anggota, ditambah membuat proyek departemen, mengatur anggota proyeknya, dan menyetujui orang baru",
   guest: "Melihat board dan membaca komentar di proyek yang dipilih. Tidak bisa mengubah task atau berkomentar.",
 };
 
@@ -43,13 +42,16 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   ctx: OrgCtx;
-  teams: TeamView[]; // tim yang boleh dipilih
+  teams: TeamView[]; // departemen terbuka yang boleh dipilih
   initialTeamId?: string;
 };
 
 export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: Props) {
   const isSA = ctx.dir.me.isSuperadmin;
-  const [teamId, setTeamId] = useState(initialTeamId ?? teams[0]?.id ?? "");
+  const [pickedTeamId, setTeamId] = useState(initialTeamId ?? teams[0]?.id ?? "");
+  // Daftar departemen bisa menyempit saat dialog terbuka (departemen diarsipkan):
+  // pilihan yang hilang jatuh ke departemen pertama yang masih ada.
+  const teamId = teams.some((t) => t.id === pickedTeamId) ? pickedTeamId : (teams[0]?.id ?? "");
   const [role, setRole] = useState<InviteRole>("member");
   const [validity, setValidity] = useState<InviteValidity>("24h");
   const [busy, setBusy] = useState(false);
@@ -101,10 +103,8 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
   }, [open, isGuest, projectsAttempt]);
 
   const team = teams.find((t) => t.id === teamId);
-  // Superadmin yang bukan anggota tim ini tidak menerima sinkron proyek tim itu.
-  const inTeam = !!team?.members.some((m) => m.publicKey === ctx.dir.me.publicKey);
   const teamProjects = projects.status === "ready" ? projects.list.filter((p) => p.teamId === teamId) : [];
-  // Centang dari tim lain tidak ikut terkirim kalau timnya diganti.
+  // Centang dari departemen lain tidak ikut terkirim kalau departemennya diganti.
   const pickedHere = picked.filter((id) => teamProjects.some((p) => p.id === id));
   const atMax = pickedHere.length >= MAX_GUEST_PROJECTS;
   const guestBlocked = isGuest && (projects.status !== "ready" || teamProjects.length === 0);
@@ -113,7 +113,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
     ? "Kode undangan siap"
     : single && team
       ? `Undang ke ${team.name}`
-      : "Undang ke tim";
+      : "Undang ke departemen";
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -200,9 +200,11 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
         <form className="dlg-form" onSubmit={submit} noValidate>
           {!single && (
             <div className="field">
-              <label htmlFor={teamSelect}>Tim</label>
+              <label htmlFor={teamSelect}>Departemen</label>
               {teams.length === 0 ? (
-                <p className="hint">Anda belum mengelola tim mana pun. Kode undangan selalu untuk satu tim.</p>
+                <p className="hint">
+                  Anda belum mengelola departemen mana pun. Kode undangan selalu untuk satu departemen.
+                </p>
               ) : (
                 <select id={teamSelect} value={teamId} onChange={(e) => setTeamId(e.target.value)} disabled={busy}>
                   {teams.map((t) => (
@@ -231,7 +233,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
               </p>
               {projects.status === "loading" && (
                 <p className="hint" role="status">
-                  Memuat proyek tim...
+                  Memuat proyek departemen...
                 </p>
               )}
               {projects.status === "error" && (
@@ -244,11 +246,9 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
               )}
               {projects.status === "ready" && teamProjects.length === 0 && (
                 <p className="notice-plain">
-                  {team ? teamLabel(team.name) : "Tim ini"} belum punya proyek yang terlihat di laptop ini. Buat proyek
-                  untuk tim ini dulu di menu Board, lalu undang Tamu ke proyek itu.
-                  {isSA && !inTeam && (
-                    <> Kalau tim ini sudah punya proyek, masuk dulu ke tim itu supaya proyeknya terlihat.</>
-                  )}
+                  {team ? `Departemen ${team.name}` : "Departemen ini"} belum punya proyek yang terlihat di laptop ini.
+                  Proyek hanya terlihat kalau Anda anggotanya. Buat proyek untuk departemen ini di menu Board, atau minta
+                  pengelola proyek menambahkan Anda, lalu undang Tamu ke proyek itu.
                 </p>
               )}
               {teamProjects.length > 0 && (
@@ -305,7 +305,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
           <div aria-live="polite">
             {error && (
               <ErrorAlert
-                title={error.code === "forbidden" ? "Anda tidak punya izin mengundang ke tim ini" : "Kode belum dibuat"}
+                title={error.code === "forbidden" ? "Anda tidak punya izin mengundang ke departemen ini" : "Kode belum dibuat"}
               >
                 <p>{error.message}</p>
               </ErrorAlert>

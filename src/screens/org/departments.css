@@ -1,0 +1,229 @@
+/* Tab Departemen. Tabel di lebar biasa; di bawah 700px tiap departemen jadi
+   blok bertumpuk dengan label di depan nilainya, tanpa gulir mendatar. */
+
+.dept-new {
+  min-height: 44px;
+}
+
+.dept-retry {
+  margin-top: 10px;
+  min-height: 36px;
+  background: var(--bg);
+  /* border-strong di atas danger-soft kurang dari 3:1; text-sec lolos di dua mode. */
+  border-color: var(--text-sec);
+}
+
+.dept-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.dept-table th,
+.dept-table td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.dept-table th {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+  border-bottom: 1px solid var(--border);
+}
+
+.dept-table tbody tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.dept-name {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.dept-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.dept-muted {
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+/* Nama channel pendek tidak dipatahkan di tanda hubung. */
+.dept-table td.dept-channel {
+  min-width: 150px;
+}
+
+/* Kolom aksi selebar tombolnya; kolom lain yang membungkus teks. */
+.dept-actions-cell {
+  width: 1%;
+}
+
+.dept-actions-cell .row-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dept-actions-cell .btn {
+  white-space: nowrap;
+}
+
+/* Baris yang sedang diganti namanya: latar kartu menandai baris yang sedang diedit. */
+.dept-table tr.dept-editing td {
+  background: var(--card);
+}
+
+.dept-edit {
+  /* Isi baris edit tidak ikut menentukan lebar kolom, jadi tabel tidak bergeser saat edit dibuka. */
+  contain: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dept-edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dept-edit-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 15px;
+}
+
+.dept-edit-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.dept-edit-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+/* Bagian Diarsipkan: tertutup bawaan, dibuka dengan klik, Enter, atau Spasi. */
+.dept-archived summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 8px;
+  margin-left: -8px;
+  border-radius: 10px;
+  font-weight: 700;
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.dept-archived summary:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.dept-archived summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Panah menunjuk ke kanan saat tertutup, ke bawah saat terbuka. */
+.dept-chev {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.dept-archived[open] .dept-chev {
+  transform: rotate(90deg);
+}
+
+.dept-archived[open] summary {
+  margin-bottom: 6px;
+}
+
+.dept-confirm p + p {
+  margin-top: 8px;
+}
+
+.dept-admin-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+@container (max-width: 700px) {
+  .dept-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .dept-table,
+  .dept-table tbody,
+  .dept-table tr,
+  .dept-table td {
+    display: block;
+  }
+
+  .dept-table tr {
+    padding: 12px 14px;
+  }
+
+  .dept-table tbody tr + tr {
+    border-top: 1px solid var(--border);
+  }
+
+  .dept-table tbody tr + tr td {
+    border-top: 0;
+  }
+
+  .dept-table td {
+    padding: 2px 0;
+  }
+
+  .dept-table td.dept-channel {
+    min-width: 0;
+  }
+
+  .dept-table tr.dept-editing {
+    background: var(--card);
+  }
+
+  .dept-table td[data-label]::before {
+    content: attr(data-label) ": ";
+    font-weight: 700;
+    color: var(--text-sec);
+  }
+
+  .dept-name-cell {
+    margin-bottom: 4px;
+  }
+
+  .dept-actions-cell {
+    margin-top: 8px;
+  }
+
+  .dept-actions-cell {
+    width: auto;
+  }
+
+  .dept-actions-cell .row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}

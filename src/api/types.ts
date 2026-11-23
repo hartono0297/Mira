@@ -167,18 +167,18 @@ export type AppError = { code: AppErrorCode | (string & {}); message: string };
 
 export const ROLE_LABELS: Record<Role, string> = {
   superadmin: "Superadmin",
-  team_admin: "Admin tim",
+  team_admin: "Admin departemen",
   member: "Anggota",
   guest: "Tamu",
 };
 
 export const TEAM_ROLE_LABELS: Record<TeamRole, string> = {
-  admin: "Admin tim",
+  admin: "Admin departemen",
   member: "Anggota",
 };
 
 export const INVITE_ROLE_LABELS: Record<InviteRole, string> = {
-  team_admin: "Admin tim",
+  team_admin: "Admin departemen",
   member: "Anggota",
   guest: "Tamu",
 };

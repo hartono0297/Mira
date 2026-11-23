@@ -1,24 +1,81 @@
-/* Halaman Organisasi. Kerangka (sub-menu kiri, judul bagian) memakai kelas
-   dari settings.css supaya dua halaman ini terasa satu keluarga. */
+/* Halaman Organisasi v0.3. Tab mendatar di bawah judul (mockup usulan v0.3),
+   isi tab selebar ruang yang ada: daftar pengguna butuh delapan kolom. */
 
 .org-pad {
-  padding: 20px 24px 0;
+  padding: 16px 24px 0;
 }
 
 .org-narrow {
-  max-width: 820px;
+  max-width: 860px;
 }
 
 .org-notice-btn {
   background: var(--bg);
 }
 
-.org-body {
-  max-width: 760px;
+.org-fp {
+  white-space: nowrap;
+}
+
+.org-tabs-wrap {
+  padding: 12px 24px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.org-tabs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.org-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
+  color: var(--text-sec);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.org-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Tab aktif ditandai garis bawah dan tebal huruf, bukan warna saja. */
+.org-tab[aria-current="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.org-tab .nav-count {
+  margin-left: 0;
+}
+
+.org-main {
+  container-type: inline-size;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 18px 24px 32px;
+  max-width: 908px;
+}
+
+.org-main-users {
+  max-width: 1228px;
 }
 
 .org-live:empty {
@@ -59,9 +116,6 @@
   font-size: 14px;
 }
 
-/* Daftar tim: satu baris = satu tombol yang membuka detail tim. */
-
-.team-list,
 .row-list {
   list-style: none;
   margin: 0;
@@ -70,52 +124,9 @@
   border-radius: 12px;
 }
 
-.team-list li + li,
 .row-list li + li {
   border-top: 1px solid var(--border);
 }
-
-.team-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 56px;
-  padding: 10px 14px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.team-row:hover {
-  background: var(--hover);
-}
-
-.team-row-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.team-name {
-  font-size: 15px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.team-meta {
-  font-size: 12px;
-  color: var(--text-sec);
-}
-
-.team-chevron {
-  flex: none;
-  color: var(--text-sec);
-}
-
 /* Baris anggota dan undangan */
 
 .row {
@@ -158,19 +169,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.member-avatar {
-  align-self: flex-start;
-}
-
-.member-off .row-name {
-  color: var(--text-sec);
-}
-
-.add-member select {
-  flex: 1;
-  min-width: 220px;
 }
 
 .redeem {

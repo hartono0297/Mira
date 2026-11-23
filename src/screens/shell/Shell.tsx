@@ -15,6 +15,7 @@ import { BoardScreen } from "../board/BoardScreen";
 import { ChatScreen } from "../chat/ChatScreen";
 import { DocsScreen } from "../docs/DocsScreen";
 import { OrgScreen } from "../org/OrgScreen";
+import { OrgNavCount } from "../org/usePendingJoinCount";
 import { SettingsScreen, type SettingsPart } from "../settings/SettingsScreen";
 import { SignScreen } from "../sign/SignScreen";
 import { UpdateDot } from "../../updates/UpdateDot";
@@ -69,6 +70,7 @@ export function Shell({ state, onRefresh }: Props) {
                     <NavIcon size={18} aria-hidden="true" />
                     {label}
                     {id === "settings" && <UpdateDot />}
+                    {id === "org" && <OrgNavCount />}
                   </button>
                 </li>
               ))}

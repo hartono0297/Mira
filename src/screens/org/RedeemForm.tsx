@@ -7,8 +7,12 @@ import { FieldError } from "../../components/FieldError";
 import { formatWhileTyping } from "../onboarding/JoinStep";
 import type { OrgCtx } from "./context";
 
-// Anggota yang sudah ada memakai kode undangan untuk masuk ke tim lain.
+// Orang yang belum punya departemen (termasuk Tamu) memakai kode undangan untuk
+// masuk ke departemen di kode itu, atau Tamu ke proyek di kode itu. Orang yang
+// sudah di departemen ditolak inti Rust (`already_in_department`), jadi
+// InvitesPanel hanya menampilkan formulir ini untuk orang tanpa departemen.
 export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
+  const isGuest = ctx.member(ctx.dir.me.publicKey)?.orgRole === "guest";
   const [code, setCode] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [server, setServer] = useState<AppError | null>(null);
@@ -34,7 +38,11 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
     try {
       await api.redeemInvite(check.code);
       setCode("");
-      ctx.notify("Kode diterima. Tim baru muncul di daftar tim Anda.");
+      ctx.notify(
+        isGuest
+          ? "Kode diterima. Proyek dari kode itu sekarang terbuka untuk Anda di menu Board."
+          : "Kode diterima. Anda sekarang anggota departemen yang tertulis di kode itu.",
+      );
       await ctx.reload();
     } catch (err) {
       const error = toAppError(err);
@@ -54,7 +62,7 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
   return (
     <form className="redeem" onSubmit={submit} noValidate aria-labelledby={titleId}>
       <h3 id={titleId} className="set-sub">
-        Punya kode undangan untuk tim lain?
+        {isGuest ? "Punya kode undangan Tamu yang baru?" : "Belum punya departemen? Pakai kode undangan"}
       </h3>
       <div className="field">
         <label htmlFor={inputId}>Kode undangan</label>
@@ -76,7 +84,9 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
           </button>
         </div>
         <p id={hintId} className="hint">
-          Anda tetap anggota tim yang sekarang. Kode ini menambahkan Anda ke tim lain.
+          {isGuest
+            ? "Kode Tamu membuka proyek yang tertulis di kode itu untuk Anda."
+            : "Kode memasukkan Anda ke departemen yang tertulis di kode itu. Minta kode ke admin departemen atau superadmin."}
         </p>
         <div id={errId} aria-live="polite">
           {fieldError && <FieldError text={fieldError} />}
