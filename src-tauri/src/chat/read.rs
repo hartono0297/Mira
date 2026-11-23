@@ -594,7 +594,7 @@ pub fn group_events(ctx: &Ctx, g: &GroupState) -> Vec<ConversationEvent> {
 pub fn group_view(ctx: &Ctx, info: &ConvInfo) -> AppResult<GroupView> {
     let g = ctx.group(&info.conv)?.ok_or_else(not_found_conv)?;
     let me = ctx.me().to_owned();
-    let eligible = ctx.group_eligible();
+    let eligible = ctx.group_eligible_now();
     let owner = g.effective_owner(&eligible).map(str::to_owned);
     let in_group = ctx.in_audience(info, &me)?;
     let mut members = Vec::new();

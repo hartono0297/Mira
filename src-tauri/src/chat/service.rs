@@ -359,6 +359,10 @@ impl ChatSync {
                 .ok_or_else(|| {
                     AppError::NotFound("Pesan tidak ditemukan atau sudah dihapus.".into())
                 })?;
+            // A former member's delete would never be accepted elsewhere.
+            if !ctx.in_audience(&info, ctx.me())? {
+                return Err(forbidden("Anda sudah bukan anggota percakapan ini."));
+            }
             let mine = row.author == ctx.me();
             if !mine && (!info.is_channel() || !ctx.is_admin(&info, ctx.me())?) {
                 return Err(forbidden("Kamu hanya bisa menghapus pesanmu sendiri."));
@@ -599,7 +603,7 @@ impl ChatSync {
             if member == me {
                 return Err(invalid("Untuk keluar dari grup, pakai Keluar dari grup."));
             }
-            let eligible = ctx.group_eligible();
+            let eligible = ctx.group_eligible_now();
             if g.effective_owner(&eligible) != Some(me) {
                 return Err(forbidden(
                     "Hanya pemilik grup yang bisa mengeluarkan orang.",

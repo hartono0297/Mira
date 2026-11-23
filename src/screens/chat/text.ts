@@ -111,9 +111,10 @@ export function conversationTitle(summary: ConversationSummary): string {
 }
 
 export function scopeLabel(summary: ConversationSummary): string {
-  if (summary.kind === "dm" || !summary.scope) return "Chat pribadi";
+  if (summary.kind === "dm" || !summary.scope) return "Pesan pribadi";
   if (summary.scope.kind === "org") return "Seluruh kantor";
-  if (summary.scope.kind === "team") return `Tim ${summary.scope.name}`;
+  if (summary.scope.kind === "team") return `Departemen ${summary.scope.name}`;
+  if (summary.scope.kind === "group") return "Grup";
   return `Proyek ${summary.scope.name}`;
 }
 

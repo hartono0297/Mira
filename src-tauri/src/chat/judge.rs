@@ -277,9 +277,8 @@ fn channel_create(
         return Ok(Verdict::Accept);
     }
     Ok(match scope {
-        // PRD F-CHAT-01: members make channels in their team or project;
-        // office-wide channels are for superadmins.
-        ChannelScope::Org if ctx.dir.is_superadmin(author) => Verdict::Accept,
+        // PRD F-CHAT-01: members make channels in their team or project
+        // (v0.2 records; v0.3 no longer offers it). Org is handled above.
         ChannelScope::Team { id } if ctx.dir.in_team(id, author) => Verdict::Accept,
         ChannelScope::Project { id } if ctx.projects.is_member(ctx.conn, id, author)? => {
             Verdict::Accept
@@ -379,7 +378,11 @@ fn channel_lock(ctx: &Ctx, rec: &VerifiedRecord, st: Standing, conv: &str) -> Ap
     if info.deleted {
         return Ok(Verdict::Accept);
     }
-    if st == Standing::Active && ctx.dir.is_superadmin(rec.author()) {
+    // Judged by the role at the record's time, like Umum channels, so a
+    // lock stays valid on every laptop after its author loses the role.
+    if (st == Standing::Active && ctx.dir.is_superadmin(rec.author()))
+        || was_superadmin_at(ctx.conn, rec.author(), rec.at)?
+    {
         return Ok(Verdict::Accept);
     }
     Ok(forbidden(
@@ -431,6 +434,12 @@ fn group_op(
         return Ok(reject("bad_format", "bukan op grup"));
     };
     let ops = ctx.group_ops(conv)?;
+    if ops.len() >= groups::MAX_GROUP_OPS {
+        return Ok(reject(
+            "group_full",
+            "grup ini sudah mencapai batas perubahan anggota",
+        ));
+    }
     let eligible = ctx.group_eligible();
     match groups::check_right(&ops, &op, &eligible) {
         Ok(()) => Ok(Verdict::Accept),

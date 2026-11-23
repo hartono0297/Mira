@@ -367,7 +367,7 @@ impl Directory {
 /// Whether `pk` was a superadmin at `at` according to the membership log:
 /// the founder from the start, then every applied `superadmin_add`,
 /// `superadmin_remove` and `member_remove` naming `pk` dated at or before
-/// `at`, in fold (lamport) order. Used for Umum channels made by someone who
+/// `at`, replayed in time order (ties by lamport and id). Used for Umum channels made by someone who
 /// is not a superadmin any more (v0.2 channels, docs/plans/v03-c.md section
 /// 7). Like every record time, `at` is the author's claim.
 pub fn was_superadmin_at(conn: &Connection, pk: &str, at: OffsetDateTime) -> AppResult<bool> {
@@ -384,26 +384,33 @@ pub fn was_superadmin_at(conn: &Connection, pk: &str, at: OffsetDateTime) -> App
     let ids = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    for id in ids {
-        let Some(op) = permissions::load_op(conn, &id)? else {
+    let mut events: Vec<(OffsetDateTime, usize, bool)> = Vec::new();
+    for (order, id) in ids.iter().enumerate() {
+        let Some(op) = permissions::load_op(conn, id)? else {
             continue;
         };
         let Ok(payload) = serde_json::from_str::<permissions::Payload>(&op.payload) else {
             continue;
         };
-        if parse_time(&payload.at).is_none_or(|t| t > at) {
+        let Some(t) = parse_time(&payload.at).filter(|t| *t <= at) else {
             continue;
-        }
+        };
         match payload.body {
-            permissions::Body::SuperadminAdd { member } if member == pk => state = true,
+            permissions::Body::SuperadminAdd { member } if member == pk => {
+                events.push((t, order, true));
+            }
             permissions::Body::SuperadminRemove { member }
             | permissions::Body::MemberRemove { member }
                 if member == pk =>
             {
-                state = false;
+                events.push((t, order, false));
             }
             _ => {}
         }
+    }
+    events.sort();
+    if let Some((_, _, last)) = events.last() {
+        state = *last;
     }
     Ok(state)
 }
@@ -494,6 +501,8 @@ pub struct Ctx<'a> {
     project_members: RefCell<Option<HashMap<String, HashSet<String>>>>,
     /// Folded groups by conversation, loaded on first use.
     groups: RefCell<HashMap<String, Option<Rc<GroupState>>>>,
+    /// Stored ops by group conversation, loaded on first use.
+    group_ops: RefCell<HashMap<String, Rc<Vec<GroupOp>>>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -505,6 +514,7 @@ impl<'a> Ctx<'a> {
             convs: RefCell::new(HashMap::new()),
             project_members: RefCell::new(None),
             groups: RefCell::new(HashMap::new()),
+            group_ops: RefCell::new(HashMap::new()),
         }
     }
 
@@ -525,10 +535,22 @@ impl<'a> Ctx<'a> {
     pub fn forget(&self, conv: &str) {
         self.convs.borrow_mut().remove(conv);
         self.groups.borrow_mut().remove(conv);
+        self.group_ops.borrow_mut().remove(conv);
     }
 
-    /// Every stored op of the group `conv`.
-    pub fn group_ops(&self, conv: &str) -> AppResult<Vec<GroupOp>> {
+    /// Every stored op of the group `conv` (cached until `forget`).
+    pub fn group_ops(&self, conv: &str) -> AppResult<Rc<Vec<GroupOp>>> {
+        if let Some(hit) = self.group_ops.borrow().get(conv) {
+            return Ok(hit.clone());
+        }
+        let ops = Rc::new(self.load_group_ops(conv)?);
+        self.group_ops
+            .borrow_mut()
+            .insert(conv.to_owned(), ops.clone());
+        Ok(ops)
+    }
+
+    fn load_group_ops(&self, conv: &str) -> AppResult<Vec<GroupOp>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT body FROM chat_records
              WHERE conv = ?1 AND body IS NOT NULL
@@ -546,8 +568,18 @@ impl<'a> Ctx<'a> {
             .collect())
     }
 
-    /// Eligible for groups: an active member who is not a guest.
-    pub fn group_eligible(&self) -> impl Fn(&str) -> bool + '_ {
+    /// Eligible to act in a group at a time (`groups::Eligible`): known, not
+    /// a guest, and active or removed from the organization only later.
+    pub fn group_eligible(&self) -> impl Fn(&str, OffsetDateTime) -> bool + '_ {
+        |pk: &str, at: OffsetDateTime| {
+            self.dir.member(pk).is_some_and(|m| {
+                !m.guest && (m.active || m.removed_at.is_some_and(|removed| at < removed))
+            })
+        }
+    }
+
+    /// Eligible now: an active member who is not a guest.
+    pub fn group_eligible_now(&self) -> impl Fn(&str) -> bool + '_ {
         |pk: &str| self.dir.is_full_member(pk)
     }
 

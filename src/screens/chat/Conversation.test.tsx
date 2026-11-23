@@ -241,7 +241,7 @@ describe("Percakapan: status kirim", () => {
     renderConv(dm());
     expect(await screen.findByRole("button", { name: /Status: Dititipkan/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sari Uji" })).toBeInTheDocument();
-    expect(screen.getByText("Chat pribadi")).toBeInTheDocument();
+    expect(screen.getByText("Pesan pribadi")).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Arsipkan channel" })).toBeNull();
   });
 });

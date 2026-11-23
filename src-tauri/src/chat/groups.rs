@@ -19,8 +19,19 @@ use time::OffsetDateTime;
 
 use super::model::{Body, Conv, MAX_GROUP_DEPS, VerifiedRecord, group_conv, parse_conv};
 
-/// Slack around membership intervals when judging a message's time, for
-/// laptop clocks that disagree.
+/// Who may act in a group at a time: an organization member who is not a
+/// guest and was not removed from the organization before then. Judging
+/// ownership at the op's time keeps a removal made by an owner valid after
+/// that owner leaves the organization.
+pub type Eligible<'a> = dyn Fn(&str, OffsetDateTime) -> bool + 'a;
+
+/// Most ops one group may hold. Folding and judging cost grows faster than
+/// the number of ops; honest groups stay far below this.
+pub const MAX_GROUP_OPS: usize = 500;
+
+/// Slack before a membership interval when judging a message's time, for
+/// laptop clocks that disagree. There is none after the interval ends, so a
+/// removed member cannot slip messages in after their removal.
 pub const MEMBER_SLACK: time::Duration = time::Duration::minutes(10);
 /// Most rounds of the concurrent-revocation fixpoint.
 pub const MAX_FOLD_ROUNDS: usize = 8;
@@ -191,15 +202,16 @@ impl GroupState {
         self.intervals.contains_key(pk)
     }
 
-    /// A member now, or a member at `at` give or take [`MEMBER_SLACK`].
+    /// A member now, or a member at `at` ([`MEMBER_SLACK`] before joining,
+    /// none after leaving).
     pub fn member_at(&self, pk: &str, at: OffsetDateTime) -> bool {
         if self.is_member(pk) {
             return true;
         }
         self.intervals.get(pk).is_some_and(|spans| {
-            spans.iter().any(|(start, end)| {
-                *start - MEMBER_SLACK <= at && end.is_none_or(|end| at <= end + MEMBER_SLACK)
-            })
+            spans
+                .iter()
+                .any(|(start, end)| *start - MEMBER_SLACK <= at && end.is_none_or(|end| at <= end))
         })
     }
 
@@ -415,7 +427,7 @@ type Revocation = (String, usize);
 /// this pass applied.
 fn fold_round(
     graph: &Graph<'_>,
-    eligible: &dyn Fn(&str) -> bool,
+    eligible: &Eligible<'_>,
     revoked: &[Revocation],
 ) -> (GroupState, Vec<Revocation>) {
     let create = graph.order[0];
@@ -459,9 +471,10 @@ fn fold_round(
         {
             continue;
         }
-        if !state.is_member(author) {
+        if !state.is_member(author) || !eligible(author, op.at) {
             continue;
         }
+        let at_op = |pk: &str| eligible(pk, op.at);
         match &op.kind {
             // A second create never reaches the graph.
             GroupOpKind::Create { .. } => continue,
@@ -479,7 +492,7 @@ fn fold_round(
             }
             GroupOpKind::Remove { member } => {
                 let leaving = member == author;
-                if !leaving && state.effective_owner(eligible) != Some(author) {
+                if !leaving && state.effective_owner(&at_op) != Some(author) {
                     continue;
                 }
                 if !state.is_member(member) {
@@ -496,7 +509,7 @@ fn fold_round(
                 };
                 state.event(op, kind);
                 if state.owner.as_deref() == Some(member.as_str())
-                    && let Some(owner) = state.pass_ownership(eligible)
+                    && let Some(owner) = state.pass_ownership(&at_op)
                 {
                     state.event(op, EventKind::OwnerChanged { owner });
                 }
@@ -519,7 +532,7 @@ fn fold_round(
 ///
 /// A [`GroupOp`] does not carry its conversation, so `id` and `conv` of the
 /// result are empty here; [`fold_conv`] fills them.
-pub fn fold(ops: &[GroupOp], eligible: &dyn Fn(&str) -> bool) -> Option<GroupState> {
+pub fn fold(ops: &[GroupOp], eligible: &Eligible<'_>) -> Option<GroupState> {
     let mut all: HashMap<String, GroupOp> = HashMap::new();
     for op in ops {
         all.entry(op.id.clone()).or_insert_with(|| op.clone());
@@ -546,7 +559,7 @@ pub fn fold(ops: &[GroupOp], eligible: &dyn Fn(&str) -> bool) -> Option<GroupSta
 pub fn fold_conv(
     conv: &str,
     ops: &[GroupOp],
-    eligible: &dyn Fn(&str) -> bool,
+    eligible: &Eligible<'_>,
 ) -> Option<GroupState> {
     let Some(Conv::Group(id)) = parse_conv(conv) else {
         return None;
@@ -565,7 +578,7 @@ pub fn fold_conv(
 pub fn check_right(
     ops: &[GroupOp],
     op: &GroupOp,
-    eligible: &dyn Fn(&str) -> bool,
+    eligible: &Eligible<'_>,
 ) -> Result<(), &'static str> {
     if matches!(op.kind, GroupOpKind::Create { .. }) {
         return Ok(());
@@ -582,9 +595,10 @@ pub fn check_right(
     if !state.is_member(&op.author) {
         return Err("not_group_member");
     }
+    let at_op = |pk: &str| eligible(pk, op.at);
     if let GroupOpKind::Remove { member } = &op.kind
         && *member != op.author
-        && state.effective_owner(eligible) != Some(op.author.as_str())
+        && state.effective_owner(&at_op) != Some(op.author.as_str())
     {
         return Err("not_group_owner");
     }
@@ -612,6 +626,10 @@ mod tests {
     /// `e` is not eligible (a guest or an inactive member).
     fn eligible(pk: &str) -> bool {
         pk != k('e')
+    }
+
+    fn elig(pk: &str, _at: OffsetDateTime) -> bool {
+        eligible(pk)
     }
 
     fn op(n: u64, author: char, min: i64, deps: &[u64], kind: GroupOpKind) -> GroupOp {
@@ -650,7 +668,51 @@ mod tests {
     }
 
     fn run(ops: &[GroupOp]) -> GroupState {
-        fold(ops, &eligible).expect("has a create")
+        fold(ops, &elig).expect("has a create")
+    }
+
+    /// `a` is removed from the organization at minute 5.
+    fn a_leaves_org(pk: &str, at: OffsetDateTime) -> bool {
+        pk != k('a') || at < t(5)
+    }
+
+    #[test]
+    fn removal_by_an_owner_stays_after_the_owner_leaves_the_org() {
+        let ops = [
+            create(1, 'a', 0, &['b', 'c', 'd']),
+            remove(2, 'a', 1, &[1], 'b'),
+            // b's add, concurrent with its removal, stays ignored.
+            add(3, 'b', 1, &[1], &['f']),
+        ];
+        let s = fold(&ops, &a_leaves_org).unwrap();
+        assert_eq!(pks(&s), keys(&['a', 'c', 'd']));
+        assert!(!s.is_member(&k('f')));
+        // After a left the organization, the oldest eligible member (c) is
+        // the one who may remove people.
+        let late = remove(4, 'c', 6, &[2, 3], 'd');
+        assert_eq!(check_right(&ops, &late, &a_leaves_org), Ok(()));
+        let early = remove(5, 'c', 2, &[2, 3], 'd');
+        assert_eq!(
+            check_right(&ops, &early, &a_leaves_org),
+            Err("not_group_owner")
+        );
+        let mut all = ops.to_vec();
+        all.push(late);
+        assert_eq!(
+            pks(&fold(&all, &a_leaves_org).unwrap()),
+            keys(&['a', 'c'])
+        );
+        // An op dated after a's removal from the organization does nothing.
+        all.push(add(6, 'a', 7, &[4], &['f']));
+        assert!(!fold(&all, &a_leaves_org).unwrap().is_member(&k('f')));
+    }
+
+    #[test]
+    fn no_slack_after_leaving() {
+        let s = run(&[create(1, 'a', 0, &['b']), remove(2, 'b', 30, &[1], 'b')]);
+        assert!(s.member_at(&k('b'), t(30)));
+        assert!(!s.member_at(&k('b'), t(31)));
+        assert!(s.member_at(&k('b'), t(-5)), "slack before joining");
     }
 
     fn pks(state: &GroupState) -> Vec<String> {
@@ -696,8 +758,8 @@ mod tests {
 
     #[test]
     fn no_create_folds_to_none() {
-        assert!(fold(&[add(2, 'a', 1, &[1], &['b'])], &eligible).is_none());
-        assert!(fold(&[], &eligible).is_none());
+        assert!(fold(&[add(2, 'a', 1, &[1], &['b'])], &elig).is_none());
+        assert!(fold(&[], &elig).is_none());
     }
 
     #[test]
@@ -711,10 +773,10 @@ mod tests {
     #[test]
     fn fold_conv_fills_id_and_conv() {
         let conv = group_conv(&"9".repeat(32));
-        let s = fold_conv(&conv, &[create(1, 'a', 0, &[])], &eligible).unwrap();
+        let s = fold_conv(&conv, &[create(1, 'a', 0, &[])], &elig).unwrap();
         assert_eq!(s.id, "9".repeat(32));
         assert_eq!(s.conv, conv);
-        assert!(fold_conv("dm:x:y", &[create(1, 'a', 0, &[])], &eligible).is_none());
+        assert!(fold_conv("dm:x:y", &[create(1, 'a', 0, &[])], &elig).is_none());
     }
 
     #[test]
@@ -802,15 +864,16 @@ mod tests {
     #[test]
     fn effective_owner_skips_an_ineligible_stored_owner() {
         let not_a = |pk: &str| pk != k('a');
+        let not_a_at = |pk: &str, _: OffsetDateTime| not_a(pk);
         let ops = [create(1, 'a', 0, &['b', 'c']), remove(2, 'b', 1, &[1], 'c')];
-        let s = fold(&ops, &not_a).unwrap();
+        let s = fold(&ops, &not_a_at).unwrap();
         assert_eq!(s.owner, Some(k('a')));
         assert_eq!(s.effective_owner(&not_a), Some(k('b').as_str()));
         assert_eq!(pks(&s), keys(&['a', 'b']));
         // The effective owner may remove the ineligible stored owner, and
         // ownership then passes to them.
         let ops = [create(1, 'a', 0, &['b', 'c']), remove(2, 'b', 1, &[1], 'a')];
-        let s = fold(&ops, &not_a).unwrap();
+        let s = fold(&ops, &not_a_at).unwrap();
         assert_eq!(s.owner, Some(k('b')));
         let kinds: Vec<_> = s.events.iter().map(|e| e.kind.clone()).collect();
         assert_eq!(kinds[2], EventKind::OwnerChanged { owner: k('b') });
@@ -919,7 +982,7 @@ mod tests {
             remove(2, 'a', 1, &[1], 'b'),
             add(3, 'a', 2, &[2], &['c']),
         ];
-        let ok = |o: &GroupOp| check_right(&ops, o, &eligible);
+        let ok = |o: &GroupOp| check_right(&ops, o, &elig);
         assert_eq!(ok(&create(9, 'f', 0, &[])), Ok(()));
         assert_eq!(ok(&add(10, 'a', 3, &[3], &['d'])), Ok(()));
         assert_eq!(ok(&add(10, 'a', 3, &[3, 8], &['d'])), Err("missing_deps"));
@@ -936,18 +999,18 @@ mod tests {
         // A dep present but with an ancestor missing.
         let gap = [create(1, 'a', 0, &[]), add(3, 'a', 2, &[2], &['c'])];
         assert_eq!(
-            check_right(&gap, &add(4, 'a', 3, &[3], &['d']), &eligible),
+            check_right(&gap, &add(4, 'a', 3, &[3], &['d']), &elig),
             Err("missing_deps")
         );
         let no_create = [add(2, 'a', 1, &[7], &['b'])];
         assert_eq!(
-            check_right(&no_create, &add(3, 'a', 2, &[2], &['c']), &eligible),
+            check_right(&no_create, &add(3, 'a', 2, &[2], &['c']), &elig),
             Err("missing_deps")
         );
         // Every dep present, but no create among them.
         let lone = [add(2, 'a', 1, &[], &['b'])];
         assert_eq!(
-            check_right(&lone, &add(3, 'a', 2, &[2], &['c']), &eligible),
+            check_right(&lone, &add(3, 'a', 2, &[2], &['c']), &elig),
             Err("no_group")
         );
     }
@@ -1008,8 +1071,8 @@ mod tests {
         assert!(s.member_at(&b, t(-10)));
         assert!(!s.member_at(&b, t(-11)));
         assert!(s.member_at(&b, t(30)));
-        assert!(s.member_at(&b, t(70)));
-        assert!(!s.member_at(&b, t(71)));
+        assert!(s.member_at(&b, t(60)));
+        assert!(!s.member_at(&b, t(61)), "no slack after leaving");
         let c = k('c');
         // A current member counts at any time.
         assert!(s.member_at(&c, t(0)));
