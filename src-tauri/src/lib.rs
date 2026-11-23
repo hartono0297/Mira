@@ -171,6 +171,7 @@ pub fn run() {
             documents::commands::restore_version,
             documents::commands::resolve_conflict,
             documents::commands::export_version,
+            documents::commands::download_version,
             signing::commands::sign_overview,
             signing::commands::sign_save_signature,
             signing::commands::sign_delete_signature,

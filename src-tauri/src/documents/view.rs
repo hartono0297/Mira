@@ -520,19 +520,18 @@ mod tests {
         assert!(!s.can.edit, "PDF is not editable");
         assert!(s.can.restore);
 
-        // Tamu: view and export only.
+        // Tamu: nothing in the general library (plan, "Batas tim dan
+        // proyek"). In an allowed project a guest may view and export only
+        // (`access::tests::scope_follows_teams_and_guest_projects`).
         f.conn
             .execute("UPDATE members SET role = 'guest'", [])
             .unwrap();
-        let s = summary(&f.conn, &f.blobs, &f.me, &RoleAccess, &word.id, T0).unwrap();
-        assert_eq!(
-            s.can,
-            DocumentCan {
-                edit: false,
-                restore: false,
-                resolve: false,
-                export: true
-            }
+        let err = summary(&f.conn, &f.blobs, &f.me, &RoleAccess, &word.id, T0).unwrap_err();
+        assert_eq!(err.code(), "forbidden");
+        assert!(
+            summaries(&f.conn, &f.blobs, &f.me, &RoleAccess, None, T0)
+                .unwrap()
+                .is_empty()
         );
 
         // Removed laptop: nothing, not even the list.

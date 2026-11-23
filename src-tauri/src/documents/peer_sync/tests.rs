@@ -9,7 +9,9 @@ use super::*;
 use crate::blobs::AUTO_REPLICATE_MAX_BYTES;
 use crate::documents::access::RoleAccess;
 use crate::documents::scope::InviteGuestProjects;
-use crate::documents::store::{DocumentRecord, DocumentSummary, EditSession, VersionOrigin, VersionRecord};
+use crate::documents::store::{
+    DocumentRecord, DocumentSummary, EditSession, VersionOrigin, VersionRecord,
+};
 use crate::documents::test_lab::{Lab, Laptop};
 use crate::identity::{self, MemoryKeyStore};
 use crate::network::feature::testing::{copy_blob, pull, sync_all};
@@ -63,7 +65,10 @@ impl BlobFetcher for TestFetcher {
 
 impl TestFetcher {
     fn requested(&self) -> Vec<String> {
-        lock(&self.requests).iter().map(|(h, _)| h.clone()).collect()
+        lock(&self.requests)
+            .iter()
+            .map(|(h, _)| h.clone())
+            .collect()
     }
 
     fn queued(&self) -> usize {
@@ -141,7 +146,9 @@ impl World {
             });
         }
         for (i, node) in self.nodes.iter().enumerate() {
-            let others = (0..self.nodes.len()).filter(|j| *j != i).collect::<Vec<_>>();
+            let others = (0..self.nodes.len())
+                .filter(|j| *j != i)
+                .collect::<Vec<_>>();
             self.connect(i, &others, node);
         }
     }
@@ -300,7 +307,8 @@ impl World {
     fn rejections(&self, i: usize) -> Vec<String> {
         self.laptop(i)
             .with(|c| {
-                let mut stmt = c.db.prepare("SELECT code FROM rejected_changes ORDER BY id")?;
+                let mut stmt =
+                    c.db.prepare("SELECT code FROM rejected_changes ORDER BY id")?;
                 let codes = stmt
                     .query_map([], |r| r.get(0))?
                     .collect::<Result<Vec<String>, _>>()?;
@@ -447,21 +455,37 @@ fn large_files_are_not_fetched_automatically_but_on_demand() {
     drop(big_bytes);
     w.sync_everyone();
 
+    // The fetcher records a request when its job runs; until `run_all` the
+    // small file's download waits in the queue (and shows as downloading).
+    let hs = vs.blob.hash.as_str().to_owned();
     let hb = vb.blob.hash.as_str().to_owned();
     for i in [1, 2] {
-        assert!(w.nodes[i].fetcher.requested().contains(&vs.blob.hash.as_str().to_owned()));
-        assert!(!w.nodes[i].fetcher.requested().contains(&hb), "laptop {i}");
+        assert_eq!(
+            w.nodes[i].fetcher.queued(),
+            1,
+            "only the small file, laptop {i}"
+        );
+        assert!(w.summary(i, &small.id).current.downloading, "laptop {i}");
         let s = w.summary(i, &big.id);
         assert!(!s.current.auto_download && !s.current.available && !s.current.downloading);
+        w.nodes[i].fetcher.run_all();
+        assert!(w.nodes[i].fetcher.requested().contains(&hs), "laptop {i}");
+        assert!(!w.nodes[i].fetcher.requested().contains(&hb), "laptop {i}");
     }
-    w.nodes[1].fetcher.run_all();
     assert!(w.has_blob(1, &vs.blob.hash));
     assert!(!w.has_blob(1, &vb.blob.hash));
     assert!(w.summary(1, &small.id).current.available);
 
     // The small file can be copied the way the transport does it.
     let dest = w.laptop(2).data_dir().join("salinan.part");
-    let n = copy_blob(w.sync(0), &w.pk(2), vs.blob.hash.as_str(), vs.blob.size, &dest).unwrap();
+    let n = copy_blob(
+        w.sync(0),
+        &w.pk(2),
+        vs.blob.hash.as_str(),
+        vs.blob.size,
+        &dest,
+    )
+    .unwrap();
     assert_eq!(n, vs.blob.size);
 
     // Rekan reconnecting does not start the large file either.
@@ -557,7 +581,11 @@ fn guests_receive_only_their_projects_and_cannot_write() {
 
     // The guest may download the project file, not the others.
     let gpk = w.pk(g);
-    assert!(w.sync(1).blob_path_for(&gpk, pv.blob.hash.as_str()).is_some());
+    assert!(
+        w.sync(1)
+            .blob_path_for(&gpk, pv.blob.hash.as_str())
+            .is_some()
+    );
     let tim_hash = BlobHash::of_bytes(b"tim");
     assert!(w.sync(0).blob_path_for(&gpk, tim_hash.as_str()).is_none());
 }
@@ -575,7 +603,10 @@ fn members_of_another_team_and_relays_respect_team_scope() {
 
     // Relay A -> B -> C works; B never hands the team document to Dewi.
     assert!(w.pull(0, 1).accepted >= 4);
-    assert!(w.pull(1, 2).accepted >= 4, "Citra gets Sari's records from Budi");
+    assert!(
+        w.pull(1, 2).accepted >= 4,
+        "Citra gets Sari's records from Budi"
+    );
     assert!(w.has_doc(2, &tim.id) && w.has_doc(2, &umum.id));
     w.pull(1, d);
     assert!(!w.has_doc(d, &tim.id));
@@ -704,7 +735,13 @@ fn forged_tampered_and_misattributed_records_are_rejected() {
     // A record of another family (signing domain) is not a document record.
     let other_domain = w
         .laptop(0)
-        .with(|c| envelope::seal(&c.identity, envelope::SIGN_DOMAIN, &DocPayload::Doc(RemoteDocument::from_record(&doc))))
+        .with(|c| {
+            envelope::seal(
+                &c.identity,
+                envelope::SIGN_DOMAIN,
+                &DocPayload::Doc(RemoteDocument::from_record(&doc)),
+            )
+        })
         .unwrap();
     assert_eq!(w.ingest(1, 0, vec![other_domain]).rejected, 1);
 
@@ -731,9 +768,18 @@ fn a_version_before_its_document_waits_then_applies() {
     assert_eq!((got.accepted, got.rejected), (2, 0));
     assert!(!got.changed);
     assert!(!w.has_doc(1, &doc.id));
-    assert_eq!(w.nodes[1].fetcher.queued(), 0, "nothing fetched while pending");
+    assert_eq!(
+        w.nodes[1].fetcher.queued(),
+        0,
+        "nothing fetched while pending"
+    );
     // Pending records are known (not asked again) but not forwarded.
-    assert!(w.sync(1).unknown_ids(&[vers[0].id.clone()]).unwrap().is_empty());
+    assert!(
+        w.sync(1)
+            .unknown_ids(&[vers[0].id.clone()])
+            .unwrap()
+            .is_empty()
+    );
     assert!(w.records(1, 2).is_empty());
 
     let got = w.ingest(1, 0, docs);
@@ -790,13 +836,19 @@ fn editing_marks_travel_refresh_and_expire() {
         document_id: doc.id.clone(),
         editor: w.pk(0),
         parent_ids: vec![v1.id.clone()],
-        working_path: laptop.data_dir().join("working").join(&doc.id).join("a.docx"),
+        working_path: laptop
+            .data_dir()
+            .join("working")
+            .join(&doc.id)
+            .join("a.docx"),
         started_at: start.clone(),
         last_hash: v1.blob.hash.clone(),
         last_saved_at: None,
         lock_seen: false,
     };
-    laptop.with(|c| store::insert_edit_session(&c.db, &session)).unwrap();
+    laptop
+        .with(|c| store::insert_edit_session(&c.db, &session))
+        .unwrap();
     assert_eq!(w.sync(0).refresh_editing_at(now).unwrap(), 0, "still fresh");
     let in_5 = now + time::Duration::minutes(5);
     assert_eq!(w.sync(0).refresh_editing_at(in_5).unwrap(), 1);
@@ -814,8 +866,15 @@ fn editing_marks_travel_refresh_and_expire() {
     assert_eq!(w.record_count(1, "edit"), 1);
 
     // Finishing clears the mark on the rekan.
-    laptop.with(|c| store::delete_edit_session(&c.db, &doc.id)).unwrap();
-    w.sync(0).editing_changed(&doc.id, &w.pk(0), false, &fmt(in_5 + time::Duration::seconds(1)));
+    laptop
+        .with(|c| store::delete_edit_session(&c.db, &doc.id))
+        .unwrap();
+    w.sync(0).editing_changed(
+        &doc.id,
+        &w.pk(0),
+        false,
+        &fmt(in_5 + time::Duration::seconds(1)),
+    );
     w.sync_everyone();
     assert!(w.summary_at(1, &doc.id, &fmt(in_5)).editing.is_empty());
     assert!(w.summary_at(2, &doc.id, &fmt(in_5)).editing.is_empty());
