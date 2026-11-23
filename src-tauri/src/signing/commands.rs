@@ -35,7 +35,7 @@ use super::session::SignSessions;
 use super::store::{BlobDocumentStore, MAX_SIGNED_PDF_BYTES};
 use super::vault::SavedSignatureInfo;
 use crate::clock;
-use crate::documents::scope::InviteGuestProjects;
+use crate::documents::scope::BoardGuestProjects;
 use crate::error::{AppError, AppResult};
 use crate::network::feature::FeatureHub;
 use crate::state::MiraState;
@@ -84,7 +84,7 @@ fn run<T>(
             store: &store,
             sessions,
             outbox: outbox.as_ref(),
-            guests: &InviteGuestProjects,
+            guests: &BoardGuestProjects,
             export_dir: &export_dir,
             kdf: KdfParams::DEFAULT,
         };

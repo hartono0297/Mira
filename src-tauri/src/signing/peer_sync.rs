@@ -49,15 +49,17 @@
 //! penanda tangannya yang anggota aktif; Tamu hanya kalau proyek permintaan
 //! diizinkan untuknya (`GuestProjects`). Disaring ulang di `records_for`.
 //!
-//! **File yang dikirim ke rekan** (`BlobSource`): file `H` dikirim ke `P`
-//! hanya kalau ada permintaan yang melibatkan `P` dengan `H` sebagai versi
-//! asli atau versi baru record `ok` (atau record `pending` yang hanya
-//! menunggu file versi lama), DAN orang yang memasukkan `H` ke permintaan itu
-//! (pengirim atau penanda tangan) boleh melihat setiap versi dokumen
-//! (`document_versions`) dengan isi `H` di laptop ini. Record yang ditolak
-//! tidak pernah membuat file terkirim. Saat diterima, record yang memasukkan
-//! file yang sudah dipegang laptop ini untuk dokumen atau permintaan lain yang
-//! tidak boleh dilihat penulisnya ditolak (`check_reuse`).
+//! **Files sent to rekan** (`BlobSource`): file `H` is sent to `P` only
+//! when a request that involves `P` has `H` as its original or as the new
+//! version of an `ok` record (or of a `pending` record that only waits for
+//! the old file), AND whoever brought `H` into that request (sender or
+//! signer) may hold it here (`may_hold`): may view every document version
+//! (`document_versions`) with content `H`, is in a chat conversation chat
+//! holds `H` for when chat put it in the store, and, when other requests use
+//! `H`, is involved in at least one of them. Rejected records never make a
+//! file go out. On receipt, a record that brings in a file this laptop
+//! already holds for a document, request or chat conversation its author may
+//! not see is refused (`check_reuse`).
 //!
 //! **Batas**: paling banyak `MAX_PENDING_PER_AUTHOR` record `pending` per
 //! penulis; record `pending` untuk permintaan yang tidak dikenal dihapus
@@ -1813,7 +1815,15 @@ impl SignSync {
                 if !involved(conn, state, guests, me, p).map_err(to_msg)? {
                     return Err("laptop ini tidak terlibat dalam permintaan itu".into());
                 }
-                check_reuse(conn, state, guests, &author, &p.original_hash, None)?;
+                check_reuse(
+                    conn,
+                    state,
+                    guests,
+                    &author,
+                    &p.original_hash,
+                    &p.id,
+                    None,
+                )?;
             }
             Payload::Signed(p) => {
                 check_signed(&author, p, known.as_ref())?;
@@ -1836,6 +1846,7 @@ impl SignSync {
                         guests,
                         &author,
                         &p.hash_after,
+                        &request_id,
                         Some(&request_id),
                     )?;
                 }
@@ -1954,17 +1965,31 @@ fn introducers(conn: &Connection, request_id: &str, hash: &str) -> AppResult<Vec
     Ok(out)
 }
 
-/// `pk` boleh memegang file `hash` menurut pemakaian lain file itu di
-/// laptop ini: setiap versi dokumen dengan isi itu ada di cakupan yang boleh
-/// dilihat `pk`, dan (kalau `except` diisi) setiap permintaan tanda tangan
-/// lain yang memakainya melibatkan `pk`.
+/// How `may_hold` judges the other signing requests that use the file.
+#[derive(Clone, Copy, Debug)]
+enum Others<'a> {
+    /// Every other request (not this id) that uses the file must involve
+    /// `pk`. For signed versions.
+    All(&'a str),
+    /// `pk` must already be allowed to hold the file through one route: a
+    /// document version it may view, another request (not this id, when
+    /// given) that involves it, or a chat conversation it is in. A file that
+    /// nothing else on this laptop uses is allowed.
+    Any(Option<&'a str>),
+}
+
+/// `pk` may hold file `hash` given its other uses on this laptop:
+/// - every document version with that content is in a scope `pk` may view;
+/// - a file chat put into the store (`chat_blobs.preexisting = 0`) only when
+///   `pk` is in one of its conversations (`scope::chat_allows`);
+/// - other signing requests that use it are judged by `others`.
 fn may_hold(
     conn: &Connection,
     state: &OrgState,
     guests: &dyn GuestProjects,
     pk: &str,
     hash: &str,
-    except: Option<&str>,
+    others: Others<'_>,
 ) -> AppResult<bool> {
     let scopes: Vec<(Option<String>, Option<String>)> = conn
         .prepare_cached(
@@ -1973,6 +1998,7 @@ fn may_hold(
         )?
         .query_map(params![hash], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
+    let mut reachable = !scopes.is_empty();
     for (team_id, project_id) in scopes {
         let scope = DocScope {
             team_id,
@@ -1982,41 +2008,60 @@ fn may_hold(
             return Ok(false);
         }
     }
-    let Some(except) = except else {
-        return Ok(true);
+    match crate::documents::scope::chat_allows(conn, hash, pk)? {
+        Some(false) => return Ok(false),
+        Some(true) => reachable = true,
+        None => {}
+    }
+    let (except, every) = match others {
+        Others::All(id) => (Some(id), true),
+        Others::Any(id) => (id, false),
     };
+    let mut used = false;
     for id in requests_using(conn, hash)? {
-        if id == except || introducers(conn, &id, hash)?.is_empty() {
+        if Some(id.as_str()) == except || introducers(conn, &id, hash)?.is_empty() {
             continue;
         }
-        if let Some(p) = request_payload(conn, &id)?
-            && !involved(conn, state, guests, pk, &p)?
-        {
+        let Some(p) = request_payload(conn, &id)? else {
+            continue;
+        };
+        used = true;
+        if involved(conn, state, guests, pk, &p)? {
+            reachable = true;
+        } else if every {
             return Ok(false);
         }
     }
-    Ok(true)
+    Ok(every || reachable || !used)
 }
 
-/// Record baru dari `author` yang memasukkan file `hash` ditolak kalau
-/// laptop ini sudah memegang file itu untuk hal yang tidak boleh dilihat
-/// `author` (lihat `may_hold`). Tanpa aturan ini, rekan yang tahu hash
-/// sebuah file bisa memintanya lewat permintaan buatan.
+/// A new record from `author` that brings in file `hash` is refused when
+/// this laptop already holds that file for something `author` may not see
+/// (see `may_hold`). Without this rule, a rekan who knows the hash of a file
+/// could fetch it through a crafted request.
 ///
-/// Versi asli permintaan (`signed_in` = `None`) hanya dibandingkan dengan
-/// versi dokumen: dua pengirim boleh memakai PDF yang sama persis (misalnya
-/// formulir baku). Versi bertanda tangan (`signed_in` = id permintaannya)
-/// juga tidak boleh berupa file permintaan lain yang tidak melibatkan
-/// penulisnya: versi yang sah selalu memuat penanda permintaannya sendiri.
+/// Original file of new request `request_id` (`signed_in` = `None`): when
+/// the file is already used here by another request or by chat, the sender
+/// must already be allowed to hold it (a document version they may view, a
+/// request they are involved in, or a chat conversation they are in). So two
+/// unrelated senders cannot use the very same PDF on a laptop that holds
+/// both. A signed version (`signed_in` = its request id) may not be the file
+/// of another request that does not involve its author: a valid version
+/// always carries the mark of its own request.
 fn check_reuse(
     conn: &Connection,
     state: &OrgState,
     guests: &dyn GuestProjects,
     author: &str,
     hash: &str,
+    request_id: &str,
     signed_in: Option<&str>,
 ) -> Check<()> {
-    if may_hold(conn, state, guests, author, hash, signed_in).map_err(to_msg)? {
+    let others = match signed_in {
+        Some(id) => Others::All(id),
+        None => Others::Any(Some(request_id)),
+    };
+    if may_hold(conn, state, guests, author, hash, others).map_err(to_msg)? {
         Ok(())
     } else {
         Err("file versi ini sudah dipakai di laptop ini untuk data yang tidak boleh dilihat penulis".into())
@@ -2182,7 +2227,8 @@ impl BlobSource for SignSync {
                         continue;
                     }
                     for author in introducers(&core.db, &id, hash)? {
-                        if may_hold(&core.db, &state, guests, &author, hash, None)? {
+                        let others = Others::Any(Some(&id));
+                        if may_hold(&core.db, &state, guests, &author, hash, others)? {
                             return Ok(true);
                         }
                     }
@@ -2292,7 +2338,7 @@ pub fn register(app: &tauri::AppHandle) {
     let sync = Arc::new(SignSync::new(
         state,
         store,
-        Arc::new(crate::documents::scope::InviteGuestProjects),
+        Arc::new(crate::documents::scope::BoardGuestProjects),
         fetcher.clone(),
         Arc::new(crate::board::reminder::TauriNotifier::new(app.clone())),
     ));

@@ -37,10 +37,12 @@
 //! - Reusing a file (`docs_blob_reuse`): a received version may name a file
 //!   (hash) that this laptop already knows only when its author may see every
 //!   other use of it here: every document scope with a version of that hash,
-//!   every signing request with that file (as sender or signer), and, when
+//!   every signing request with that file (as sender or signer), every chat
+//!   conversation chat holds it for when chat put it in the store
+//!   (`scope::chat_allows`: the author must be in one of them), and, when
 //!   the file is in the blob store, at least one such use. Without this, a
-//!   member could announce the hash of a team or signing file in the general
-//!   library and have rekan copy it to everyone.
+//!   member could announce the hash of a team, signing or chat file in the
+//!   general library and have rekan copy it to everyone.
 //! - Files ([`BlobSource`]): a blob is served to a peer only through a
 //!   version of a document the peer may view that is either made on this
 //!   laptop or whose author may see every other use of the file here (the
@@ -489,9 +491,10 @@ fn check_known_version(conn: &Connection, v: &RemoteVersion) -> Result<bool, Fai
 
 /// True when `author` may see every other use of file `hash` on this laptop
 /// (module docs, "Reusing a file"): every document scope with a version of
-/// it other than `except_version`, and every signing request with it (as
-/// sender or signer). With `in_store`, at least one such use must exist,
-/// since a file here that nothing the author may see uses belongs to
+/// it other than `except_version`, every signing request with it (as sender
+/// or signer), and a chat attachment only from a conversation the author is
+/// in (`scope::chat_allows`). With `in_store`, at least one such use must
+/// exist, since a file here that nothing the author may see uses belongs to
 /// something else (signing, another feature).
 fn may_reuse_blob(
     conn: &Connection,
@@ -539,6 +542,14 @@ fn may_reuse_blob(
             return Ok(false);
         }
         seen = true;
+    }
+    // A chat attachment from a conversation the author is not in: refused
+    // even when the file is not in the store yet, so a version received
+    // before the chat download is never served once the file arrives.
+    match scope::chat_allows(conn, hash, author)? {
+        Some(false) => return Ok(false),
+        Some(true) => seen = true,
+        None => {}
     }
     Ok(seen || !in_store)
 }

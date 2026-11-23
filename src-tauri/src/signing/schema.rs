@@ -1,5 +1,5 @@
-//! SQL migrasi tanda tangan PDF. Didaftarkan sebagai satu entri di akhir
-//! `db::migrations::MIGRATIONS`; nomor versinya ditentukan saat merge.
+//! SQL migration for PDF signing: schema v5 in `db::migrations::MIGRATIONS`
+//! (after v4 documents, before v6 board sync).
 //!
 //! Kunci publik, hash, dan tanda tangan disimpan sebagai hex huruf kecil.
 //! Waktu dalam RFC 3339 UTC.

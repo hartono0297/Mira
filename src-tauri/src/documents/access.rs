@@ -8,14 +8,16 @@
 //!   removed: nothing.
 //! - The document's team and project ([`scope_allows`]), the same rules the
 //!   sync applies to rekan (`documents::scope`): the general library for every
-//!   non-guest member, a team scope for that team's members and superadmins,
-//!   guests only in the projects [`GuestProjects`] allows.
+//!   non-guest member, a team scope for that team's members (a superadmin
+//!   only after joining the team), a project scope only for a board project
+//!   of exactly that team, guests only in the projects [`GuestProjects`]
+//!   allows.
 
 use std::sync::Arc;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::documents::scope::{self, GuestProjects, InviteGuestProjects};
+use crate::documents::scope::{self, BoardGuestProjects, GuestProjects};
 use crate::documents::store::DocScope;
 use crate::error::{AppError, AppResult};
 use crate::identity::Identity;
@@ -79,8 +81,8 @@ pub trait DocumentAccess: Send + Sync {
 
 /// The real check: this laptop's role from `org::get_organization`, its
 /// membership status from `members` (kept up to date by the membership fold),
-/// and [`scope_allows`] with the guest projects named in the invites
-/// ([`InviteGuestProjects`]).
+/// and [`scope_allows`] with the board's guest projects
+/// ([`BoardGuestProjects`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RoleAccess;
 
@@ -92,7 +94,7 @@ impl DocumentAccess for RoleAccess {
         scope: &DocScope,
         action: DocAction,
     ) -> AppResult<()> {
-        check_role_and_scope(conn, me, scope, action, &InviteGuestProjects)
+        check_role_and_scope(conn, me, scope, action, &BoardGuestProjects)
     }
 }
 
@@ -278,6 +280,8 @@ mod tests {
         let mut lab = Lab::new(&["Sari", "Budi"]);
         let guest = lab.add_guest("Tamu", &[&project]);
         let outsider = lab.add_member_elsewhere("Dewi");
+        lab.add_project(&project, Some(&lab.team));
+        lab.add_project(&"cd".repeat(16), Some(&lab.team));
         let team = DocScope {
             team_id: Some(lab.team.clone()),
             project_id: None,
@@ -309,12 +313,33 @@ mod tests {
                 "guest, own project {action:?}"
             );
         }
-        let with = RoleAccessWith(Arc::new(InviteGuestProjects));
+        let with = RoleAccessWith(Arc::new(BoardGuestProjects));
         lab.laptops[guest].with(|c| {
             assert!(
                 with.allows(&c.db, &c.identity, &allowed_project, DocAction::View)
                     .unwrap()
             );
         });
+
+        // A team project named without its team is not the general library.
+        let without_team = DocScope {
+            team_id: None,
+            project_id: Some(project.clone()),
+        };
+        for who in [1, outsider, guest] {
+            assert!(!allows(who, &without_team, DocAction::View), "laptop {who}");
+        }
+
+        // A superadmin outside the team sees the general library only
+        // (F-ROLE-11).
+        lab.leave_team(0);
+        let allows = |who: usize, scope: &DocScope, action: DocAction| {
+            lab.laptops[who].with(|c| RoleAccess.allows(&c.db, &c.identity, scope, action).unwrap())
+        };
+        for action in ALL {
+            assert!(!allows(0, &team, action), "superadmin outside {action:?}");
+            assert!(!allows(0, &allowed_project, action), "superadmin outside {action:?}");
+            assert!(allows(0, &general, action), "superadmin, general {action:?}");
+        }
     }
 }

@@ -26,9 +26,10 @@ use super::session::SignSessions;
 use super::store::DocumentStore;
 use crate::blobs::AUTO_REPLICATE_MAX_BYTES;
 use crate::board::reminder::Notifier;
+use crate::chat::fetch;
 use crate::clock;
 use crate::documents::envelope::{self, SIGN_DOMAIN};
-use crate::documents::scope::InviteGuestProjects;
+use crate::documents::scope::BoardGuestProjects;
 use crate::documents::test_lab::{Lab, Laptop};
 use crate::error::AppResult;
 use crate::network::feature::{BlobSource, FeatureRecord, FeatureSync, testing};
@@ -98,7 +99,7 @@ fn node(l: &Laptop) -> Node {
     let sync = Arc::new(SignSync::new(
         l.state.clone(),
         store,
-        Arc::new(InviteGuestProjects),
+        Arc::new(BoardGuestProjects),
         fetcher.clone(),
         notifier.clone(),
     ));
@@ -185,7 +186,7 @@ impl World {
                 store: &store,
                 sessions: &node.sessions,
                 outbox: &LocalOnlyOutbox,
-                guests: &InviteGuestProjects,
+                guests: &BoardGuestProjects,
                 export_dir: &export,
                 kdf: KdfParams::TEST,
             };
@@ -770,6 +771,8 @@ fn guest_signs_only_in_allowed_project_and_never_requests() {
     let other = "cd".repeat(16);
     let mut w = World::new(&["Sari", "Budi"]);
     let g = w.add_guest("Tamu", &[&project]);
+    w.lab.add_project(&project, Some(&w.lab.team));
+    w.lab.add_project(&other, Some(&w.lab.team));
     w.save_signature(1);
     w.save_signature(g);
     let team = Some(w.lab.team.clone());
@@ -1116,10 +1119,12 @@ fn request_id_cannot_be_taken_by_another_laptop() {
     let old_id = request_id_for(&w.pk(2), "");
     let old = request_payload_from(&w, 2, &old_id, "", &sample, &[(1, "Budi")]);
     assert_eq!(w.ingest(1, 2, w.seal_as(2, &old)), (0, 1));
-    // Permintaan Citra dengan id dari kuncinya sendiri diterima.
+    // Permintaan Citra dengan id dari kuncinya sendiri diterima. Its own PDF:
+    // an original another request already uses needs a sender who may hold
+    // it (`check_reuse`).
     let salt = peer_sync::new_salt();
     let own_id = request_id_for(&w.pk(2), &salt);
-    let own = request_payload_from(&w, 2, &own_id, &salt, &sample, &[(1, "Budi")]);
+    let own = request_payload_from(&w, 2, &own_id, &salt, &pdf::sample_pdf(2), &[(1, "Budi")]);
     assert_eq!(w.ingest(1, 2, w.seal_as(2, &own)), (1, 0));
 
     // Permintaan Sari yang asli tetap sampai.
@@ -1381,4 +1386,103 @@ fn downloads_cover_current_and_pending_versions_only() {
     w.lab.laptops[1].blobs().remove(&h).unwrap();
     assert!(w.nodes[1].sync.missing_files(&id).unwrap().is_empty());
     assert_eq!(w.detail(1, &id).summary.download_size, Some(0));
+}
+
+/// Puts `file` into laptop `i`'s blob store as a chat attachment chat
+/// downloaded for conversation `conv` (`chat_blobs.preexisting = 0`).
+fn chat_attachment(w: &World, i: usize, file: &[u8], conv: &str) -> String {
+    let hash = w.nodes[i].sync.store().put(file).unwrap();
+    w.lab.laptops[i].with(|c| {
+        fetch::track(&c.db, &hash, fetch::FetchKind::Plain, false, &at(1)).unwrap();
+        fetch::add_blob_conv(&c.db, &hash, conv, false).unwrap();
+    });
+    hash
+}
+
+#[test]
+fn chat_attachments_cannot_be_fetched_through_a_sign_request() {
+    let w = World::new(&["Sari", "Budi", "Citra"]);
+    let file = pdf::sample_pdf(2);
+    // Sari's laptop holds an attachment of her chat pribadi with Budi.
+    let dm = crate::chat::model::dm_conv(&w.pk(0), &w.pk(1));
+    let h = chat_attachment(&w, 0, &file, &dm);
+    let sari = &w.nodes[0].sync;
+    assert!(sari.blob_path_for(&w.pk(2), &h).is_none());
+
+    // Citra knows the hash and asks Sari to sign "her" copy: refused, and the
+    // file is not served to her.
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(2), &salt);
+    let crafted = request_payload_from(&w, 2, &rid, &salt, &file, &[(0, "Sari")]);
+    assert_eq!(w.ingest(0, 2, w.seal_as(2, &crafted)), (0, 1));
+    assert_eq!(w.record_count(0, &rid), 0);
+    assert!(sari.blob_path_for(&w.pk(2), &h).is_none());
+
+    // Budi is in that chat: his request with the same file is accepted and
+    // served to the people it involves.
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(1), &salt);
+    let from_budi = request_payload_from(&w, 1, &rid, &salt, &file, &[(0, "Sari")]);
+    assert_eq!(w.ingest(0, 1, w.seal_as(1, &from_budi)), (1, 0));
+    assert!(sari.blob_path_for(&w.pk(1), &h).is_some());
+    assert!(sari.blob_path_for(&w.pk(2), &h).is_none());
+}
+
+#[test]
+fn reused_original_needs_a_sender_who_may_hold_it() {
+    let w = World::new(&["Sari", "Budi", "Citra"]);
+    let sample = pdf::sample_pdf(1);
+    let d = w.create(0, &sample, "parallel", &[1], &no_scope()).unwrap();
+    w.converge(&[0, 1]);
+    let h = d.original_hash.clone();
+    let budi = &w.nodes[1].sync;
+    assert!(budi.blob_path_for(&w.pk(0), &h).is_some());
+
+    // Citra takes no part in Sari's request but knows its hash: her request
+    // with that original is refused on Budi's laptop, which never serves
+    // Sari's file to her.
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(2), &salt);
+    let crafted = request_payload_from(&w, 2, &rid, &salt, &sample, &[(1, "Budi")]);
+    assert_eq!(w.ingest(1, 2, w.seal_as(2, &crafted)), (0, 1));
+    assert_eq!(w.record_count(1, &rid), 0);
+    assert!(budi.blob_path_for(&w.pk(2), &h).is_none());
+
+    // Sari reuses her own PDF in a second request: accepted.
+    let again = w.create(0, &sample, "parallel", &[1], &no_scope()).unwrap();
+    w.converge(&[0, 1]);
+    assert_eq!(w.detail(1, &again.summary.id).original_hash, h);
+
+    // Budi, a signer of Sari's request, may send the same PDF back to Sari.
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(1), &salt);
+    let back = request_payload_from(&w, 1, &rid, &salt, &sample, &[(0, "Sari")]);
+    assert_eq!(w.ingest(0, 1, w.seal_as(1, &back)), (1, 0));
+}
+
+#[test]
+fn superadmin_outside_the_team_cannot_request_there() {
+    let project = "ab".repeat(16);
+    let mut w = World::new(&["Sari", "Budi"]);
+    w.lab.add_project(&project, Some(&w.lab.team));
+    let scope = RequestScope {
+        team_id: Some(w.lab.team.clone()),
+        project_id: Some(project.clone()),
+    };
+    let sample = pdf::sample_pdf(1);
+    w.create(0, &sample, "parallel", &[1], &scope).unwrap();
+
+    // Without the team's id the project is refused: the board says it
+    // belongs to the team.
+    let no_team = RequestScope {
+        team_id: None,
+        project_id: Some(project.clone()),
+    };
+    let e = w.create(0, &sample, "parallel", &[1], &no_team).unwrap_err();
+    assert_eq!(e.code(), "request_invalid");
+
+    w.lab.leave_team(0);
+    let e = w.create(0, &sample, "parallel", &[1], &scope).unwrap_err();
+    assert_eq!(e.code(), "request_invalid");
+    w.create(0, &sample, "parallel", &[1], &no_scope()).unwrap();
 }

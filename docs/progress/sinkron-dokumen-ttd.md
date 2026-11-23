@@ -28,7 +28,7 @@ Semua di-commit di branch ini. Tidak ada push dan tidak ada merge ke `main`.
 **Fondasi bersama**
 - `documents/envelope.rs`: amplop bertanda tangan untuk setiap record. Isinya penulis, isi JSON apa adanya, dan tanda tangan Ed25519 atas `domain\npenulis\nisi`. Domain dokumen dan tanda tangan dibedakan, jadi record satu fitur tidak bisa dipakai di fitur lain.
 - `documents/scope.rs`: siapa boleh melihat dan menulis di Pustaka Umum, tim, atau proyek, untuk kunci mana pun (laptop sendiri maupun rekan).
-- `documents/sync_schema.rs`: satu entri migrasi (v6 di branch ini).
+- `documents/sync_schema.rs`: satu entri migrasi (v8).
 - `documents/test_lab.rs`: tes beberapa laptop dalam satu organisasi.
 
 **Dokumen** (`documents/peer_sync.rs`, `access.rs`, `runtime.rs`, `commands.rs`, `view.rs`)
@@ -169,9 +169,9 @@ Masalah yang ditemukan dan diperbaiki selama kerja:
 
 | Titik | Di mana | Saat merge |
 |---|---|---|
-| Proyek yang boleh dibuka Tamu | trait `GuestProjects` di `documents/scope.rs`; implementasi sementara `InviteGuestProjects` membaca proyek dari undangan Tamu | ganti dengan fungsi asli dari sesi sinkron board |
+| Proyek yang boleh dibuka Tamu | trait `GuestProjects` di `documents/scope.rs`, implementasi `BoardGuestProjects` lewat `board::access::may_access_project` | sudah digabung: `InviteGuestProjects` dihapus, cakupan proyek dicek dengan tim proyek di board |
 | Transport fitur | `FeatureHub::set_link`; dokumen dan tanda tangan mendaftar `FeatureSync` dan `BlobSource` saat start | transport cukup memanggil `set_link`; event `mira://feature` `{topic}` sudah didengar tampilan |
-| Jembatan uji | `feature_bridge.rs`, dipasang di `lib.rs` hanya kalau `MIRA_TEST_BRIDGE_DIR` diisi | transport jangan menimpa link saat variabel itu ada, atau hapus jembatan dan ubah `sync-e2e.mjs` memakai transport asli (pompa record dihapus) |
+| Jembatan uji | `feature_bridge.rs`, dipasang di `lib.rs` hanya kalau `MIRA_TEST_BRIDGE_DIR` diisi | sudah: jembatan dihapus saat merge, `sync-e2e.mjs` memakai transport asli |
 | F-SIGN-06 (kartu task pindah ke Selesai) | catatan `completed` di `service::complete` dan di fold | butuh board |
 
 Kekurangan kontrak `feature.rs` (tidak diubah, hanya dicatat):
@@ -181,15 +181,15 @@ Kekurangan kontrak `feature.rs` (tidak diubah, hanya dicatat):
 ## Catatan merge
 
 - **Basis.** Branch ini dibuat dari 63eb72b. Selama kerja, `main` sudah maju (sekitar 60 commit dari sesi lain), jadi merge perlu menyelesaikan konflik di bawah.
-- **Migrasi.** Satu entri `crate::documents::sync_schema::SYNC_SCHEMA` di akhir `MIGRATIONS` (v6 di sini, rencana final v8). Isinya:
+- **Migrasi.** Satu entri `crate::documents::sync_schema::SYNC_SCHEMA` di akhir `MIGRATIONS` (v8 setelah merge). Isinya:
   - tabel `docs_sync_records`, `sign_sync_records`, `sign_proof_checks`, `sign_notified`;
   - kolom `team_id` dan `project_id` di `sign_requests`.
   - Tes `documents::schema` mengecek `latest_version() == 6` dan membuang tabel sinkron; sesuaikan nomornya. Hapus folder data uji lama sebelum mencoba.
 - **`lib.rs`:**
-  - `pub mod feature_bridge;`;
+  - `pub mod feature_bridge;` (dihapus saat merge);
   - hub dibuat lalu, kalau ada variabel jembatan, `set_link` jembatan, baru `app.manage(hub)`;
   - `signing::peer_sync::register(app.handle());` setelah `SignSessions`;
-  - perintah `documents::commands::download_version`, `signing::commands::sign_download_file`, dan empat `feature_bridge::debug_*`.
+  - perintah `documents::commands::download_version` dan `signing::commands::sign_download_file`. Jembatan uji `feature_bridge` (dengan empat perintah `debug_*`) dihapus saat merge; sinkron memakai transport asli.
   - `DocumentsRuntime::new` mendaftar ke hub sendiri, jadi hub harus di-`manage` sebelum runtime dokumen (sudah begitu).
 - **`Cargo.toml`:** `lopdf = "=0.47.0"` tanpa fitur bawaan.
 - **`package.json`:** skrip `test:e2e-sync` dan `fixtures:sign`.

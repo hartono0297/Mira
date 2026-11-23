@@ -4,9 +4,11 @@
 //! tests together with `network::feature::testing`.
 //!
 //! `Lab::new(&["Sari", "Budi", "Citra"])`: laptop 0 founds "CV Maju Jaya"
-//! (superadmin) and creates team "Tim Proyek"; the others join it through an
-//! invite code as team members. `add_guest`, `add_member_elsewhere` and
-//! `remove` change the membership and sync it to every laptop still active.
+//! (superadmin), creates team "Tim Proyek" and joins it (a superadmin only
+//! sees team data as a team member); the others join it through an invite
+//! code as team members. `add_guest`, `add_member_elsewhere`, `leave_team`
+//! and `remove` change the membership and sync it to every laptop still
+//! active. `add_project` puts a board project on every laptop.
 
 use std::path::Path;
 
@@ -80,9 +82,12 @@ impl Lab {
         let founder = Laptop::new(names[0]);
         let team = founder.with(|c| {
             org::create_organization(&mut c.db, &c.identity, "CV Maju Jaya").unwrap();
-            p::create_team(&mut c.db, &c.identity, "Tim Proyek", now())
+            let team = p::create_team(&mut c.db, &c.identity, "Tim Proyek", now())
                 .unwrap()
-                .id
+                .id;
+            let me = c.identity.public_key_hex().to_owned();
+            p::add_team_member(&mut c.db, &c.identity, &team, &me, now()).unwrap();
+            team
         });
         let mut lab = Lab {
             laptops: vec![founder],
@@ -166,6 +171,25 @@ impl Lab {
         self.join(name, &other, InviteRole::Member, Vec::new())
     }
 
+    /// Laptop 0 takes laptop `who` out of `self.team` (still in the
+    /// organization).
+    pub fn leave_team(&mut self, who: usize) {
+        let (pk, team) = (self.pk(who), self.team.clone());
+        self.laptops[0].with(|c| {
+            p::remove_team_member(&mut c.db, &c.identity, &team, &pk, now()).unwrap()
+        });
+        self.sync_membership();
+    }
+
+    /// Board project `id` of `team` (none: a project without team), made by
+    /// laptop 0, on every laptop, as board sync would leave it.
+    pub fn add_project(&self, id: &str, team: Option<&str>) {
+        let creator = self.pk(0);
+        for l in &self.laptops {
+            l.with(|c| crate::documents::scope::insert_test_project(&c.db, id, team, &creator));
+        }
+    }
+
     /// Laptop 0 removes laptop `who` from the organization.
     pub fn remove(&mut self, who: usize) {
         let pk = self.pk(who);
@@ -208,7 +232,7 @@ impl Lab {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::scope::{InviteGuestProjects, may_view, may_write};
+    use crate::documents::scope::{BoardGuestProjects, may_view, may_write};
     use crate::documents::store::DocScope;
 
     #[test]
@@ -217,6 +241,8 @@ mod tests {
         let mut lab = Lab::new(&["Sari", "Budi", "Citra"]);
         let guest = lab.add_guest("Tamu", &[&project]);
         let outsider = lab.add_member_elsewhere("Dewi");
+        lab.add_project(&project, Some(&lab.team));
+        lab.add_project(&"cd".repeat(16), Some(&lab.team));
         for l in &lab.laptops {
             let s = l.org_state();
             assert_eq!(s.members.len(), 5, "{} sees everyone", l.name);
@@ -236,13 +262,13 @@ mod tests {
         };
         let general = DocScope::default();
         lab.laptops[1].with(|c| {
-            let g = InviteGuestProjects;
+            let g = BoardGuestProjects;
             let db = &c.db;
             assert!(may_view(db, &s, &g, &lab.pk(2), &team_scope).unwrap());
             assert!(!may_view(db, &s, &g, &lab.pk(outsider), &team_scope).unwrap());
             assert!(
                 may_view(db, &s, &g, &lab.pk(0), &team_scope).unwrap(),
-                "superadmin"
+                "superadmin in the team"
             );
             assert!(may_view(db, &s, &g, &lab.pk(outsider), &general).unwrap());
             assert!(!may_view(db, &s, &g, &lab.pk(guest), &general).unwrap());
@@ -257,7 +283,7 @@ mod tests {
         let s = lab.laptops[1].org_state();
         assert!(!s.is_active(&lab.pk(2)));
         lab.laptops[1].with(|c| {
-            assert!(!may_view(&c.db, &s, &InviteGuestProjects, &lab.pk(2), &general).unwrap());
+            assert!(!may_view(&c.db, &s, &BoardGuestProjects, &lab.pk(2), &general).unwrap());
         });
     }
 }

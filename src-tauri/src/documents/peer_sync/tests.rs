@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use super::*;
 use crate::blobs::AUTO_REPLICATE_MAX_BYTES;
 use crate::documents::access::RoleAccess;
-use crate::documents::scope::InviteGuestProjects;
+use crate::documents::scope::BoardGuestProjects;
 use crate::documents::store::{
     DocumentRecord, DocumentSummary, EditSession, VersionOrigin, VersionRecord,
 };
@@ -132,7 +132,7 @@ impl World {
             let sync = DocsPeerSync::new(
                 laptop.state.clone(),
                 PeerSyncDeps {
-                    guests: Arc::new(InviteGuestProjects),
+                    guests: Arc::new(BoardGuestProjects),
                     hub: Arc::new(FeatureHub::default()),
                     fetcher: fetcher.clone(),
                     events: events.clone(),
@@ -591,6 +591,8 @@ fn guests_receive_only_their_projects_and_cannot_write() {
     let other = "cd".repeat(16);
     let mut w = World::new(&["Sari", "Budi", "Citra"]);
     let g = w.guest("Tamu", &[&project]);
+    w.lab.add_project(&project, Some(&w.lab.team));
+    w.lab.add_project(&other, Some(&w.lab.team));
     let team = DocScope {
         team_id: Some(w.lab.team.clone()),
         project_id: None,
@@ -1269,4 +1271,90 @@ fn a_damaged_download_shows_no_hash() {
         err.to_string(),
         "File yang diterima dari laptop rekan rusak di jalan. Coba unduh lagi."
     );
+}
+
+#[test]
+fn chat_attachments_are_not_served_through_document_versions() {
+    let mut w = World::new(&["Sari", "Budi", "Citra"]);
+    let d = w.outsider("Dewi");
+    let (g, gv) = w.add_doc(0, &general(), "umum.docx", b"umum");
+    w.sync_everyone();
+    let secret: &[u8] = b"lampiran chat pribadi";
+    let h = BlobHash::of_bytes(secret);
+    let size = secret.len() as u64;
+
+    // Dewi knows the hash of an attachment in Sari and Budi's chat pribadi
+    // and announces it as a version. Budi's laptop has not downloaded the
+    // attachment yet, so it accepts the version.
+    let reuse = w.remote_version(d, &g.id, &[&gv.id], &h, size);
+    let got = w.ingest(1, d, vec![w.signed(d, &DocPayload::Ver(reuse))]);
+    assert_eq!((got.accepted, got.rejected), (1, 0));
+
+    // Then chat downloads the attachment on Budi's laptop.
+    let dm = crate::chat::model::dm_conv(&w.pk(0), &w.pk(1));
+    w.laptop(1).blobs().put_bytes(secret).unwrap();
+    w.laptop(1).with(|c| {
+        crate::chat::fetch::track(&c.db, h.as_str(), crate::chat::fetch::FetchKind::Plain, false, &now_s())
+            .unwrap();
+        crate::chat::fetch::add_blob_conv(&c.db, h.as_str(), &dm, false).unwrap();
+    });
+
+    // Dewi's version never serves the chat file, to anyone.
+    for peer in [0, 2, d] {
+        let pk = w.pk(peer);
+        assert!(w.sync(1).blob_path_for(&pk, h.as_str()).is_none(), "laptop {peer}");
+    }
+    // A new version from Dewi naming it is refused.
+    let again = w.remote_version(d, &g.id, &[&gv.id], &h, size);
+    let got = w.ingest(1, d, vec![w.signed(d, &DocPayload::Ver(again))]);
+    assert_eq!(got.rejected, 1);
+    assert_eq!(w.rejections(1).last().unwrap(), "docs_blob_reuse");
+
+    // Sari is in the conversation: she may put the file in the general
+    // library, and then it is served for her version.
+    let from_sari = w.remote_version(0, &g.id, &[&gv.id], &h, size);
+    let got = w.ingest(1, 0, vec![w.signed(0, &DocPayload::Ver(from_sari))]);
+    assert_eq!((got.accepted, got.rejected), (1, 0));
+    assert!(w.sync(1).blob_path_for(&w.pk(2), h.as_str()).is_some());
+}
+
+#[test]
+fn project_scope_needs_the_board_team_and_superadmins_in_the_team() {
+    let project = "ab".repeat(16);
+    let mut w = World::new(&["Sari", "Budi", "Citra"]);
+    let g = w.guest("Tamu", &[&project]);
+    w.lab.add_project(&project, Some(&w.lab.team));
+    let in_project = DocScope {
+        team_id: Some(w.lab.team.clone()),
+        project_id: Some(project.clone()),
+    };
+    let without_team = DocScope {
+        team_id: None,
+        project_id: Some(project.clone()),
+    };
+    let team = DocScope {
+        team_id: Some(w.lab.team.clone()),
+        project_id: None,
+    };
+    let (proj, _) = w.add_doc(1, &in_project, "proyek.docx", b"proyek");
+    // Budi's laptop announcing the team project without its team: every
+    // other laptop refuses it, nobody outside the board's rule receives it.
+    let (loose, _) = w.add_doc(1, &without_team, "lepas.docx", b"lepas");
+    w.sync_everyone();
+    assert!(w.has_doc(g, &proj.id));
+    for i in [0, 2, g] {
+        assert!(!w.has_doc(i, &loose.id), "laptop {i}");
+    }
+
+    // Sari (superadmin) leaves the team: new team documents and project
+    // documents no longer reach her.
+    w.lab.leave_team(0);
+    let (tim, _) = w.add_doc(1, &team, "tim.docx", b"tim");
+    let (proj2, _) = w.add_doc(1, &in_project, "proyek2.docx", b"proyek 2");
+    let (umum, _) = w.add_doc(1, &general(), "umum.docx", b"umum");
+    w.sync_everyone();
+    assert!(!w.has_doc(0, &tim.id));
+    assert!(!w.has_doc(0, &proj2.id));
+    assert!(w.has_doc(0, &umum.id));
+    assert!(w.has_doc(2, &tim.id) && w.has_doc(2, &proj2.id));
 }

@@ -19,8 +19,8 @@
 //! - `commands` Tauri commands for the Dokumen screen.
 //! - `peer_sync` sync with rekan (FeatureSync, BlobSource, DocumentSync).
 //! - `envelope` signed record bodies sent to rekan (documents and signing).
-//! - `scope`   who may see a team or project scope (any key); guest projects
-//!   behind the `GuestProjects` merge point.
+//! - `scope`   who may see a team or project scope (any key), on the board's
+//!   project and guest rules (`board::access`).
 //! - `sync_schema` migration for document and signing sync.
 //! - `test_lab` (tests only) three laptops in one organization.
 

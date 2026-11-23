@@ -23,7 +23,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::documents::access::RoleAccessWith;
 use crate::documents::peer_sync::{DocsPeerSync, HubFetcher, PeerSyncDeps};
-use crate::documents::scope::{GuestProjects, InviteGuestProjects};
+use crate::documents::scope::{BoardGuestProjects, GuestProjects};
 use crate::documents::session::{DocsDeps, DocsEnv, DocumentEvents, Launcher};
 use crate::documents::sync::{DocumentSync, NoSync};
 use crate::documents::watch::DEFAULT_SETTLE;
@@ -189,8 +189,8 @@ impl DocumentsRuntime {
     /// opener plugin (or nothing with [`NO_LAUNCH_ENV`]) and Tauri events.
     pub fn new(app: &AppHandle, state: MiraState) -> Self {
         let app = app.clone();
-        // MERGE POINT (board sync): the real guest projects replace this.
-        let guests: Arc<dyn GuestProjects> = Arc::new(InviteGuestProjects);
+        // Guests follow the board: the projects `board::access` lets them read.
+        let guests: Arc<dyn GuestProjects> = Arc::new(BoardGuestProjects);
         let events: Arc<dyn DocumentEvents> = Arc::new(TauriEvents { app: app.clone() });
         let peer = start_peer_sync(&app, &state, &guests, &events);
         let sync: Arc<dyn DocumentSync> = match &peer {

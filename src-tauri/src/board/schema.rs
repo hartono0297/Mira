@@ -1,7 +1,7 @@
 //! SQLite tables for the board (docs/plans/tahap-3-lokal.md, "Skema SQLite").
 //!
-//! Appended as one entry at the end of `db::migrations::MIGRATIONS`. The final
-//! schema number is decided when the stage branches are merged.
+//! Schema v3 in `db::migrations::MIGRATIONS` (after v2 membership, before v4
+//! documents).
 
 pub const BOARD_SCHEMA: &str = r#"
 CREATE TABLE board_projects (
@@ -51,9 +51,8 @@ CREATE TABLE board_reminders_sent (
 ) STRICT;
 "#;
 
-/// Board sync with other laptops (docs/plans/sinkron-board.md). Appended as
-/// one entry at the end of `db::migrations::MIGRATIONS` (v6 on this branch;
-/// the final number is decided at merge).
+/// Board sync with other laptops (docs/plans/sinkron-board.md): schema v6 in
+/// `db::migrations::MIGRATIONS` (after v5 signing, before v7 chat).
 ///
 /// - `board_changes.record_id`: BLAKE3 of the change's `FeatureRecord` body,
 ///   filled for new rows and backfilled on first use for older rows.

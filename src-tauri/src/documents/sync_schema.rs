@@ -1,6 +1,7 @@
-//! Migration for syncing documents and signing with rekan (one entry at the
-//! end of `db::migrations::MIGRATIONS`; v6 on this branch, the final number
-//! is decided when the parallel branches are merged).
+//! Migration for syncing documents and signing with rekan: schema v8, the
+//! last entry of `db::migrations::MIGRATIONS` (v1 foundation, v2 membership,
+//! v3 board, v4 documents, v5 signing, v6 board sync, v7 chat, v8 document
+//! and signing sync).
 //!
 //! - `docs_sync_records`: every signed document record this laptop holds
 //!   (own and received), the body exactly as sent so it can be forwarded.

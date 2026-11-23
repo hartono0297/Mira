@@ -32,6 +32,7 @@ use crate::clock;
 use crate::documents::access::{DocAction, DocumentAccess};
 use crate::documents::kinds::DocumentKind;
 use crate::documents::office;
+use crate::documents::scope;
 use crate::documents::store::{
     self, DocScope, DocumentDetail, DocumentRecord, DocumentSummary, EditSession, VersionRecord,
 };
@@ -236,11 +237,25 @@ impl DocsEnv {
         paths: &[PathBuf],
         project_id: Option<&str>,
     ) -> AppResult<Vec<DocumentSummary>> {
-        let scope = DocScope {
-            team_id: None,
-            project_id: project_id.map(str::to_owned),
-        };
-        self.core(|db, me| self.access.check(db, me, &scope, DocAction::Add))?;
+        let scope = self.core(|db, me| {
+            // A project document takes the project's team from the board, so
+            // it is shared with exactly the people the board shares it with.
+            let team_id = match project_id {
+                Some(project) => scope::board_team(db, project)?.ok_or_else(|| {
+                    AppError::NotFound(
+                        "Proyek ini tidak ditemukan di laptop ini. Muat ulang daftar proyek, lalu coba lagi."
+                            .into(),
+                    )
+                })?,
+                None => None,
+            };
+            let scope = DocScope {
+                team_id,
+                project_id: project_id.map(str::to_owned),
+            };
+            self.access.check(db, me, &scope, DocAction::Add)?;
+            Ok(scope)
+        })?;
         for path in paths {
             check_source(path)?;
         }

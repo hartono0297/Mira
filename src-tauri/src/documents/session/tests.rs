@@ -675,3 +675,45 @@ fn command_results_use_the_contract_field_names() {
     assert_eq!(detail["versions"][0]["number"], 1);
     h.env.finish_edit(&doc.id).unwrap();
 }
+
+#[test]
+fn project_documents_take_the_board_team() {
+    let h = Harness::new();
+    let now = time::OffsetDateTime::now_utc();
+    let (team, me) = h
+        .env
+        .core(|db, me| {
+            let team = crate::permissions::create_team(db, me, "Tim Proyek", now)?.id;
+            let pk = me.public_key_hex().to_owned();
+            crate::permissions::add_team_member(db, me, &team, &pk, now)?;
+            Ok((team, pk))
+        })
+        .unwrap();
+    let (in_team, no_team) = ("ab".repeat(16), "cd".repeat(16));
+    h.env
+        .core(|db, _| {
+            crate::documents::scope::insert_test_project(db, &in_team, Some(&team), &me);
+            crate::documents::scope::insert_test_project(db, &no_team, None, &me);
+            Ok(())
+        })
+        .unwrap();
+
+    for (project, want) in [(&in_team, Some(team.clone())), (&no_team, None)] {
+        let added = h
+            .env
+            .add_documents(&[h.file("rapat.docx", project)], Some(project))
+            .unwrap();
+        let doc = h
+            .env
+            .core(|db, _| store::get_document(db, &added[0].id))
+            .unwrap();
+        assert_eq!(doc.team_id, want);
+        assert_eq!(doc.project_id.as_deref(), Some(project.as_str()));
+    }
+
+    let err = h
+        .env
+        .add_documents(&[h.file("x.docx", "x")], Some(&"ef".repeat(16)))
+        .unwrap_err();
+    assert_eq!(err.code(), "not_found");
+}

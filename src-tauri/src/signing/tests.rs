@@ -20,7 +20,7 @@ use super::service::{
 };
 use super::session::SignSessions;
 use super::store::{DocumentStore, MemoryStore};
-use crate::documents::scope::InviteGuestProjects;
+use crate::documents::scope::BoardGuestProjects;
 use crate::error::{AppError, AppResult};
 use crate::identity::{self, Identity, MemoryKeyStore};
 use crate::{clock, db, org};
@@ -131,7 +131,7 @@ impl Fx {
             store: &self.store,
             sessions: &self.sessions,
             outbox: &self.outbox,
-            guests: &InviteGuestProjects,
+            guests: &BoardGuestProjects,
             export_dir: &self.export_dir,
             kdf: KdfParams::TEST,
         }
@@ -605,7 +605,7 @@ fn no_organization_means_no_requests() {
         store: &store,
         sessions: &sessions,
         outbox: &outbox,
-        guests: &InviteGuestProjects,
+        guests: &BoardGuestProjects,
         export_dir: dir.path(),
         kdf: KdfParams::TEST,
     };
