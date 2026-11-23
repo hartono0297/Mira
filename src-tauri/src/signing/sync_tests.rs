@@ -13,8 +13,9 @@ use time::OffsetDateTime;
 use super::increment::{self, testing as pdf};
 use super::outbox::LocalOnlyOutbox;
 use super::peer_sync::{
-    CancelledPayload, FileFetcher, Payload, RequestPayload, SignSync, SignedPayload, TURN_TITLE,
-    WireEvent, WireSigner,
+    self, CancelledPayload, Downloading, FileFetcher, MAX_PENDING_PER_AUTHOR,
+    MAX_REJECTED_PER_SIGNER, Payload, RequestPayload, SignSync, SignedPayload, TURN_TITLE,
+    WireEvent, WireSigner, code, request_id_for,
 };
 use super::pin::KdfParams;
 use super::repo::{self, RequestScope};
@@ -493,11 +494,8 @@ fn sequential_a_b_c_converges_everywhere() {
     assert_eq!(b.signers[2].status.as_str(), "waiting");
     assert_eq!(b.rejected.len(), 1);
     assert_eq!(b.rejected[0].signer_name, "Citra");
-    assert!(
-        b.rejected[0].reason.contains("Belum giliran"),
-        "{}",
-        b.rejected[0].reason
-    );
+    assert_eq!(b.rejected[0].code, code::NOT_YOUR_TURN);
+    assert_eq!(b.rejected[0].other_name, None);
 
     w.sign(1, &id, stamp, 30).unwrap();
     w.converge(&ALL3);
@@ -549,11 +547,12 @@ fn parallel_concurrent_signatures_resolve_identically() {
         assert_eq!(d.signers[1].status.as_str(), "signed");
         assert_eq!(d.rejected.len(), 1);
         assert_eq!(d.rejected[0].signer_name, "Budi");
-        assert!(
-            d.rejected[0].reason.contains("bersamaan"),
-            "{}",
-            d.rejected[0].reason
-        );
+        assert_eq!(d.rejected[0].code, code::SKIPPED_CONCURRENT);
+        assert_eq!(d.rejected[0].other_name.as_deref(), Some("Citra"));
+        let j = serde_json::to_value(&d.rejected[0]).unwrap();
+        let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["at", "code", "otherName", "reason", "signerName"]);
     }
     w.assert_identical(&ALL3, &id);
     assert_eq!(w.detail(1, &id).summary.my_state.as_str(), "your_turn");
@@ -590,25 +589,68 @@ fn version_that_changes_content_is_rejected_everywhere() {
 
     // Record yang melewati cek lokal tetap ditolak di semua laptop.
     let tampered = pdf::tamper(&orig, &seal::doc_tag(&id));
-    let expected = increment::check_increment(&orig, &tampered)
-        .unwrap_err()
-        .message;
+    let expected = increment::check_increment(&orig, &tampered).unwrap_err();
     let rec = w.seal_as(
         1,
         &w.signed_payload(1, &id, &d.original_hash, &tampered, false, 20),
     );
     assert_eq!(w.ingest(1, 1, rec), (1, 0));
     w.converge(&ALL3);
+    // Laptop Budi menolaknya dan tidak mengirim file versi yang ditolak, jadi
+    // laptop lain menunggu dan tidak memakainya.
+    let tampered_hash = seal::hash_hex(&tampered);
     for i in ALL3 {
         let d = w.detail(i, &id);
         assert_eq!(d.current_hash, d.original_hash, "laptop {i}");
         assert_eq!(d.summary.signed_count, 0);
+        assert_eq!(d.rejected.len(), usize::from(i == 1), "laptop {i}");
+        assert_eq!(d.summary.pending, i != 1, "laptop {i}");
+        assert!(
+            w.nodes[1]
+                .sync
+                .blob_path_for(&w.pk(i), &tampered_hash)
+                .is_none()
+        );
+    }
+    // File yang sampai lewat jalan lain ditolak dengan alasan yang sama.
+    for i in [0, 2] {
+        let path = w.lab.laptops[i].data_dir().join("rusak.part");
+        std::fs::write(&path, &tampered).unwrap();
+        w.nodes[i]
+            .sync
+            .add_downloaded(&path, &tampered_hash)
+            .unwrap();
+    }
+    for i in ALL3 {
+        let d = w.detail(i, &id);
+        assert_eq!(d.current_hash, d.original_hash, "laptop {i}");
         assert_eq!(d.rejected.len(), 1);
-        assert_eq!(d.rejected[0].reason, expected);
+        assert_eq!(d.rejected[0].reason, expected.message);
+        assert_eq!(d.rejected[0].code, expected.code);
         assert!(!d.summary.pending);
     }
     w.assert_identical(&ALL3, &id);
     assert_eq!(w.detail(1, &id).summary.my_state.as_str(), "your_turn");
+
+    // Citra menandatangani di atas versi yang ditolak itu.
+    let on_top = stamp(&tampered, &seal::doc_tag(&id));
+    let rec = w.seal_as(
+        2,
+        &w.signed_payload(2, &id, &tampered_hash, &on_top, true, 30),
+    );
+    assert_eq!(w.ingest(2, 2, rec), (1, 0));
+    w.converge(&ALL3);
+    for i in ALL3 {
+        let d = w.detail(i, &id);
+        assert_eq!(d.rejected.len(), 2, "laptop {i}");
+        let citra = d
+            .rejected
+            .iter()
+            .find(|r| r.signer_name == "Citra")
+            .unwrap();
+        assert_eq!(citra.code, code::ON_REJECTED);
+    }
+    w.assert_identical(&ALL3, &id);
 }
 
 #[test]
@@ -800,10 +842,12 @@ fn guest_signs_only_in_allowed_project_and_never_requests() {
 
     // ...dan record permintaan buatan Tamu ditolak laptop lain.
     let hash = seal::hash_hex(&sample);
-    let rid = "e".repeat(32);
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(g), &salt);
     let created = w.event(g, &rid, EventKind::Created, None, Some(&hash), 5);
     let from_guest = Payload::Request(RequestPayload {
         id: rid.clone(),
+        salt,
         title: "Dari Tamu".into(),
         mode: SignMode::Parallel,
         requested_by: w.pk(g),
@@ -821,10 +865,12 @@ fn guest_signs_only_in_allowed_project_and_never_requests() {
     assert_eq!(w.ingest(1, g, w.seal_as(g, &from_guest)), (0, 1));
 
     // Record permintaan tanpa proyek yang memasukkan Tamu ditolak di mana pun.
-    let rid = "f".repeat(32);
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(0), &salt);
     let created = w.event(0, &rid, EventKind::Created, None, Some(&hash), 5);
     let no_project = Payload::Request(RequestPayload {
         id: rid,
+        salt,
         title: "Tanpa proyek".into(),
         mode: SignMode::Parallel,
         requested_by: w.pk(0),
@@ -1010,4 +1056,328 @@ fn records_arriving_out_of_order_wait_then_apply() {
     assert_eq!(a.summary.status, RequestStatus::Completed);
     assert_eq!(a.seal_valid, Some(true));
     w.assert_identical(&[0, 1], &id);
+}
+
+fn request_payload_from(
+    w: &World,
+    author: usize,
+    id: &str,
+    salt: &str,
+    original: &[u8],
+    signers: &[(usize, &str)],
+) -> Payload {
+    let hash = seal::hash_hex(original);
+    let created = w.event(author, id, EventKind::Created, None, Some(&hash), 4);
+    Payload::Request(RequestPayload {
+        id: id.to_owned(),
+        salt: salt.to_owned(),
+        title: "Kontrak".into(),
+        mode: SignMode::Parallel,
+        requested_by: w.pk(author),
+        team_id: None,
+        project_id: None,
+        original_hash: hash,
+        original_size: original.len() as u64,
+        created_at: created.at.clone(),
+        signers: signers
+            .iter()
+            .map(|&(i, name)| WireSigner {
+                public_key: w.pk(i),
+                display_name: name.into(),
+            })
+            .collect(),
+        created,
+    })
+}
+
+#[test]
+fn request_id_cannot_be_taken_by_another_laptop() {
+    let w = World::new(&["Sari", "Budi", "Citra"]);
+    let sample = pdf::sample_pdf(1);
+    assert_ne!(
+        request_id_for(&w.pk(0), "aa"),
+        request_id_for(&w.pk(2), "aa")
+    );
+    assert_ne!(
+        request_id_for(&w.pk(0), "aa"),
+        request_id_for(&w.pk(0), "ab")
+    );
+
+    let d = w.create(0, &sample, "parallel", &[1], &no_scope()).unwrap();
+    let id = d.summary.id.clone();
+
+    // Citra memakai id permintaan Sari dengan dirinya sebagai pengirim, dan
+    // recordnya sampai ke Budi lebih dulu: ditolak.
+    let salt = peer_sync::new_salt();
+    let forged = request_payload_from(&w, 2, &id, &salt, &sample, &[(1, "Budi")]);
+    assert_eq!(w.ingest(1, 2, w.seal_as(2, &forged)), (0, 1));
+    // Salt kosong (record lama) juga ditolak.
+    let old_id = request_id_for(&w.pk(2), "");
+    let old = request_payload_from(&w, 2, &old_id, "", &sample, &[(1, "Budi")]);
+    assert_eq!(w.ingest(1, 2, w.seal_as(2, &old)), (0, 1));
+    // Permintaan Citra dengan id dari kuncinya sendiri diterima.
+    let salt = peer_sync::new_salt();
+    let own_id = request_id_for(&w.pk(2), &salt);
+    let own = request_payload_from(&w, 2, &own_id, &salt, &sample, &[(1, "Budi")]);
+    assert_eq!(w.ingest(1, 2, w.seal_as(2, &own)), (1, 0));
+
+    // Permintaan Sari yang asli tetap sampai.
+    w.converge(&[0, 1]);
+    let b = w.detail(1, &id);
+    assert_eq!(b.summary.requested_by_name, "Sari");
+    assert_eq!(b.summary.title, "Kontrak Sewa");
+}
+
+#[test]
+fn files_of_rejected_or_foreign_records_are_not_served() {
+    let w = World::new(&["Sari", "Budi", "Citra"]);
+    let orig = pdf::sample_pdf(1);
+    let d = w.create(0, &orig, "parallel", &[1], &no_scope()).unwrap();
+    let id = d.summary.id.clone();
+    w.converge(&ALL3);
+    let sari = &w.nodes[0].sync;
+    assert!(sari.blob_path_for(&w.pk(1), &d.original_hash).is_some());
+
+    // File lain yang dipegang Sari (bukan bagian permintaan mana pun).
+    let secret = pdf::sample_pdf(3);
+    let secret_hash = sari.store().put(&secret).unwrap();
+    assert!(sari.blob_path_for(&w.pk(1), &secret_hash).is_none());
+
+    // Budi mengakuinya sebagai versi bertanda tangannya: record disimpan dan
+    // ditolak, dan filenya tetap tidak dikirim ke siapa pun.
+    let claim = w.signed_payload(1, &id, &d.original_hash, &secret, true, 20);
+    assert_eq!(w.ingest(0, 1, w.seal_as(1, &claim)), (1, 0));
+    let a = w.detail(0, &id);
+    assert_eq!(a.rejected.len(), 1);
+    assert_eq!(a.rejected[0].code, "version_not_prefix");
+    for peer in [1, 2] {
+        assert!(
+            sari.blob_path_for(&w.pk(peer), &secret_hash).is_none(),
+            "laptop {peer}"
+        );
+    }
+
+    // File permintaan lain yang tidak melibatkan Budi: record Budi yang
+    // memakainya ditolak sebelum disimpan.
+    let other = pdf::sample_pdf(4);
+    let d2 = w.create(0, &other, "parallel", &[2], &no_scope()).unwrap();
+    let before = w.record_count(0, &id);
+    let claim = w.signed_payload(1, &id, &d.original_hash, &other, true, 25);
+    assert_eq!(w.ingest(0, 1, w.seal_as(1, &claim)), (0, 1));
+    assert_eq!(w.record_count(0, &id), before);
+    assert!(sari.blob_path_for(&w.pk(1), &d2.original_hash).is_none());
+    assert!(sari.blob_path_for(&w.pk(2), &d2.original_hash).is_some());
+}
+
+#[test]
+fn file_of_a_hidden_document_is_not_served_through_a_request() {
+    let w = World::new(&["Sari", "Budi"]);
+    let secret = pdf::sample_pdf(2);
+    let sari = &w.nodes[0].sync;
+    let hash = sari.store().put(&secret).unwrap();
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(1), &salt);
+    let req = request_payload_from(&w, 1, &rid, &salt, &secret, &[(0, "Sari")]);
+
+    // Permintaan Budi sampai sebelum Sari memegang file itu sebagai dokumen.
+    assert_eq!(w.ingest(0, 1, w.seal_as(1, &req)), (1, 0));
+    assert!(sari.blob_path_for(&w.pk(1), &hash).is_some());
+
+    // File yang sama ternyata versi dokumen di tim yang tidak boleh dilihat
+    // Budi: tidak dikirim lagi lewat permintaan itu.
+    let hidden_team = "9".repeat(32);
+    let doc = "d".repeat(32);
+    let now = clock::now_rfc3339();
+    w.lab.laptops[0].with(|c| {
+        c.db.execute(
+            "INSERT INTO documents (id, team_id, project_id, name, kind, created_by, created_at)
+             VALUES (?1, ?2, NULL, 'Rahasia.pdf', 'pdf', ?3, ?4)",
+            params![doc, hidden_team, w.pk(0), now],
+        )
+        .unwrap();
+        c.db.execute(
+            "INSERT INTO document_versions (id, document_id, seq, blob_hash, size, author, created_at, origin)
+             VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, 'added')",
+            params!["e".repeat(32), doc, hash, secret.len() as i64, w.pk(0), now],
+        )
+        .unwrap();
+    });
+    assert!(sari.blob_path_for(&w.pk(1), &hash).is_none());
+
+    // Permintaan baru dengan file itu ditolak saat diterima.
+    let salt = peer_sync::new_salt();
+    let rid = request_id_for(&w.pk(1), &salt);
+    let again = request_payload_from(&w, 1, &rid, &salt, &secret, &[(0, "Sari")]);
+    assert_eq!(w.ingest(0, 1, w.seal_as(1, &again)), (0, 1));
+}
+
+#[test]
+fn rejected_and_pending_records_are_capped() {
+    let w = World::new(&["Sari", "Budi"]);
+    w.save_signature(1);
+    let orig = pdf::sample_pdf(1);
+    let d = w.create(0, &orig, "parallel", &[1], &no_scope()).unwrap();
+    let id = d.summary.id.clone();
+    w.converge(&[0, 1]);
+
+    // Versi yang ditolak dari satu penanda tangan: paling banyak
+    // MAX_REJECTED_PER_SIGNER, sisanya dibuang dan dicatat.
+    let extra = 2;
+    let recs: Vec<FeatureRecord> = (0..MAX_REJECTED_PER_SIGNER + extra)
+        .map(|i| {
+            let bad = pdf::tamper(&orig, &format!("{}{i}", seal::doc_tag(&id)));
+            let p = w.signed_payload(1, &id, &d.original_hash, &bad, true, 20 + i);
+            w.seal_as(1, &p)
+        })
+        .collect();
+    let bad_files: Vec<Vec<u8>> = (0..MAX_REJECTED_PER_SIGNER)
+        .map(|i| pdf::tamper(&orig, &format!("{}{i}", seal::doc_tag(&id))))
+        .collect();
+    let got = w.nodes[0].sync.ingest(&w.pk(1), recs).unwrap();
+    assert_eq!(got.accepted as i64, MAX_REJECTED_PER_SIGNER);
+    assert_eq!(got.rejected as i64, extra);
+    // Filenya sampai (laptop Budi tidak mengirim versi yang ditolak).
+    for (i, bad) in bad_files.iter().enumerate() {
+        let path = w.lab.laptops[0].data_dir().join(format!("rusak-{i}.part"));
+        std::fs::write(&path, bad).unwrap();
+        w.nodes[0]
+            .sync
+            .add_downloaded(&path, &seal::hash_hex(bad))
+            .unwrap();
+    }
+    w.converge(&[0, 1]);
+    let a = w.detail(0, &id);
+    assert_eq!(a.rejected.len() as i64, MAX_REJECTED_PER_SIGNER);
+    assert!(!a.summary.pending);
+    // Setelah batas itu, record Budi berikutnya untuk permintaan ini dibuang
+    // di laptop Sari (termasuk yang sah) dan dicatat.
+    let logged = |w: &World| -> i64 {
+        w.lab.laptops[0].with(|c| {
+            c.db.query_row(
+                "SELECT COUNT(*) FROM rejected_changes WHERE code = 'sign_rejected'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        })
+    };
+    let before = logged(&w);
+    w.sign(1, &id, pdf::stamp_with_audit_page, 90).unwrap();
+    w.sync(&[0, 1]);
+    assert_eq!(w.detail(0, &id).summary.status, RequestStatus::InProgress);
+    assert_eq!(logged(&w), before + 1);
+    assert_eq!(w.record_count(0, &id), 1 + MAX_REJECTED_PER_SIGNER);
+
+    // Record untuk permintaan yang tidak dikenal: paling banyak
+    // MAX_PENDING_PER_AUTHOR per penulis.
+    let next = stamp(&orig, "x");
+    let recs: Vec<FeatureRecord> = (0..=MAX_PENDING_PER_AUTHOR)
+        .map(|i| {
+            let rid = request_id_for(&w.pk(1), &format!("{i:032x}"));
+            let p = w.signed_payload(1, &rid, &d.original_hash, &next, false, i);
+            w.seal_as(1, &p)
+        })
+        .collect();
+    let got = w.nodes[0].sync.ingest(&w.pk(1), recs).unwrap();
+    assert_eq!(got.accepted as i64, MAX_PENDING_PER_AUTHOR);
+    assert_eq!(got.rejected, 1);
+    let pending = |w: &World| -> i64 {
+        w.lab.laptops[0].with(|c| {
+            c.db.query_row(
+                "SELECT COUNT(*) FROM sign_sync_records WHERE state = 'pending'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        })
+    };
+    assert_eq!(pending(&w), MAX_PENDING_PER_AUTHOR);
+
+    // Setelah 7 hari tanpa data permintaan, record itu dihapus.
+    let old = clock::format_rfc3339(clock::now() - time::Duration::days(8));
+    w.lab.laptops[0].with(|c| {
+        c.db.execute(
+            "UPDATE sign_sync_records SET received_at = ?1 WHERE state = 'pending'",
+            params![old],
+        )
+        .unwrap();
+    });
+    let rid = request_id_for(&w.pk(1), "baru");
+    let p = w.signed_payload(1, &rid, &d.original_hash, &next, false, 500);
+    assert_eq!(w.ingest(0, 1, w.seal_as(1, &p)), (1, 0));
+    assert_eq!(pending(&w), 1);
+}
+
+#[test]
+fn downloads_cover_current_and_pending_versions_only() {
+    let w = World::new(&["Sari", "Budi", "Citra"]);
+    w.save_signature(1);
+    w.save_signature(2);
+    let d = w
+        .create(0, &pdf::sample_pdf(1), "parallel", &[1, 2], &no_scope())
+        .unwrap();
+    let id = d.summary.id.clone();
+    w.converge(&ALL3);
+
+    // Budi menandatangani; Citra menerima recordnya, belum filenya.
+    let v1 = w.sign(1, &id, stamp, 20).unwrap().current_hash;
+    w.sync(&ALL3);
+    let c = w.detail(2, &id);
+    assert!(c.summary.pending);
+    let missing = w.nodes[2].sync.missing_files(&id).unwrap();
+    assert_eq!(
+        missing.iter().map(|m| m.hash.as_str()).collect::<Vec<_>>(),
+        vec![v1.as_str()]
+    );
+    assert_eq!(c.summary.download_size, missing[0].size);
+    assert_eq!(missing[0].size, w.read(1, &v1).len() as u64);
+
+    // Selama file itu diunduh, permintaan tampil `downloading`.
+    assert!(!c.summary.downloading);
+    let store = w.nodes[2].sync.store();
+    let guard = Downloading::begin(store, &v1).unwrap();
+    assert!(
+        Downloading::begin(store, &v1).is_none(),
+        "satu unduhan per file"
+    );
+    assert!(w.detail(2, &id).summary.downloading);
+    assert!(!w.detail(0, &id).summary.downloading);
+    drop(guard);
+    assert!(!w.detail(2, &id).summary.downloading);
+
+    w.converge(&ALL3);
+    let c = w.detail(2, &id);
+    assert!(!c.summary.pending);
+    assert_eq!(c.summary.download_size, 0);
+    assert_eq!(c.current_hash, v1);
+    // Bukti stempel dicatat (di luar kunci inti), dengan aturannya.
+    let cached: String = w.lab.laptops[2].with(|c| {
+        c.db.query_row(
+            "SELECT reason FROM sign_proof_checks WHERE hash_after = ?1",
+            params![v1],
+            |r| r.get(0),
+        )
+        .unwrap()
+    });
+    assert!(cached.contains("\"completing\":false"), "{cached}");
+
+    w.sign(2, &id, pdf::stamp_with_audit_page, 30).unwrap();
+    w.converge(&ALL3);
+    for i in ALL3 {
+        let stuck: i64 = w.lab.laptops[i].with(|c| {
+            c.db.query_row(
+                "SELECT COUNT(*) FROM sign_sync_records WHERE state != 'ok'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        });
+        assert_eq!(stuck, 0, "laptop {i}");
+    }
+
+    // Setelah rantai berjalan, versi asli tidak diminta lagi.
+    let h = crate::blobs::BlobHash::parse(&d.original_hash).unwrap();
+    w.lab.laptops[1].blobs().remove(&h).unwrap();
+    assert!(w.nodes[1].sync.missing_files(&id).unwrap().is_empty());
+    assert_eq!(w.detail(1, &id).summary.download_size, 0);
 }

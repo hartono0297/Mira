@@ -24,7 +24,7 @@ use zeroize::Zeroizing;
 
 use super::err;
 use super::outbox::{HubOutbox, LocalOnlyOutbox, SignOutbox};
-use super::peer_sync::{self, SignSync};
+use super::peer_sync::{self, Downloading, SignSync};
 use super::pin::KdfParams;
 use super::repo::RequestScope;
 use super::service::{
@@ -92,12 +92,12 @@ fn run<T>(
     })
 }
 
+/// Pesan untuk pengguna tetap sederhana; rinciannya hanya ke log.
 fn not_available(detail: impl std::fmt::Display) -> AppError {
+    eprintln!("Mira: file tanda tangan belum bisa diunduh: {detail}");
     err(
         "not_available",
-        format!(
-            "File ini belum bisa diunduh: tidak ada laptop rekan tersambung yang menyimpannya. Pastikan laptop pengirim atau penanda tangan menyala dan tersambung, lalu coba lagi. Detail: {detail}"
-        ),
+        "File ini belum bisa diunduh: tidak ada laptop rekan tersambung yang menyimpannya. Pastikan laptop pengirim atau penanda tangan menyala dan tersambung, lalu coba lagi.",
     )
 }
 
@@ -284,9 +284,11 @@ pub async fn sign_create_request(
     })
 }
 
-/// Mengunduh file versi permintaan yang belum ada di laptop ini (termasuk
-/// yang lebih dari 20 MB) dari laptop rekan, lalu mengembalikan rinciannya.
-/// Error `not_available` kalau tidak ada rekan tersambung yang menyimpannya.
+/// Mengunduh file permintaan yang belum ada di laptop ini (versi terkini dan
+/// versi baru yang menunggu, lihat `peer_sync::wanted_files`; termasuk yang
+/// lebih dari 20 MB) dari laptop rekan, lalu mengembalikan rinciannya. File
+/// yang sedang diunduh otomatis dilewati (rinciannya `downloading`). Error
+/// `not_available` kalau tidak ada rekan tersambung yang menyimpannya.
 #[tauri::command]
 pub async fn sign_download_file(
     app: AppHandle,
@@ -310,8 +312,15 @@ pub async fn sign_download_file(
     };
     let fetched = !missing.is_empty();
     for file in missing {
+        let Some(guard) = Downloading::begin(sync.store(), &file.hash) else {
+            continue;
+        };
         let dest = sync.download_path(&file.hash)?;
-        let max = file.size.min(MAX_SIGNED_PDF_BYTES as u64);
+        // Ukuran 0 = tidak diketahui: batasnya ukuran PDF bertanda tangan.
+        let max = match file.size {
+            0 => MAX_SIGNED_PDF_BYTES as u64,
+            n => n.min(MAX_SIGNED_PDF_BYTES as u64),
+        };
         if let Err(e) = hub.fetch_blob(&file.hash, max, file.prefer, &dest).await {
             let _ = std::fs::remove_file(&dest);
             return Err(not_available(e));
@@ -320,6 +329,7 @@ pub async fn sign_download_file(
         tauri::async_runtime::spawn_blocking(move || sync.add_downloaded(&dest, &hash))
             .await
             .map_err(join_error)??;
+        drop(guard);
     }
     if fetched {
         peer_sync::emit_changed(&app);
