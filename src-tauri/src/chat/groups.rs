@@ -123,11 +123,11 @@ pub struct Member {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventKind {
-    /// The creator and the other first members (eligible ones only).
+    /// The creator and the other first members.
     Created {
         members: Vec<String>,
     },
-    /// Who actually joined (eligible and not already members).
+    /// Who actually joined (not already members).
     Added {
         members: Vec<String>,
     },
@@ -666,18 +666,20 @@ mod tests {
     }
 
     #[test]
-    fn create_makes_creator_owner_and_skips_ineligible_members() {
+    fn create_makes_creator_owner_and_keeps_every_first_member() {
+        // Joining ignores `eligible` (the judge refuses guests and unknown
+        // keys; the audience leaves out people removed from the org later).
         let s = run(&[create(1, 'a', 0, &['b', 'c', 'e'])]);
-        assert_eq!(pks(&s), keys(&['a', 'b', 'c']));
+        assert_eq!(pks(&s), keys(&['a', 'b', 'c', 'e']));
         assert_eq!(
             s.members.iter().map(|m| m.seq).collect::<Vec<_>>(),
-            [0, 1, 2]
+            [0, 1, 2, 3]
         );
         assert!(s.members.iter().all(|m| m.added_by == k('a')));
         assert_eq!(s.owner, Some(k('a')));
         assert_eq!(s.creator, k('a'));
         assert_eq!(s.name, "Tim");
-        assert!(!s.ever_member(&k('e')));
+        assert!(s.ever_member(&k('e')));
         assert_eq!(
             s.events,
             [GroupEvent {
@@ -685,7 +687,7 @@ mod tests {
                 at: t(0),
                 author: k('a'),
                 kind: EventKind::Created {
-                    members: keys(&['a', 'b', 'c'])
+                    members: keys(&['a', 'b', 'c', 'e'])
                 },
             }]
         );
@@ -719,7 +721,7 @@ mod tests {
     fn member_adds_and_non_member_add_is_ignored() {
         let s = run(&[
             create(1, 'a', 0, &['b']),
-            add(2, 'b', 1, &[1], &['c', 'e', 'a']),
+            add(2, 'b', 1, &[1], &['c', 'a']),
             add(3, 'f', 2, &[2], &['d']),
         ]);
         assert_eq!(pks(&s), keys(&['a', 'b', 'c']));
@@ -739,7 +741,7 @@ mod tests {
 
     #[test]
     fn add_with_nobody_new_applies_without_event() {
-        let s = run(&[create(1, 'a', 0, &['b']), add(2, 'a', 1, &[1], &['b', 'e'])]);
+        let s = run(&[create(1, 'a', 0, &['b']), add(2, 'a', 1, &[1], &['b', 'a'])]);
         assert!(s.applied.contains(&id(2)));
         assert_eq!(s.events.len(), 1);
     }
