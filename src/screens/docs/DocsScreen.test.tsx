@@ -260,6 +260,25 @@ describe("Layar Dokumen", () => {
     await waitFor(() => expect(title).toHaveFocus());
   });
 
+  it("kotak bentrok yang dipasang ulang karena ganti lokasi tidak memindah fokus", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [kontrak, laporan], p1: [denah] });
+    render(<DocsScreen />);
+    await screen.findByRole("heading", { level: 2, name: "kontrak.docx" });
+
+    await user.click(within(row("kontrak.docx")).getByRole("button", { name: "Selesaikan bentrok kontrak.docx" }));
+    const title = screen.getByRole("heading", { level: 3, name: "Dua versi tersimpan berdampingan" });
+    await waitFor(() => expect(title).toHaveFocus());
+
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    await user.selectOptions(select, await screen.findByRole("option", { name: "PA Gudang" }));
+    await screen.findByRole("heading", { level: 2, name: "denah-gudang.pdf" });
+    await user.selectOptions(select, "Pustaka Umum");
+    await screen.findByRole("heading", { level: 3, name: "Dua versi tersimpan berdampingan" });
+    expect(select).toHaveFocus();
+  });
+
   it("memulihkan versi lama meminta konfirmasi dulu", async () => {
     const user = userEvent.setup();
     setup([laporan]);
@@ -566,8 +585,9 @@ describe("Layar Dokumen", () => {
     await screen.findByText("notulen.docx", { selector: ".doc-name" });
     const r = row("notulen.docx");
     expect(within(r).getByText("Versi 2 sedang disalin dari laptop rekan")).toBeInTheDocument();
-    // Hanya tombol pilih file; tidak ada Edit, Buka, atau Unduh.
-    expect(within(r).getAllByRole("button")).toHaveLength(1);
+    // Hanya tombol pilih file dan tombol menu; tidak ada Edit, Buka, atau Unduh.
+    expect(within(r).getAllByRole("button")).toHaveLength(2);
+    expect(within(r).getByRole("button", { name: "Aksi lain untuk notulen.docx" })).toBeInTheDocument();
 
     const history = await screen.findByRole("list", { name: "Riwayat versi notulen.docx" });
     const v2 = within(history).getAllByRole("listitem")[0];
@@ -871,5 +891,232 @@ describe("Lokasi dokumen untuk Tamu", () => {
     expect(await screen.findByRole("heading", { name: "Belum ada file di proyek PA Gudang" })).toBeInTheDocument();
     expect(screen.getByText("File yang ditambahkan anggota proyek muncul di sini. Tamu bisa membuka file, tetapi tidak menambahkannya.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Tambah file" })).toBeNull();
+  });
+});
+
+// Menu klik kanan di baris file: item mengikuti keadaan file seperti tombol baris.
+function menuIds(menu: HTMLElement): (string | null)[] {
+  return Array.from(menu.querySelectorAll("[data-menu-item]")).map((el) => el.getAttribute("data-menu-item"));
+}
+
+async function rightClick(user: ReturnType<typeof userEvent.setup>, name: string): Promise<HTMLElement> {
+  await user.pointer({ keys: "[MouseRight]", target: screen.getByText(name, { selector: ".doc-name" }) });
+  return screen.getByRole("menu", { name: `Aksi untuk ${name}` });
+}
+
+function item(menu: HTMLElement, id: string): HTMLElement {
+  const el = menu.querySelector<HTMLElement>(`[data-menu-item="${id}"]`);
+  if (!el) throw new Error(`item ${id} tidak ada`);
+  return el;
+}
+
+describe("Menu klik kanan baris file", () => {
+  it("file biasa: Edit, Buka hanya baca, riwayat, Simpan salinan, Salin nama; Simpan salinan berjalan lewat menu", async () => {
+    const user = userEvent.setup();
+    setup([laporan]);
+    docsApi.pickExportDestination.mockResolvedValue("C:\\Salinan\\laporan-bulanan.docx");
+    docsApi.exportVersion.mockResolvedValue(undefined);
+    render(<DocsScreen />);
+    await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" });
+
+    const menu = await rightClick(user, "laporan-bulanan.docx");
+    expect(menuIds(menu)).toEqual(["edit", "open", "history", "export", "copy-name"]);
+    expect(item(menu, "edit")).toHaveTextContent("Edit di Word");
+    expect(item(menu, "open")).toHaveTextContent("Buka hanya baca");
+    expect(item(menu, "edit")).toHaveFocus();
+
+    await user.click(item(menu, "export"));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(docsApi.pickExportDestination).toHaveBeenCalledWith("laporan-bulanan.docx");
+    await waitFor(() =>
+      expect(docsApi.exportVersion).toHaveBeenCalledWith("d1", "d1-v3", "C:\\Salinan\\laporan-bulanan.docx"),
+    );
+    expect(await screen.findByText("Salinan versi 3 disimpan di C:\\Salinan\\laporan-bulanan.docx.")).toBeInTheDocument();
+  });
+
+  it("item menu mengikuti keadaan: diedit di laptop ini, diedit rekan, bentrok, PDF", async () => {
+    const user = userEvent.setup();
+    setup([rab, jadwal, kontrak, brosur]);
+    docsApi.finishEdit.mockResolvedValue({ ...rab, editing: [] });
+    render(<DocsScreen />);
+    await screen.findByText("RAB-proyek.xlsx", { selector: ".doc-name" });
+
+    let menu = await rightClick(user, "RAB-proyek.xlsx");
+    expect(menuIds(menu)).toEqual(["edit", "finish", "history", "export", "copy-name"]);
+    expect(item(menu, "edit")).toHaveTextContent("Buka lagi");
+    await user.keyboard("{Escape}");
+
+    menu = await rightClick(user, "jadwal.xlsx");
+    expect(menuIds(menu)).toEqual(["open", "history", "export", "copy-name"]);
+    expect(item(menu, "open")).toHaveTextContent("Buka hanya baca");
+    await user.keyboard("{Escape}");
+
+    // Bentrok: "versi sekarang" belum pasti, jadi salinan disimpan per versi dari panel detail.
+    menu = await rightClick(user, "kontrak.docx");
+    expect(menuIds(menu)).toEqual(["conflict", "history", "copy-name"]);
+    expect(item(menu, "conflict")).toHaveTextContent("Selesaikan bentrok");
+    await user.keyboard("{Escape}");
+
+    menu = await rightClick(user, "brosur.pdf");
+    expect(menuIds(menu)).toEqual(["open", "history", "export", "copy-name"]);
+    expect(item(menu, "open")).toHaveTextContent(/^Buka$/);
+    await user.keyboard("{Escape}");
+
+    menu = await rightClick(user, "RAB-proyek.xlsx");
+    await user.click(item(menu, "finish"));
+    expect(docsApi.finishEdit).toHaveBeenCalledWith("d2");
+    expect(await screen.findByText("Selesai mengedit RAB-proyek.xlsx. Rekan sekarang bisa mengeditnya.")).toBeInTheDocument();
+  });
+
+  it("isi belum ada di laptop ini: Unduh dari rekan untuk file besar, Simpan salinan nonaktif dengan alasan", async () => {
+    const user = userEvent.setup();
+    setup([besar, kecil]);
+    docsApi.downloadVersion.mockResolvedValue({ ...besar, current: { ...besar.current, available: true } });
+    render(<DocsScreen />);
+    await screen.findByText("gambar-kerja.docx", { selector: ".doc-name" });
+
+    let menu = await rightClick(user, "gambar-kerja.docx");
+    expect(menuIds(menu)).toEqual(["download", "history", "export", "copy-name"]);
+    expect(item(menu, "download")).toHaveTextContent("Unduh dari rekan (45 MB)");
+    expect(item(menu, "export")).toHaveAttribute("aria-disabled", "true");
+    expect(item(menu, "export")).toHaveAccessibleDescription("Unduh dulu isinya dari rekan");
+    await user.click(item(menu, "export"));
+    expect(docsApi.pickExportDestination).not.toHaveBeenCalled();
+    await user.click(item(menu, "download"));
+    expect(docsApi.downloadVersion).toHaveBeenCalledWith("d6", "d6-v2");
+    expect(await screen.findByText("Isi versi 2 dari gambar-kerja.docx sudah ada di laptop ini.")).toBeInTheDocument();
+
+    // Versi kecil yang sedang disalin otomatis: tanpa Unduh.
+    menu = await rightClick(user, "notulen.docx");
+    expect(menuIds(menu)).toEqual(["history", "export", "copy-name"]);
+    expect(item(menu, "export")).toHaveAccessibleDescription("Isinya masih disalin dari laptop rekan");
+  });
+
+  it("tanpa hak edit dan simpan salinan: hanya Buka hanya baca, riwayat, Salin nama; bentrok hanya dilihat", async () => {
+    const user = userEvent.setup();
+    const none = { edit: false, restore: false, resolve: false, export: false };
+    const tamuDoc = summary("t1", "spesifikasi.docx", { can: none });
+    const tamuKontrak = { ...kontrak, id: "t2", name: "kontrak-tamu.docx", can: none };
+    setup([tamuDoc, tamuKontrak]);
+    render(<DocsScreen />);
+    await screen.findByText("spesifikasi.docx", { selector: ".doc-name" });
+
+    let menu = await rightClick(user, "spesifikasi.docx");
+    expect(menuIds(menu)).toEqual(["open", "history", "copy-name"]);
+    expect(item(menu, "open")).toHaveTextContent("Buka hanya baca");
+    await user.keyboard("{Escape}");
+
+    menu = await rightClick(user, "kontrak-tamu.docx");
+    expect(menuIds(menu)).toEqual(["conflict", "history", "copy-name"]);
+    expect(item(menu, "conflict")).toHaveTextContent("Lihat bentrok");
+  });
+
+  it("tombol ... membuka menu yang sama, Shift+F10 dari baris terfokus juga", async () => {
+    const user = userEvent.setup();
+    setup([laporan]);
+    docsApi.startEdit.mockResolvedValue(laporan);
+    render(<DocsScreen />);
+    await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" });
+    const r = row("laporan-bulanan.docx");
+
+    const more = within(r).getByRole("button", { name: "Aksi lain untuk laporan-bulanan.docx" });
+    expect(more).toHaveAttribute("aria-haspopup", "menu");
+    await user.click(more);
+    let menu = screen.getByRole("menu", { name: "Aksi untuk laporan-bulanan.docx" });
+    expect(menuIds(menu)).toEqual(["edit", "open", "history", "export", "copy-name"]);
+    await user.keyboard("{Escape}");
+    expect(more).toHaveFocus();
+
+    const pick = r.querySelector<HTMLElement>("[data-doc-pick]");
+    act(() => pick?.focus());
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    menu = screen.getByRole("menu", { name: "Aksi untuk laporan-bulanan.docx" });
+    expect(item(menu, "edit")).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(docsApi.startEdit).toHaveBeenCalledWith("d1", null);
+    expect(await screen.findByText(/laporan-bulanan\.docx dibuka di Word/)).toBeInTheDocument();
+  });
+
+  it("selama aksi lain berjalan, item yang mengubah data nonaktif dengan alasan", async () => {
+    const user = userEvent.setup();
+    setup([laporan, brosur]);
+    let finish: (value: DocumentSummary) => void = () => {};
+    docsApi.startEdit.mockImplementation(() => new Promise<DocumentSummary>((resolve) => (finish = resolve)));
+    render(<DocsScreen />);
+    await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" });
+
+    await user.click(within(row("laporan-bulanan.docx")).getByRole("button", { name: "Edit di Word laporan-bulanan.docx" }));
+    let menu = await rightClick(user, "laporan-bulanan.docx");
+    expect(item(menu, "edit")).toHaveAttribute("aria-disabled", "true");
+    expect(item(menu, "edit")).toHaveAccessibleDescription("Membuka...");
+    expect(item(menu, "open")).toHaveAccessibleDescription("Tunggu aksi lain selesai");
+    await user.keyboard("{Escape}");
+
+    menu = await rightClick(user, "brosur.pdf");
+    expect(item(menu, "open")).toHaveAttribute("aria-disabled", "true");
+    expect(item(menu, "export")).toHaveAttribute("aria-disabled", "true");
+    expect(item(menu, "history")).not.toHaveAttribute("aria-disabled");
+    expect(item(menu, "copy-name")).not.toHaveAttribute("aria-disabled");
+    await user.click(item(menu, "open"));
+    expect(docsApi.openReadOnly).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+
+    await act(async () => finish(laporan));
+    menu = await rightClick(user, "brosur.pdf");
+    expect(item(menu, "open")).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("Lihat riwayat versi memilih file dan memindah fokus ke riwayatnya", async () => {
+    const user = userEvent.setup();
+    setup([laporan, brosur]);
+    render(<DocsScreen />);
+    await screen.findByRole("heading", { level: 2, name: "laporan-bulanan.docx" });
+
+    const menu = await rightClick(user, "brosur.pdf");
+    await user.click(item(menu, "history"));
+    expect(await screen.findByRole("heading", { level: 2, name: "brosur.pdf" })).toBeInTheDocument();
+    expect(row("brosur.pdf")).toHaveClass("is-selected");
+    const title = screen.getByRole("heading", { level: 3, name: "Riwayat versi" });
+    await waitFor(() => expect(title).toHaveFocus());
+  });
+
+  it("setelah Lihat riwayat versi, panel yang dipasang ulang karena ganti lokasi tidak memindah fokus", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [laporan, brosur], p1: [denah] });
+    render(<DocsScreen />);
+    await screen.findByRole("heading", { level: 2, name: "laporan-bulanan.docx" });
+
+    const menu = await rightClick(user, "brosur.pdf");
+    await user.click(item(menu, "history"));
+    await waitFor(() => expect(screen.getByRole("heading", { level: 3, name: "Riwayat versi" })).toHaveFocus());
+
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    await user.selectOptions(select, await screen.findByRole("option", { name: "PA Gudang" }));
+    await screen.findByRole("heading", { level: 2, name: "denah-gudang.pdf" });
+    await screen.findByRole("heading", { level: 3, name: "Riwayat versi" });
+    expect(select).toHaveFocus();
+
+    await user.selectOptions(select, "Pustaka Umum");
+    await screen.findByRole("heading", { level: 2, name: "laporan-bulanan.docx" });
+    await screen.findByRole("heading", { level: 3, name: "Riwayat versi" });
+    expect(select).toHaveFocus();
+  });
+
+  it("Salin nama menyalin nama file dan mengabarkannya; gagal menyalin juga dikabarkan", async () => {
+    const user = userEvent.setup();
+    setup([laporan]);
+    render(<DocsScreen />);
+    await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" });
+
+    let menu = await rightClick(user, "laporan-bulanan.docx");
+    await user.click(item(menu, "copy-name"));
+    expect(await screen.findByText("Nama laporan-bulanan.docx disalin.")).toBeInTheDocument();
+    expect(await navigator.clipboard.readText()).toBe("laporan-bulanan.docx");
+
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new Error("clipboard ditolak"));
+    menu = await rightClick(user, "laporan-bulanan.docx");
+    await user.click(item(menu, "copy-name"));
+    expect(await screen.findByText("Nama file belum bisa disalin")).toBeInTheDocument();
   });
 });

@@ -1,8 +1,11 @@
 import {
   IconAlertTriangle,
+  IconBan,
   IconChevronRight,
   IconClockHour4,
+  IconDeviceFloppy,
   IconDownload,
+  IconExternalLink,
   IconFileSearch,
   IconFileTypePdf,
   IconFileUpload,
@@ -20,6 +23,7 @@ import {
   type SignOverview,
 } from "../../api/signing";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { MenuButton, SEPARATOR, menuItems, useContextMenu } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { PinDialog } from "./pad/PinDialog";
 import { SignatureSetupDialog } from "./pad/SignatureSetupDialog";
@@ -27,6 +31,8 @@ import { SignDocumentView } from "./SignDocumentView";
 import { NewRequestDialog } from "./NewRequestDialog";
 import { VerifyDialog } from "./VerifyDialog";
 import {
+  CANCEL_CONFIRM,
+  ROW_MENU,
   checkPdfFile,
   downloadLabel,
   exportWarningLabel,
@@ -39,6 +45,8 @@ import {
   modeLabel,
   readFileBytes,
   requestStateLabel,
+  rowExportOff,
+  rowSignItem,
   signErrorMessage,
 } from "./labels";
 import { checkSignablePdf } from "./stamp";
@@ -219,15 +227,18 @@ function MySignature({
 
 type DownloadCtl = { busyId: string | null; start: (r: RequestSummary) => void };
 
-function RequestRow({
-  r,
-  onOpen,
-  download,
-}: {
-  r: RequestSummary;
-  onOpen: (id: string) => void;
+// Aksi baris yang juga ada di menu klik kanan dan tombol "...".
+type RowActions = {
+  open: (id: string, sign?: boolean) => void;
   download: DownloadCtl;
-}) {
+  exportingId: string | null;
+  exportCopy: (r: RequestSummary) => void;
+  verify: () => void;
+  cancel: (r: RequestSummary) => Promise<void>;
+};
+
+function RequestRow({ r, actions }: { r: RequestSummary; actions: RowActions }) {
+  const { download } = actions;
   const mine = isActionable(r);
   const warn = hasWarning(r);
   const when = r.completedAt ?? r.updatedAt;
@@ -239,64 +250,120 @@ function RequestRow({
   // keyboard tidak lepas dari tombol yang sedang menunggu.
   const blocked = download.busyId !== null || busy;
   const size = need?.size ? `, ${formatSize(need.size)}` : "";
+
+  const sign = rowSignItem(r);
+  const exportOff = actions.exportingId === r.id ? ROW_MENU.exporting : rowExportOff(r);
+  const menu = useContextMenu({
+    label: `Aksi untuk ${r.title}`,
+    items: menuItems(
+      { id: "open", label: ROW_MENU.open, icon: <IconExternalLink size={16} />, onSelect: () => actions.open(r.id) },
+      !sign.hidden && {
+        id: "sign",
+        label: ROW_MENU.sign,
+        icon: <IconSignature size={16} />,
+        disabled: sign.off ?? false,
+        onSelect: () => actions.open(r.id, true),
+      },
+      SEPARATOR,
+      need?.state === "manual" && {
+        id: "download",
+        label: downloadLabel(need),
+        icon: <IconDownload size={16} />,
+        disabled: busy ? ROW_MENU.downloading : blocked ? ROW_MENU.otherDownload : false,
+        onSelect: () => download.start(r),
+      },
+      {
+        id: "export",
+        label: ROW_MENU.export,
+        icon: <IconDeviceFloppy size={16} />,
+        disabled: exportOff ?? false,
+        onSelect: () => actions.exportCopy(r),
+      },
+      { id: "verify", label: ROW_MENU.verify, icon: <IconFileSearch size={16} />, onSelect: actions.verify },
+      SEPARATOR,
+      // Hanya pengirim (permintaan dibuat di laptop ini) yang boleh membatalkan.
+      !r.fromPeer &&
+        r.status === "in_progress" && {
+          id: "cancel",
+          label: ROW_MENU.cancel,
+          icon: <IconBan size={16} />,
+          danger: true,
+          confirm: {
+            title: CANCEL_CONFIRM.title,
+            body: <p>{CANCEL_CONFIRM.body}</p>,
+            confirmLabel: CANCEL_CONFIRM.confirmLabel,
+            busyLabel: CANCEL_CONFIRM.busyLabel,
+          },
+          onSelect: () => actions.cancel(r),
+        },
+    ),
+  });
+
   return (
-    <li>
-      <button
-        type="button"
-        className={`sign-row${warn ? " sign-row-warn" : ""}`}
-        data-request={r.id}
-        onClick={() => onOpen(r.id)}
-      >
-        <IconFileTypePdf size={22} className="sign-row-icon" aria-hidden="true" />
-        <span className="sign-row-main">
-          <span className="sign-row-title">{r.title}</span>
-          {r.fromPeer && (
-            <span className="sign-row-from">
+    <li {...menu.triggerProps}>
+      <div className="sign-row-line">
+        <button
+          type="button"
+          className={`sign-row${warn ? " sign-row-warn" : ""}`}
+          data-request={r.id}
+          onClick={() => actions.open(r.id)}
+        >
+          <IconFileTypePdf size={22} className="sign-row-icon" aria-hidden="true" />
+          <span className="sign-row-main">
+            <span className="sign-row-title">{r.title}</span>
+            {r.fromPeer && (
+              <span className="sign-row-from">
+                <span className="sr-only">, </span>
+                Diminta oleh {r.requestedByName}
+              </span>
+            )}
+            <span className="sign-row-meta">
               <span className="sr-only">, </span>
-              Diminta oleh {r.requestedByName}
+              {r.signedCount} dari {r.signerCount} sudah tanda tangan
+              <span aria-hidden="true"> · </span>
+              <span className="sr-only">, </span>
+              {modeLabel(r.mode)}
+              <span aria-hidden="true"> · </span>
+              <span className="sr-only">, </span>
+              {r.completedAt ? "selesai" : "terakhir berubah"} {formatWhen(when)}
             </span>
-          )}
-          <span className="sign-row-meta">
-            <span className="sr-only">, </span>
-            {r.signedCount} dari {r.signerCount} sudah tanda tangan
-            <span aria-hidden="true"> · </span>
-            <span className="sr-only">, </span>
-            {modeLabel(r.mode)}
-            <span aria-hidden="true"> · </span>
-            <span className="sr-only">, </span>
-            {r.completedAt ? "selesai" : "terakhir berubah"} {formatWhen(when)}
+            {need && (
+              <span className="sign-row-file">
+                <span className="sr-only">, </span>
+                {need.state === "manual" ? (
+                  <IconDownload size={16} aria-hidden="true" />
+                ) : (
+                  <IconClockHour4 size={16} aria-hidden="true" />
+                )}
+                {fileNeedText(need)}
+              </span>
+            )}
+            {warn && (
+              <span className="sign-row-warnings">
+                {integrityWarn(r) && (
+                  <span className="sign-warn-line">
+                    <IconAlertTriangle size={16} aria-hidden="true" />
+                    {integrityLabel(r.integrity)}
+                  </span>
+                )}
+                {r.exportWarnings > 0 && (
+                  <span className="sign-warn-line">
+                    <IconAlertTriangle size={16} aria-hidden="true" />
+                    {exportWarningLabel(r.exportWarnings)}
+                  </span>
+                )}
+              </span>
+            )}
           </span>
-          {need && (
-            <span className="sign-row-file">
-              <span className="sr-only">, </span>
-              {need.state === "manual" ? (
-                <IconDownload size={16} aria-hidden="true" />
-              ) : (
-                <IconClockHour4 size={16} aria-hidden="true" />
-              )}
-              {fileNeedText(need)}
-            </span>
-          )}
-          {warn && (
-            <span className="sign-row-warnings">
-              {integrityWarn(r) && (
-                <span className="sign-warn-line">
-                  <IconAlertTriangle size={16} aria-hidden="true" />
-                  {integrityLabel(r.integrity)}
-                </span>
-              )}
-              {r.exportWarnings > 0 && (
-                <span className="sign-warn-line">
-                  <IconAlertTriangle size={16} aria-hidden="true" />
-                  {exportWarningLabel(r.exportWarnings)}
-                </span>
-              )}
-            </span>
-          )}
-        </span>
-        <span className={`chip${mine ? " chip-on" : ""}`}>{requestStateLabel(r)}</span>
-        <IconChevronRight size={18} className="sign-row-chevron" aria-hidden="true" />
-      </button>
+          <span className={`chip${mine ? " chip-on" : ""}`}>{requestStateLabel(r)}</span>
+          <IconChevronRight size={18} className="sign-row-chevron" aria-hidden="true" />
+        </button>
+        <MenuButton
+          menu={menu}
+          label={`Aksi lain untuk ${r.title}`}
+          className="btn btn-ghost btn-sm cmenu-more sign-row-more"
+        />
+      </div>
       {need?.state === "manual" && (
         <div className="sign-row-extra">
           <button
@@ -314,6 +381,7 @@ function RequestRow({
           </button>
         </div>
       )}
+      {menu.element}
     </li>
   );
 }
@@ -322,6 +390,8 @@ export function SignScreen() {
   const { data, error, loading, reload } = useOverview();
   const overview = data;
   const [openId, setOpenId] = useState<string | null>(null);
+  // Dibuka lewat "Tandatangani" di menu baris: langsung ke langkah tanda tangan.
+  const [openToSign, setOpenToSign] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   // Hapus dengan PIN (tanda tangan baru langsung bisa dipakai) atau tanpa PIN
   // karena lupa (tanda tangan baru baru bisa dipakai 24 jam kemudian).
@@ -335,6 +405,7 @@ export function SignScreen() {
   const [newOpen, setNewOpen] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [exportingId, setExportingId] = useState<string | null>(null);
   const downloadRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const pickRef = useRef<HTMLButtonElement>(null);
@@ -375,8 +446,9 @@ export function SignScreen() {
     }, 0);
   }, []);
 
-  const openDoc = useCallback((id: string) => {
+  const openDoc = useCallback((id: string, sign = false) => {
     setFeedback(null);
+    setOpenToSign(sign);
     setOpenId(id);
   }, []);
 
@@ -384,6 +456,7 @@ export function SignScreen() {
     return (
       <SignDocumentView
         requestId={openId}
+        startSigning={openToSign}
         onBack={() => {
           returnTo.current = openId;
           setOpenId(null);
@@ -495,7 +568,38 @@ export function SignScreen() {
     }
   }
 
+  // Simpan salinan dari menu baris, perintah yang sama dengan layar dokumen.
+  async function exportCopy(r: RequestSummary) {
+    if (exportingId) return;
+    setExportingId(r.id);
+    setFeedback(null);
+    try {
+      const { path } = await signingApi.exportFile(r.id);
+      setFeedback({ kind: "ok", text: `Salinan ${r.title} tersimpan di ${path}` });
+      void reload();
+    } catch (err) {
+      setFeedback({ kind: "error", title: "Salinan belum tersimpan", error: toAppError(err) });
+    } finally {
+      setExportingId(null);
+    }
+  }
+
+  // Dipanggil dari dialog konfirmasi menu baris; error tampil di dialog itu.
+  async function cancelRequest(r: RequestSummary) {
+    await signingApi.cancel(r.id);
+    setFeedback({ kind: "ok", text: `Permintaan ${r.title} dibatalkan.` });
+    await reload();
+  }
+
   const download: DownloadCtl = { busyId: downloadingId, start: (r) => void downloadFile(r) };
+  const rowActions: RowActions = {
+    open: openDoc,
+    download,
+    exportingId,
+    exportCopy: (r) => void exportCopy(r),
+    verify: () => setVerifyOpen(true),
+    cancel: cancelRequest,
+  };
   const all = overview?.requests ?? [];
   const waiting = waitingRequests(all);
   const waitingIds = new Set(waiting.map((r) => r.id));
@@ -555,7 +659,7 @@ export function SignScreen() {
               </div>
               <ul className="sign-list">
                 {waiting.map((r) => (
-                  <RequestRow key={r.id} r={r} onOpen={openDoc} download={download} />
+                  <RequestRow key={r.id} r={r} actions={rowActions} />
                 ))}
               </ul>
             </section>
@@ -647,7 +751,7 @@ export function SignScreen() {
             ) : (
               <ul className="sign-list">
                 {requests.map((r) => (
-                  <RequestRow key={r.id} r={r} onOpen={openDoc} download={download} />
+                  <RequestRow key={r.id} r={r} actions={rowActions} />
                 ))}
               </ul>
             )}

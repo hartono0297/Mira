@@ -374,3 +374,114 @@ describe("Departemen: atur admin", () => {
     expect(within(dialog).queryByRole("button", { name: /Jadikan admin/ })).not.toBeInTheDocument();
   });
 });
+
+describe("Departemen: menu klik kanan", () => {
+  function rowOf(name: string) {
+    const row = screen.getByText(name, { selector: ".row-name" }).closest<HTMLElement>("tr, li");
+    if (!row) throw new Error(`Baris ${name} tidak ada`);
+    return row;
+  }
+
+  function menuIds() {
+    return within(screen.getByRole("menu"))
+      .getAllByRole("menuitem")
+      .map((el) => el.getAttribute("data-menu-item"));
+  }
+
+  it("klik kanan baris aktif: Ganti nama, Atur admin, Arsipkan; Arsipkan nonaktif kalau masih ada orang", async () => {
+    setup();
+    const user = await openTable();
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByText("Desain", { selector: ".row-name" }) });
+    const menu = screen.getByRole("menu", { name: "Aksi untuk departemen Desain" });
+    expect(menuIds()).toEqual(["rename", "admins", "archive"]);
+    expect(within(menu).getByRole("menuitem", { name: "Ganti nama" })).toHaveFocus();
+    const archive = within(menu).getByRole("menuitem", { name: /Arsipkan/ });
+    expect(archive).toHaveAttribute("aria-disabled", "true");
+    expect(archive).toHaveAccessibleDescription("Masih ada 3 orang. Pindahkan dulu lewat tab Pengguna.");
+    await user.click(archive);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Interior") });
+    const empty = screen.getByRole("menu", { name: "Aksi untuk departemen Interior" });
+    expect(within(empty).getByRole("menuitem", { name: "Arsipkan" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("Ganti nama lewat menu membuka isian di baris; Escape mengembalikan fokus ke tombol Ganti nama", async () => {
+    setup();
+    const user = await openTable();
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Keuangan") });
+    await user.click(screen.getByRole("menuitem", { name: "Ganti nama" }));
+    const input = screen.getByLabelText("Nama baru untuk departemen Keuangan");
+    expect(input).toHaveFocus();
+    // Klik kanan di isian tidak membuka menu baris.
+    await user.pointer({ keys: "[MouseRight]", target: input });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Ganti nama Keuangan" })).toHaveFocus();
+  });
+
+  it("Shift+F10 dari baris terfokus, Atur admin membuka dialog, fokus kembali ke baris", async () => {
+    setup();
+    const user = await openTable();
+    const rename = screen.getByRole("button", { name: "Ganti nama Desain" });
+    rename.focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(screen.getByRole("menu", { name: "Aksi untuk departemen Desain" })).toBeInTheDocument();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(screen.getByRole("dialog", { name: "Admin departemen Desain" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(rename).toHaveFocus();
+  });
+
+  it("Arsipkan lewat menu memakai dialog konfirmasi yang sama", async () => {
+    setup();
+    const user = await openTable();
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Interior") });
+    await user.click(screen.getByRole("menuitem", { name: "Arsipkan" }));
+    const dialog = screen.getByRole("dialog", { name: "Arsipkan Interior?" });
+    await user.click(within(dialog).getByRole("button", { name: "Arsipkan Interior" }));
+    expect(invoke).toHaveBeenCalledWith("org_set_department_archived", { teamId: TEAM_3, archived: true });
+  });
+
+  it("baris arsip: Pulihkan lewat menu, lalu fokus pindah ke baris yang dipulihkan", async () => {
+    let list = [desain, keuangan, interior, lanskap];
+    setup({
+      org_departments: () => list,
+      org_set_department_archived: (args: { teamId: string; archived: boolean }) => {
+        list = list.map((d) => (d.id === args.teamId ? { ...d, archived: args.archived, archivedAt: null } : d));
+        return null;
+      },
+    });
+    const user = await openTable();
+    await user.click(screen.getByText("Diarsipkan (1)"));
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Lanskap") });
+    const menu = screen.getByRole("menu", { name: "Aksi untuk departemen Lanskap" });
+    expect(menuIds()).toEqual(["restore"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Pulihkan" }));
+    expect(invoke).toHaveBeenCalledWith("org_set_department_archived", { teamId: lanskap.id, archived: false });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ganti nama Lanskap" })).toHaveFocus());
+  });
+
+  it("selama aksi lain berjalan, item menu nonaktif dengan alasan", async () => {
+    setup({ org_set_department_archived: () => new Promise(() => {}) });
+    const user = await openTable();
+    await user.click(screen.getByText("Diarsipkan (1)"));
+    await user.click(screen.getByRole("button", { name: "Pulihkan Lanskap" }));
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Keuangan") });
+    const rename = screen.getByRole("menuitem", { name: /Ganti nama/ });
+    expect(rename).toHaveAttribute("aria-disabled", "true");
+    expect(rename).toHaveAccessibleDescription("Tunggu perubahan yang sedang disimpan.");
+    await user.keyboard("{Enter}");
+    expect(screen.queryByLabelText("Nama baru untuk departemen Keuangan")).not.toBeInTheDocument();
+  });
+
+  it("bukan superadmin: klik kanan baris tidak membuka menu", async () => {
+    setup({}, memberOverview());
+    const user = await openTab();
+    await screen.findByRole("table", { name: "Departemen aktif" });
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Desain") });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});

@@ -208,6 +208,56 @@ export function downloadLabel(need: FileNeed): string {
   return need.size ? `Unduh file (${formatSize(need.size)})` : "Unduh file";
 }
 
+// Konfirmasi pembatalan, sama di layar dokumen dan di menu baris daftar.
+export const CANCEL_CONFIRM = {
+  title: "Batalkan permintaan ini?",
+  confirmLabel: "Batalkan permintaan",
+  busyLabel: "Membatalkan...",
+  body: "Penanda tangan yang belum menandatangani tidak bisa menandatangani lagi. Tanda tangan yang sudah ada tetap tercatat di jejak audit. Pembatalan tidak bisa diurungkan.",
+};
+
+// Menu baris di daftar tanda tangan (klik kanan atau tombol "...").
+export const ROW_MENU = {
+  open: "Buka",
+  sign: "Tandatangani",
+  export: "Simpan salinan PDF",
+  verify: "Periksa keaslian file",
+  cancel: "Batalkan permintaan",
+  notYourTurn: "Belum giliran Anda",
+  fileAbsent: "File belum ada di laptop ini",
+  fileChanged: "Isi file tidak cocok dengan catatan Mira",
+  fileMissing: "File dokumen tidak ditemukan",
+  waitingPeer: "Menunggu tanda tangan terbaru dari rekan",
+  exporting: "Sedang menyimpan salinan",
+  downloading: "Sedang mengunduh",
+  otherDownload: "Tunggu unduhan lain selesai",
+};
+
+// Item menu baris: hidden kalau aksinya tidak pernah berlaku untuk permintaan
+// ini, atau alasan singkat kalau hanya sementara tidak bisa (null: bisa).
+export type RowItem = { hidden: true } | { hidden: false; off: string | null };
+
+// Tandatangani hanya untuk penanda tangan yang belum menandatangani dan
+// permintaan yang masih berjalan.
+export function rowSignItem(r: StateInput): RowItem {
+  if (r.status !== "in_progress") return { hidden: true };
+  if (r.myState === "waiting_others") return { hidden: false, off: ROW_MENU.notYourTurn };
+  if (r.myState !== "your_turn") return { hidden: true };
+  if (r.fileAvailable === false) return { hidden: false, off: ROW_MENU.fileAbsent };
+  if (r.integrity !== "intact") return { hidden: false, off: ROW_MENU.fileChanged };
+  if (r.pending === true) return { hidden: false, off: ROW_MENU.waitingPeer };
+  return { hidden: false, off: null };
+}
+
+// Alasan Simpan salinan PDF tidak bisa dijalankan, null kalau bisa. Sama
+// dengan aturan tombol di layar dokumen.
+export function rowExportOff(r: Pick<RequestSummary, "integrity"> & Partial<Pick<RequestSummary, "fileAvailable">>): string | null {
+  if (r.fileAvailable === false) return ROW_MENU.fileAbsent;
+  if (r.integrity === "missing") return ROW_MENU.fileMissing;
+  if (r.integrity !== "intact") return ROW_MENU.fileChanged;
+  return null;
+}
+
 // Pesan yang mudah dipahami untuk kode error tanda tangan yang baru. Kode lain
 // memakai pesan Indonesia dari inti Rust apa adanya.
 export function signErrorMessage(error: AppError): string {

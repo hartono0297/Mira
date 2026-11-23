@@ -7,12 +7,13 @@ import {
   IconSearch,
   IconShieldCheck,
 } from "@tabler/icons-react";
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, toAppError, type AppError } from "../../api";
 import { formatDate, relativeTime } from "../../api/format";
 import { actionErrorTitle } from "../../api/messages";
 import { orgApi, type DepartmentView, type UserView } from "../../api/org";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { MenuButton, menuItems, SEPARATOR, useContextMenu, type MenuEntry } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
@@ -161,93 +162,55 @@ function Status({ u }: { u: UserView }) {
   );
 }
 
-type MenuItem = { id: string; label: string; icon: ReactNode; danger?: boolean; onSelect: () => void };
+// Teks menu aksi per orang. "Aksi untuk" juga nama tombol titik tiga yang
+// dipakai uji e2e, jadi jangan diubah tanpa mengubah skripnya.
+const MENU_TEXT = {
+  label: (name: string) => `Aksi untuk ${name}`,
+  move: "Ubah departemen",
+  role: "Ubah peran",
+  remove: "Keluarkan dari organisasi",
+  busy: "Tunggu aksi lain selesai",
+};
 
-// Menu aksi per baris: pola disclosure. Escape menutup dan mengembalikan fokus
-// ke tombol pembuka, klik atau fokus di luar menutup.
-function ActionMenu({
-  menuKey,
-  name,
-  items,
-  open,
-  onOpenChange,
-  disabled,
-}: {
-  menuKey: string;
-  name: string;
-  items: MenuItem[];
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  disabled: boolean;
-}) {
-  const menuId = useId();
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+type RowActions = {
+  onMove: (u: UserView) => void;
+  onRole: (u: UserView) => void;
+  onRemove: (u: UserView) => void;
+};
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: PointerEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onOpenChange(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onOpenChange(false);
-        buttonRef.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, onOpenChange]);
+// Hak yang sama dengan menu lama: Tamu tidak punya departemen dan peran,
+// diri sendiri tidak bisa dikeluarkan, orang yang sudah dikeluarkan tidak punya aksi.
+function hasActions(u: UserView): boolean {
+  return u.status === "active" && (!u.isGuest || !u.isMe);
+}
 
-  return (
-    <div
-      ref={wrapRef}
-      className="users-menu-wrap"
-      onBlur={(e) => {
-        if (open && !wrapRef.current?.contains(e.relatedTarget as Node | null) && e.relatedTarget !== null) {
-          onOpenChange(false);
-        }
-      }}
-    >
-      <button
-        ref={buttonRef}
-        type="button"
-        className="btn btn-ghost btn-sm users-menu-btn"
-        aria-label={`Aksi untuk ${name}`}
-        data-menu-for={menuKey}
-        aria-expanded={open}
-        aria-controls={menuId}
-        disabled={disabled}
-        onClick={() => onOpenChange(!open)}
-      >
-        <IconDotsVertical size={18} aria-hidden="true" />
-      </button>
-      <div id={menuId} className="users-menu" hidden={!open}>
-        {items.map((item, i) => (
-          <div key={item.id}>
-            {item.danger && i > 0 && <hr className="users-menu-sep" />}
-            <button
-              type="button"
-              className={item.danger ? "users-menu-item users-menu-danger" : "users-menu-item"}
-              onClick={() => {
-                // Fokus dulu ke tombol pembuka supaya dialog mengembalikan fokus ke sana saat ditutup.
-                buttonRef.current?.focus();
-                onOpenChange(false);
-                item.onSelect();
-              }}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
+function rowMenu(u: UserView, busy: boolean, act: RowActions): MenuEntry[] {
+  if (!hasActions(u)) return [];
+  const disabled = busy ? MENU_TEXT.busy : undefined;
+  return menuItems(
+    !u.isGuest && {
+      id: "move",
+      label: MENU_TEXT.move,
+      icon: <IconBuildingCommunity size={16} aria-hidden="true" />,
+      disabled,
+      onSelect: () => act.onMove(u),
+    },
+    !u.isGuest && {
+      id: "role",
+      label: MENU_TEXT.role,
+      icon: <IconShieldCheck size={16} aria-hidden="true" />,
+      disabled,
+      onSelect: () => act.onRole(u),
+    },
+    SEPARATOR,
+    !u.isMe && {
+      id: "remove",
+      label: MENU_TEXT.remove,
+      icon: <IconDoorExit size={16} aria-hidden="true" />,
+      danger: true,
+      disabled,
+      onSelect: () => act.onRemove(u),
+    },
   );
 }
 
@@ -536,7 +499,6 @@ export function UsersPanel({ page }: { page: OrgPage }) {
   const live = useOrgLive(() => orgApi.users(), { version: page.version, network: true });
   const depts = useOrgLive(() => orgApi.departments(false), { version: page.version });
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
   const [open, setOpen] = useState<Open>(null);
   const searchId = useId();
   const deptId = useId();
@@ -565,7 +527,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
   useEffect(() => {
     if (!refocus || shown.some((u) => u.publicKey === refocus.gone)) return;
     const target = refocus.next
-      ? tableRef.current?.querySelector<HTMLButtonElement>(`[data-menu-for="${refocus.next}"]`)
+      ? tableRef.current?.querySelector<HTMLButtonElement>(`[data-user-key="${refocus.next}"] [aria-haspopup="menu"]`)
       : null;
     (target ?? headingRef.current)?.focus();
     setRefocus(null);
@@ -574,7 +536,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
   function removed(u: UserView) {
     const i = shown.findIndex((x) => x.publicKey === u.publicKey);
     const others = [...shown.slice(i + 1), ...shown.slice(0, Math.max(i, 0)).reverse()];
-    const next = others.find((x) => x.status === "active" && items(x).length > 0) ?? null;
+    const next = others.find((x) => hasActions(x)) ?? null;
     setRefocus({ gone: u.publicKey, next: next?.publicKey ?? null });
     setOpen(null);
   }
@@ -583,33 +545,11 @@ export function UsersPanel({ page }: { page: OrgPage }) {
     setFilters((f) => ({ ...f, ...next }));
   }
 
-  function items(u: UserView): MenuItem[] {
-    const list: MenuItem[] = [];
-    if (!u.isGuest) {
-      list.push({
-        id: "move",
-        label: "Ubah departemen",
-        icon: <IconBuildingCommunity size={17} aria-hidden="true" />,
-        onSelect: () => setOpen({ kind: "move", user: u }),
-      });
-      list.push({
-        id: "role",
-        label: "Ubah peran",
-        icon: <IconShieldCheck size={17} aria-hidden="true" />,
-        onSelect: () => setOpen({ kind: "role", user: u }),
-      });
-    }
-    if (!u.isMe) {
-      list.push({
-        id: "remove",
-        label: "Keluarkan dari organisasi",
-        icon: <IconDoorExit size={17} aria-hidden="true" />,
-        danger: true,
-        onSelect: () => setOpen({ kind: "remove", user: u }),
-      });
-    }
-    return list;
-  }
+  const actions: RowActions = {
+    onMove: (u) => setOpen({ kind: "move", user: u }),
+    onRole: (u) => setOpen({ kind: "role", user: u }),
+    onRemove: (u) => setOpen({ kind: "remove", user: u }),
+  };
 
   const empty = live.data && shown.length === 0 && users.length > 0 ? emptyResult(users, filters, deptName) : null;
 
@@ -732,81 +672,9 @@ export function UsersPanel({ page }: { page: OrgPage }) {
                 </tr>
               </thead>
               <tbody role="rowgroup">
-                {shown.map((u) => {
-                  const menu = u.status === "active" ? items(u) : [];
-                  return (
-                    <tr key={u.publicKey} role="row" className={u.status === "removed" ? "ut-off" : undefined}>
-                      <td role="cell" className="ut-name">
-                        <span className="users-av" aria-hidden="true">
-                          {initials(u.displayName)}
-                        </span>
-                        <span className="ut-who">
-                          <NameWithLabels
-                            className="ut-n"
-                            name={u.displayName}
-                            labels={u.labels}
-                            suffix={u.isMe ? " (Anda)" : undefined}
-                          />
-                          <span className="ut-sub">{roleText(u)}</span>
-                        </span>
-                      </td>
-                      <td role="cell" className="ut-dept">
-                        <span className="ut-k">Departemen</span>
-                        <span className={u.isGuest || u.departmentId === null ? "ut-muted" : undefined}>
-                          {departmentCell(u, deptName)}
-                        </span>
-                      </td>
-                      <td role="cell" className="ut-laptop">
-                        <span className="ut-k">Laptop dan IP terakhir</span>
-                        {u.device ? (
-                          <span className="mono ut-mono">{u.device.laptop}</span>
-                        ) : (
-                          <span className="ut-muted">Belum dilaporkan</span>
-                        )}
-                        <span className={u.lastIp ? "mono ut-mono ut-sub" : "ut-sub"}>
-                          {u.lastIp ?? (u.isMe ? "Tidak dicatat" : "Belum terlihat")}
-                        </span>
-                      </td>
-                      <td role="cell" className="ut-sys">
-                        <span className="ut-k">Sistem dan versi</span>
-                        {u.device ? (
-                          <>
-                            <span className="ut-os">
-                              <OsIcon os={u.device.os} />
-                              {u.device.os}
-                            </span>
-                            <span className="mono ut-mono ut-sub">Mira {u.device.appVersion}</span>
-                          </>
-                        ) : (
-                          <span className="ut-muted">
-                            <span aria-hidden="true">-</span>
-                            <span className="sr-only">Belum dilaporkan</span>
-                          </span>
-                        )}
-                      </td>
-                      <td role="cell" className="ut-status">
-                        <span className="ut-k">Status</span>
-                        <Status u={u} />
-                      </td>
-                      <td role="cell" className="ut-joined">
-                        <span className="ut-k">Bergabung</span>
-                        <span>{formatDate(u.joinedAt)}</span>
-                      </td>
-                      <td role="cell" className="ut-act">
-                        {menu.length > 0 && (
-                          <ActionMenu
-                            menuKey={u.publicKey}
-                            name={u.displayName}
-                            items={menu}
-                            open={menuFor === u.publicKey}
-                            onOpenChange={(next) => setMenuFor(next ? u.publicKey : null)}
-                            disabled={busy}
-                          />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {shown.map((u) => (
+                  <UserRow key={u.publicKey} u={u} deptName={deptName} busy={busy} actions={actions} />
+                ))}
               </tbody>
             </table>
           )}
@@ -831,6 +699,85 @@ export function UsersPanel({ page }: { page: OrgPage }) {
         <RemoveDialog user={open.user} onClose={() => setOpen(null)} onRemoved={removed} page={page} />
       )}
     </section>
+  );
+}
+
+// Satu baris orang. Klik kanan, tombol Menu, atau Shift+F10 di baris membuka
+// menu yang sama dengan tombol titik tiga.
+function UserRow({
+  u,
+  deptName,
+  busy,
+  actions,
+}: {
+  u: UserView;
+  deptName: (id: string) => string;
+  busy: boolean;
+  actions: RowActions;
+}) {
+  const menu = useContextMenu({ label: MENU_TEXT.label(u.displayName), items: rowMenu(u, busy, actions) });
+  return (
+    <tr
+      role="row"
+      className={u.status === "removed" ? "ut-off" : undefined}
+      data-user-key={u.publicKey}
+      {...menu.triggerProps}
+    >
+      <td role="cell" className="ut-name">
+        <span className="users-av" aria-hidden="true">
+          {initials(u.displayName)}
+        </span>
+        <span className="ut-who">
+          <NameWithLabels className="ut-n" name={u.displayName} labels={u.labels} suffix={u.isMe ? " (Anda)" : undefined} />
+          <span className="ut-sub">{roleText(u)}</span>
+        </span>
+      </td>
+      <td role="cell" className="ut-dept">
+        <span className="ut-k">Departemen</span>
+        <span className={u.isGuest || u.departmentId === null ? "ut-muted" : undefined}>{departmentCell(u, deptName)}</span>
+      </td>
+      <td role="cell" className="ut-laptop">
+        <span className="ut-k">Laptop dan IP terakhir</span>
+        {u.device ? <span className="mono ut-mono">{u.device.laptop}</span> : <span className="ut-muted">Belum dilaporkan</span>}
+        <span className={u.lastIp ? "mono ut-mono ut-sub" : "ut-sub"}>
+          {u.lastIp ?? (u.isMe ? "Tidak dicatat" : "Belum terlihat")}
+        </span>
+      </td>
+      <td role="cell" className="ut-sys">
+        <span className="ut-k">Sistem dan versi</span>
+        {u.device ? (
+          <>
+            <span className="ut-os">
+              <OsIcon os={u.device.os} />
+              {u.device.os}
+            </span>
+            <span className="mono ut-mono ut-sub">Mira {u.device.appVersion}</span>
+          </>
+        ) : (
+          <span className="ut-muted">
+            <span aria-hidden="true">-</span>
+            <span className="sr-only">Belum dilaporkan</span>
+          </span>
+        )}
+      </td>
+      <td role="cell" className="ut-status">
+        <span className="ut-k">Status</span>
+        <Status u={u} />
+      </td>
+      <td role="cell" className="ut-joined">
+        <span className="ut-k">Bergabung</span>
+        <span>{formatDate(u.joinedAt)}</span>
+      </td>
+      <td role="cell" className="ut-act">
+        <MenuButton
+          menu={menu}
+          label={MENU_TEXT.label(u.displayName)}
+          className="btn btn-ghost btn-sm users-menu-btn"
+          icon={<IconDotsVertical size={18} aria-hidden="true" />}
+        />
+        {menu.element}
+      </td>
+    </tr>
   );
 }
 

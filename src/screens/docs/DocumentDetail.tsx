@@ -1,5 +1,5 @@
 import { IconAlertTriangle, IconClockHour4, IconDownload } from "@tabler/icons-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { relativeTime } from "../../api/format";
 import type { AppError } from "../../api";
 import type { DocumentDetail as Detail, DocumentSummary, DocumentVersion } from "../../api/documents";
@@ -19,6 +19,19 @@ import {
   versionList,
 } from "./text";
 
+// Memfokus elemen hanya saat token berubah sesudah komponen terpasang. Panel
+// yang dipasang ulang (misalnya sesudah ganti lokasi) membawa token lama yang
+// bukan nol; nilai itu dicatat saat mount supaya fokus tidak ikut melompat.
+function useFocusOnChange(token: number, ref: RefObject<HTMLElement | null>) {
+  const seen = useRef(token);
+  useEffect(() => {
+    if (token === seen.current) return;
+    seen.current = token;
+    ref.current?.focus();
+    ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [token, ref]);
+}
+
 type Props = {
   summary: DocumentSummary;
   detail: Detail | null;
@@ -28,6 +41,8 @@ type Props = {
   actions: DocActions;
   // Berubah setiap kali tombol "Selesaikan bentrok" di daftar ditekan.
   focusConflict: number;
+  // Berubah setiap kali "Lihat riwayat versi" di menu baris dipilih.
+  focusVersions: number;
   now: Date;
 };
 
@@ -82,20 +97,14 @@ function ActionButton({
 function ConflictBox({
   doc,
   actions,
-  focusToken,
+  titleRef,
   now,
 }: {
   doc: DocumentSummary;
   actions: DocActions;
-  focusToken: number;
+  titleRef: RefObject<HTMLHeadingElement | null>;
   now: Date;
 }) {
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    if (focusToken === 0) return;
-    titleRef.current?.focus();
-    titleRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [focusToken]);
 
   const heads = doc.conflictVersions;
   const app = appName(doc.kind);
@@ -288,7 +297,23 @@ function VersionRow({
   );
 }
 
-export function DocumentDetail({ summary, detail, loading, error, onRetry, actions, focusConflict, now }: Props) {
+export function DocumentDetail({
+  summary,
+  detail,
+  loading,
+  error,
+  onRetry,
+  actions,
+  focusConflict,
+  focusVersions,
+  now,
+}: Props) {
+  // Fokus diatur di sini, bukan di ConflictBox: kotak bentrok baru terpasang
+  // saat file bentrok dipilih, bersamaan dengan token yang naik.
+  const conflictRef = useRef<HTMLHeadingElement>(null);
+  const historyRef = useRef<HTMLHeadingElement>(null);
+  useFocusOnChange(focusConflict, conflictRef);
+  useFocusOnChange(focusVersions, historyRef);
   // Ringkasan dari daftar dipakai sampai detail file ini selesai dimuat.
   const doc: DocumentSummary = detail && detail.id === summary.id ? detail : summary;
   const versions = detail && detail.id === summary.id ? detail.versions : null;
@@ -311,10 +336,12 @@ export function DocumentDetail({ summary, detail, loading, error, onRetry, actio
       </header>
 
       {doc.conflict && doc.conflictVersions.length > 1 && (
-        <ConflictBox doc={doc} actions={actions} focusToken={focusConflict} now={now} />
+        <ConflictBox doc={doc} actions={actions} titleRef={conflictRef} now={now} />
       )}
 
-      <h3 className="detail-label">Riwayat versi</h3>
+      <h3 className="detail-label" tabIndex={-1} ref={historyRef}>
+        Riwayat versi
+      </h3>
       {editingHere && doc.can.restore && (
         <p className="hint">Versi lama bisa dipulihkan setelah Anda menekan Selesai mengedit.</p>
       )}

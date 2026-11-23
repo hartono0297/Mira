@@ -1,8 +1,35 @@
-import { IconAlertTriangle, IconDownload, IconLock } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconCopy,
+  IconDownload,
+  IconEye,
+  IconFileExport,
+  IconHistory,
+  IconLock,
+  IconPencil,
+} from "@tabler/icons-react";
+import type { ReactNode } from "react";
 import type { DocumentSummary } from "../../api/documents";
+import { MenuButton, menuItems, SEPARATOR, useContextMenu, type MenuAction } from "../../components/ContextMenu";
 import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
-import { appName, downloadLabel, editable, fetchState, statusLines, type StatusKind } from "./text";
+import {
+  appName,
+  COPY_NAME_LABEL,
+  downloadLabel,
+  editable,
+  EXPORT_LABEL,
+  exportBlockedReason,
+  fetchState,
+  HISTORY_LABEL,
+  menuButtonLabel,
+  menuLabel,
+  OPEN_READONLY_LABEL,
+  statusLines,
+  WAIT_REASON,
+  type StatusKind,
+} from "./text";
 
 type Props = {
   doc: DocumentSummary;
@@ -19,21 +46,42 @@ function StatusIcon({ kind }: { kind: StatusKind }) {
   return null;
 }
 
-type Btn = { key: string; label: string; busyLabel: string; primary?: boolean; run: () => void };
+// `id` juga menjadi id item di menu klik kanan (data-menu-item).
+// `menuOnly`: hanya tampil di menu, tidak sebagai tombol di baris.
+type Btn = {
+  id: string;
+  key: string;
+  label: string;
+  busyLabel: string;
+  icon: ReactNode;
+  run: () => void;
+  menuOnly?: boolean;
+};
+
+const icon = (Icon: typeof IconPencil) => <Icon size={16} aria-hidden="true" />;
 
 // Tombol di baris mengikuti keadaan file: bentrok, diedit di laptop ini,
-// diedit rekan, atau biasa.
+// diedit rekan, atau biasa. Menu klik kanan memakai daftar yang sama.
 function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
   const mine = doc.editing.find((e) => e.local);
   const rekan = doc.editing.find((e) => !e.local);
   const app = appName(doc.kind);
   if (mine) {
     return [
-      { key: keys.edit(doc.id, null), label: "Buka lagi", busyLabel: "Membuka...", run: () => actions.edit(doc, null) },
       {
+        id: "edit",
+        key: keys.edit(doc.id, null),
+        label: "Buka lagi",
+        busyLabel: "Membuka...",
+        icon: icon(IconPencil),
+        run: () => actions.edit(doc, null),
+      },
+      {
+        id: "finish",
         key: keys.finish(doc.id),
         label: "Selesai mengedit",
         busyLabel: "Menyelesaikan...",
+        icon: icon(IconCheck),
         run: () => actions.finish(doc),
       },
     ];
@@ -42,7 +90,16 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
     // Tamu tidak bisa memilih atau menggabung, jadi tombolnya hanya menunjukkan bentrok.
     const canAct = doc.can.resolve || (editable(doc.kind) && doc.can.edit);
     const label = canAct ? "Selesaikan bentrok" : "Lihat bentrok";
-    return [{ key: `conflict:${doc.id}`, label, busyLabel: label, run: () => actions.showConflict(doc) }];
+    return [
+      {
+        id: "conflict",
+        key: `conflict:${doc.id}`,
+        label,
+        busyLabel: label,
+        icon: icon(IconAlertTriangle),
+        run: () => actions.showConflict(doc),
+      },
+    ];
   }
   // Isi versi sekarang belum ada di laptop ini: Edit dan Buka tidak ditawarkan.
   // File di atas 20 MB punya tombol unduh; yang lain cukup baris status.
@@ -50,26 +107,85 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
   if (fetch === "manual") {
     return [
       {
+        id: "download",
         key: keys.download(doc.id, doc.current.id),
         label: downloadLabel(doc.current),
         busyLabel: "Mengunduh...",
+        icon: icon(IconDownload),
         run: () => actions.download(doc, doc.current),
       },
     ];
   }
   if (fetch) return [];
+  const open: Btn = {
+    id: "open",
+    key: keys.open(doc.id, null),
+    label: OPEN_READONLY_LABEL,
+    busyLabel: "Membuka...",
+    icon: icon(IconEye),
+    run: () => actions.open(doc, null),
+  };
   if (rekan || !editable(doc.kind) || !doc.can.edit) {
-    const label = rekan || editable(doc.kind) ? "Buka hanya baca" : "Buka";
-    return [{ key: keys.open(doc.id, null), label, busyLabel: "Membuka...", run: () => actions.open(doc, null) }];
+    return [{ ...open, label: rekan || editable(doc.kind) ? OPEN_READONLY_LABEL : "Buka" }];
   }
-  return [{ key: keys.edit(doc.id, null), label: `Edit di ${app}`, busyLabel: "Membuka...", run: () => actions.edit(doc, null) }];
+  return [
+    {
+      id: "edit",
+      key: keys.edit(doc.id, null),
+      label: `Edit di ${app}`,
+      busyLabel: "Membuka...",
+      icon: icon(IconPencil),
+      run: () => actions.edit(doc, null),
+    },
+    // Hanya di menu: membuka tanpa mengunci file untuk rekan.
+    { ...open, menuOnly: true },
+  ];
+}
+
+// Alasan item menu nonaktif selama aksi berjalan: label sibuk untuk aksinya
+// sendiri, atau keterangan menunggu untuk aksi lain.
+function blockedReason(actions: DocActions, key: string, busyLabel: string): string | undefined {
+  if (isBusy(actions, key)) return busyLabel;
+  return isBlocked(actions, key) ? WAIT_REASON : undefined;
+}
+
+function menuEntries(doc: DocumentSummary, buttons: Btn[], actions: DocActions) {
+  const conflict = doc.conflict && doc.conflictVersions.length > 1;
+  const fetch = fetchState(doc.current);
+  const exportKey = keys.export(doc.id, doc.current.id);
+  // Saat bentrok, "versi sekarang" belum pasti; salinan per versi ada di panel detail.
+  const exportItem: MenuAction | null =
+    doc.can.export && !conflict
+      ? {
+          id: "export",
+          label: EXPORT_LABEL,
+          icon: icon(IconFileExport),
+          disabled: fetch ? exportBlockedReason(fetch) : blockedReason(actions, exportKey, "Menyimpan..."),
+          onSelect: () => actions.exportCopy(doc, doc.current),
+        }
+      : null;
+  return menuItems(
+    ...buttons.map<MenuAction>((b) => ({
+      id: b.id,
+      label: b.label,
+      icon: b.icon,
+      disabled: blockedReason(actions, b.key, b.busyLabel),
+      onSelect: b.run,
+    })),
+    SEPARATOR,
+    { id: "history", label: HISTORY_LABEL, icon: icon(IconHistory), onSelect: () => actions.showVersions(doc) },
+    exportItem,
+    { id: "copy-name", label: COPY_NAME_LABEL, icon: icon(IconCopy), onSelect: () => actions.copyName(doc) },
+  );
 }
 
 export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
   const lines = statusLines(doc, now);
-  const buttons = rowButtons(doc, actions);
+  const all = rowButtons(doc, actions);
+  const buttons = all.filter((b) => !b.menuOnly);
+  const menu = useContextMenu({ label: menuLabel(doc.name), items: menuEntries(doc, all, actions) });
   return (
-    <li className={`doc-row${selected ? " is-selected" : ""}`} data-testid={`doc-${doc.id}`}>
+    <li className={`doc-row${selected ? " is-selected" : ""}`} data-testid={`doc-${doc.id}`} {...menu.triggerProps}>
       <button
         type="button"
         className="doc-pick"
@@ -112,7 +228,9 @@ export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
             </button>
           );
         })}
+        <MenuButton menu={menu} label={menuButtonLabel(doc.name)} />
       </div>
+      {menu.element}
     </li>
   );
 }

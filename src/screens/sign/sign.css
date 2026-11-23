@@ -172,6 +172,25 @@
   border-top: 1px solid var(--border);
 }
 
+/* Tombol baris dan tombol "..." bersebelahan. Tombol "..." di luar tombol
+   baris, karena tombol tidak boleh bersarang. */
+.sign-row-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sign-row-line .sign-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.sign-row-more {
+  flex: none;
+  min-height: 34px;
+  margin-right: 10px;
+}
+
 .sign-row {
   display: flex;
   align-items: center;
