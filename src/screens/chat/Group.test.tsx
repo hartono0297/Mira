@@ -95,7 +95,7 @@ describe("Grup: kepala dan daftar anggota", () => {
     const rows = within(panel).getAllByRole("listitem");
     expect(rows[0]).toHaveTextContent("Penguji (Anda)");
     expect(within(rows[0]).getByText("Pemilik grup")).toBeInTheDocument();
-    expect(within(rows[0]).queryByRole("button")).toBeNull();
+    expect(within(rows[0]).queryByRole("button", { name: /^Keluarkan/ })).toBeNull();
     await waitFor(() => expect(rows[1]).toHaveTextContent("Drafting"));
     expect(within(panel).getByRole("button", { name: "Keluarkan Sari Uji dari grup" })).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Keluarkan Budi Uji dari grup" })).toBeInTheDocument();
@@ -125,6 +125,8 @@ describe("Grup: kepala dan daftar anggota", () => {
     expect(within(panel).getAllByRole("listitem")[0]).toHaveTextContent("Pemilik grup");
     await user.click(within(panel).getByRole("button", { name: "Keluar dari grup" }));
     const dlg = screen.getByRole("dialog", { name: "Keluar dari grup Persiapan pameran?" });
+    expect(dlg).toHaveTextContent("Untuk masuk lagi, anggota grup perlu menambahkan Anda.");
+    expect(dlg).not.toHaveTextContent(/peran pemilik/i);
     await user.click(within(dlg).getByRole("button", { name: "Keluar dari grup" }));
     await waitFor(() => expect(chat.groupLeave).toHaveBeenCalledWith(GR));
     await waitFor(() => expect(onGone).toHaveBeenCalled());
@@ -139,8 +141,10 @@ describe("Grup: kepala dan daftar anggota", () => {
     const panel = await openMembers(user);
     await user.click(within(panel).getByRole("button", { name: "Keluar dari grup" }));
     const dlg = screen.getByRole("dialog", { name: /^Keluar dari grup/ });
+    expect(dlg).toHaveTextContent("Anda pemilik grup ini, jadi peran pemilik pindah ke anggota yang paling lama di grup.");
     await user.click(within(dlg).getByRole("button", { name: "Keluar dari grup" }));
     expect(await within(dlg).findByText("Laptop belum tersambung.")).toBeInTheDocument();
+    expect(within(dlg).getByText("Keluar dari grup gagal")).toBeInTheDocument();
     expect(onGone).not.toHaveBeenCalled();
   });
 
@@ -207,7 +211,7 @@ describe("Grup: tambah orang dan ganti nama", () => {
     const { onChanged } = renderConv();
     await screen.findByRole("button", { name: "Tambah orang" });
     await user.click(screen.getByRole("button", { name: "Menu Persiapan pameran" }));
-    await user.click(screen.getByRole("menuitem", { name: "Ganti nama grup" }));
+    await user.click(screen.getByRole("menuitem", { name: "Ganti nama" }));
     const input = screen.getByLabelText("Nama grup");
     expect(input).toHaveValue("Persiapan pameran");
     await user.clear(input);

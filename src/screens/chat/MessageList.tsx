@@ -59,14 +59,28 @@ type Props = {
   kind: ConversationSummary["kind"];
   flashId: string | null;
   loadedIds: Set<string>;
+  canReply: boolean;
   onReply: (message: MessageView) => void;
   onDelete: (message: MessageView) => void;
   onJump: (messageId: string) => void;
   onReload: () => void;
+  onAnnounce: (text: string, error?: boolean) => void;
 };
 
 // Daftar pesan dengan pemisah hari dan baris kejadian grup. Pengguliran diatur Conversation.
-export function MessageList({ items, me, kind, flashId, loadedIds, onReply, onDelete, onJump, onReload }: Props) {
+export function MessageList({
+  items,
+  me,
+  kind,
+  flashId,
+  loadedIds,
+  canReply,
+  onReply,
+  onDelete,
+  onJump,
+  onReload,
+  onAnnounce,
+}: Props) {
   return (
     <ol className="conv-list">
       {items.map((item) => {
@@ -99,11 +113,13 @@ export function MessageList({ items, me, kind, flashId, loadedIds, onReply, onDe
             me={me}
             kind={kind}
             flash={flashId === item.message.id}
+            canReply={canReply}
             replyLoaded={!!item.message.replyTo && loadedIds.has(item.message.replyTo.id)}
             onReply={onReply}
             onDelete={onDelete}
             onJump={onJump}
             onReload={onReload}
+            onAnnounce={onAnnounce}
           />
         );
       })}

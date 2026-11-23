@@ -72,13 +72,13 @@ describe("Chat proyek: kepala", () => {
     expect(chat.group).not.toHaveBeenCalled();
   });
 
-  it("menu hanya berisi notifikasi: tanpa arsip, hapus, ganti nama, atau hanya-baca", async () => {
+  it("menu hanya berisi Bisukan: tanpa arsip, hapus, ganti nama, atau hanya-baca", async () => {
     const user = userEvent.setup();
     renderConv(project({ canArchive: true, canDelete: true, canLock: true }));
     await user.click(screen.getByRole("button", { name: "Menu Gedung Alfa" }));
-    const menu = screen.getByRole("menu", { name: "Menu Gedung Alfa" });
+    const menu = screen.getByRole("menu", { name: "Aksi untuk Gedung Alfa" });
     const items = within(menu).getAllByRole("menuitem");
-    expect(items.map((i) => i.textContent)).toEqual(["Bisukan notifikasi"]);
+    expect(items.map((i) => i.textContent)).toEqual(["Bisukan"]);
   });
 
   it("arsip lama dari v0.3 bisa dikembalikan, tapi tidak bisa diarsipkan lagi", async () => {
@@ -86,9 +86,9 @@ describe("Chat proyek: kepala", () => {
     chat.setArchived.mockResolvedValue(null);
     const { onChanged } = renderConv(project({ archived: true, canArchive: true }));
     await user.click(screen.getByRole("button", { name: "Menu Gedung Alfa" }));
-    const menu = screen.getByRole("menu", { name: "Menu Gedung Alfa" });
+    const menu = screen.getByRole("menu", { name: "Aksi untuk Gedung Alfa" });
     expect(within(menu).getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      "Bisukan notifikasi",
+      "Bisukan",
       "Kembalikan dari arsip",
     ]);
     await user.click(within(menu).getByRole("menuitem", { name: "Kembalikan dari arsip" }));
@@ -118,7 +118,8 @@ describe("Chat proyek: daftar anggota", () => {
     expect(within(rows[2]).getByText("Pengelola proyek")).toBeInTheDocument();
     expect(within(rows[0]).queryByText("Pengelola proyek")).toBeNull();
     await waitFor(() => expect(rows[2]).toHaveTextContent("Drafting"));
-    expect(within(panel).queryByRole("button")).toBeNull();
+    // Hanya tombol menu orang; tidak ada tombol untuk mengubah anggota.
+    for (const b of within(panel).queryAllByRole("button")) expect(b).toHaveAccessibleName(/^Aksi untuk /);
     expect(panel).toHaveTextContent(`${BASE_NOTE} Pengelola proyek yang mengatur anggotanya di Board.`);
   });
 

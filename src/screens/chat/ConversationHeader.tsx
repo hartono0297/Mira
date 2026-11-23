@@ -1,210 +1,130 @@
-import {
-  IconArchive,
-  IconArchiveOff,
-  IconBell,
-  IconBellOff,
-  IconDots,
-  IconLock,
-  IconLockOpen,
-  IconPencil,
-  IconTrash,
-  IconUserPlus,
-  IconUsers,
-  type Icon,
-} from "@tabler/icons-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { toAppError, type AppError } from "../../api";
-import { chatApi, type ConversationSummary } from "../../api/chat";
-import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { IconBellOff, IconLock, IconUserPlus, IconUsers } from "@tabler/icons-react";
+import { useEffect, useRef, useState, type Ref } from "react";
+import type { AppError } from "../../api";
+import type { ConversationSummary } from "../../api/chat";
+import { MenuButton } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
-import { AddPeopleDialog, GroupMembers, RenameGroupDialog, useGroupView } from "./GroupMembers";
+import type { ConvRequest } from "./ChatActions";
+import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
+import { AddPeopleDialog, GroupMembers, RenameGroupDialog, type GroupState } from "./GroupMembers";
 import { ProjectMembers } from "./ProjectMembers";
 import { conversationTitle, scopeLabel } from "./text";
 
 type Props = {
   summary: ConversationSummary;
+  // Data grup dari panel percakapan (useGroupView). Untuk selain grup: group null.
+  groupState: GroupState;
+  // Judul percakapan (tabIndex -1): tujuan fokus setelah panel lama hilang.
+  titleRef?: Ref<HTMLHeadingElement>;
+  // Permintaan dari menu sidebar untuk percakapan ini (sudah disaring per percakapan).
+  request?: ConvRequest | null;
+  onRequestDone?: () => void;
   onChanged: () => void;
   onGone: () => void;
 };
 
-type Action = "mute" | "archive" | "delete" | "lock" | "rename";
+type GroupDialog = "rename" | "add";
 
-type MenuItem = { key: Action; label: string; icon: Icon; danger?: boolean };
-
-const ERROR_TITLES: Record<Action, string> = {
-  mute: "Notifikasi belum bisa diubah",
-  archive: "Arsip belum bisa diubah",
-  delete: "Channel belum bisa dihapus",
-  lock: "Status hanya-baca belum bisa diubah",
-  rename: "Nama grup belum bisa diganti",
+const GROUP_WAIT: Record<GroupDialog, string> = {
+  rename: "Ganti nama terbuka begitu data grup termuat.",
+  add: "Tambah orang terbuka begitu data grup termuat.",
 };
 
-export function ConversationHeader({ summary, onChanged, onGone }: Props) {
+export function ConversationHeader({
+  summary,
+  groupState,
+  titleRef,
+  request = null,
+  onRequestDone,
+  onChanged,
+  onGone,
+}: Props) {
   const title = conversationTitle(summary);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<Action | null>(null);
-  const [error, setError] = useState<{ action: Action; error: AppError } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleteError, setDeleteError] = useState<AppError | null>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLUListElement>(null);
-  const menuId = useId();
-  const alive = useRef(true);
+  const [error, setError] = useState<ActionError | null>(null);
   const isGroup = summary.kind === "group";
   // Chat proyek tampil seperti grup, tetapi anggotanya diatur di Board: tanpa tambah, keluar,
-  // ganti nama, arsip, atau hapus. Menu hanya berisi notifikasi.
+  // ganti nama, atau hapus. Menunya hanya Bisukan (dan Kembalikan untuk arsip lama).
   const isProject = summary.kind === "project";
   const groupLike = isGroup || isProject;
-  const groupState = useGroupView(
-    isGroup ? summary.id : null,
-    `${summary.memberCount}|${summary.name}|${summary.former}`,
-  );
   const group = groupState.group;
   const [adding, setAdding] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  // Dialog grup yang diminta (dari menu ini atau dari sidebar) sebelum data grup selesai dimuat.
+  const [pending, setPending] = useState<GroupDialog | null>(null);
 
+  // Ganti percakapan: buang error dan dialog lama.
   useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  // Ganti percakapan: tutup menu dan buang error lama.
-  useEffect(() => {
-    setOpen(false);
     setError(null);
-    setConfirmDelete(false);
-    setDeleteError(null);
     setAdding(false);
     setRenaming(false);
+    setPending(null);
   }, [summary.id]);
 
-  const items: MenuItem[] = [
-    summary.muted
-      ? { key: "mute", label: "Nyalakan notifikasi", icon: IconBell }
-      : { key: "mute", label: "Bisukan notifikasi", icon: IconBellOff },
-  ];
-  if (isGroup && group?.canRename && !summary.former) {
-    items.push({ key: "rename", label: "Ganti nama grup", icon: IconPencil });
-  }
-  if (summary.kind === "channel" && summary.canLock) {
-    items.push(
-      summary.locked
-        ? { key: "lock", label: "Buka untuk semua", icon: IconLockOpen }
-        : { key: "lock", label: "Jadikan hanya-baca", icon: IconLock },
-    );
-  }
-  // Chat proyek tidak bisa diarsipkan lagi (v0.4), tapi arsip lama dari v0.3 tetap bisa dikembalikan.
-  if (isProject && summary.archived && summary.canArchive) {
-    items.push({ key: "archive", label: "Kembalikan dari arsip", icon: IconArchiveOff });
-  }
-  if (summary.kind === "channel" && summary.canArchive) {
-    items.push(
-      summary.archived
-        ? { key: "archive", label: "Kembalikan dari arsip", icon: IconArchiveOff }
-        : { key: "archive", label: "Arsipkan channel", icon: IconArchive },
-    );
-  }
-  if (summary.kind === "channel" && summary.canDelete && !summary.isUmum) {
-    items.push({ key: "delete", label: "Hapus channel", icon: IconTrash, danger: true });
-  }
-
-  function menuItems(): HTMLButtonElement[] {
-    return Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? []);
-  }
-
+  // Permintaan dari sidebar: disimpan sebagai dialog tertunda, lalu permintaannya selesai.
+  const requestN = request?.n;
+  const requestAction = request?.action;
   useEffect(() => {
-    if (!open) return;
-    menuItems()[0]?.focus();
-    function onDown(e: MouseEvent) {
-      const t = e.target as Node;
-      if (!menuRef.current?.contains(t) && !buttonRef.current?.contains(t)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+    if (requestN === undefined || !requestAction) return;
+    setPending(requestAction);
+    onRequestDone?.();
+    // Satu kali per permintaan: hanya n yang dipantau.
+  }, [requestN]);
 
-  function close(focusButton: boolean) {
-    setOpen(false);
-    if (focusButton) buttonRef.current?.focus();
-  }
-
-  function onMenuKey(e: KeyboardEvent<HTMLUListElement>) {
-    const list = menuItems();
-    const at = list.indexOf(document.activeElement as HTMLButtonElement);
-    let next: number | null = null;
-    if (e.key === "ArrowDown") next = (at + 1) % list.length;
-    else if (e.key === "ArrowUp") next = (at - 1 + list.length) % list.length;
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = list.length - 1;
-    else if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      close(true);
-      return;
-    } else if (e.key === "Tab") {
-      setOpen(false);
-      return;
+  // Buka dialog tertunda begitu data grup siap. Kalau data grup gagal dimuat, permintaan
+  // tetap disimpan dan error-nya tampil di bawah kepala dengan Coba lagi: dialog terbuka
+  // setelah muat ulang berhasil. Batal membuang permintaan.
+  const [retrying, setRetrying] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const groupErrorRef = useRef<HTMLDivElement>(null);
+  // Kotak error grup hilang bersama tombolnya: fokus pindah dulu ke tombol menu "...", supaya
+  // dialog yang terbuka sesudahnya juga mengembalikan fokus ke sana.
+  const leaveGroupError = () => {
+    if (groupErrorRef.current?.contains(document.activeElement)) {
+      rowRef.current?.querySelector<HTMLElement>('button[aria-haspopup="menu"]')?.focus();
     }
-    if (next !== null) {
-      e.preventDefault();
-      list[next]?.focus();
+  };
+  useEffect(() => {
+    if (!pending) return;
+    if (group) {
+      const allowed = !summary.former && (pending === "rename" ? group.canRename : group.canAdd);
+      leaveGroupError();
+      if (allowed) (pending === "rename" ? setRenaming : setAdding)(true);
+      setPending(null);
+    } else if (!groupState.loading && !groupState.error) {
+      setPending(null);
     }
-  }
+  }, [pending, group, groupState.loading, groupState.error, summary.former]);
+  const groupFailed = pending !== null && !group && (groupState.error !== null || retrying);
+  // Error terakhir tetap tampil selama Coba lagi berjalan (reload mengosongkan error).
+  const [groupError, setGroupError] = useState<AppError | null>(null);
+  useEffect(() => {
+    if (groupState.error) setGroupError(groupState.error);
+  }, [groupState.error]);
 
-  async function run(action: Action, work: () => Promise<unknown>): Promise<boolean> {
-    setBusy(action);
-    setError(null);
+  async function retryGroup() {
+    if (retrying) return;
+    setRetrying(true);
     try {
-      await work();
-      return true;
-    } catch (err) {
-      if (alive.current) setError({ action, error: toAppError(err) });
-      return false;
+      await groupState.reload();
     } finally {
-      if (alive.current) setBusy(null);
+      setRetrying(false);
     }
   }
 
-  async function pick(key: Action) {
-    close(true);
-    if (key === "delete") {
-      setDeleteError(null);
-      setConfirmDelete(true);
-      return;
-    }
-    if (key === "rename") {
-      setRenaming(true);
-      return;
-    }
-    let ok: boolean;
-    if (key === "mute") ok = await run("mute", () => chatApi.setMuted(summary.id, !summary.muted));
-    else if (key === "lock") ok = await run("lock", () => chatApi.setLocked(summary.id, !summary.locked));
-    else ok = await run("archive", () => chatApi.setArchived(summary.id, !summary.archived));
-    if (ok) onChanged();
-  }
-
-  async function deleteChannel() {
-    setBusy("delete");
-    setDeleteError(null);
-    try {
-      await chatApi.deleteChannel(summary.id);
-      if (!alive.current) return;
-      setConfirmDelete(false);
-      onChanged();
-      onGone();
-    } catch (err) {
-      if (alive.current) setDeleteError(toAppError(err));
-    } finally {
-      if (alive.current) setBusy(null);
-    }
-  }
+  const menu = useConversationMenu({
+    summary,
+    onChanged,
+    onGone,
+    onRename: () => setPending("rename"),
+    onAdd: () => setPending("add"),
+    onError: setError,
+  });
 
   return (
     <header className="conv-head">
-      <div className="conv-head-row">
+      {/* Klik kanan atau Shift+F10 di kepala membuka menu yang sama dengan tombol "...". */}
+      <div className="conv-head-row" ref={rowRef} {...menu.triggerProps}>
         {summary.kind === "dm" && (
           <span className="conv-avatar" aria-hidden="true">
             {initials(title)}
@@ -216,7 +136,9 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
           </span>
         )}
         <div className={groupLike ? "conv-head-text conv-head-group" : "conv-head-text"}>
-          <h2 className="conv-title">{title}</h2>
+          <h2 className="conv-title" ref={titleRef} tabIndex={-1}>
+            {title}
+          </h2>
           {isGroup && (
             <GroupMembers
               memberCount={summary.memberCount}
@@ -253,54 +175,42 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
             Tambah orang
           </button>
         )}
-        <div className="conv-menu">
-          <button
-            ref={buttonRef}
-            type="button"
-            className="conv-icon-btn"
-            aria-label={`Menu ${title}`}
-            aria-haspopup="menu"
-            aria-expanded={open}
-            aria-controls={open ? menuId : undefined}
-            aria-busy={busy !== null || undefined}
-            onClick={() => setOpen((v) => !v)}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown" && !e.altKey) {
-                e.preventDefault();
-                setOpen(true);
-              }
-            }}
-          >
-            <IconDots size={18} aria-hidden="true" />
-          </button>
-          {open && (
-            <ul ref={menuRef} id={menuId} role="menu" aria-label={`Menu ${title}`} className="conv-menu-list" onKeyDown={onMenuKey}>
-              {items.map((item) => {
-                const Glyph = item.icon;
-                return (
-                  <li key={item.key} role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      tabIndex={-1}
-                      className={item.danger ? "conv-menu-item conv-menu-danger" : "conv-menu-item"}
-                      onClick={() => void pick(item.key)}
-                    >
-                      <Glyph size={16} aria-hidden="true" />
-                      {item.label}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+        <MenuButton menu={menu} label={`Menu ${title}`} className="conv-icon-btn" />
       </div>
       <div aria-live="polite">
         {error && (
           <div className="conv-head-error">
-            <ErrorAlert title={ERROR_TITLES[error.action]}>
+            <ErrorAlert title={ACTION_ERRORS[error.action]}>
               <p>{error.error.message}</p>
+            </ErrorAlert>
+          </div>
+        )}
+        {groupFailed && (
+          <div className="conv-head-error" ref={groupErrorRef}>
+            <ErrorAlert title="Data grup belum bisa dimuat">
+              {groupError && <p>{groupError.message}</p>}
+              {pending && <p>{GROUP_WAIT[pending]}</p>}
+              <div className="chat-alert-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => void retryGroup()}
+                  aria-disabled={retrying || undefined}
+                  aria-busy={retrying || undefined}
+                >
+                  {retrying ? "Memuat ulang..." : "Coba lagi"}
+                </button>
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    leaveGroupError();
+                    setPending(null);
+                  }}
+                >
+                  Batal
+                </button>
+              </div>
             </ErrorAlert>
           </div>
         )}
@@ -330,20 +240,7 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
           />
         </>
       )}
-      <ConfirmDialog
-        open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        title={`Hapus channel ${title}?`}
-        confirmLabel="Hapus channel"
-        busyLabel="Menghapus..."
-        busy={busy === "delete"}
-        onConfirm={() => void deleteChannel()}
-        error={deleteError && <ErrorAlert title={ERROR_TITLES.delete}><p>{deleteError.message}</p></ErrorAlert>}
-      >
-        <p>
-          Semua pesan di {title} dihapus untuk semua anggota. Tindakan ini tidak bisa dibatalkan.
-        </p>
-      </ConfirmDialog>
+      {menu.element}
     </header>
   );
 }

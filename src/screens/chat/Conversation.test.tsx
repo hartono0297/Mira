@@ -271,7 +271,7 @@ describe("Percakapan: kartu file", () => {
     expect(screen.getAllByText("1,2 MB").length).toBeGreaterThan(0);
     expect(screen.getByText("52 MB")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Buka kontrak.pdf" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Simpan kontrak.pdf sebagai" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan kontrak.pdf" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Unduh foto-lokasi.jpg" })).toBeInTheDocument();
     expect(screen.getByText("Mengunduh...")).toBeInTheDocument();
     expect(
@@ -285,7 +285,7 @@ describe("Percakapan: kartu file", () => {
     renderConv();
     await user.click(await screen.findByRole("button", { name: "Buka kontrak.pdf" }));
     expect(chat.fileOpen).toHaveBeenCalledWith("f1", "1".repeat(64));
-    await user.click(screen.getByRole("button", { name: "Simpan kontrak.pdf sebagai" }));
+    await user.click(screen.getByRole("button", { name: "Simpan salinan kontrak.pdf" }));
     expect(chat.fileSave).toHaveBeenCalledWith("1".repeat(64));
     expect(await screen.findByText("kontrak.pdf tersimpan.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Unduh foto-lokasi.jpg" }));
@@ -298,7 +298,7 @@ describe("Percakapan: kartu file", () => {
     chat.fileSave.mockResolvedValue(false);
     withFiles();
     renderConv();
-    await user.click(await screen.findByRole("button", { name: "Simpan kontrak.pdf sebagai" }));
+    await user.click(await screen.findByRole("button", { name: "Simpan salinan kontrak.pdf" }));
     await waitFor(() => expect(chat.fileSave).toHaveBeenCalled());
     expect(screen.queryByText("kontrak.pdf tersimpan.")).toBeNull();
   });
@@ -311,7 +311,7 @@ describe("Percakapan: kartu file", () => {
     await user.click(await screen.findByRole("button", { name: "Buka kontrak.pdf" }));
     expect(await screen.findByText("File belum bisa dibuka.")).toBeInTheDocument();
     expect(screen.getByText(/File program tidak dibuka langsung/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Simpan kontrak.pdf sebagai" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan kontrak.pdf" })).toBeInTheDocument();
   });
 });
 
@@ -356,14 +356,14 @@ describe("Percakapan: menu kepala", () => {
     await screen.findByText("@Budi Uji");
     const menuBtn = screen.getByRole("button", { name: "Menu #proyek-a" });
     await user.click(menuBtn);
-    await user.click(screen.getByRole("menuitem", { name: "Bisukan notifikasi" }));
+    await user.click(screen.getByRole("menuitem", { name: "Bisukan" }));
     expect(chat.setMuted).toHaveBeenCalledWith(CH, true);
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
 
     // Keyboard: Enter membuka, panah memilih, Enter menjalankan.
     menuBtn.focus();
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("menuitem", { name: "Bisukan notifikasi" })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: "Bisukan" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Arsipkan channel" })).toHaveFocus();
     await user.keyboard("{Enter}");
@@ -390,7 +390,7 @@ describe("Percakapan: menu kepala", () => {
     expect(screen.getByText("Channel ini diarsipkan. Kembalikan dari arsip untuk mengirim pesan.")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Menu #proyek-a" }));
-    await user.click(screen.getByRole("menuitem", { name: "Nyalakan notifikasi" }));
+    await user.click(screen.getByRole("menuitem", { name: "Bunyikan" }));
     expect(chat.setMuted).toHaveBeenCalledWith(CH, false);
     await user.click(screen.getByRole("button", { name: "Menu #proyek-a" }));
     await user.click(screen.getByRole("menuitem", { name: "Kembalikan dari arsip" }));
@@ -415,7 +415,7 @@ describe("Percakapan: menu kepala", () => {
     const user = userEvent.setup();
     renderConv(channel({ canArchive: false, canDelete: false }));
     await user.click(await screen.findByRole("button", { name: "Menu #proyek-a" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Bisukan notifikasi"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Bisukan"]);
   });
 
   it("error API tampil di bawah kepala", async () => {

@@ -7,11 +7,14 @@ import {
   type ConversationSummary,
   type ConversationView,
   type MessageView,
+  type Person,
 } from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { Composer } from "./Composer";
+import { ConversationActionsContext, type ConversationActions, type ConvRequest } from "./ChatActions";
+import { Composer, type MentionRequest } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
+import { useGroupView } from "./GroupMembers";
 import { messageDomId } from "./MessageItem";
 import { buildTimeline, mergeEvents, MessageList } from "./MessageList";
 import { conversationTarget, conversationTitle, mergeMessages, messagePreview } from "./text";
@@ -26,7 +29,18 @@ export type ConversationProps = {
   onChanged: () => void;
   // Percakapan tidak tersedia lagi (channel dihapus): ChatScreen kembali ke #umum.
   onGone: () => void;
+  // Permintaan dari menu sidebar (Ganti nama, Tambah orang) untuk percakapan ini.
+  request?: ConvRequest | null;
+  onRequestDone?: () => void;
+  // Pindahkan fokus sekali ke kolom pesan atau judul, lalu onFocusDone.
+  focus?: FocusRequest | null;
+  onFocusDone?: () => void;
 };
+
+// Permintaan fokus dari ChatScreen setelah panel lama hilang bersama elemen yang terfokus.
+// conv null: untuk panel apa pun yang tampil berikutnya. Kolom pesan yang tidak ada (tidak
+// boleh menulis) diganti judul percakapan.
+export type FocusRequest = { conv: string | null; target: "composer" | "title"; n: number };
 
 // Jarak dari bawah (px) yang masih dianggap "di bawah": pesan baru ikut menggulir.
 const NEAR_BOTTOM_PX = 80;
@@ -43,7 +57,16 @@ function lastFromOthers(messages: MessageView[]): MessageView | null {
   return null;
 }
 
-function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps) {
+function ConversationPanel({
+  summary,
+  me,
+  onChanged,
+  onGone,
+  request = null,
+  onRequestDone,
+  focus = null,
+  onFocusDone,
+}: ConversationProps) {
   const title = conversationTitle(summary);
   const load = useCallback(() => chatApi.messages(summary.id), [summary.id]);
   const live = useChatLive<ConversationView>(load, summary.id);
@@ -61,6 +84,16 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  // Salin gagal: tampil juga di layar, bukan hanya untuk pembaca layar.
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(null);
+
+  // Data grup dipegang di sini: kepala percakapan (anggota, dialog) dan menu orang di pesan
+  // (Keluarkan dari grup) memakai data yang sama.
+  const groupState = useGroupView(
+    summary.kind === "group" ? summary.id : null,
+    `${summary.memberCount}|${summary.name}|${summary.former}`,
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -73,6 +106,9 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
   const alive = useRef(true);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const onFocusDoneRef = useRef(onFocusDone);
+  onFocusDoneRef.current = onFocusDone;
 
   useEffect(() => {
     alive.current = true;
@@ -80,6 +116,22 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
       alive.current = false;
     };
   }, []);
+
+  // Satu kali per permintaan (n). Ditunda satu giliran: dialog atau menu yang baru tertutup
+  // mengembalikan fokus ke pembukanya lebih dulu, baru fokus dipindah ke sini.
+  const focusN = focus && (focus.conv === null || focus.conv === summary.id) ? focus.n : undefined;
+  const focusTarget = focus?.target;
+  useEffect(() => {
+    if (focusN === undefined) return;
+    const t = window.setTimeout(() => {
+      const input = inputRef.current;
+      if (focusTarget === "composer" && input && !input.disabled) input.focus();
+      else titleRef.current?.focus();
+      onFocusDoneRef.current?.();
+    }, 0);
+    return () => window.clearTimeout(t);
+    // Hanya n yang dipantau: target ikut permintaan yang sama.
+  }, [focusN]);
 
   const messages = useMemo(() => (view ? mergeMessages(older, view.messages) : []), [older, view]);
   const events = useMemo(() => (view ? mergeEvents(olderEvents, view.events ?? []) : []), [olderEvents, view]);
@@ -215,6 +267,16 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
     setToDelete(m);
   }, []);
 
+  // Teks sama berturut-turut (salin dua kali) tetap dibacakan ulang: isinya dibuat berbeda.
+  const onAnnounce = useCallback((text: string, error?: boolean) => {
+    if (error) {
+      setCopyError(text);
+      return;
+    }
+    setCopyError(null);
+    setAnnounce((prev) => (prev === text ? `${text}\u00a0` : text));
+  }, []);
+
   const onJump = useCallback((id: string) => {
     const el = document.getElementById(messageDomId(id));
     if (!el) return;
@@ -309,10 +371,12 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
           kind={summary.kind}
           flashId={flashId}
           loadedIds={loadedIds}
+          canReply={summary.canPost}
           onReply={onReply}
           onDelete={onDelete}
           onJump={onJump}
           onReload={reload}
+          onAnnounce={onAnnounce}
         />
         {messages.length === 0 && (
           <p className="conv-state conv-state-after">
@@ -323,9 +387,40 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
     );
   }
 
+  const group = groupState.group;
+  const reloadGroup = groupState.reload;
+  const memberKeys = useMemo(() => new Set((view?.members ?? []).map((p) => p.publicKey)), [view]);
+  const canPost = summary.canPost;
+  const actions = useMemo<ConversationActions>(
+    () => ({
+      conv: summary.id,
+      // Sebut dari menu pesan atau menu orang: Composer menyisipkan @Nama di posisi kursor.
+      mention: canPost
+        ? (person: Person) => setMentionRequest((prev) => ({ person, n: (prev?.n ?? 0) + 1 }))
+        : null,
+      isMember: (pk) => memberKeys.has(pk),
+      canRemove: (pk) => !!group?.members.some((m) => m.person.publicKey === pk && m.canRemove),
+      removeFromGroup: async (person) => {
+        await chatApi.groupRemove(summary.id, person.publicKey);
+        void reloadGroup();
+        onChangedRef.current();
+      },
+    }),
+    [summary.id, canPost, memberKeys, group, reloadGroup],
+  );
+
   return (
+    <ConversationActionsContext.Provider value={actions}>
     <section className="chat-conv conv" aria-label={title}>
-      <ConversationHeader summary={summary} onChanged={onChanged} onGone={onGone} />
+      <ConversationHeader
+        summary={summary}
+        groupState={groupState}
+        titleRef={titleRef}
+        request={request?.conv === summary.id ? request : null}
+        onRequestDone={onRequestDone}
+        onChanged={onChanged}
+        onGone={onGone}
+      />
       <div aria-live="polite" className="conv-live">
         {view && live.error && (
           <ErrorAlert title="Pesan terbaru belum bisa dimuat">
@@ -334,6 +429,15 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
               {retrying ? "Memuat ulang..." : "Coba lagi"}
             </button>
           </ErrorAlert>
+        )}
+        {copyError && (
+          <div className="conv-copy-error">
+            <ErrorAlert title={copyError}>
+              <button type="button" className="link-btn" onClick={() => setCopyError(null)}>
+                Tutup
+              </button>
+            </ErrorAlert>
+          </div>
         )}
       </div>
       <div className="conv-scroll" ref={scrollRef} onScroll={onScroll} role="region" aria-label={`Pesan di ${title}`}>
@@ -353,6 +457,7 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
         }}
         onSent={onSent}
         inputRef={inputRef}
+        mentionRequest={mentionRequest}
       />
       <ConfirmDialog
         open={toDelete !== null}
@@ -378,5 +483,6 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
         </p>
       </ConfirmDialog>
     </section>
+    </ConversationActionsContext.Provider>
   );
 }

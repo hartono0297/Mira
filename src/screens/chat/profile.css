@@ -1,0 +1,145 @@
+/* Dialog profil orang dan tombol menu orang di daftar anggota. Warna lewat token tema;
+   pasangan teks yang dipakai sudah ada di tema (text, text-sec, accent-text di atas
+   accent-soft), tidak ada pasangan baru. */
+
+.prof-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.prof-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Inisial, bukan foto: Mira tidak menyimpan foto orang. */
+.prof-av {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.prof-name {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.prof-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.prof-retry {
+  margin-top: 8px;
+}
+
+.prof-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.prof-facts > div {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.prof-facts > div + div {
+  border-top: 1px solid var(--border);
+}
+
+.prof-facts dt {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.prof-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Sidik dipilih utuh sekali klik, supaya mudah disalin untuk dicocokkan. */
+.prof-fp {
+  user-select: all;
+}
+
+.prof-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+/* Dialog sempit: label di atas nilai. */
+@media (max-width: 420px) {
+  .prof-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
+@keyframes prof-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.prof-spin {
+  flex: none;
+  animation: prof-spin 1s linear infinite;
+}
+
+/* Daftar anggota grup dan proyek: panel menjadi wadah menu orang. MenuPopup menghitung
+   posisi menu dari pojok wadah yang punya transform (seperti .dlg); tanpa transform,
+   menu di panel ini tergeser sejauh posisi panel di jendela. */
+.member-pop {
+  transform: translateZ(0);
+}
+
+.member-more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.member-more:hover,
+.member-more[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+@media (forced-colors: active) {
+  .member-more {
+    border: 1px solid ButtonText;
+  }
+}

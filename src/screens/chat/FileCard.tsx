@@ -1,5 +1,6 @@
 import {
   IconCloudOff,
+  IconCopy,
   IconDeviceFloppy,
   IconDownload,
   IconExternalLink,
@@ -16,6 +17,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type FileView } from "../../api/chat";
+import { MenuButton, menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
+import { MENU } from "./menuText";
 import { fileKind, formatSize, type FileKind } from "./text";
 
 const KIND_ICONS: Record<FileKind, Icon> = {
@@ -36,9 +39,11 @@ type Props = {
   file: FileView;
   // Dipanggil setelah unduhan selesai supaya keadaan file dimuat ulang.
   onDownloaded: () => void;
+  // Hasil Salin nama file untuk pembaca layar; error ditampilkan panel percakapan.
+  onAnnounce?: (text: string, error?: boolean) => void;
 };
 
-export function FileCard({ messageId, file, onDownloaded }: Props) {
+export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<{ action: Busy; error: AppError } | null>(null);
   const [saved, setSaved] = useState(false);
@@ -88,6 +93,49 @@ export function FileCard({ messageId, file, onDownloaded }: Props) {
       return true;
     });
 
+  async function copyName() {
+    try {
+      if (!navigator.clipboard) throw new Error("clipboard");
+      await navigator.clipboard.writeText(file.name);
+      onAnnounce?.(MENU.fileNameCopied(file.name));
+    } catch {
+      onAnnounce?.(MENU.fileNameCopyFailed, true);
+    }
+  }
+
+  // Aksi file yang sedang berjalan menahan aksi file lain; Salin nama file tetap bisa.
+  const waiting = busy !== null && MENU.fileBusy;
+  const menu = useContextMenu({
+    label: MENU.fileMenu(file.name),
+    items: menuItems(
+      file.state === "local" && {
+        id: "open",
+        label: MENU.openFile,
+        icon: <IconExternalLink size={16} />,
+        disabled: waiting,
+        onSelect: () => void openFile(),
+      },
+      file.state === "local" && {
+        id: "save",
+        label: MENU.saveCopy,
+        icon: <IconDeviceFloppy size={16} />,
+        disabled: waiting,
+        onSelect: () => void saveFile(),
+      },
+      file.state === "remote" && {
+        id: "download",
+        label: MENU.downloadFromPeer(size),
+        icon: <IconDownload size={16} />,
+        disabled: waiting,
+        onSelect: () => void download(),
+      },
+      SEPARATOR,
+      { id: "copy-name", label: MENU.copyFileName, icon: <IconCopy size={16} />, onSelect: () => void copyName() },
+    ),
+  });
+
+  const more = <MenuButton menu={menu} label={MENU.fileMore(file.name)} />;
+
   const errorTitle =
     error?.action === "open"
       ? "File belum bisa dibuka"
@@ -96,7 +144,7 @@ export function FileCard({ messageId, file, onDownloaded }: Props) {
         : "File belum bisa diunduh";
 
   return (
-    <div className="conv-file">
+    <div className="conv-file" {...menu.triggerProps}>
       <div className="conv-file-main">
         <Glyph size={22} className="conv-file-icon" aria-hidden="true" />
         <div className="conv-file-info">
@@ -130,11 +178,12 @@ export function FileCard({ messageId, file, onDownloaded }: Props) {
               onClick={() => void saveFile()}
               aria-disabled={busy !== null || undefined}
               aria-busy={busy === "save" || undefined}
-              aria-label={`Simpan ${file.name} sebagai`}
+              aria-label={MENU.saveCopyFile(file.name)}
             >
               <IconDeviceFloppy size={16} aria-hidden="true" />
-              {busy === "save" ? "Menyimpan..." : "Simpan"}
+              {busy === "save" ? "Menyimpan..." : MENU.saveCopy}
             </button>
+            {more}
           </div>
         )}
         {file.state === "remote" && (
@@ -154,8 +203,10 @@ export function FileCard({ messageId, file, onDownloaded }: Props) {
               )}
               {busy === "download" ? "Mengunduh..." : "Unduh"}
             </button>
+            {more}
           </div>
         )}
+        {(file.state === "missing" || file.state === "fetching") && <div className="conv-file-actions">{more}</div>}
       </div>
       {file.state === "missing" && (
         <p className="conv-file-note">
@@ -171,6 +222,7 @@ export function FileCard({ messageId, file, onDownloaded }: Props) {
           </p>
         )}
       </div>
+      {menu.element}
     </div>
   );
 }

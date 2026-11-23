@@ -1,14 +1,26 @@
 import { IconChevronDown, IconDoorExit, IconLoader2 } from "@tabler/icons-react";
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { toAppError, type AppError } from "../../api";
-import { chatApi, type GroupMemberView, type GroupView } from "../../api/chat";
+import { chatApi, type GroupMemberView, type GroupView, type Person } from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { MenuButton } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import {
+  ChatActionsContext,
+  ConversationActionsContext,
+  useChatActions,
+  useConversationActions,
+  usePersonMenu,
+  type ChatActions,
+  type ConversationActions,
+} from "./ChatActions";
+import { MENU } from "./menuText";
 import { GROUP_PICK_MAX, groupNameError, InlineError, normalizeGroupName, GROUP_NAME_MAX } from "./NewGroupDialog";
 import { PeoplePicker, usePeopleDirectory } from "./PeoplePicker";
 import { PersonName } from "./PersonName";
+import "./profile.css";
 
 export type GroupState = {
   group: GroupView | null;
@@ -54,6 +66,83 @@ export function useGroupView(conv: string | null, refreshKey: string): GroupStat
   }, [reload, refreshKey]);
 
   return { group, loading, error, reload };
+}
+
+// Menu orang di panel anggota (grup dan proyek). Aksi yang membawa pengguna ke tempat lain
+// (Kirim pesan pribadi, Sebut, Lihat profil) menutup panel dulu dan mengembalikan fokus ke
+// tombol anggota, baru aksinya jalan. Dialog profil mencatat tombol itu sebagai pembukanya,
+// jadi fokus kembali ke sana saat profil ditutup (baris di panel sudah hilang).
+export function MemberPanelActions({ close, children }: { close: () => void; children: ReactNode }) {
+  const chat = useChatActions();
+  const conv = useConversationActions();
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  const chatValue = useMemo<ChatActions | null>(
+    () =>
+      chat && {
+        ...chat,
+        openDm: (person: Person) => {
+          closeRef.current();
+          return chat.openDm(person);
+        },
+        showProfile: (person: Person) => {
+          closeRef.current();
+          chat.showProfile(person);
+        },
+      },
+    [chat],
+  );
+  const convValue = useMemo<ConversationActions | null>(() => {
+    if (!conv) return null;
+    const mention = conv.mention;
+    return {
+      ...conv,
+      mention:
+        mention &&
+        ((person: Person) => {
+          closeRef.current();
+          mention(person);
+        }),
+    };
+  }, [conv]);
+  return (
+    <ChatActionsContext.Provider value={chatValue}>
+      <ConversationActionsContext.Provider value={convValue}>{children}</ConversationActionsContext.Provider>
+    </ChatActionsContext.Provider>
+  );
+}
+
+type MemberRowProps = {
+  person: Person;
+  me: boolean;
+  department: string | undefined;
+  // Chip di kanan nama, misalnya "Pemilik grup".
+  chip?: string;
+  // Pemilik grup: membuka konfirmasi Keluarkan yang sama dengan tombol Keluarkan.
+  onRemove?: () => void;
+  children?: ReactNode;
+};
+
+// Satu baris anggota dengan menu orang: klik kanan, Shift+F10, tombol Menu, atau tombol "...".
+export function MemberRow({ person, me, department, chip, onRemove, children }: MemberRowProps) {
+  const menu = usePersonMenu(person, { onRemove });
+  return (
+    <li className="conv-member" {...menu.triggerProps}>
+      <span className="pick-av" aria-hidden="true">
+        {initials(person.name)}
+      </span>
+      <span className="pick-who">
+        <span className="pick-name">
+          <PersonName person={person} me={me} />
+        </span>
+        {department && <span className="pick-dept-line">{department}</span>}
+      </span>
+      {chip && <span className="chip chip-on">{chip}</span>}
+      {children}
+      <MenuButton menu={menu} label={MENU.personMenu(person.name)} className="member-more" />
+      {menu.element}
+    </li>
+  );
 }
 
 type MembersProps = {
@@ -178,33 +267,30 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
     content = (
       <ul className="conv-members">
         {members.map((m) => {
-          const department = departments.get(m.person.publicKey);
+          const askRemove = () => {
+            setActionError(null);
+            setToRemove(m);
+          };
           return (
-            <li key={m.person.publicKey} className="conv-member">
-              <span className="pick-av" aria-hidden="true">
-                {initials(m.person.name)}
-              </span>
-              <span className="pick-who">
-                <span className="pick-name">
-                  <PersonName person={m.person} me={m.me} />
-                </span>
-                {department && <span className="pick-dept-line">{department}</span>}
-              </span>
-              {m.owner && <span className="chip chip-on">Pemilik grup</span>}
+            <MemberRow
+              key={m.person.publicKey}
+              person={m.person}
+              me={m.me}
+              department={departments.get(m.person.publicKey)}
+              chip={m.owner ? "Pemilik grup" : undefined}
+              onRemove={askRemove}
+            >
               {m.canRemove && (
                 <button
                   type="button"
                   className="conv-member-remove"
                   aria-label={`Keluarkan ${m.person.name} dari grup`}
-                  onClick={() => {
-                    setActionError(null);
-                    setToRemove(m);
-                  }}
+                  onClick={askRemove}
                 >
                   Keluarkan
                 </button>
               )}
-            </li>
+            </MemberRow>
           );
         })}
       </ul>
@@ -231,7 +317,7 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
           role="dialog"
           aria-labelledby={titleId}
           tabIndex={-1}
-          className="conv-group-pop"
+          className="conv-group-pop member-pop"
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.preventDefault();
@@ -248,7 +334,7 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
               Daftar terbaru belum bisa dimuat. Yang tampil adalah daftar terakhir.
             </p>
           )}
-          {content}
+          <MemberPanelActions close={() => close(true)}>{content}</MemberPanelActions>
           {group?.canLeave && !group.former && (
             <>
               <hr className="conv-group-sep" />
@@ -261,7 +347,7 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
                 }}
               >
                 <IconDoorExit size={16} aria-hidden="true" />
-                Keluar dari grup
+                {MENU.leaveGroup}
               </button>
             </>
           )}
@@ -272,9 +358,9 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
         onOpenChange={(next) => {
           if (!next) setToRemove(null);
         }}
-        title={`Keluarkan ${removeName} dari grup?`}
-        confirmLabel="Keluarkan"
-        busyLabel="Mengeluarkan..."
+        title={MENU.removeTitle(removeName)}
+        confirmLabel={MENU.removeConfirm}
+        busyLabel={MENU.removeBusy}
         busy={busy}
         onConfirm={() => void removeMember()}
         error={
@@ -285,33 +371,26 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
           )
         }
       >
-        <p>
-          {removeName} tidak menerima pesan baru lagi; pesan lama tetap di laptopnya.
-        </p>
+        <p>{MENU.removeBody(removeName)}</p>
       </ConfirmDialog>
       <ConfirmDialog
         open={leaving}
         onOpenChange={setLeaving}
-        title={`Keluar dari grup ${title}?`}
-        confirmLabel="Keluar dari grup"
-        busyLabel="Keluar..."
+        title={MENU.leaveTitle(title)}
+        confirmLabel={MENU.leaveConfirm}
+        busyLabel={MENU.leaveBusy}
         busy={busy}
         onConfirm={() => void leave()}
         error={
           actionError && (
-            <ErrorAlert title="Anda belum keluar dari grup">
+            <ErrorAlert title={MENU.leaveFailed}>
               <p>{actionError.message}</p>
             </ErrorAlert>
           )
         }
       >
-        <p>
-          Pesan baru di grup ini tidak dikirim lagi ke laptop Anda; pesan lama tetap tersimpan di sini. Untuk masuk lagi,
-          anggota grup perlu menambahkan Anda.
-        </p>
-        {iAmOwner && members.length > 1 && (
-          <p>Peran pemilik grup pindah ke anggota yang paling lama di grup.</p>
-        )}
+        <p>{MENU.leaveBody}</p>
+        {iAmOwner && members.length > 1 && <p>{MENU.leaveOwner}</p>}
       </ConfirmDialog>
     </div>
   );
