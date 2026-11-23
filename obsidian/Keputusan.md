@@ -38,6 +38,7 @@ Keputusan desain yang sudah berlaku, dikumpulkan dari PRD dan laporan tahap. Ala
 - Lampiran yang bisa menjalankan program hanya bisa disimpan, tidak dibuka.
 - Dialog pilih dan simpan file dijalankan di sisi Rust, jadi skrip di webview tidak bisa membaca file sembarangan.
 - Status gabungan pesan channel diambil dari penerima dengan status paling rendah.
+- Celah grup yang diketahui (diputuskan 23 November 2026, v0.3.0): orang yang sudah dikeluarkan dari organisasi tapi masih tercatat di grup bisa menandatangani penambahan anggota yang tanggalnya dibuat mundur. Rekan yang ditambahkan ikut membaca riwayat grup. Celah ini dibiarkan sebagai batasan, karena menutupnya penuh juga menghapus penambahan sah yang pernah dibuat orang itu. Penambahan selalu tampil sebagai "X menambahkan Y" bagi semua anggota, dan pemilik grup bisa langsung mengeluarkan Y. Rencana lanjutan: tandai penambahan oleh orang yang sudah dikeluarkan dengan peringatan yang jelas di percakapan.
 
 ## Board ([[Tahap 3]])
 
