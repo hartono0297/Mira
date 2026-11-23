@@ -171,6 +171,7 @@ fn request_reaches_an_approver_through_a_member_and_the_requester_joins() {
         &sari.id,
         &target(&o.dimas, &o.desain),
         &device(),
+        None,
         now(),
     )
     .unwrap();
@@ -246,6 +247,12 @@ fn request_reaches_an_approver_through_a_member_and_the_requester_joins() {
     assert_eq!(card.ip.as_deref(), Some("192.168.1.23"));
     assert_eq!(card.seen_by_name.as_deref(), Some("Dimas"));
     assert_eq!(card.laptop, "LAPTOP-DESAIN-03");
+    // A request without the v0.4 fields.
+    assert_eq!(card.note, None);
+    assert_eq!(card.account, None);
+    assert_eq!(mine.note, None);
+    assert!(!mine.request.payload.contains("note"));
+    assert!(!mine.request.payload.contains("account"));
 
     p::approve_join(&mut o.rina.conn, &o.rina.id, &id, now()).unwrap();
     let rina_state = o.rina.state();
@@ -277,6 +284,90 @@ fn request_reaches_an_approver_through_a_member_and_the_requester_joins() {
 }
 
 #[test]
+fn note_and_account_reach_the_approver_card() {
+    let mut o = office();
+    let mut sari = Node::new("Sari");
+    let extras = p::join::JoinExtras {
+        note: Some("  Staf gudang, NIK 1234 ".into()),
+        account: Some("sari.w".into()),
+    };
+    let mine = p::create_join_request(
+        &mut sari.conn,
+        &sari.id,
+        &target(&o.andi, &o.desain),
+        &device(),
+        Some(&extras),
+        now(),
+    )
+    .unwrap();
+    assert_eq!(mine.note.as_deref(), Some("Staf gudang, NIK 1234"));
+    let json = serde_json::to_value(&mine).unwrap();
+    assert_eq!(json["note"], "Staf gudang, NIK 1234");
+    // Read back from the outbox (after a restart).
+    let again = p::outgoing_join_request(&sari.conn).unwrap().unwrap();
+    assert_eq!(again.note.as_deref(), Some("Staf gudang, NIK 1234"));
+    p::receive_join_request(
+        &mut o.andi.conn,
+        &o.andi.id,
+        &mine.request,
+        &sari.pk(),
+        ip("192.168.1.23"),
+        now(),
+    )
+    .unwrap();
+    let state = o.andi.state();
+    let cards = p::pending_join_requests(&o.andi.conn, &state, &o.andi.pk(), now()).unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].note.as_deref(), Some("Staf gudang, NIK 1234"));
+    assert_eq!(cards[0].account.as_deref(), Some("sari.w"));
+    let card = serde_json::to_value(&cards[0]).unwrap();
+    assert_eq!(card["note"], "Staf gudang, NIK 1234");
+    assert_eq!(card["account"], "sari.w");
+    p::approve_join(&mut o.andi.conn, &o.andi.id, &mine.request_id, now()).unwrap();
+    assert!(o.andi.state().is_active(&sari.pk()));
+}
+
+#[test]
+fn note_is_cleaned_and_checked_before_signing() {
+    let o = office();
+    let mut sari = Node::new("Sari");
+    let make = |sari: &mut Node, note: &str, account: Option<&str>| {
+        p::create_join_request(
+            &mut sari.conn,
+            &sari.id,
+            &target(&o.andi, &o.desain),
+            &device(),
+            Some(&p::join::JoinExtras {
+                note: Some(note.into()),
+                account: account.map(str::to_owned),
+            }),
+            now(),
+        )
+    };
+    // Blank note and no account: the v0.3 shape.
+    let blank = make(&mut sari, "   ", None).unwrap();
+    assert_eq!(blank.note, None);
+    assert!(!blank.request.payload.contains("note"));
+    let max = "é".repeat(p::join::JOIN_NOTE_MAX_CHARS);
+    assert_eq!(make(&mut sari, &max, None).unwrap().note, Some(max));
+    let long = make(
+        &mut sari,
+        &"x".repeat(p::join::JOIN_NOTE_MAX_CHARS + 1),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(long.code(), "invalid_input");
+    assert_eq!(long.to_string(), "Keterangan paling banyak 80 karakter.");
+    let newline = make(&mut sari, "Staf\ngudang", None).unwrap_err();
+    assert_eq!(newline.code(), "invalid_input");
+    // An account name that does not fit is left out, not an error.
+    let odd = make(&mut sari, "Staf", Some(&"x".repeat(65))).unwrap();
+    assert!(!odd.request.payload.contains("account"));
+    let odd = make(&mut sari, "Staf", Some(" \t ")).unwrap();
+    assert!(!odd.request.payload.contains("account"));
+}
+
+#[test]
 fn approval_from_a_copy_of_the_office_is_refused() {
     let mut o = office();
     let mut sari = Node::new("Sari");
@@ -285,6 +376,7 @@ fn approval_from_a_copy_of_the_office_is_refused() {
         &sari.id,
         &target(&o.andi, &o.desain),
         &device(),
+        None,
         now(),
     )
     .unwrap();
@@ -343,6 +435,7 @@ fn rejection_is_recorded_only_with_the_matching_reject_op() {
         &sari.id,
         &target(&o.rina, &o.desain),
         &device(),
+        None,
         now(),
     )
     .unwrap();
@@ -388,6 +481,7 @@ fn rejection_is_recorded_only_with_the_matching_reject_op() {
         &sari.id,
         &target(&o.rina, &o.desain),
         &device(),
+        None,
         now(),
     )
     .unwrap();
@@ -416,6 +510,7 @@ fn caps_per_address_group_per_key_and_per_laptop() {
             &n.id,
             &target(&o.andi, &team),
             &device(),
+            None,
             now(),
         )
         .unwrap();
@@ -449,6 +544,7 @@ fn caps_per_address_group_per_key_and_per_laptop() {
         &n.id,
         &target(&o.andi, &team),
         &device(),
+        None,
         now(),
     )
     .unwrap();
@@ -492,6 +588,7 @@ fn forwarded_records_need_a_valid_signed_observation() {
         &sari.id,
         &target(&o.dimas, &o.desain),
         &device(),
+        None,
         now(),
     )
     .unwrap();
@@ -550,6 +647,7 @@ fn removed_laptops_and_archived_departments_are_refused_on_receipt() {
         &sari.id,
         &target(&o.andi, &empty),
         &device(),
+        None,
         now(),
     )
     .unwrap();
@@ -580,6 +678,8 @@ fn removed_laptops_and_archived_departments_are_refused_on_receipt() {
             laptop: "L".into(),
             os: "Windows 11".into(),
             app_version: "0.3.0".into(),
+            note: None,
+            account: None,
             at: p::format::format_time(now()),
             nonce: "ab".repeat(16),
         };

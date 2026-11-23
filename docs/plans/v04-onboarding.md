@@ -18,7 +18,7 @@ Cadangan tetap: alamat laptop rekan, kode undangan.
 
 - Layar "Kantor belum ditemukan" hanya berisi: Cari lagi, alamat laptop rekan, kode undangan, dan bagian lipat "Untuk admin IT".
 - Di dalam bagian itu: penjelasan singkat dan tombol "Siapkan Mira untuk kantor baru". Kalau di sesi ini pernah terlihat kantor atau pengumuman organisasi, tombolnya diganti penjelasan (kantor sudah ada di jaringan, minta bergabung saja).
-- Layar kantor baru: peringatan VPN, nama organisasi, nama Anda, departemen Anda, lalu "Ketik ulang nama organisasi" yang harus sama persis sebelum "Buat organisasi" bisa ditekan.
+- Layar kantor baru: peringatan VPN, nama organisasi, nama Anda, departemen Anda, lalu "Ketik ulang nama organisasi" yang harus sama persis. Tombol "Buat organisasi" tetap aktif; kalau ketikan ulangnya berbeda, isian itu menampilkan pesan dan organisasi tidak dibuat (tombol yang dinonaktifkan tidak menjelaskan alasannya ke pembaca layar).
 - Argumen peluncuran `--siapkan-kantor` (command `join_setup_mode`) membuka layar kantor baru langsung setelah langkah nama dilewati.
 
 ## Data verifikasi

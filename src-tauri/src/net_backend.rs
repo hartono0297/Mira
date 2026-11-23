@@ -104,6 +104,8 @@ pub struct MiraBackend {
     /// here is pushed to the other members right away instead of on the
     /// next periodic sync.
     net: OnceLock<Network>,
+    /// `extras` in `join_info` answers (v0.4: `JOIN_INFO_EXTRAS`).
+    join_extras: u32,
 }
 
 impl MiraBackend {
@@ -111,7 +113,15 @@ impl MiraBackend {
         Self {
             state,
             net: OnceLock::new(),
+            join_extras: network::JOIN_INFO_EXTRAS,
         }
+    }
+
+    /// Answers `join_info` like another Mira version (0: v0.3).
+    #[cfg(test)]
+    pub(crate) fn with_join_extras(mut self, extras: u32) -> Self {
+        self.join_extras = extras;
+        self
     }
 
     pub fn attach(&self, net: Network) {
@@ -301,6 +311,7 @@ impl SyncBackend for MiraBackend {
                     name: d.name,
                 })
                 .collect(),
+            extras: self.join_extras,
         })
     }
 

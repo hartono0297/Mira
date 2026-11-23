@@ -19,6 +19,14 @@
 //! the requester picks) and each guess costs one Argon2id run, so another
 //! laptop cannot find a request with the same code while an approver is
 //! looking.
+//!
+//! v0.4 adds two optional fields (docs/plans/v04-onboarding.md, "Data
+//! verifikasi"): `note`, a short text for the approver, and `account`, the
+//! requester's operating system login name. They are written only when
+//! present, so a request without them is byte-identical to v0.3. Mira v0.3
+//! parses requests with `deny_unknown_fields` and refuses either field, so
+//! the requester adds them only for offices whose members all answered
+//! `join_info` with `extras >= 1`.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use hex::FromHex;
@@ -43,6 +51,10 @@ pub const ORG_FP_DOMAIN: &str = "mira-org-fp-v1\n";
 /// milliseconds per request on a laptop, per guess for an attacker).
 const CODE_M_COST_KIB: u32 = 8 * 1024;
 const CODE_T_COST: u32 = 2;
+/// Longest note for the approver, in characters (v0.4).
+pub const JOIN_NOTE_MAX_CHARS: usize = 80;
+/// Longest login account name, in characters (v0.4).
+pub const JOIN_ACCOUNT_MAX_CHARS: usize = 64;
 
 /// What the joining laptop signs. Field order is the serialization order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,8 +72,48 @@ pub struct JoinRequestPayload {
     pub laptop: String,
     pub os: String,
     pub app_version: String,
+    /// v0.4: what the requester tells the approver (job title, staff
+    /// number). Absent in v0.3 requests and never written as `null`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// v0.4: the requester's login name on Windows (`USERNAME`) or macOS
+    /// (`USER`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
     pub at: String,
     pub nonce: String,
+}
+
+impl JoinRequestPayload {
+    /// Carries a v0.4 field, so Mira v0.3 refuses it.
+    pub fn has_extras(&self) -> bool {
+        self.note.is_some() || self.account.is_some()
+    }
+}
+
+/// What a v0.4 requester adds to its request. Both optional; empty means
+/// the request has the v0.3 shape.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JoinExtras {
+    pub note: Option<String>,
+    pub account: Option<String>,
+}
+
+/// Trimmed, 1 to `max` characters, no control, bidi or invisible characters.
+fn is_short_text(s: &str, max: usize) -> bool {
+    s.trim() == s
+        && (1..=max).contains(&s.chars().count())
+        && !crate::identity::has_forbidden_chars(s)
+}
+
+/// A note as it may appear in a signed request.
+pub fn is_valid_join_note(s: &str) -> bool {
+    is_short_text(s, JOIN_NOTE_MAX_CHARS)
+}
+
+/// A login account name as it may appear in a signed request.
+pub fn is_valid_join_account(s: &str) -> bool {
+    is_short_text(s, JOIN_ACCOUNT_MAX_CHARS)
 }
 
 /// A request as stored and sent: the exact payload string and the
@@ -141,6 +193,14 @@ pub fn parse_request_payload(s: &str) -> Result<JoinRequestPayload, String> {
     need(
         is_valid_app_version(&p.app_version),
         "versi Mira tidak valid",
+    )?;
+    need(
+        p.note.as_deref().is_none_or(is_valid_join_note),
+        "keterangan permintaan tidak valid",
+    )?;
+    need(
+        p.account.as_deref().is_none_or(is_valid_join_account),
+        "nama akun peminta tidak valid",
     )?;
     need(parse_time(&p.at).is_some(), "waktu permintaan tidak valid")?;
     need(is_lower_hex(&p.nonce, 32), "nonce permintaan tidak valid")?;
@@ -293,8 +353,135 @@ mod tests {
             laptop: "LAPTOP-DESAIN-03".into(),
             os: "Windows 11".into(),
             app_version: "0.3.0".into(),
+            note: None,
+            account: None,
             at: "2026-11-23T08:00:00Z".into(),
             nonce: "cd".repeat(16),
+        }
+    }
+
+    /// A request as Mira v0.3 writes it, byte for byte.
+    const V03_PAYLOAD: &str = concat!(
+        "{\"v\":1,\"org\":\"0123456789abcdef0123456789abcdef\",",
+        "\"org_fp\":\"ORGFP\",\"member\":\"MEMBER\",\"name\":\"Rina\",",
+        "\"team\":\"abababababababababababababababab\",\"laptop\":\"LAPTOP-DESAIN-03\",",
+        "\"os\":\"Windows 11\",\"app_version\":\"0.3.0\",\"at\":\"2026-11-23T08:00:00Z\",",
+        "\"nonce\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}"
+    );
+
+    #[test]
+    fn v03_payload_parses_and_serializes_byte_identically() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let pk = hex::encode(sk.verifying_key().as_bytes());
+        let v03 = V03_PAYLOAD
+            .replace("ORGFP", &org_fingerprint(&org()))
+            .replace("MEMBER", &pk);
+        let p = parse_request_payload(&v03).unwrap();
+        assert_eq!(p, payload(&pk));
+        assert_eq!(p.note, None);
+        assert_eq!(p.account, None);
+        assert_eq!(serde_json::to_string(&p).unwrap(), v03);
+        // A payload without extras signs exactly like v0.3.
+        let signed = sign_join_request(&payload(&pk), |m| sk.sign(m));
+        assert_eq!(signed.payload, v03);
+    }
+
+    #[test]
+    fn note_and_account_are_signed_after_app_version() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let pk = hex::encode(sk.verifying_key().as_bytes());
+        let p = JoinRequestPayload {
+            note: Some("Staf gudang, NIK 1234".into()),
+            account: Some("rina.w".into()),
+            ..payload(&pk)
+        };
+        let signed = sign_join_request(&p, |m| sk.sign(m));
+        assert!(signed.payload.contains(
+            "\"app_version\":\"0.3.0\",\"note\":\"Staf gudang, NIK 1234\",\"account\":\"rina.w\",\"at\""
+        ));
+        let v = verify_join_request(&signed, &org()).unwrap();
+        assert_eq!(v.payload, p);
+        // Only one of them is fine too.
+        let only_note = JoinRequestPayload {
+            account: None,
+            ..p.clone()
+        };
+        let s = serde_json::to_string(&only_note).unwrap();
+        assert!(!s.contains("account"));
+        assert_eq!(parse_request_payload(&s).unwrap(), only_note);
+    }
+
+    #[test]
+    fn invalid_note_or_account_is_rejected() {
+        let pk = hex::encode(SigningKey::generate(&mut OsRng).verifying_key().as_bytes());
+        let with = |note: Option<&str>, account: Option<&str>| {
+            serde_json::to_string(&JoinRequestPayload {
+                note: note.map(str::to_owned),
+                account: account.map(str::to_owned),
+                ..payload(&pk)
+            })
+            .unwrap()
+        };
+        assert!(parse_request_payload(&with(Some(&"é".repeat(JOIN_NOTE_MAX_CHARS)), None)).is_ok());
+        assert!(
+            parse_request_payload(&with(None, Some(&"x".repeat(JOIN_ACCOUNT_MAX_CHARS)))).is_ok()
+        );
+        for note in [
+            "",
+            " Staf",
+            "Staf ",
+            "Staf\ngudang",
+            "Staf\tgudang",
+            "Staf\u{202E}gudang",
+            "Staf\u{200B}",
+            &"x".repeat(JOIN_NOTE_MAX_CHARS + 1),
+        ] {
+            assert!(
+                parse_request_payload(&with(Some(note), None)).is_err(),
+                "{note:?}"
+            );
+        }
+        for account in [
+            "",
+            " rina",
+            "rina\u{0000}",
+            "ri\u{2066}na",
+            &"x".repeat(JOIN_ACCOUNT_MAX_CHARS + 1),
+        ] {
+            assert!(
+                parse_request_payload(&with(None, Some(account))).is_err(),
+                "{account:?}"
+            );
+        }
+        // Wrong types are not extras either.
+        let ok = with(None, None);
+        let num = ok.replace("\"at\"", "\"note\":5,\"at\"");
+        assert!(parse_request_payload(&num).is_err());
+    }
+
+    #[test]
+    fn largest_request_fits_the_byte_limit() {
+        let pk = hex::encode(SigningKey::generate(&mut OsRng).verifying_key().as_bytes());
+        // Four-byte characters are the worst case: JSON keeps them as is,
+        // and control characters (escaped as \uXXXX) are not allowed.
+        for wide in ["é", "\u{1F600}"] {
+            let p = JoinRequestPayload {
+                name: wide.repeat(crate::identity::DISPLAY_NAME_MAX_CHARS),
+                laptop: wide.repeat(super::super::format::LAPTOP_NAME_MAX_CHARS),
+                os: wide.repeat(super::super::format::OS_NAME_MAX_CHARS),
+                app_version: "1".repeat(super::super::format::APP_VERSION_MAX_CHARS),
+                note: Some(wide.repeat(JOIN_NOTE_MAX_CHARS)),
+                account: Some(wide.repeat(JOIN_ACCOUNT_MAX_CHARS)),
+                at: "2026-11-23T08:00:00.123456789+07:00".into(),
+                ..payload(&pk)
+            };
+            let s = serde_json::to_string(&p).unwrap();
+            assert!(
+                s.len() <= MAX_JOIN_REQUEST_BYTES,
+                "{wide}: {} bytes",
+                s.len()
+            );
+            assert_eq!(parse_request_payload(&s).unwrap(), p);
         }
     }
 

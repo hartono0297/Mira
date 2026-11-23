@@ -11,6 +11,11 @@
 //! the pair (org id, full genesis fingerprint). A request goes only to
 //! laptops that answered for that exact pair, and never to an office whose
 //! id is also claimed by another genesis (`conflict`).
+//!
+//! v0.4 (docs/plans/v04-onboarding.md): the request may carry a note for
+//! the approver and the login account name. Mira v0.3 refuses requests with
+//! either field, so they are added only for offices whose answering members
+//! all said `extras >= 1` in `join_info` ([`FoundOffice::accepts_note`]).
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -25,9 +30,12 @@ use crate::clock;
 use crate::device;
 use crate::error::{AppError, AppResult};
 use crate::net_backend::{self, AppNet};
-use crate::network::{JoinInfoWire, JoinReject, JoinRequestWire, JoinStatusWire, Network};
+use crate::network::{
+    JOIN_INFO_EXTRAS, JoinInfoWire, JoinReject, JoinRequestWire, JoinStatusWire, Network,
+};
 use crate::org::{self, OrgInfo, Organization};
 use crate::peers;
+use crate::permissions::join::{JOIN_ACCOUNT_MAX_CHARS, JoinExtras};
 use crate::permissions::{self, JoinDepartment, JoinTarget, OutgoingJoinRequest, OutgoingStatus};
 use crate::settings;
 use crate::state::MiraState;
@@ -64,6 +72,10 @@ const MEMBER_TTL: Duration = Duration::from_secs(5 * 60);
 /// `join_reject` with any key; members holding the request contradict it.
 pub const REJECT_CONFIRM: Duration = Duration::from_secs(30);
 
+/// Command line argument that opens Mira in "set up the office" mode (v0.4,
+/// for the IT admin preparing a laptop).
+pub const SETUP_MODE_ARG: &str = "--siapkan-kantor";
+
 /// Refusals that will not change by sending again to another member.
 const FINAL_CODES: [&str; 5] = [
     "team_not_found",
@@ -81,6 +93,9 @@ pub struct JoinDevice {
     pub laptop: String,
     pub os: String,
     pub app_version: String,
+    /// v0.4: login account name, signed into the request; `None` when the
+    /// system does not tell.
+    pub account: Option<String>,
     pub addresses: Vec<String>,
 }
 
@@ -95,6 +110,9 @@ pub struct FoundOffice {
     pub peer_count: usize,
     pub conflict: bool,
     pub same_name: bool,
+    /// Every member that answered for this office is v0.4 or later: the
+    /// request carries the note and the login account name.
+    pub accepts_note: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -124,8 +142,15 @@ struct Office {
     org: Organization,
     short_fp: String,
     departments: Vec<JoinDepartment>,
-    /// Member key → address it answered on, and when.
-    members: HashMap<String, (SocketAddr, Instant)>,
+    /// Member key → address it answered on, when, and its `extras`.
+    members: HashMap<String, (SocketAddr, Instant, u32)>,
+}
+
+impl Office {
+    /// Every member that answered takes requests with `note` and `account`.
+    fn accepts_extras(&self) -> bool {
+        !self.members.is_empty() && self.members.values().all(|m| m.2 >= JOIN_INFO_EXTRAS)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -159,14 +184,12 @@ struct SuspectReject {
 }
 
 impl ClientState {
-    fn record(
-        &mut self,
-        pk: &str,
-        addr: SocketAddr,
-        org: Organization,
-        departments: Vec<JoinDepartment>,
-        now: Instant,
-    ) -> String {
+    fn record(&mut self, pk: &str, addr: SocketAddr, info: VerifiedInfo, now: Instant) -> String {
+        let VerifiedInfo {
+            org,
+            departments,
+            extras,
+        } = info;
         self.prune(now);
         let key = office_key(&org);
         if !self.offices.contains_key(&key) && self.offices.len() >= MAX_OFFICES {
@@ -188,7 +211,7 @@ impl ClientState {
         });
         // Departments from the freshest answer.
         entry.departments = departments;
-        entry.members.insert(pk.to_owned(), (addr, now));
+        entry.members.insert(pk.to_owned(), (addr, now, extras));
         self.asked.insert(pk.to_owned(), now);
         key
     }
@@ -198,7 +221,7 @@ impl ClientState {
     fn prune(&mut self, now: Instant) {
         for o in self.offices.values_mut() {
             o.members
-                .retain(|_, (_, at)| now.saturating_duration_since(*at) < MEMBER_TTL);
+                .retain(|_, (_, at, _)| now.saturating_duration_since(*at) < MEMBER_TTL);
         }
         self.offices.retain(|_, o| !o.members.is_empty());
         self.asked
@@ -227,6 +250,7 @@ impl ClientState {
                 .offices
                 .iter()
                 .any(|(k, o)| k != key && o.org.name == office.org.name),
+            accepts_note: office.accepts_extras(),
         }
     }
 
@@ -237,15 +261,21 @@ impl ClientState {
         out
     }
 
-    /// Verified members of an office, freshest answer first.
-    fn members_of(&self, key: &str) -> Vec<(String, SocketAddr)> {
+    /// Verified members of an office, freshest answer first. With
+    /// `needs_extras`, only those that take requests with `note` and
+    /// `account` (a v0.3 member refuses them).
+    fn members_of(&self, key: &str, needs_extras: bool) -> Vec<(String, SocketAddr)> {
         let Some(office) = self.offices.get(key) else {
             return Vec::new();
         };
-        let mut m: Vec<(&String, &(SocketAddr, Instant))> = office.members.iter().collect();
+        let mut m: Vec<(&String, &(SocketAddr, Instant, u32))> = office
+            .members
+            .iter()
+            .filter(|(_, m)| !needs_extras || m.2 >= JOIN_INFO_EXTRAS)
+            .collect();
         m.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(b.0)));
         m.into_iter()
-            .map(|(pk, (addr, _))| (pk.clone(), *addr))
+            .map(|(pk, (addr, _, _))| (pk.clone(), *addr))
             .collect()
     }
 
@@ -290,12 +320,19 @@ fn office_key(org: &Organization) -> String {
     format!("{}:{}", org.id, permissions::org_fingerprint(org))
 }
 
+/// A `join_info` answer whose genesis record verified.
+#[derive(Debug, Clone)]
+struct VerifiedInfo {
+    org: Organization,
+    departments: Vec<JoinDepartment>,
+    /// What the member said it accepts (`JoinInfoWire.extras`).
+    extras: u32,
+}
+
 /// The genesis record and departments of an answer, if the record verifies
 /// and (for mDNS hints) its id is the one announced.
-fn verify_info(
-    info: JoinInfoWire,
-    expected_org: Option<&str>,
-) -> Option<(Organization, Vec<JoinDepartment>)> {
+fn verify_info(info: JoinInfoWire, expected_org: Option<&str>) -> Option<VerifiedInfo> {
+    let extras = info.extras;
     let org = net_backend::organization(info.org);
     if org::validate_org_record(&org).is_err() || !org.verify_genesis() {
         return None;
@@ -314,7 +351,11 @@ fn verify_info(
             name: d.name,
         })
         .collect();
-    Some((org, departments))
+    Some(VerifiedInfo {
+        org,
+        departments,
+        extras,
+    })
 }
 
 fn unreachable_reject() -> JoinReject {
@@ -351,6 +392,33 @@ async fn ask_info(
 
 // ----- Device and search --------------------------------------------------------------
 
+#[cfg(windows)]
+fn raw_account() -> Option<String> {
+    std::env::var("USERNAME").ok()
+}
+
+#[cfg(not(windows))]
+fn raw_account() -> Option<String> {
+    std::env::var("USER").ok()
+}
+
+/// Login account name as a request may carry it: printable characters
+/// only, trimmed, at most 64 characters; `None` when nothing is left.
+fn clean_account(raw: &str) -> Option<String> {
+    let kept: String = raw
+        .chars()
+        .filter(|c| !crate::identity::has_forbidden_chars(&c.to_string()))
+        .collect();
+    let cut: String = kept.trim().chars().take(JOIN_ACCOUNT_MAX_CHARS).collect();
+    let cut = cut.trim();
+    (!cut.is_empty()).then(|| cut.to_owned())
+}
+
+/// This laptop's login account name (Windows `USERNAME`, macOS `USER`).
+pub(crate) fn login_account() -> Option<String> {
+    clean_account(&raw_account()?)
+}
+
 /// `join_device`: what the approver will see about this laptop.
 pub fn device_info(net: &Network) -> JoinDevice {
     let d = device::current();
@@ -365,6 +433,7 @@ pub fn device_info(net: &Network) -> JoinDevice {
         laptop: d.laptop,
         os: d.os,
         app_version: d.app_version,
+        account: login_account(),
         addresses,
     }
 }
@@ -409,10 +478,8 @@ pub async fn search(net: &Network, client: &JoinClient) -> JoinSearch {
     };
     for (addr, expected, answer) in ask_info(net, targets).await {
         let Ok((pk, info)) = answer else { continue };
-        if let Some((org, departments)) = verify_info(info, expected.as_deref()) {
-            client
-                .lock()
-                .record(&pk, addr, org, departments, Instant::now());
+        if let Some(info) = verify_info(info, expected.as_deref()) {
+            client.lock().record(&pk, addr, info, Instant::now());
         }
     }
     result(client)
@@ -462,10 +529,8 @@ pub async fn connect_address(
                     continue;
                 }
                 match verify_info(info, None) {
-                    Some((org, departments)) => {
-                        let key = client
-                            .lock()
-                            .record(&pk, addr, org, departments, Instant::now());
+                    Some(info) => {
+                        let key = client.lock().record(&pk, addr, info, Instant::now());
                         if !keys.contains(&key) {
                             keys.push(key);
                         }
@@ -644,7 +709,10 @@ async fn send_targets(
     out: &OutgoingJoinRequest,
 ) -> AppResult<Vec<SocketAddr>> {
     let key = office_key(&out.org);
-    let cached = !client.lock().members_of(&key).is_empty();
+    // A request with `note` or `account` goes only to members that said
+    // they take it; v0.3 members refuse it as invalid.
+    let needs_extras = has_extras(out);
+    let cached = !client.lock().members_of(&key, needs_extras).is_empty();
     if !cached {
         let saved = state.with_core(|c| load_saved(&c.db))?;
         let addrs: Vec<(SocketAddr, Option<String>)> = status_candidates(net, client, out, &saved)
@@ -654,10 +722,8 @@ async fn send_targets(
             .collect();
         for (addr, expected, answer) in ask_info(net, addrs).await {
             let Ok((pk, info)) = answer else { continue };
-            if let Some((org, departments)) = verify_info(info, expected.as_deref()) {
-                client
-                    .lock()
-                    .record(&pk, addr, org, departments, Instant::now());
+            if let Some(info) = verify_info(info, expected.as_deref()) {
+                client.lock().record(&pk, addr, info, Instant::now());
             }
         }
     }
@@ -666,12 +732,17 @@ async fn send_targets(
     // exact record are sent to.
     let st = client.lock();
     Ok(st
-        .members_of(&key)
+        .members_of(&key, needs_extras)
         .into_iter()
         .filter(|(pk, _)| !st.delivered.contains(pk))
         .take(MAX_SEND)
         .map(|(_, addr)| addr)
         .collect())
+}
+
+/// The request carries a v0.4 field (`note` or `account`).
+fn has_extras(out: &OutgoingJoinRequest) -> bool {
+    permissions::join::parse_request_payload(&out.request.payload).is_ok_and(|p| p.has_extras())
 }
 
 /// Sends the current outgoing request and records the result. A refusal
@@ -716,6 +787,13 @@ async fn send_and_record(
 /// must first compare the short fingerprint with the superadmin (by phone
 /// or at the desk) and pass it as `confirm_fingerprint`; the request then
 /// goes only to laptops that answered with that exact genesis.
+///
+/// `note` and the login account name go into the request only when the
+/// office accepts them ([`FoundOffice::accepts_note`]). Otherwise the
+/// request has the v0.3 shape and a note is dropped: the screen hides the
+/// note field for such an office, so a note only arrives here when the
+/// office changed between the search and the send (a v0.3 member answered
+/// meanwhile). Sending without it beats a request the office refuses.
 pub async fn send_request(
     state: &MiraState,
     net: &Network,
@@ -723,9 +801,10 @@ pub async fn send_request(
     office_key: &str,
     team_id: &str,
     confirm_fingerprint: Option<&str>,
+    note: Option<&str>,
 ) -> AppResult<OutgoingJoinRequest> {
     let _op = client.ops.lock().await;
-    let (target, members) = {
+    let (target, members, accepts_extras) = {
         let st = client.lock();
         let office = st.offices.get(office_key).ok_or_else(|| {
             AppError::NotFound(
@@ -742,8 +821,9 @@ pub async fn send_request(
         let team = office.departments.iter().find(|d| d.id == team_id).ok_or_else(|| {
             AppError::InvalidInput("Departemen itu tidak ada di kantor ini. Cari kantor lagi dan pilih departemen lain.".into())
         })?;
+        let accepts_extras = office.accepts_extras();
         let members: Vec<SocketAddr> = st
-            .members_of(office_key)
+            .members_of(office_key, accepts_extras)
             .into_iter()
             .take(MAX_SEND)
             .map(|(_, a)| a)
@@ -755,14 +835,20 @@ pub async fn send_request(
                 team_name: team.name.clone(),
             },
             members,
+            accepts_extras,
         )
     };
+    let extras = accepts_extras.then(|| JoinExtras {
+        note: note.map(str::to_owned),
+        account: login_account(),
+    });
     let out = state.with_core(|c| {
         permissions::create_join_request(
             &mut c.db,
             &c.identity,
             &target,
             &device::current(),
+            extras.as_ref(),
             clock::now(),
         )
     })?;
@@ -771,7 +857,9 @@ pub async fn send_request(
 }
 
 /// `join_resend`: a new request (new id and code) to the same office and
-/// department, sent right away.
+/// department, sent right away. Same shape as the previous one: with its
+/// note and the current login account name if it carried v0.4 fields,
+/// the v0.3 shape otherwise.
 pub async fn resend(
     state: &MiraState,
     net: &Network,
@@ -788,12 +876,17 @@ pub async fn resend(
         team_id: old.team_id.clone(),
         team_name: old.team_name.clone(),
     };
+    let extras = has_extras(&old).then(|| JoinExtras {
+        note: old.note.clone(),
+        account: login_account(),
+    });
     let out = state.with_core(|c| {
         permissions::create_join_request(
             &mut c.db,
             &c.identity,
             &target,
             &device::current(),
+            extras.as_ref(),
             clock::now(),
         )
     })?;
@@ -819,7 +912,7 @@ fn status_candidates(
         }
     };
     let st = client.lock();
-    for (_, a) in st.members_of(&office_key(&out.org)) {
+    for (_, a) in st.members_of(&office_key(&out.org), false) {
         push(a);
     }
     for h in net
@@ -1094,6 +1187,8 @@ pub async fn join_connect_address(
     connect_address(&state, &network, &client, &address).await
 }
 
+// Each argument is one field of the `invoke` call in src/api/join.ts.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn join_send_request(
     state: State<'_, MiraState>,
@@ -1103,6 +1198,7 @@ pub async fn join_send_request(
     office_key: String,
     team_id: String,
     confirm_fingerprint: Option<String>,
+    note: Option<String>,
 ) -> AppResult<OutgoingJoinRequest> {
     let network = net.get(&state, &app).await?;
     send_request(
@@ -1112,6 +1208,7 @@ pub async fn join_send_request(
         &office_key,
         &team_id,
         confirm_fingerprint.as_deref(),
+        note.as_deref(),
     )
     .await
 }
@@ -1155,6 +1252,17 @@ pub async fn join_resend(
     resend(&state, &network, &client).await
 }
 
+/// The program arguments (the program itself first) ask for the setup mode.
+fn has_setup_arg(args: impl IntoIterator<Item = String>) -> bool {
+    args.into_iter().skip(1).any(|a| a == SETUP_MODE_ARG)
+}
+
+/// `join_setup_mode`: Mira was started with `--siapkan-kantor`.
+#[tauri::command]
+pub fn join_setup_mode() -> bool {
+    has_setup_arg(std::env::args())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,6 +1296,7 @@ mod tests {
             peer_count: 2,
             conflict: false,
             same_name: true,
+            accepts_note: true,
         };
         let v = serde_json::to_value(&office).unwrap();
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
@@ -1196,6 +1305,7 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "acceptsNote",
                 "conflict",
                 "departments",
                 "fingerprint",
@@ -1206,6 +1316,7 @@ mod tests {
                 "sameName"
             ]
         );
+        assert_eq!(v["acceptsNote"], true);
         let s = serde_json::to_value(JoinSearch {
             offices: vec![],
             org_seen: true,
@@ -1217,14 +1328,203 @@ mod tests {
             s,
             serde_json::json!({ "offices": [], "orgSeen": true, "mdnsOk": false, "mdnsError": null })
         );
-        let d = serde_json::to_value(JoinDevice {
+        let device = JoinDevice {
             laptop: "L".into(),
             os: "Windows 11".into(),
             app_version: "0.3.0".into(),
+            account: Some("rina.w".into()),
             addresses: vec!["192.168.1.2".into()],
+        };
+        let d = serde_json::to_value(&device).unwrap();
+        assert_eq!(
+            d,
+            serde_json::json!({
+                "laptop": "L",
+                "os": "Windows 11",
+                "appVersion": "0.3.0",
+                "account": "rina.w",
+                "addresses": ["192.168.1.2"]
+            })
+        );
+        let d = serde_json::to_value(JoinDevice {
+            account: None,
+            ..device
         })
         .unwrap();
-        assert_eq!(d["appVersion"], "0.3.0");
+        assert_eq!(d["account"], serde_json::Value::Null);
+    }
+
+    fn sorted_keys(v: &serde_json::Value) -> Vec<String> {
+        let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        k.sort_unstable();
+        k
+    }
+
+    #[test]
+    fn request_shapes_match_join_ts_and_org_ts() {
+        let out = OutgoingJoinRequest {
+            request_id: "r".into(),
+            request: permissions::SignedJoinRequest {
+                payload: "{}".into(),
+                sig: "s".into(),
+            },
+            org: genesis(1),
+            code: "ABCD EFGH".into(),
+            org_fingerprint: "ABCD-EFGH".into(),
+            org_id: "o".into(),
+            org_name: "Kantor".into(),
+            team_id: "t".into(),
+            team_name: "Desain".into(),
+            display_name: "Rina".into(),
+            note: Some("Staf gudang".into()),
+            created_at: "2026-11-23T08:00:00Z".into(),
+            status: OutgoingStatus::Pending,
+            decided_by_name: None,
+            decided_at: None,
+            last_sent_at: None,
+            last_error: None,
+        };
+        let v = serde_json::to_value(&out).unwrap();
+        assert_eq!(
+            sorted_keys(&v),
+            [
+                "code",
+                "createdAt",
+                "decidedAt",
+                "decidedByName",
+                "displayName",
+                "lastError",
+                "lastSentAt",
+                "note",
+                "orgFingerprint",
+                "orgId",
+                "orgName",
+                "requestId",
+                "status",
+                "teamId",
+                "teamName"
+            ]
+        );
+        assert_eq!(v["note"], "Staf gudang");
+        assert_eq!(v["status"], "pending");
+        let v = serde_json::to_value(OutgoingJoinRequest { note: None, ..out }).unwrap();
+        assert_eq!(v["note"], serde_json::Value::Null);
+
+        let card = permissions::JoinRequestView {
+            id: "i".into(),
+            public_key: "p".into(),
+            display_name: "Rina".into(),
+            team_id: "t".into(),
+            team_name: "Desain".into(),
+            laptop: "L".into(),
+            os: "Windows 11".into(),
+            app_version: "0.4.0".into(),
+            requested_at: "2026-11-23T08:00:00Z".into(),
+            received_at: "2026-11-23T08:00:01Z".into(),
+            code: "ABCD EFGH".into(),
+            ip: None,
+            seen_by_name: None,
+            note: Some("Staf gudang".into()),
+            account: None,
+        };
+        let v = serde_json::to_value(&card).unwrap();
+        assert_eq!(
+            sorted_keys(&v),
+            [
+                "account",
+                "appVersion",
+                "code",
+                "displayName",
+                "id",
+                "ip",
+                "laptop",
+                "note",
+                "os",
+                "publicKey",
+                "receivedAt",
+                "requestedAt",
+                "seenByName",
+                "teamId",
+                "teamName"
+            ]
+        );
+        assert_eq!(v["note"], "Staf gudang");
+        assert_eq!(v["account"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn login_account_is_cleaned() {
+        assert_eq!(clean_account("rina.w").as_deref(), Some("rina.w"));
+        assert_eq!(
+            clean_account("  Rina W\u{202E} \n").as_deref(),
+            Some("Rina W")
+        );
+        assert_eq!(clean_account(" \t\u{200B} "), None);
+        assert_eq!(clean_account(""), None);
+        let long = clean_account(&"é".repeat(100)).unwrap();
+        assert_eq!(long.chars().count(), JOIN_ACCOUNT_MAX_CHARS);
+        // Whatever the system says passes the request check.
+        for raw in ["rina.w", " a b ", "x\u{0007}y", &"z".repeat(70)] {
+            if let Some(a) = clean_account(raw) {
+                assert!(permissions::join::is_valid_join_account(&a), "{raw:?}");
+            }
+        }
+        if let Some(a) = login_account() {
+            assert!(permissions::join::is_valid_join_account(&a));
+        }
+    }
+
+    #[test]
+    fn setup_mode_needs_the_exact_argument() {
+        let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert!(has_setup_arg(args(&["mira.exe", "--siapkan-kantor"])));
+        assert!(has_setup_arg(args(&[
+            "mira.exe",
+            "--x",
+            "--siapkan-kantor"
+        ])));
+        assert!(!has_setup_arg(args(&["mira.exe"])));
+        assert!(
+            !has_setup_arg(args(&["--siapkan-kantor"])),
+            "program name only"
+        );
+        assert!(!has_setup_arg(args(&["mira.exe", "--siapkan-kantor=1"])));
+        assert!(!has_setup_arg(args(&["mira.exe", "siapkan-kantor"])));
+        // The test binary is not started with it.
+        assert!(!join_setup_mode());
+    }
+
+    fn info(org: Organization, extras: u32) -> VerifiedInfo {
+        VerifiedInfo {
+            org,
+            departments: Vec::new(),
+            extras,
+        }
+    }
+
+    #[test]
+    fn note_is_accepted_only_when_every_member_answered_with_extras() {
+        let mut st = ClientState::default();
+        let t0 = Instant::now();
+        let a1: SocketAddr = "192.168.1.9:47800".parse().unwrap();
+        let a2: SocketAddr = "192.168.1.10:47800".parse().unwrap();
+        let key = st.record(&"01".repeat(32), a1, info(genesis(1), JOIN_INFO_EXTRAS), t0);
+        let found = |st: &ClientState| st.found(&key, &st.offices[&key]);
+        assert!(found(&st).accepts_note);
+        assert_eq!(st.members_of(&key, true).len(), 1);
+        // A v0.3 member answers for the same office.
+        st.record(&"02".repeat(32), a2, info(genesis(1), 0), t0);
+        assert!(!found(&st).accepts_note);
+        assert_eq!(found(&st).peer_count, 2);
+        assert_eq!(st.members_of(&key, false).len(), 2);
+        assert_eq!(st.members_of(&key, true), vec![("01".repeat(32), a1)]);
+        // It updates to v0.4 and answers again.
+        st.record(&"02".repeat(32), a2, info(genesis(1), JOIN_INFO_EXTRAS), t0);
+        assert!(found(&st).accepts_note);
+        // Only v0.3 members: no.
+        let other = st.record(&"03".repeat(32), a1, info(genesis(2), 0), t0);
+        assert!(!st.found(&other, &st.offices[&other]).accepts_note);
+        assert!(st.members_of(&other, true).is_empty());
     }
 
     #[test]
@@ -1259,8 +1559,7 @@ mod tests {
             st.record(
                 &format!("{n:02x}").repeat(32),
                 addr,
-                genesis(n),
-                Vec::new(),
+                info(genesis(n), 0),
                 at,
             );
         }

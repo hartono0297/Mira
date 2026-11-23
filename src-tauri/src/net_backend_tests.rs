@@ -51,6 +51,15 @@ async fn settle(nodes: &[&Node]) {
 }
 
 async fn start_net(state: &MiraState, org_changed: &Arc<AtomicUsize>) -> Network {
+    start_net_with_extras(state, org_changed, crate::network::JOIN_INFO_EXTRAS).await
+}
+
+/// Same, answering `join_info` with `extras` (0: like Mira v0.3).
+async fn start_net_with_extras(
+    state: &MiraState,
+    org_changed: &Arc<AtomicUsize>,
+    extras: u32,
+) -> Network {
     let (identity_secret, public_key) = state
         .with_core(|c| {
             Ok((
@@ -70,7 +79,7 @@ async fn start_net(state: &MiraState, org_changed: &Arc<AtomicUsize>) -> Network
             port: Some(0),
             mdns_enabled: false,
         },
-        Arc::new(MiraBackend::new(state.clone())),
+        Arc::new(MiraBackend::new(state.clone()).with_join_extras(extras)),
         Arc::new(move |ev| {
             if ev == NetEvent::OrgChanged {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -152,6 +161,23 @@ impl Node {
     async fn restart(&mut self) {
         self.net.shutdown().await;
         self.net = start_net(&self.state, &self.org_changed).await;
+    }
+
+    /// Restarts the network answering `join_info` like Mira v0.3 (no
+    /// `extras`).
+    async fn restart_as_v03(&mut self) {
+        self.net.shutdown().await;
+        self.net = start_net_with_extras(&self.state, &self.org_changed, 0).await;
+    }
+
+    /// The payloads of the join requests stored here.
+    fn stored_join_payloads(&self) -> Vec<String> {
+        self.core(|c| {
+            let mut stmt =
+                c.db.prepare("SELECT payload FROM join_requests ORDER BY id")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            Ok(rows.collect::<Result<Vec<String>, _>>()?)
+        })
     }
 
     /// `team_commands::join_with_code` without Tauri: returns the error code.
@@ -689,12 +715,23 @@ async fn new_laptop_joins_by_request_through_a_member() {
     );
     assert_eq!(office.peer_count, 1);
     assert!(!office.conflict && !office.same_name);
+    assert!(office.accepts_note, "B is v0.4");
     let names: Vec<&str> = office.departments.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(names, ["Tim Desain", "Tim Keuangan"]);
 
-    let out = join::send_request(&n.state, &n.net, &client, &office.key, &keuangan, None)
-        .await
-        .expect("request sent");
+    let note = "Staf keuangan, NIK 1234";
+    let out = join::send_request(
+        &n.state,
+        &n.net,
+        &client,
+        &office.key,
+        &keuangan,
+        None,
+        Some(note),
+    )
+    .await
+    .expect("request sent");
+    assert_eq!(out.note.as_deref(), Some(note));
     assert_eq!(out.team_name, "Tim Keuangan");
     assert_eq!(out.org_fingerprint, office.fingerprint);
     assert_eq!(out.display_name, "Nina");
@@ -717,6 +754,9 @@ async fn new_laptop_joins_by_request_through_a_member() {
     assert_eq!(card.team_id, keuangan);
     assert_eq!(card.seen_by_name.as_deref(), Some("Budi"));
     assert_eq!(card.ip.as_deref(), Some("127.0.0.1"));
+    // v0.4: the note and login name, signed by N and forwarded by B.
+    assert_eq!(card.note.as_deref(), Some(note));
+    assert_eq!(card.account, join::login_account());
     settle(&[&a, &b, &c]).await;
     // C is admin of Tim Desain, not Tim Keuangan: nothing forwarded to it.
     assert!(c.pending_joins().is_empty());
@@ -766,14 +806,95 @@ async fn new_laptop_joins_by_request_through_a_member() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn office_with_a_v03_member_gets_the_v03_request_shape() {
+    let (a, mut b, desain) = pair().await;
+    // B answers `join_info` without `extras`, like Mira v0.3.
+    b.restart_as_v03().await;
+    b.know(&a);
+    a.net.refresh();
+    wait_until("A and B connected again", || {
+        a.connected(&b) && b.connected(&a)
+    })
+    .await;
+
+    let n = Node::new("Nina").await;
+    let client = JoinClient::default();
+    let offices = n.connect_office(&client, &b).await.expect("B answers");
+    assert_eq!(offices.len(), 1);
+    assert!(!offices[0].accepts_note, "B is v0.3");
+    // The note field is hidden on screen; a note sent anyway is left out.
+    let out = join::send_request(
+        &n.state,
+        &n.net,
+        &client,
+        &offices[0].key,
+        &desain,
+        None,
+        Some("Staf gudang"),
+    )
+    .await
+    .expect("request sent");
+    assert_eq!(out.note, None);
+    assert!(out.last_sent_at.is_some());
+    assert_eq!(out.last_error, None);
+    let payloads = b.stored_join_payloads();
+    assert_eq!(payloads.len(), 1);
+    let keys: Vec<String> = serde_json::from_str::<serde_json::Value>(&payloads[0])
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    assert!(
+        !keys.iter().any(|k| k == "note" || k == "account"),
+        "v0.3 shape: {keys:?}"
+    );
+
+    wait_until("A has the request", || {
+        a.pending_joins().iter().any(|r| r.id == out.request_id)
+    })
+    .await;
+    let card = a
+        .pending_joins()
+        .into_iter()
+        .find(|r| r.id == out.request_id)
+        .unwrap();
+    assert_eq!(card.note, None);
+    assert_eq!(card.account, None);
+
+    // Resending keeps the v0.3 shape.
+    a.core(|c| permissions::reject_join(&mut c.db, &c.identity, &out.request_id, clock::now()));
+    a.net.refresh();
+    n.poll_until(&client, "N sees the rejection", |p| {
+        matches!(p, JoinPoll::Rejected { .. })
+    })
+    .await;
+    let again = join::resend(&n.state, &n.net, &client)
+        .await
+        .expect("resend");
+    assert_eq!(again.note, None);
+    assert!(!again.request.payload.contains("\"account\""));
+    shutdown(&[&a, &b, &n]).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn rejected_request_can_be_sent_again() {
     let (a, b, desain) = pair().await;
     let n = Node::new("Nina").await;
     let client = JoinClient::default();
     let offices = n.connect_office(&client, &b).await.expect("office");
-    let first = join::send_request(&n.state, &n.net, &client, &offices[0].key, &desain, None)
-        .await
-        .expect("request sent");
+    let first = join::send_request(
+        &n.state,
+        &n.net,
+        &client,
+        &offices[0].key,
+        &desain,
+        None,
+        Some("Magang desain"),
+    )
+    .await
+    .expect("request sent");
     wait_until("A has the request", || {
         a.pending_joins().iter().any(|r| r.id == first.request_id)
     })
@@ -805,6 +926,7 @@ async fn rejected_request_can_be_sent_again() {
     assert_eq!(again.status, permissions::OutgoingStatus::Pending);
     assert_eq!(again.team_id, desain);
     assert_eq!(again.last_error, None);
+    assert_eq!(again.note.as_deref(), Some("Magang desain"), "same note");
     wait_until("A has the new request", || {
         a.pending_joins().iter().any(|r| r.id == again.request_id)
     })
@@ -866,7 +988,7 @@ async fn rogue_office_with_the_same_id_is_flagged_and_gets_nothing() {
     assert!(!found.org_seen && !found.mdns_ok, "mDNS is off in tests");
 
     for (key, team) in [(&good.key, &desain), (&fake.key, &rogue_desain)] {
-        let err = join::send_request(&n.state, &n.net, &client, key, team, None)
+        let err = join::send_request(&n.state, &n.net, &client, key, team, None, None)
             .await
             .expect_err("conflicting office");
         assert_eq!(err.code(), "forbidden");
@@ -883,18 +1005,37 @@ async fn rogue_office_with_the_same_id_is_flagged_and_gets_nothing() {
     }
 
     // A wrong fingerprint does not unlock it either.
-    let err = join::send_request(&n.state, &n.net, &client, &good.key, &desain, Some(&fake.fingerprint))
-        .await
-        .expect_err("fingerprint of the other office");
+    let err = join::send_request(
+        &n.state,
+        &n.net,
+        &client,
+        &good.key,
+        &desain,
+        Some(&fake.fingerprint),
+        None,
+    )
+    .await
+    .expect_err("fingerprint of the other office");
     assert_eq!(err.code(), "forbidden");
     // After comparing the fingerprint with the superadmin: sent, and only to
     // laptops that answered with the real genesis.
-    let out = join::send_request(&n.state, &n.net, &client, &good.key, &desain, Some(&good.fingerprint))
-        .await
-        .expect("confirmed office");
+    let out = join::send_request(
+        &n.state,
+        &n.net,
+        &client,
+        &good.key,
+        &desain,
+        Some(&good.fingerprint),
+        None,
+    )
+    .await
+    .expect("confirmed office");
     assert_eq!(out.org_fingerprint, good.fingerprint);
     assert_eq!(b.stored_join_requests(), vec![out.request_id.clone()]);
     settle(&[&a, &b, &r]).await;
-    assert!(r.stored_join_requests().is_empty(), "the rogue got the request");
+    assert!(
+        r.stored_join_requests().is_empty(),
+        "the rogue got the request"
+    );
     shutdown(&[&a, &b, &r, &n]).await;
 }
