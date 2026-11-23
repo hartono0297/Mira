@@ -25,6 +25,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Simpan cache walau tes gagal, supaya run berikutnya tidak mengompilasi ulang semua.
+          cache-on-failure: true
+
       - uses: actions/setup-node@v7
         with:
           # package-lock: vite 8 dan vitest 5 butuh Node ^20.19 || ^22.12 || >=24.
@@ -34,28 +44,25 @@ jobs:
       - name: Pasang dependensi npm
         run: npm ci
 
+      # Langkah berikut tetap jalan walau satu gagal, supaya semua masalah terlihat dalam satu run.
       - name: Cek tipe TypeScript
         run: npx tsc --noEmit
 
       - name: Tes frontend (vitest)
+        if: ${{ !cancelled() }}
         run: npx vitest run --pool=threads
 
       # tauri::generate_context! mewajibkan folder frontendDist (../dist) ada saat kompilasi.
       - name: Build frontend untuk konteks Tauri
+        if: ${{ !cancelled() }}
         run: npx vite build
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
       - name: cargo test
+        if: ${{ !cancelled() }}
         working-directory: src-tauri
         run: cargo test
 
       - name: cargo clippy
+        if: ${{ !cancelled() }}
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
