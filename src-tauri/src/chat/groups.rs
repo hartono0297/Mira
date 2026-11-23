@@ -556,11 +556,7 @@ pub fn fold(ops: &[GroupOp], eligible: &Eligible<'_>) -> Option<GroupState> {
 
 /// [`fold`] for the ops of the group conversation `conv` (`gr:<id>`), with
 /// `id` and `conv` filled in. `None` also when `conv` is not a group.
-pub fn fold_conv(
-    conv: &str,
-    ops: &[GroupOp],
-    eligible: &Eligible<'_>,
-) -> Option<GroupState> {
+pub fn fold_conv(conv: &str, ops: &[GroupOp], eligible: &Eligible<'_>) -> Option<GroupState> {
     let Some(Conv::Group(id)) = parse_conv(conv) else {
         return None;
     };
@@ -698,10 +694,7 @@ mod tests {
         );
         let mut all = ops.to_vec();
         all.push(late);
-        assert_eq!(
-            pks(&fold(&all, &a_leaves_org).unwrap()),
-            keys(&['a', 'c'])
-        );
+        assert_eq!(pks(&fold(&all, &a_leaves_org).unwrap()), keys(&['a', 'c']));
         // An op dated after a's removal from the organization does nothing.
         all.push(add(6, 'a', 7, &[4], &['f']));
         assert!(!fold(&all, &a_leaves_org).unwrap().is_member(&k('f')));

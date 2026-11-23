@@ -6,16 +6,16 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::audience::{ConvInfo, Ctx, Directory, Scope};
 use super::fetch::{self, FetchKind};
-use super::store::envelope::ACKED;
 use super::groups::{EventKind, GroupState};
+use super::store::envelope::ACKED;
 use super::view::{
     ChannelScopeView, ChatSection, ConversationEvent, ConversationKind, ConversationSummary,
     DeliveryState, FileState, FileView, GroupMemberView, GroupView, MessageStatus, MessageView,
     Person, ReceiptView, ReplyPreview, ScopeKind, truncate_chars,
 };
-use crate::permissions::format::format_time;
 use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
 use crate::error::{AppError, AppResult};
+use crate::permissions::format::format_time;
 
 /// Longest `lastPreview` and reply preview.
 pub const PREVIEW_CHARS: usize = 80;
@@ -71,7 +71,9 @@ pub fn is_former(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
         return Ok(false);
     }
     if info.is_group() {
-        return Ok(ctx.group(&info.conv)?.is_some_and(|g| g.ever_member(ctx.me())));
+        return Ok(ctx
+            .group(&info.conv)?
+            .is_some_and(|g| g.ever_member(ctx.me())));
     }
     let held: bool = ctx.conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM chat_messages WHERE conv = ?1 AND placeholder = 0)",

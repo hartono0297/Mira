@@ -271,7 +271,10 @@ impl ChatSync {
             if has_more && let Some(first) = rows.first() {
                 events.retain(|e| e.at >= first.at);
             }
-            if let Some(b) = before.as_deref().and_then(|b| read::message_row(ctx.conn, b).ok().flatten()) {
+            if let Some(b) = before
+                .as_deref()
+                .and_then(|b| read::message_row(ctx.conn, b).ok().flatten())
+            {
                 events.retain(|e| e.at < b.at);
             }
             Ok(ConversationView {
@@ -610,7 +613,9 @@ impl ChatSync {
                 ));
             }
             if !g.is_member(member) {
-                return Err(AppError::NotFound("Orang ini sudah tidak ada di grup.".into()));
+                return Err(AppError::NotFound(
+                    "Orang ini sudah tidak ada di grup.".into(),
+                ));
             }
             Ok(Some(Body::GroupRemove {
                 conv: conv.to_owned(),

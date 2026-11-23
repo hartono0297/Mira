@@ -904,7 +904,8 @@ pub fn is_executable_name(name: &str) -> bool {
     ];
     name.rsplit_once('.')
         .map(|(_, ext)| {
-            EXT.contains(&ext.to_ascii_lowercase().as_str()) || crate::runnable::is_macos_runnable(ext)
+            EXT.contains(&ext.to_ascii_lowercase().as_str())
+                || crate::runnable::is_macos_runnable(ext)
         })
         .unwrap_or(false)
 }
