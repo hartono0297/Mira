@@ -93,7 +93,7 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 
 `v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini publik dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
 
-`v0.1.0` hanya berisi installer Windows. Installer macOS (file `.dmg`) dibuat oleh GitHub Actions dan ikut terbit mulai rilis berikutnya.
+`v0.2.0` menambah dukungan macOS. Rilis ini berisi `Mira_0.2.0_x64-setup.exe` untuk Windows dan `Mira_0.2.0_universal.dmg` untuk Mac (Apple Silicon dan Intel), keduanya dibangun GitHub Actions, masing-masing dengan file `.sha256`. `v0.1.0` hanya berisi installer Windows.
 
 ## Memasang
 
@@ -111,7 +111,7 @@ Kalau kebijakan kantor memblokir perintah ini di PowerShell, pakai cara manual d
 
 Cara manual:
 
-1. Unduh `Mira_0.1.0_x64-setup.exe` (installer NSIS, 7,86 MB) dari rilis `v0.1.0` di [halaman Releases](../../releases).
+1. Unduh `Mira_<versi>_x64-setup.exe` (installer NSIS, sekitar 8 MB) dari rilis terbaru di [halaman Releases](../../releases).
 2. Jalankan installer. Installer terpasang per pengguna di `%LOCALAPPDATA%\Mira`, jadi tidak butuh hak admin.
 3. Kalau WebView2 belum ada, installer mengunduhnya. Untuk laptop tanpa WebView2 dan tanpa internet, buat varian offline dengan `npm run build:installer-offline` (sekitar 286 MB).
 4. Installer belum ditandatangani dengan sertifikat penandatanganan kode, jadi Windows SmartScreen bisa memberi peringatan saat memasang.

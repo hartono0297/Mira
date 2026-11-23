@@ -4,6 +4,17 @@ tags: [mira, rilis]
 
 # Rilis
 
+## v0.2.0
+
+Menambah dukungan macOS (11 atau lebih baru, Apple Silicon dan Intel). Isinya:
+
+- kunci laptop di Keychain macOS;
+- panduan firewall macOS;
+- pemantau simpan Word dan Excel untuk Office di Mac;
+- izin Jaringan lokal.
+
+Installer `Mira_0.2.0_x64-setup.exe` (Windows) dan `Mira_0.2.0_universal.dmg` (Mac) dibangun GitHub Actions, masing-masing dengan file `.sha256`. Pasang di Mac dengan `curl -fsSL https://raw.githubusercontent.com/hartono0297/Mira/main/install.sh | bash`. Belum diuji di MacBook sungguhan, lihat [[macOS]].
+
 ## v0.1.0
 
 Rilis pertama Mira. Ini build internal untuk uji coba, belum untuk dipakai seluruh kantor.
