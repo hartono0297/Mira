@@ -271,7 +271,7 @@ describe("Percakapan: kartu file", () => {
     expect(screen.getAllByText("1,2 MB").length).toBeGreaterThan(0);
     expect(screen.getByText("52 MB")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Buka kontrak.pdf" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Simpan kontrak.pdf sebagai" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan kontrak.pdf" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Unduh foto-lokasi.jpg" })).toBeInTheDocument();
     expect(screen.getByText("Mengunduh...")).toBeInTheDocument();
     expect(
@@ -285,7 +285,7 @@ describe("Percakapan: kartu file", () => {
     renderConv();
     await user.click(await screen.findByRole("button", { name: "Buka kontrak.pdf" }));
     expect(chat.fileOpen).toHaveBeenCalledWith("f1", "1".repeat(64));
-    await user.click(screen.getByRole("button", { name: "Simpan kontrak.pdf sebagai" }));
+    await user.click(screen.getByRole("button", { name: "Simpan salinan kontrak.pdf" }));
     expect(chat.fileSave).toHaveBeenCalledWith("1".repeat(64));
     expect(await screen.findByText("kontrak.pdf tersimpan.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Unduh foto-lokasi.jpg" }));
@@ -298,7 +298,7 @@ describe("Percakapan: kartu file", () => {
     chat.fileSave.mockResolvedValue(false);
     withFiles();
     renderConv();
-    await user.click(await screen.findByRole("button", { name: "Simpan kontrak.pdf sebagai" }));
+    await user.click(await screen.findByRole("button", { name: "Simpan salinan kontrak.pdf" }));
     await waitFor(() => expect(chat.fileSave).toHaveBeenCalled());
     expect(screen.queryByText("kontrak.pdf tersimpan.")).toBeNull();
   });
@@ -311,7 +311,7 @@ describe("Percakapan: kartu file", () => {
     await user.click(await screen.findByRole("button", { name: "Buka kontrak.pdf" }));
     expect(await screen.findByText("File belum bisa dibuka.")).toBeInTheDocument();
     expect(screen.getByText(/File program tidak dibuka langsung/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Simpan kontrak.pdf sebagai" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan salinan kontrak.pdf" })).toBeInTheDocument();
   });
 });
 

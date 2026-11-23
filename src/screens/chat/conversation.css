@@ -207,6 +207,15 @@
   background: var(--hover);
 }
 
+/* Mode kontras tinggi Windows membuang latar sorotan: pesan yang menunya terbuka
+   ditandai garis warna sistem supaya tetap terlihat milik pesan mana menunya. */
+@media (forced-colors: active) {
+  .conv-msg-menu-open {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+}
+
 /* Pesan asli yang dituju dari kutipan balasan. Fokus diletakkan lewat skrip, jadi cincin
    tampil selama sorotan berlangsung walau lompatan dipicu klik. Klik biasa di teks pesan
    tidak memunculkan cincin. */

@@ -267,6 +267,7 @@ describe("Menu baris percakapan: aksi", () => {
     );
     const dialog = await screen.findByRole("dialog", { name: "Keluar dari grup Persiapan pameran?" });
     expect(dialog).toHaveTextContent("Pesan lama tetap tersimpan di laptop ini.");
+    expect(dialog).toHaveTextContent("Kalau Anda pemilik grup, peran pemilik pindah ke anggota yang paling lama di grup.");
     expect(chat.groupLeave).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Keluar dari grup" }));
     expect(chat.groupLeave).toHaveBeenCalledWith(GRUP_ID);
@@ -380,9 +381,46 @@ describe("Menu kepala percakapan", () => {
     expect(await screen.findByRole("dialog", { name: "Tambah orang ke Persiapan pameran" })).toBeInTheDocument();
   });
 
-  it("data grup gagal dimuat: permintaan dibuang tanpa dialog", async () => {
-    const { rerender } = renderHeader(group(), groupState({ group: null, loading: true }), { conv: GR, action: "rename", n: 3 });
-    rerender(groupState({ group: null, loading: false, error: { code: "io", message: "Gagal." } }), null);
+  it("data grup gagal dimuat: error tampil di bawah kepala, Coba lagi membuka dialog yang diminta", async () => {
+    const user = userEvent.setup();
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = renderHeader(group(), groupState({ group: null, loading: true, reload }), {
+      conv: GR,
+      action: "rename",
+      n: 3,
+    });
+    rerender(groupState({ group: null, error: { code: "io", message: "Berkas grup terkunci." }, reload }), null);
+
+    expect(await screen.findByText("Data grup belum bisa dimuat")).toBeInTheDocument();
+    expect(screen.getByText("Berkas grup terkunci.")).toBeInTheDocument();
+    expect(screen.getByText("Ganti nama terbuka begitu data grup termuat.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Muat ulang masih gagal: permintaan tetap disimpan.
+    await user.click(screen.getByRole("button", { name: "Coba lagi" }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Data grup belum bisa dimuat")).toBeInTheDocument();
+
+    rerender(groupState({ reload }), null);
+    const dialog = await screen.findByRole("dialog", { name: "Ganti nama grup" });
+    expect(within(dialog).getByLabelText("Nama grup")).toHaveValue("Persiapan pameran");
+    expect(screen.queryByText("Data grup belum bisa dimuat")).toBeNull();
+  });
+
+  it("data grup gagal dimuat: Tambah orang dari menu kepala menampilkan error; Batal membuang permintaan", async () => {
+    const user = userEvent.setup();
+    const failed = groupState({ group: null, error: { code: "io", message: "Berkas grup terkunci." } });
+    const { rerender } = renderHeader(group(), failed);
+    const menuButton = screen.getByRole("button", { name: "Menu Persiapan pameran" });
+    await user.click(menuButton);
+    await user.click(screen.getByRole("menuitem", { name: "Tambah orang" }));
+
+    expect(await screen.findByText("Tambah orang terbuka begitu data grup termuat.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Batal" }));
+    expect(screen.queryByText("Data grup belum bisa dimuat")).toBeNull();
+    expect(menuButton).toHaveFocus();
+
+    // Permintaan sudah dibuang: data grup yang datang kemudian tidak membuka dialog.
     rerender(groupState(), null);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });

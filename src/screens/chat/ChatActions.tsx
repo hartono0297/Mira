@@ -31,7 +31,7 @@ export type ConversationActions = {
 // `n` membedakan permintaan yang sama berturut-turut.
 export type ConvRequest = { conv: string; action: "rename" | "add"; n: number };
 
-export const ChatActionsContext =createContext<ChatActions | null>(null);
+export const ChatActionsContext = createContext<ChatActions | null>(null);
 export const ConversationActionsContext = createContext<ConversationActions | null>(null);
 
 export function useChatActions(): ChatActions | null {

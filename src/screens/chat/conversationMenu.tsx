@@ -87,7 +87,12 @@ export function conversationMenuItems(s: ConversationSummary, h: ConversationMen
       danger: true,
       confirm: {
         title: MENU.leaveTitle(title),
-        body: <p>{MENU.leaveBody}</p>,
+        body: (
+          <>
+            <p>{MENU.leaveBody}</p>
+            <p>{MENU.leaveOwnerMaybe}</p>
+          </>
+        ),
         confirmLabel: MENU.leaveConfirm,
         busyLabel: MENU.leaveBusy,
       },

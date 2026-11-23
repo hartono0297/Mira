@@ -1,9 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type ChatOverview, type ConversationSummary, type Person } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { ChatActionsContext, type ChatActions, type ConvRequest } from "./ChatActions";
-import { Conversation } from "./Conversation";
+import { Conversation, type FocusRequest } from "./Conversation";
 import { ConversationList } from "./ConversationList";
 import { defaultConversation, withConversation } from "./ListFormat";
 import { NewChannelDialog } from "./NewChannelDialog";
@@ -49,20 +49,42 @@ function ChatScreenInner() {
   const list = overview?.conversations ?? [];
   const current = list.find((c) => c.id === selected) ?? defaultConversation(list);
 
+  // Aksi yang membuang panel percakapan (Kirim pesan pribadi, Hapus channel, Keluar dari grup)
+  // juga membuang elemen yang sedang terfokus. Panel berikutnya memindahkan fokus sekali ke
+  // kolom pesan atau judulnya. Ganti percakapan biasa dan muat ulang data tidak memakai ini.
+  const [focusReq, setFocusReq] = useState<FocusRequest | null>(null);
+  const focusCount = useRef(0);
+  const focusDone = useCallback(() => setFocusReq(null), []);
+  const requestFocus = useCallback((conv: string | null, target: FocusRequest["target"]) => {
+    setFocusReq({ conv, target, n: ++focusCount.current });
+  }, []);
+
   const changed = useCallback(() => void reload(), [reload]);
   const gone = useCallback(() => {
     setSelected(null);
+    requestFocus(null, "title");
     void reload();
-  }, [reload]);
+  }, [reload, requestFocus]);
   // Channel dihapus atau keluar dari grup lewat menu sidebar. Daftar sudah dimuat ulang oleh menu;
   // kalau percakapan itu sedang dibuka, kembali ke percakapan bawaan.
   const currentId = current?.id ?? null;
   const removed = useCallback(
     (conv: string) => {
-      if (conv === currentId) setSelected(null);
+      if (conv !== currentId) return;
+      setSelected(null);
+      requestFocus(null, "title");
     },
-    [currentId],
+    [currentId, requestFocus],
   );
+
+  // Tidak ada percakapan lagi untuk menerima fokus: judul keadaan kosong yang menerimanya.
+  const emptyTitleRef = useRef<HTMLHeadingElement>(null);
+  const noConversation = overview !== null && !current;
+  useEffect(() => {
+    if (!focusReq || !noConversation) return;
+    emptyTitleRef.current?.focus();
+    setFocusReq(null);
+  }, [focusReq, noConversation]);
 
   function adopt(summary: ConversationSummary) {
     setOpen(null);
@@ -92,13 +114,14 @@ function ChatScreenInner() {
           const summary = await chatApi.openDm(person.publicKey);
           setProfile(null);
           adoptRef.current(summary);
+          requestFocus(summary.id, "composer");
         } catch (err) {
           setDmError(toAppError(err));
         }
       },
       showProfile: (person) => setProfile(person),
     }),
-    [overview?.me, dmKeys],
+    [overview?.me, dmKeys, requestFocus],
   );
 
   if (!overview) {
@@ -153,6 +176,26 @@ function ChatScreenInner() {
       />
 
       <div className="chat-main">
+        {/* Di dalam kolom kanan, bukan anak langsung grid .chat: wilayah ini tidak boleh
+            menambah baris grid. Kosong saat tidak ada error, jadi tingginya nol. */}
+        <div aria-live="polite" className="chat-dm-error">
+          {dmError && (
+            <ErrorAlert title="Pesan pribadi belum bisa dibuka">
+              <p>{dmError.message}</p>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  // Tombol ini ikut hilang: fokus pindah ke judul percakapan yang terbuka.
+                  setDmError(null);
+                  requestFocus(current?.id ?? null, "title");
+                }}
+              >
+                Tutup
+              </button>
+            </ErrorAlert>
+          )}
+        </div>
         {current ? (
           <Conversation
             key={current.id}
@@ -162,9 +205,11 @@ function ChatScreenInner() {
             onGone={gone}
             request={request}
             onRequestDone={requestDone}
+            focus={focusReq}
+            onFocusDone={focusDone}
           />
         ) : (
-          <EmptyChat guest={overview.isGuest} />
+          <EmptyChat guest={overview.isGuest} titleRef={emptyTitleRef} />
         )}
       </div>
 
@@ -189,22 +234,17 @@ function ChatScreenInner() {
         onSaved={(notify) => setData({ ...overview, notify })}
       />
       <ProfileDialog person={profile} onOpenChange={(next) => !next && setProfile(null)} />
-      <div aria-live="polite" className="chat-dm-error">
-        {dmError && (
-          <ErrorAlert title="Pesan pribadi belum bisa dibuka">
-            <p>{dmError.message}</p>
-          </ErrorAlert>
-        )}
-      </div>
     </main>
     </ChatActionsContext.Provider>
   );
 }
 
-function EmptyChat({ guest }: { guest: boolean }) {
+function EmptyChat({ guest, titleRef }: { guest: boolean; titleRef: Ref<HTMLHeadingElement> }) {
   return (
     <div className="chat-empty">
-      <h2 className="chat-empty-title">Belum ada percakapan</h2>
+      <h2 className="chat-empty-title" ref={titleRef} tabIndex={-1}>
+        Belum ada percakapan
+      </h2>
       {guest ? (
         <p>
           Sebagai Tamu, Anda hanya bisa chat di proyek yang Anda diundang ke dalamnya. Chat proyek itu muncul di

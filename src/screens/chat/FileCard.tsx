@@ -99,7 +99,7 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
       await navigator.clipboard.writeText(file.name);
       onAnnounce?.(MENU.fileNameCopied(file.name));
     } catch {
-      onAnnounce?.(MENU.copyFailed, true);
+      onAnnounce?.(MENU.fileNameCopyFailed, true);
     }
   }
 
@@ -178,10 +178,10 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
               onClick={() => void saveFile()}
               aria-disabled={busy !== null || undefined}
               aria-busy={busy === "save" || undefined}
-              aria-label={`Simpan ${file.name} sebagai`}
+              aria-label={MENU.saveCopyFile(file.name)}
             >
               <IconDeviceFloppy size={16} aria-hidden="true" />
-              {busy === "save" ? "Menyimpan..." : "Simpan"}
+              {busy === "save" ? "Menyimpan..." : MENU.saveCopy}
             </button>
             {more}
           </div>

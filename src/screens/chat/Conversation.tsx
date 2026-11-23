@@ -32,7 +32,15 @@ export type ConversationProps = {
   // Permintaan dari menu sidebar (Ganti nama, Tambah orang) untuk percakapan ini.
   request?: ConvRequest | null;
   onRequestDone?: () => void;
+  // Pindahkan fokus sekali ke kolom pesan atau judul, lalu onFocusDone.
+  focus?: FocusRequest | null;
+  onFocusDone?: () => void;
 };
+
+// Permintaan fokus dari ChatScreen setelah panel lama hilang bersama elemen yang terfokus.
+// conv null: untuk panel apa pun yang tampil berikutnya. Kolom pesan yang tidak ada (tidak
+// boleh menulis) diganti judul percakapan.
+export type FocusRequest = { conv: string | null; target: "composer" | "title"; n: number };
 
 // Jarak dari bawah (px) yang masih dianggap "di bawah": pesan baru ikut menggulir.
 const NEAR_BOTTOM_PX = 80;
@@ -49,7 +57,16 @@ function lastFromOthers(messages: MessageView[]): MessageView | null {
   return null;
 }
 
-function ConversationPanel({ summary, me, onChanged, onGone, request = null, onRequestDone }: ConversationProps) {
+function ConversationPanel({
+  summary,
+  me,
+  onChanged,
+  onGone,
+  request = null,
+  onRequestDone,
+  focus = null,
+  onFocusDone,
+}: ConversationProps) {
   const title = conversationTitle(summary);
   const load = useCallback(() => chatApi.messages(summary.id), [summary.id]);
   const live = useChatLive<ConversationView>(load, summary.id);
@@ -89,6 +106,9 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
   const alive = useRef(true);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const onFocusDoneRef = useRef(onFocusDone);
+  onFocusDoneRef.current = onFocusDone;
 
   useEffect(() => {
     alive.current = true;
@@ -96,6 +116,22 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
       alive.current = false;
     };
   }, []);
+
+  // Satu kali per permintaan (n). Ditunda satu giliran: dialog atau menu yang baru tertutup
+  // mengembalikan fokus ke pembukanya lebih dulu, baru fokus dipindah ke sini.
+  const focusN = focus && (focus.conv === null || focus.conv === summary.id) ? focus.n : undefined;
+  const focusTarget = focus?.target;
+  useEffect(() => {
+    if (focusN === undefined) return;
+    const t = window.setTimeout(() => {
+      const input = inputRef.current;
+      if (focusTarget === "composer" && input && !input.disabled) input.focus();
+      else titleRef.current?.focus();
+      onFocusDoneRef.current?.();
+    }, 0);
+    return () => window.clearTimeout(t);
+    // Hanya n yang dipantau: target ikut permintaan yang sama.
+  }, [focusN]);
 
   const messages = useMemo(() => (view ? mergeMessages(older, view.messages) : []), [older, view]);
   const events = useMemo(() => (view ? mergeEvents(olderEvents, view.events ?? []) : []), [olderEvents, view]);
@@ -379,6 +415,7 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
       <ConversationHeader
         summary={summary}
         groupState={groupState}
+        titleRef={titleRef}
         request={request?.conv === summary.id ? request : null}
         onRequestDone={onRequestDone}
         onChanged={onChanged}

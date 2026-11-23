@@ -1,5 +1,7 @@
 // Teks menu klik kanan dan tombol "..." di layar Chat (v0.4).
 
+const LEAVE = "Keluar dari grup";
+
 export const MENU = {
   // Pesan
   messageMenu: (author: string, time: string) => `Aksi untuk pesan ${author} pukul ${time}`,
@@ -14,18 +16,26 @@ export const MENU = {
 
   // Percakapan di sidebar dan menu "..." di kepala percakapan
   convMenu: (title: string) => `Aksi untuk ${title}`,
-  convMore: (title: string) => `Aksi lain untuk ${title}`,
   open: "Buka",
   markRead: "Tandai sudah dibaca",
   mute: "Bisukan",
   unmute: "Bunyikan",
   renameGroup: "Ganti nama",
   addPeople: "Tambah orang",
-  leaveGroup: "Keluar dari grup",
-  leaveTitle: (name: string) => `Keluar dari grup ${name}?`,
-  leaveBody: "Anda tidak menerima pesan baru dari grup ini lagi. Pesan lama tetap tersimpan di laptop ini.",
-  leaveConfirm: "Keluar dari grup",
+  // Konfirmasi Keluar dari grup: dipakai menu percakapan dan tombol di panel anggota grup.
+  leaveGroup: LEAVE,
+  leaveTitle: (name: string) => `${LEAVE} ${name}?`,
+  leaveBody:
+    "Anda tidak menerima pesan baru dari grup ini lagi. Pesan lama tetap tersimpan di laptop ini. " +
+    "Untuk masuk lagi, anggota grup perlu menambahkan Anda.",
+  // Panel anggota tahu saya pemilik dan masih ada anggota lain.
+  leaveOwner: "Anda pemilik grup ini, jadi peran pemilik pindah ke anggota yang paling lama di grup.",
+  // Menu percakapan belum memuat data grup, jadi pemiliknya belum diketahui.
+  leaveOwnerMaybe: "Kalau Anda pemilik grup, peran pemilik pindah ke anggota yang paling lama di grup.",
+  leaveConfirm: LEAVE,
   leaveBusy: "Keluar...",
+  // Sama dengan judul error yang dibuat menu untuk item berkonfirmasi: "<label> gagal".
+  leaveFailed: `${LEAVE} gagal`,
   lock: "Jadikan hanya-baca",
   unlock: "Buka untuk semua",
   archive: "Arsipkan channel",
@@ -43,14 +53,14 @@ export const MENU = {
   openFile: "Buka",
   saveCopy: "Simpan salinan",
   downloadFromPeer: (size: string) => `Unduh dari rekan (${size})`,
+  saveCopyFile: (name: string) => `Simpan salinan ${name}`,
   copyFileName: "Salin nama file",
-  fileNotHere: "File belum ada di laptop ini",
   fileBusy: "Tunggu aksi lain selesai",
   fileNameCopied: (name: string) => `Nama ${name} disalin.`,
+  fileNameCopyFailed: "Nama file belum bisa disalin. Pilih namanya lalu tekan Ctrl+C.",
 
-  // Orang
+  // Orang. Label yang sama untuk menu dan tombol "..." di baris orang.
   personMenu: (name: string) => `Aksi untuk ${name}`,
-  personMore: (name: string) => `Aksi untuk ${name}`,
   sendDm: "Kirim pesan pribadi",
   mention: "Sebut",
   profile: "Lihat profil",

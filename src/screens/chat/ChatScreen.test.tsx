@@ -20,6 +20,7 @@ import {
   overview,
   summary,
 } from "./testData";
+import { message, view } from "./conversationTestData";
 
 const chat = vi.hoisted(() => ({
   overview: vi.fn(),
@@ -27,7 +28,14 @@ const chat = vi.hoisted(() => ({
   openDm: vi.fn(),
   setNotify: vi.fn(),
   setFolded: vi.fn(),
+  // Untuk panel percakapan asli (panel.real).
+  messages: vi.fn(),
+  markRead: vi.fn(),
+  deleteChannel: vi.fn(),
 }));
+
+// Panel tiruan secara bawaan; real: true memakai panel percakapan asli (uji fokus).
+const panelMode = vi.hoisted(() => ({ real: false }));
 
 // Ringkasan yang dikembalikan dialog grup tiruan saat "Buat tiruan" ditekan.
 const group = vi.hoisted(() => ({ created: null as ConversationSummary | null }));
@@ -38,9 +46,12 @@ vi.mock("../../api/chat", async (importOriginal) => ({
   subscribeChat: () => () => {},
 }));
 
-// Panel percakapan dibuat terpisah dan punya tes sendiri.
-vi.mock("./Conversation", () => ({
-  Conversation: ({
+// Panel percakapan dibuat terpisah dan punya tes sendiri. Tiruan ini juga bisa memanggil
+// openDm lewat konteks, seperti menu orang di panel asli.
+vi.mock("./Conversation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./Conversation")>();
+  const { useChatActions } = await import("./ChatActions");
+  function Fake({
     summary: s,
     onChanged,
     onGone,
@@ -48,18 +59,29 @@ vi.mock("./Conversation", () => ({
     summary: ConversationSummary;
     onChanged: () => void;
     onGone: () => void;
-  }) => (
-    <section aria-label="Percakapan tiruan">
-      <h2>{s.kind === "channel" ? `#${s.name}` : s.name}</h2>
-      <button type="button" onClick={onChanged}>
-        Ubah tiruan
-      </button>
-      <button type="button" onClick={onGone}>
-        Hilang tiruan
-      </button>
-    </section>
-  ),
-}));
+  }) {
+    const actions = useChatActions();
+    return (
+      <section aria-label="Percakapan tiruan">
+        <h2>{s.kind === "channel" ? `#${s.name}` : s.name}</h2>
+        <button type="button" onClick={onChanged}>
+          Ubah tiruan
+        </button>
+        <button type="button" onClick={onGone}>
+          Hilang tiruan
+        </button>
+        <button type="button" onClick={() => void actions?.openDm({ publicKey: "c".repeat(64), name: "Rekan Citra" })}>
+          Pesan pribadi tiruan
+        </button>
+      </section>
+    );
+  }
+  return {
+    ...actual,
+    Conversation: (props: Parameters<typeof actual.Conversation>[0]) =>
+      panelMode.real ? <actual.Conversation {...props} /> : <Fake {...props} />,
+  };
+});
 
 // Dialog grup punya tes sendiri; di sini hanya sambungannya dengan layar.
 vi.mock("./NewGroupDialog", () => ({
@@ -117,6 +139,10 @@ beforeEach(() => {
   chat.setNotify.mockResolvedValue(null);
   chat.setFolded.mockReset();
   chat.setFolded.mockResolvedValue(null);
+  chat.messages.mockReset();
+  chat.markRead.mockResolvedValue(null);
+  chat.deleteChannel.mockResolvedValue(null);
+  panelMode.real = false;
   group.created = null;
 });
 
@@ -637,5 +663,85 @@ describe("ChatScreen: notifikasi, error, dan pilihan yang hilang", () => {
     expect(await panelHeading("#tim-uji")).toBeInTheDocument();
     expect(row(/Channel tim-uji/)).toHaveAttribute("aria-current", "true");
     expect(TIM.id).toBe(TIM_ID);
+  });
+});
+
+describe("ChatScreen: error pesan pribadi dan fokus setelah aksi menu", () => {
+  it("error Kirim pesan pribadi tampil di kolom kanan, bukan baris grid baru, dan bisa ditutup", async () => {
+    const user = userEvent.setup();
+    chat.openDm.mockRejectedValue({ code: "forbidden", message: "Rekan ini sudah tidak aktif." });
+    const { container } = render(<ChatScreen />);
+    await panelHeading("#umum");
+
+    // Grid .chat hanya berisi daftar dan kolom kanan; wilayah error ada di dalam kolom kanan.
+    const region = container.querySelector(".chat-dm-error");
+    expect(region?.parentElement).toHaveClass("chat-main");
+    expect(region).toBeEmptyDOMElement();
+
+    await user.click(within(panel()).getByRole("button", { name: "Pesan pribadi tiruan" }));
+    expect(await screen.findByText("Pesan pribadi belum bisa dibuka")).toBeInTheDocument();
+    expect(screen.getByText("Rekan ini sudah tidak aktif.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Tutup" }));
+    expect(region).toBeEmptyDOMElement();
+  });
+
+  it("Tutup pada error pesan pribadi memindahkan fokus ke judul percakapan", async () => {
+    panelMode.real = true;
+    const user = userEvent.setup();
+    chat.openDm.mockRejectedValue({ code: "forbidden", message: "Rekan ini sudah tidak aktif." });
+    chat.messages.mockImplementation(async (conv: string) =>
+      view([message({ id: "m1", conv, author: REKAN_C, text: "Draf kontrak sudah saya kirim." })]),
+    );
+    render(<ChatScreen />);
+
+    const umum = await screen.findByRole("region", { name: "#umum" });
+    await user.click(await within(umum).findByRole("button", { name: "Rekan Citra" }));
+    await user.click(screen.getByRole("menuitem", { name: "Kirim pesan pribadi" }));
+    await user.click(await screen.findByRole("button", { name: "Tutup" }));
+    expect(screen.queryByText("Pesan pribadi belum bisa dibuka")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "#umum" })).toHaveFocus());
+  });
+
+  it("Kirim pesan pribadi dari menu orang: fokus pindah ke kolom pesan percakapan baru", async () => {
+    panelMode.real = true;
+    const user = userEvent.setup();
+    const dm = summary(`dm:${"a".repeat(64)}:${PK_C}`, REKAN_C.name, { peer: REKAN_C });
+    chat.openDm.mockResolvedValue(dm);
+    chat.messages.mockImplementation(async (conv: string) =>
+      conv === dm.id
+        ? view([], { conversation: dm, members: [] })
+        : view([message({ id: "m1", conv, author: REKAN_C, text: "Draf kontrak sudah saya kirim." })]),
+    );
+    render(<ChatScreen />);
+
+    const umum = await screen.findByRole("region", { name: "#umum" });
+    chat.overview.mockResolvedValue(overview({ conversations: [...overview().conversations, dm] }));
+    await user.click(await within(umum).findByRole("button", { name: "Rekan Citra" }));
+    await user.click(screen.getByRole("menuitem", { name: "Kirim pesan pribadi" }));
+    expect(chat.openDm).toHaveBeenCalledWith(PK_C);
+    await waitFor(() => expect(screen.getByLabelText("Pesan untuk Rekan Citra")).toHaveFocus());
+  });
+
+  it("Hapus channel dari kepala percakapan: fokus pindah ke judul #umum; klik baris tidak memindahkan fokus", async () => {
+    panelMode.real = true;
+    const user = userEvent.setup();
+    chat.messages.mockImplementation(async () => view([]));
+    render(<ChatScreen />);
+    await screen.findByRole("heading", { name: "#umum" });
+
+    await user.click(row(/Channel tim-uji/));
+    expect(await screen.findByRole("heading", { name: "#tim-uji" })).toBeInTheDocument();
+    expect(row(/Channel tim-uji/)).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Menu #tim-uji" }));
+    await user.click(screen.getByRole("menuitem", { name: "Hapus channel" }));
+    const dialog = await screen.findByRole("dialog", { name: "Hapus channel #tim-uji?" });
+    chat.overview.mockResolvedValue(overview({ conversations: [UMUM, DM_B] }));
+    await user.click(within(dialog).getByRole("button", { name: "Hapus channel" }));
+
+    expect(chat.deleteChannel).toHaveBeenCalledWith(TIM_ID);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "#umum" })).toHaveFocus());
+    await waitFor(() => expect(within(list()).queryByRole("button", { name: /Channel tim-uji/ })).toBeNull());
+    expect(screen.getByRole("heading", { name: "#umum" })).toHaveFocus();
   });
 });

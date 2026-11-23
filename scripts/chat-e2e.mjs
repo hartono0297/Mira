@@ -10,6 +10,10 @@
 // v0.4: buat grup yang hanya berisi pembuatnya, lipat bagian Grup (dicek dengan CSS
 // sungguhan, bukan hanya atribut), dan pastikan lipatan bertahan setelah restart.
 //
+// v0.4 menu klik kanan (docs/plans/v04-ctx-chat.md), dengan klik kanan mouse sungguhan:
+// balas, salin, dan hapus pesan; bisukan dan bunyikan dari baris sidebar; Shift+F10 dan Esc;
+// keluar dari grup; menu bawaan WebView dibatalkan. Screenshot ke subfolder v04-ctx-chat.
+//
 // Pakai:  node scripts/chat-e2e.mjs <path mira.exe> <folder screenshot> [folder induk data]
 // Folder data dibuat di bawah folder induk (bawaan: folder temp) dan dihapus di akhir.
 // Build dulu: npx tauri build --debug --no-bundle
@@ -70,7 +74,18 @@ const sel = {
   section: (page, title) => sel.list(page).getByRole("region", { name: title, exact: true }),
   foldBtn: (page, title) => sel.section(page, title).locator("button.chat-fold"),
   sectionBody: (page, title) => sel.section(page, title).locator(".chat-sec-body"),
+  // v0.4 menu klik kanan (docs/plans/v04-ctx-chat.md, teks di src/screens/chat/menuText.ts).
+  anyMenu: (page) => page.getByRole("menu"),
+  msgMenu: (page) => page.getByRole("menu", { name: /^Aksi untuk pesan / }),
+  convMenu: (page, title) => page.getByRole("menu", { name: `Aksi untuk ${title}`, exact: true }),
+  menuEntry: (menu, id) => menu.locator(`[data-menu-item="${id}"]`),
+  msgText: (msg) => msg.locator(".conv-text").first(),
+  deletedMsg: (page) => sel.log(page).locator("li.conv-msg", { has: page.locator("p.conv-deleted") }),
 };
+
+// Id item menu yang sedang terbuka, berurutan.
+const menuIds = (menu) => menu.locator("[data-menu-item]").evaluateAll((els) => els.map((e) => e.dataset.menuItem));
+const menuLabel = (menu, id) => sel.menuEntry(menu, id).innerText().then((t) => t.trim());
 
 // Keadaan lipat sebuah bagian menurut tampilan sungguhan: tombol, atribut, dan CSS.
 async function foldState(page, title) {
@@ -88,6 +103,10 @@ const TEXT = {
   toDelete: "Pesan ini akan dihapus.",
   soloGroup: "Catatan Rina",
   soloMsg: "Catatan pribadi di grup yang hanya berisi saya.",
+  leaveGroup: "Grup Uji Keluar",
+  menuFirst: "Pesan uji untuk menu klik kanan.",
+  menuReply: "Balasan lewat menu klik kanan.",
+  menuDelete: "Pesan ini dihapus lewat menu klik kanan.",
 };
 
 function miraCredentials() {
@@ -154,6 +173,36 @@ async function stop({ child, browser }) {
 }
 
 const shot = (page, name) => page.screenshot({ path: join(shots, name) });
+const ctxShots = join(shots, "v04-ctx-chat");
+mkdirSync(ctxShots, { recursive: true });
+const ctxShot = (page, name) => page.screenshot({ path: join(ctxShots, name) });
+
+// Klik kanan sungguhan (mouse lewat CDP), lalu tunggu menunya terlihat.
+async function rightClickMenu(target, menu) {
+  await target.click({ button: "right" });
+  await menu.waitFor({ state: "visible", timeout: 5000 });
+  return menu;
+}
+
+// Isi papan klip: navigator.clipboard di halaman, kalau tidak bisa lewat Get-Clipboard Windows.
+async function readClipboard(page) {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+  const inPage = await page
+    .evaluate(() =>
+      Promise.race([
+        navigator.clipboard.readText().then((text) => ({ ok: true, text })),
+        new Promise((r) => setTimeout(() => r({ ok: false, error: "waktu habis" }), 3000)),
+      ]).catch((err) => ({ ok: false, error: String(err) })),
+    )
+    .catch((err) => ({ ok: false, error: String(err) }));
+  if (inPage.ok) return { via: "navigator.clipboard.readText", text: inPage.text };
+  try {
+    const text = execFileSync("powershell", ["-NoProfile", "-Command", "Get-Clipboard -Raw"], { encoding: "utf8" });
+    return { via: `Get-Clipboard (readText: ${inPage.error})`, text: text.replace(/\r?\n$/, "") };
+  } catch (err) {
+    return { via: null, text: null, error: `${inPage.error}; Get-Clipboard: ${err.message}` };
+  }
+}
 
 // Memanggil perintah Rust langsung. Error dikembalikan sebagai data, bukan dilempar.
 function invoke(page, cmd, args = {}) {
@@ -364,6 +413,203 @@ try {
   await sel.close(nDlg).click();
   await nDlg.waitFor({ state: "hidden", timeout: 10000 });
 
+  // 9a. v0.4 menu klik kanan, dengan klik kanan mouse sungguhan (bukan event buatan). Pesan
+  // diuji di grup khusus yang di akhir ditinggalkan, supaya #umum, #proyek-a, grup
+  // Catatan Rina, dan screenshot lama tidak berubah.
+  await sel.list(page).getByRole("button", { name: "Grup baru", exact: true }).click();
+  const kDlg = sel.dialog(page, "Grup baru");
+  await kDlg.waitFor({ timeout: 10000 });
+  await kDlg.getByLabel("Nama grup").fill(TEXT.leaveGroup);
+  await kDlg.getByRole("button", { name: /^Buat grup$/ }).click();
+  await kDlg.waitFor({ state: "hidden", timeout: 10000 });
+  await sel.conv(page, TEXT.leaveGroup).waitFor({ timeout: 10000 });
+  const leaveConv = (await overview(page)).conversations.find((c) => c.kind === "group" && c.name === TEXT.leaveGroup);
+  await sendWithEnter(page, TEXT.menuFirst);
+  await sendWithEnter(page, TEXT.menuDelete);
+
+  // Balas lewat klik kanan pesan.
+  const menuTarget = sel.message(page, TEXT.menuFirst);
+  let mMenu = await rightClickMenu(sel.msgText(menuTarget), sel.msgMenu(page));
+  const mName = await mMenu.getAttribute("aria-label");
+  const mIds = await menuIds(mMenu);
+  const mFocus = await page.evaluate(() => document.activeElement?.getAttribute("data-menu-item"));
+  check(
+    "Klik kanan pesan sendiri membuka menu pesan: Balas, Salin teks, Hapus pesan, tanpa Sebut, item pertama terfokus",
+    /^Aksi untuk pesan Anda pukul \d{2}[.:]\d{2}$/.test(mName ?? "") &&
+      ["reply", "copy", "delete"].every((id) => mIds.includes(id)) &&
+      !mIds.includes("mention") &&
+      mFocus === mIds[0],
+    `menu="${mName}", item=${mIds.join(",")}, fokus=${mFocus}`,
+  );
+  await ctxShot(page, "01-menu-pesan-terang.png");
+  await sel.menuEntry(mMenu, "reply").click();
+  await mMenu.waitFor({ state: "hidden", timeout: 5000 });
+  const ctxChip = await sel.replyChip(page).isVisible();
+  const ctxChipText = ctxChip ? await sel.replyChip(page).innerText() : "";
+  await sendWithEnter(page, TEXT.menuReply);
+  const ctxQuote = await sel.replyQuote(sel.message(page, TEXT.menuReply)).first().innerText().catch(() => "");
+  const ctxReplyData = leaveConv ? (await messagesIn(page, leaveConv.id)).find((m) => m.text === TEXT.menuReply) : null;
+  const ctxFirstData = leaveConv ? (await messagesIn(page, leaveConv.id)).find((m) => m.text === TEXT.menuFirst) : null;
+  check(
+    "Balas lewat klik kanan: chip Membalas tampil, balasan terkirim dengan kutipan pesan yang diklik",
+    ctxChip && ctxQuote.includes(TEXT.menuFirst.slice(0, 20)) && !!ctxFirstData && ctxReplyData?.replyTo?.id === ctxFirstData.id,
+    `chip="${ctxChipText.replace(/\s+/g, " ").slice(0, 60)}", kutipan="${ctxQuote.replace(/\s+/g, " ").slice(0, 60)}"`,
+  );
+
+  // Salin teks lewat menu pesan.
+  mMenu = await rightClickMenu(sel.msgText(sel.message(page, TEXT.menuFirst)), sel.msgMenu(page));
+  await sel.menuEntry(mMenu, "copy").click();
+  await mMenu.waitFor({ state: "hidden", timeout: 5000 });
+  await page.waitForTimeout(300);
+  const copiedNote = await page.getByText("Teks pesan disalin.").count();
+  const copyFailNote = await page.getByText(/Teks belum bisa disalin/).count();
+  const clip = await readClipboard(page);
+  if (clip.text === null) {
+    console.log(`CATATAN  Papan klip tidak bisa dibaca dari uji ini: ${clip.error}. Pengumuman disalin=${copiedNote}.`);
+    check("Salin teks lewat menu pesan diumumkan berhasil", copiedNote > 0 && copyFailNote === 0, `disalin=${copiedNote}, gagal=${copyFailNote}`);
+  } else {
+    check(
+      "Salin teks lewat menu pesan: papan klip berisi teks pesan dan berhasil diumumkan",
+      clip.text === TEXT.menuFirst && copiedNote > 0 && copyFailNote === 0,
+      `dibaca lewat ${clip.via}: "${clip.text.slice(0, 60)}", disalin=${copiedNote}, gagal=${copyFailNote}`,
+    );
+  }
+
+  // Hapus pesan lewat klik kanan.
+  mMenu = await rightClickMenu(sel.msgText(sel.message(page, TEXT.menuDelete)), sel.msgMenu(page));
+  await sel.menuEntry(mMenu, "delete").click();
+  const ctxDelDlg = sel.dialog(page, /Hapus pesan ini/);
+  await ctxDelDlg.waitFor({ timeout: 10000 });
+  await sel.confirmDelete(ctxDelDlg).click();
+  await ctxDelDlg.waitFor({ state: "hidden", timeout: 10000 });
+  await sel.log(page).getByText("Pesan dihapus", { exact: true }).waitFor({ timeout: 10000 });
+  const ctxGone = await sel.log(page).getByText(TEXT.menuDelete).count();
+  const ctxDeletedData = leaveConv ? (await messagesIn(page, leaveConv.id)).filter((m) => m.deleted).length : -1;
+  await sel.deletedMsg(page).locator("p.conv-deleted").click({ button: "right" });
+  await page.waitForTimeout(500);
+  const menusOnDeleted = await sel.anyMenu(page).count();
+  check(
+    "Hapus lewat klik kanan: konfirmasi Hapus pesan ini, lalu tanda Pesan dihapus; klik kanan pesan dihapus tanpa menu",
+    ctxGone === 0 && ctxDeletedData === 1 && menusOnDeleted === 0,
+    `teks lama=${ctxGone}, dihapus di data=${ctxDeletedData}, menu setelah klik kanan=${menusOnDeleted}`,
+  );
+
+  // Klik kanan di judul percakapan membuka menu aplikasi; di area kosong tidak ada menu apa pun.
+  // Dua-duanya membatalkan event, jadi menu bawaan WebView tidak muncul.
+  await page.evaluate(() => {
+    window.__ctxLog = [];
+    window.addEventListener(
+      "contextmenu",
+      (e) => setTimeout(() => window.__ctxLog.push({ prevented: e.defaultPrevented, tag: e.target?.className ?? "" })),
+      true,
+    );
+  });
+  await sel.conv(page, TEXT.leaveGroup).locator(".conv-title").click({ button: "right" });
+  const titleMenu = sel.convMenu(page, TEXT.leaveGroup);
+  await titleMenu.waitFor({ state: "visible", timeout: 5000 });
+  await page.keyboard.press("Escape");
+  await titleMenu.waitFor({ state: "hidden", timeout: 5000 });
+  const blank = await sel.log(page).evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    for (let y = r.top + 8; y < r.bottom - 8; y += 8) {
+      const x = r.left + r.width / 2;
+      const hit = document.elementFromPoint(x, y);
+      if (hit && el.contains(hit) && !hit.closest("li, button, a, p, time")) return { x, y };
+    }
+    return null;
+  });
+  if (blank) await page.mouse.click(blank.x, blank.y, { button: "right" });
+  await page.waitForTimeout(400);
+  const blankMenus = await sel.anyMenu(page).count();
+  const ctxLog = await page.evaluate(() => window.__ctxLog);
+  check(
+    "Klik kanan di judul percakapan membuka menu aplikasi, di area kosong tidak ada menu; menu bawaan WebView dibatalkan",
+    !!blank && ctxLog.length === 2 && ctxLog.every((e) => e.prevented) && blankMenus === 0,
+    `event=${JSON.stringify(ctxLog)}, menu di area kosong=${blankMenus}`,
+  );
+
+  // Bisukan dan Bunyikan lewat klik kanan baris sidebar.
+  let rMenu = await rightClickMenu(sel.row(page, "proyek-a"), sel.convMenu(page, "#proyek-a"));
+  const rIds = await menuIds(rMenu);
+  const muteLabel = await menuLabel(rMenu, "mute");
+  check(
+    "Klik kanan baris channel membuka menu Aksi untuk #proyek-a dengan Buka, Bisukan, Arsipkan, Hapus channel",
+    ["open", "mute", "archive", "delete"].every((id) => rIds.includes(id)) && muteLabel === "Bisukan",
+    `item=${rIds.join(",")}, mute="${muteLabel}"`,
+  );
+  await ctxShot(page, "02-menu-baris-sidebar-terang.png");
+  await sel.menuEntry(rMenu, "mute").click();
+  await sel.list(page).getByRole("button", { name: /^Channel proyek-a, (.*, )?dibisukan(,|$)/ }).waitFor({ timeout: 10000 });
+  const mutedOn = (await overview(page)).conversations.find((c) => c.name === "proyek-a")?.muted;
+  check("Bisukan lewat klik kanan: nama baris memuat dibisukan, chat_overview muted=true", mutedOn === true, `muted=${mutedOn}`);
+  rMenu = await rightClickMenu(sel.row(page, "proyek-a"), sel.convMenu(page, "#proyek-a"));
+  const unmuteLabel = await menuLabel(rMenu, "mute");
+  await sel.menuEntry(rMenu, "mute").click();
+  await sel.list(page).getByRole("button", { name: /^Channel proyek-a$/ }).waitFor({ timeout: 10000 });
+  const mutedOff = (await overview(page)).conversations.find((c) => c.name === "proyek-a")?.muted;
+  check(
+    "Bunyikan lewat klik kanan: item berganti Bunyikan, baris tanpa dibisukan, muted=false",
+    unmuteLabel === "Bunyikan" && mutedOff === false,
+    `item="${unmuteLabel}", muted=${mutedOff}`,
+  );
+
+  // Keyboard sungguhan: Shift+F10 di baris sidebar, Esc mengembalikan fokus.
+  await sel.row(page, "umum").focus();
+  await page.keyboard.press("Shift+F10");
+  const kbMenu = sel.convMenu(page, "#umum");
+  await kbMenu.waitFor({ state: "visible", timeout: 5000 });
+  await page.waitForTimeout(300);
+  const kbFocus = await page.evaluate(() => {
+    const a = document.activeElement;
+    const menu = a?.closest("[role=menu]");
+    return {
+      role: a?.getAttribute("role"),
+      item: a?.getAttribute("data-menu-item"),
+      first: !!menu && menu.querySelector("[role=menuitem]") === a,
+      menus: document.querySelectorAll("[role=menu]").length,
+    };
+  });
+  check(
+    "Shift+F10 di baris sidebar membuka satu menu dengan item pertama terfokus",
+    kbFocus.role === "menuitem" && kbFocus.first && kbFocus.menus === 1,
+    `fokus role=${kbFocus.role}, item=${kbFocus.item}, pertama=${kbFocus.first}, menu=${kbFocus.menus}`,
+  );
+  await page.keyboard.press("Escape");
+  await kbMenu.waitFor({ state: "hidden", timeout: 5000 });
+  const kbBack = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName);
+  check("Esc menutup menu dan fokus kembali ke baris #umum", /^Channel umum(,|$)/.test(kbBack ?? ""), `fokus="${kbBack}"`);
+
+  // Keluar dari grup lewat klik kanan baris grup.
+  rMenu = await rightClickMenu(sel.groupRow(page, TEXT.leaveGroup), sel.convMenu(page, TEXT.leaveGroup));
+  const gIds = await menuIds(rMenu);
+  check(
+    "Klik kanan baris grup membuka menu dengan Ganti nama, Tambah orang, Keluar dari grup",
+    ["mute", "rename", "add", "leave"].every((id) => gIds.includes(id)) && !gIds.includes("delete"),
+    `item=${gIds.join(",")}`,
+  );
+  await sel.menuEntry(rMenu, "leave").click();
+  const leaveDlg = sel.dialog(page, `Keluar dari grup ${TEXT.leaveGroup}?`);
+  await leaveDlg.waitFor({ timeout: 10000 });
+  await page.waitForTimeout(300);
+  await ctxShot(page, "03-konfirmasi-keluar-grup-terang.png");
+  await leaveDlg.getByRole("button", { name: "Keluar dari grup", exact: true }).click();
+  await leaveDlg.waitFor({ state: "hidden", timeout: 10000 });
+  await page.waitForTimeout(800);
+  const leftConv = (await overview(page)).conversations.find((c) => c.id === leaveConv?.id);
+  const leftRow = sel.list(page).getByRole("button", { name: new RegExp(`^Grup ${TEXT.leaveGroup}(,|$)`) });
+  const leftRowName = (await leftRow.count()) ? await leftRow.getAttribute("aria-label") : null;
+  const leftShown = await sel.conv(page, TEXT.leaveGroup).count();
+  console.log(
+    `CATATAN  Setelah keluar dari grup satu orang: ${
+      leftConv ? JSON.stringify({ former: leftConv.former, memberCount: leftConv.memberCount, canPost: leftConv.canPost, section: leftConv.section }) : "grup hilang dari chat_overview"
+    }, baris="${leftRowName}", percakapan masih terbuka=${leftShown > 0}`,
+  );
+  check(
+    "Keluar dari grup lewat klik kanan: grup ditandai bukan anggota lagi (atau hilang) dan tidak bisa ditulis",
+    leftConv ? leftConv.former === true && !leftConv.canPost && /bukan anggota lagi/.test(leftRowName ?? "") : leftRowName === null,
+    leftConv ? `former=${leftConv.former}, canPost=${leftConv.canPost}, baris="${leftRowName}"` : "hilang dari daftar",
+  );
+
   // 9b. v0.4: grup tanpa anggota lain, lalu lipat bagian Grup.
   await sel.list(page).getByRole("button", { name: "Grup baru", exact: true }).click();
   const gDlg = sel.dialog(page, "Grup baru");
@@ -413,6 +659,14 @@ try {
   await sel.message(page, TEXT.reply).waitFor({ timeout: 10000 });
   await shot(page, "t2-05-percakapan-gelap.png");
   await sel.list(page).screenshot({ path: join(shots, "t2-06-daftar-gelap.png") });
+  const darkMsgMenu = await rightClickMenu(sel.msgText(sel.message(page, TEXT.first)), sel.msgMenu(page));
+  await ctxShot(page, "04-menu-pesan-gelap.png");
+  await page.keyboard.press("Escape");
+  await darkMsgMenu.waitFor({ state: "hidden", timeout: 5000 });
+  const darkRowMenu = await rightClickMenu(sel.row(page, "proyek-a"), sel.convMenu(page, "#proyek-a"));
+  await ctxShot(page, "05-menu-baris-sidebar-gelap.png");
+  await page.keyboard.press("Escape");
+  await darkRowMenu.waitFor({ state: "hidden", timeout: 5000 });
   check("Screenshot terang dan gelap diambil", true);
   await stop(app);
   app = null;

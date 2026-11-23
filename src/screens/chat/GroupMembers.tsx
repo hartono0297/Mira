@@ -139,7 +139,7 @@ export function MemberRow({ person, me, department, chip, onRemove, children }: 
       </span>
       {chip && <span className="chip chip-on">{chip}</span>}
       {children}
-      <MenuButton menu={menu} label={MENU.personMore(person.name)} className="member-more" />
+      <MenuButton menu={menu} label={MENU.personMenu(person.name)} className="member-more" />
       {menu.element}
     </li>
   );
@@ -347,7 +347,7 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
                 }}
               >
                 <IconDoorExit size={16} aria-hidden="true" />
-                Keluar dari grup
+                {MENU.leaveGroup}
               </button>
             </>
           )}
@@ -358,9 +358,9 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
         onOpenChange={(next) => {
           if (!next) setToRemove(null);
         }}
-        title={`Keluarkan ${removeName} dari grup?`}
-        confirmLabel="Keluarkan"
-        busyLabel="Mengeluarkan..."
+        title={MENU.removeTitle(removeName)}
+        confirmLabel={MENU.removeConfirm}
+        busyLabel={MENU.removeBusy}
         busy={busy}
         onConfirm={() => void removeMember()}
         error={
@@ -371,33 +371,26 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
           )
         }
       >
-        <p>
-          {removeName} tidak menerima pesan baru lagi; pesan lama tetap di laptopnya.
-        </p>
+        <p>{MENU.removeBody(removeName)}</p>
       </ConfirmDialog>
       <ConfirmDialog
         open={leaving}
         onOpenChange={setLeaving}
-        title={`Keluar dari grup ${title}?`}
-        confirmLabel="Keluar dari grup"
-        busyLabel="Keluar..."
+        title={MENU.leaveTitle(title)}
+        confirmLabel={MENU.leaveConfirm}
+        busyLabel={MENU.leaveBusy}
         busy={busy}
         onConfirm={() => void leave()}
         error={
           actionError && (
-            <ErrorAlert title="Anda belum keluar dari grup">
+            <ErrorAlert title={MENU.leaveFailed}>
               <p>{actionError.message}</p>
             </ErrorAlert>
           )
         }
       >
-        <p>
-          Pesan baru di grup ini tidak dikirim lagi ke laptop Anda; pesan lama tetap tersimpan di sini. Untuk masuk lagi,
-          anggota grup perlu menambahkan Anda.
-        </p>
-        {iAmOwner && members.length > 1 && (
-          <p>Peran pemilik grup pindah ke anggota yang paling lama di grup.</p>
-        )}
+        <p>{MENU.leaveBody}</p>
+        {iAmOwner && members.length > 1 && <p>{MENU.leaveOwner}</p>}
       </ConfirmDialog>
     </div>
   );

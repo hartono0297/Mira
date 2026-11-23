@@ -65,7 +65,7 @@ function Row({ person, onRemove }: { person: Person; onRemove?: () => void }) {
     <ul>
       <li {...menu.triggerProps}>
         <button type="button">{person.name}</button>
-        <MenuButton menu={menu} label={MENU.personMore(person.name)} />
+        <MenuButton menu={menu} label={MENU.personMenu(person.name)} />
         {menu.element}
       </li>
     </ul>
@@ -215,7 +215,7 @@ describe("usePersonMenu: keyboard", () => {
   it("tombol ... membuka menu yang sama dan Esc kembali ke tombol", async () => {
     const user = userEvent.setup();
     renderRow(sari);
-    const more = screen.getByRole("button", { name: MENU.personMore("Sari Uji") });
+    const more = screen.getByRole("button", { name: MENU.personMenu("Sari Uji") });
     await user.click(more);
     const menu = await screen.findByRole("menu", { name: MENU.personMenu("Sari Uji") });
     expect(itemNames(menu)).toEqual([MENU.sendDm, MENU.mention, MENU.profile]);
@@ -270,7 +270,7 @@ describe("Daftar anggota grup: menu orang", () => {
     const user = userEvent.setup();
     render(<MembersHarness group={groupView()} c={chatActions()} />);
     const panel = await openPanel(user);
-    await user.click(within(rowOf(panel, "Sari Uji")).getByRole("button", { name: MENU.personMore("Sari Uji") }));
+    await user.click(within(rowOf(panel, "Sari Uji")).getByRole("button", { name: MENU.personMenu("Sari Uji") }));
     await user.click(await screen.findByRole("menuitem", { name: MENU.removeFromGroup }));
     const dlg = screen.getByRole("dialog", { name: "Keluarkan Sari Uji dari grup?" });
     expect(dlg).toHaveTextContent("Sari Uji tidak menerima pesan baru lagi; pesan lama tetap di laptopnya.");
@@ -294,7 +294,7 @@ describe("Daftar anggota grup: menu orang", () => {
     const c = chatActions();
     render(<MembersHarness group={groupView()} c={c} />);
     const panel = await openPanel(user);
-    await user.click(within(rowOf(panel, "Sari Uji")).getByRole("button", { name: MENU.personMore("Sari Uji") }));
+    await user.click(within(rowOf(panel, "Sari Uji")).getByRole("button", { name: MENU.personMenu("Sari Uji") }));
     await user.click(await screen.findByRole("menuitem", { name: MENU.profile }));
     expect(c.showProfile).toHaveBeenCalledWith(sari);
     expect(screen.queryByRole("dialog", { name: "Anggota grup (3)" })).toBeNull();
@@ -307,13 +307,13 @@ describe("Daftar anggota grup: menu orang", () => {
     const mention = vi.fn();
     render(<MembersHarness group={groupView()} c={c} conv={{ mention }} />);
     let panel = await openPanel(user);
-    await user.click(within(rowOf(panel, "Budi Uji")).getByRole("button", { name: MENU.personMore("Budi Uji") }));
+    await user.click(within(rowOf(panel, "Budi Uji")).getByRole("button", { name: MENU.personMenu("Budi Uji") }));
     await user.click(await screen.findByRole("menuitem", { name: MENU.sendDm }));
     expect(c.openDm).toHaveBeenCalledWith(budi);
     expect(screen.queryByRole("dialog", { name: "Anggota grup (3)" })).toBeNull();
 
     panel = await openPanel(user);
-    await user.click(within(rowOf(panel, "Budi Uji")).getByRole("button", { name: MENU.personMore("Budi Uji") }));
+    await user.click(within(rowOf(panel, "Budi Uji")).getByRole("button", { name: MENU.personMenu("Budi Uji") }));
     await user.click(await screen.findByRole("menuitem", { name: MENU.mention }));
     expect(mention).toHaveBeenCalledWith(budi);
     expect(screen.queryByRole("dialog", { name: "Anggota grup (3)" })).toBeNull();
@@ -323,7 +323,7 @@ describe("Daftar anggota grup: menu orang", () => {
     const user = userEvent.setup();
     render(<MembersHarness group={groupView()} c={chatActions()} />);
     const panel = await openPanel(user);
-    await user.click(within(rowOf(panel, "Penguji")).getByRole("button", { name: MENU.personMore("Penguji") }));
+    await user.click(within(rowOf(panel, "Penguji")).getByRole("button", { name: MENU.personMenu("Penguji") }));
     const menu = await screen.findByRole("menu", { name: MENU.personMenu("Penguji") });
     expect(itemNames(menu)).toEqual([MENU.profile]);
   });

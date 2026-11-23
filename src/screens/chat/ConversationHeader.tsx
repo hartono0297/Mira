@@ -1,5 +1,6 @@
 import { IconBellOff, IconLock, IconUserPlus, IconUsers } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
+import type { AppError } from "../../api";
 import type { ConversationSummary } from "../../api/chat";
 import { MenuButton } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -14,6 +15,8 @@ type Props = {
   summary: ConversationSummary;
   // Data grup dari panel percakapan (useGroupView). Untuk selain grup: group null.
   groupState: GroupState;
+  // Judul percakapan (tabIndex -1): tujuan fokus setelah panel lama hilang.
+  titleRef?: Ref<HTMLHeadingElement>;
   // Permintaan dari menu sidebar untuk percakapan ini (sudah disaring per percakapan).
   request?: ConvRequest | null;
   onRequestDone?: () => void;
@@ -23,7 +26,20 @@ type Props = {
 
 type GroupDialog = "rename" | "add";
 
-export function ConversationHeader({ summary, groupState, request = null, onRequestDone, onChanged, onGone }: Props) {
+const GROUP_WAIT: Record<GroupDialog, string> = {
+  rename: "Ganti nama terbuka begitu data grup termuat.",
+  add: "Tambah orang terbuka begitu data grup termuat.",
+};
+
+export function ConversationHeader({
+  summary,
+  groupState,
+  titleRef,
+  request = null,
+  onRequestDone,
+  onChanged,
+  onGone,
+}: Props) {
   const title = conversationTitle(summary);
   const [error, setError] = useState<ActionError | null>(null);
   const isGroup = summary.kind === "group";
@@ -56,17 +72,45 @@ export function ConversationHeader({ summary, groupState, request = null, onRequ
   }, [requestN]);
 
   // Buka dialog tertunda begitu data grup siap. Kalau data grup gagal dimuat, permintaan
-  // dibuang; GroupMembers sudah menampilkan error-nya.
+  // tetap disimpan dan error-nya tampil di bawah kepala dengan Coba lagi: dialog terbuka
+  // setelah muat ulang berhasil. Batal membuang permintaan.
+  const [retrying, setRetrying] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const groupErrorRef = useRef<HTMLDivElement>(null);
+  // Kotak error grup hilang bersama tombolnya: fokus pindah dulu ke tombol menu "...", supaya
+  // dialog yang terbuka sesudahnya juga mengembalikan fokus ke sana.
+  const leaveGroupError = () => {
+    if (groupErrorRef.current?.contains(document.activeElement)) {
+      rowRef.current?.querySelector<HTMLElement>('button[aria-haspopup="menu"]')?.focus();
+    }
+  };
   useEffect(() => {
     if (!pending) return;
     if (group) {
       const allowed = !summary.former && (pending === "rename" ? group.canRename : group.canAdd);
+      leaveGroupError();
       if (allowed) (pending === "rename" ? setRenaming : setAdding)(true);
       setPending(null);
-    } else if (!groupState.loading) {
+    } else if (!groupState.loading && !groupState.error) {
       setPending(null);
     }
-  }, [pending, group, groupState.loading, summary.former]);
+  }, [pending, group, groupState.loading, groupState.error, summary.former]);
+  const groupFailed = pending !== null && !group && (groupState.error !== null || retrying);
+  // Error terakhir tetap tampil selama Coba lagi berjalan (reload mengosongkan error).
+  const [groupError, setGroupError] = useState<AppError | null>(null);
+  useEffect(() => {
+    if (groupState.error) setGroupError(groupState.error);
+  }, [groupState.error]);
+
+  async function retryGroup() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await groupState.reload();
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   const menu = useConversationMenu({
     summary,
@@ -80,7 +124,7 @@ export function ConversationHeader({ summary, groupState, request = null, onRequ
   return (
     <header className="conv-head">
       {/* Klik kanan atau Shift+F10 di kepala membuka menu yang sama dengan tombol "...". */}
-      <div className="conv-head-row" {...menu.triggerProps}>
+      <div className="conv-head-row" ref={rowRef} {...menu.triggerProps}>
         {summary.kind === "dm" && (
           <span className="conv-avatar" aria-hidden="true">
             {initials(title)}
@@ -92,7 +136,9 @@ export function ConversationHeader({ summary, groupState, request = null, onRequ
           </span>
         )}
         <div className={groupLike ? "conv-head-text conv-head-group" : "conv-head-text"}>
-          <h2 className="conv-title">{title}</h2>
+          <h2 className="conv-title" ref={titleRef} tabIndex={-1}>
+            {title}
+          </h2>
           {isGroup && (
             <GroupMembers
               memberCount={summary.memberCount}
@@ -136,6 +182,35 @@ export function ConversationHeader({ summary, groupState, request = null, onRequ
           <div className="conv-head-error">
             <ErrorAlert title={ACTION_ERRORS[error.action]}>
               <p>{error.error.message}</p>
+            </ErrorAlert>
+          </div>
+        )}
+        {groupFailed && (
+          <div className="conv-head-error" ref={groupErrorRef}>
+            <ErrorAlert title="Data grup belum bisa dimuat">
+              {groupError && <p>{groupError.message}</p>}
+              {pending && <p>{GROUP_WAIT[pending]}</p>}
+              <div className="chat-alert-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => void retryGroup()}
+                  aria-disabled={retrying || undefined}
+                  aria-busy={retrying || undefined}
+                >
+                  {retrying ? "Memuat ulang..." : "Coba lagi"}
+                </button>
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    leaveGroupError();
+                    setPending(null);
+                  }}
+                >
+                  Batal
+                </button>
+              </div>
             </ErrorAlert>
           </div>
         )}

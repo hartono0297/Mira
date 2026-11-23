@@ -91,6 +91,25 @@ describe("Menu lampiran", () => {
     await vi.waitFor(() => expect(onAnnounce).toHaveBeenCalledWith("Nama kontrak-draft.pdf disalin."));
   });
 
+  it("Salin nama file gagal: pesan khusus nama file sebagai error", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => {
+      throw new Error("ditolak");
+    });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
+    const { card, onAnnounce } = renderCard();
+    fireEvent.contextMenu(card);
+    await user.click(screen.getByRole("menuitem", { name: "Salin nama file" }));
+    await vi.waitFor(() =>
+      expect(onAnnounce).toHaveBeenCalledWith("Nama file belum bisa disalin. Pilih namanya lalu tekan Ctrl+C.", true),
+    );
+  });
+
+  it("tombol Simpan salinan memakai kata yang sama dengan item menu", () => {
+    renderCard();
+    expect(screen.getByRole("button", { name: "Simpan salinan kontrak-draft.pdf" })).toHaveTextContent("Simpan salinan");
+  });
+
   it("tombol ... dengan keyboard: Enter membuka, Esc menutup dan fokus kembali", async () => {
     const user = userEvent.setup();
     renderCard();

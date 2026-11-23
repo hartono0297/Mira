@@ -150,6 +150,14 @@
   color: var(--text);
 }
 
+/* Mode kontras tinggi Windows membuang latar --hover: baris yang menunya terbuka diberi garis. */
+@media (forced-colors: active) {
+  .chat-row-menu {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+}
+
 .chat-row-unread {
   color: var(--text);
   font-weight: 800;
@@ -337,6 +345,38 @@
 .chat-main > * {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* Error Kirim pesan pribadi, di atas percakapan. Kosong (tanpa error) setinggi nol; panel
+   percakapan di bawahnya tetap mengisi sisa tinggi. */
+.chat-main > .chat-dm-error {
+  flex: none;
+}
+
+.chat-dm-error:not(:empty) {
+  padding: 12px 24px 0;
+}
+
+.chat-dm-error p {
+  overflow-wrap: anywhere;
+}
+
+.chat-dm-error .link-btn {
+  margin-top: 4px;
+}
+
+/* Tombol di bawah kotak error (Coba lagi, Batal). Dipakai juga oleh kepala percakapan. Garis
+   --text-sec, sama alasannya dengan .chat-retry. */
+.chat-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.chat-alert-actions .btn {
+  border-color: var(--text-sec);
 }
 
 .chat-pad {
