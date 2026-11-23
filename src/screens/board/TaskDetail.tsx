@@ -481,13 +481,13 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   const me = board?.me ?? "";
   const people: Person[] = board?.assignees ?? [];
   const nameOf = (p: Person) => (p.publicKey === me ? `${p.name} (Anda)` : p.name);
-  // Penanggung jawab yang sudah tidak ada di daftar (misalnya dikeluarkan dari
-  // tim) tetap tampil dengan keterangan, supaya tidak hilang diam-diam.
+  // Penanggung jawab yang sudah bukan anggota proyek (misalnya dikeluarkan dari
+  // proyek) tetap tampil dengan keterangan, supaya tidak hilang diam-diam.
   const isFormer = (p: Person | null) => !!p && !!board && !people.some((x) => x.publicKey === p.publicKey);
-  // Satu pasang kurung saja: "Budi (tidak bisa ditugaskan lagi)", "Budi (Anda, tidak bisa ditugaskan lagi)".
+  // Satu pasang kurung saja: "Budi (bukan anggota proyek lagi)", "Budi (Anda, bukan anggota proyek lagi)".
   const assigneeName = (p: Person) => {
     if (!isFormer(p)) return nameOf(p);
-    return p.publicKey === me ? `${p.name} (Anda, tidak bisa ditugaskan lagi)` : `${p.name} (tidak bisa ditugaskan lagi)`;
+    return p.publicKey === me ? `${p.name} (Anda, bukan anggota proyek lagi)` : `${p.name} (bukan anggota proyek lagi)`;
   };
 
   function body() {
@@ -1152,7 +1152,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                     {GONE_TITLE[gone]}
                   </strong>
                   {gone === "project" && (
-                    <p>Anda tidak punya akses lagi ke proyek ini, misalnya karena dikeluarkan dari timnya.</p>
+                    <p>Anda tidak punya akses lagi ke proyek ini, misalnya karena dikeluarkan dari proyek ini.</p>
                   )}
                   <p>
                     {keptDrafts(task).length > 0

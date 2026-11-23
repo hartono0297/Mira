@@ -15,6 +15,7 @@ pub mod feature;
 pub mod membership;
 pub mod model;
 pub mod numbers;
+pub mod outside;
 pub mod policy;
 pub mod rank;
 pub mod reminder;

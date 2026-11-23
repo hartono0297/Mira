@@ -12,8 +12,9 @@ export type ProjectSummary = {
   id: string;
   code: string;
   name: string;
+  // Departemen proyek ("team" di inti Rust). null = proyek tanpa departemen.
+  // Sejak v0.3 yang melihat proyek hanya anggotanya (orgApi.projectMembers), bukan seluruh departemen.
   teamId: string | null;
-  // Nama tim pemilik proyek. null = proyek tanpa tim, terlihat oleh seluruh organisasi kecuali Tamu.
   teamName: string | null;
   openCount: number;
   taskCount: number;
@@ -96,6 +97,21 @@ export type TaskPatch = {
 
 export type MyTask = { projectId: string; projectCode: string; projectName: string; task: TaskCard };
 
+// Proyek terdaftar yang belum saya ikuti, hanya untuk superadmin (board_outside_projects).
+// Log keanggotaan tidak memuat nama proyek: code dan name hanya ada kalau laptop ini
+// masih menyimpan board-nya. Superadmin boleh menambahkan dirinya sendiri
+// (orgApi.addProjectMember dengan kuncinya), dan langkah itu tercatat di log.
+export type OutsideProject = {
+  id: string;
+  code: string | null;
+  name: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  creatorName: string;
+  memberCount: number;
+  createdAt: string;
+};
+
 // Kunci pengaturan pengingat tenggat (per laptop), nilai "on" atau "off", bawaan "on".
 export const REMINDER_DAY_BEFORE = "board.reminder.day_before";
 export const REMINDER_DUE_DAY = "board.reminder.due_day";
@@ -105,6 +121,8 @@ export const BOARD_EVENT = "mira://board";
 // Perubahan dari laptop lain lewat sinkron fitur. Payload { topic }, board memakai topik "board".
 export const FEATURE_EVENT = "mira://feature";
 export const BOARD_TOPIC = "board";
+// Op keanggotaan baru (anggota proyek ditambah atau dikeluarkan) mengubah proyek yang terlihat.
+export const DIRECTORY_EVENT = "mira://directory";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!isTauri()) throw NO_TAURI_ERROR;
@@ -117,8 +135,10 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export const boardApi = {
   listProjects: () => call<ProjectSummary[]>("board_list_projects"),
-  createProject: (name: string, code: string, teamId: string | null = null) =>
-    call<ProjectSummary>("board_create_project", { name, code, teamId }),
+  // members: kunci publik orang yang dipilih selain pembuat (pembuat selalu anggota).
+  createProject: (name: string, code: string, teamId: string | null = null, members: string[] = []) =>
+    call<ProjectSummary>("board_create_project", { name, code, teamId, members }),
+  outsideProjects: () => call<OutsideProject[]>("board_outside_projects"),
   updateProject: (projectId: string, name: string) =>
     call<ProjectSummary>("board_update_project", { projectId, name }),
   getBoard: (projectId: string) => call<BoardView>("board_get_board", { projectId }),
@@ -140,8 +160,9 @@ function isBoardTopic(payload: unknown): boolean {
 }
 
 // Memuat ulang saat board berubah, baik di laptop ini (mira://board) maupun
-// dari laptop lain (mira://feature dengan topik "board"). Topik fitur lain
-// diabaikan. Di luar aplikasi desktop tidak melakukan apa pun.
+// dari laptop lain (mira://feature dengan topik "board"), dan saat anggota
+// proyek berubah (mira://directory). Topik fitur lain diabaikan. Di luar
+// aplikasi desktop tidak melakukan apa pun.
 export function subscribeBoard(handler: () => void): () => void {
   if (!isTauri()) return () => {};
   let stopped = false;
@@ -163,6 +184,7 @@ export function subscribeBoard(handler: () => void): () => void {
   };
   watch(BOARD_EVENT, () => true);
   watch(FEATURE_EVENT, isBoardTopic);
+  watch(DIRECTORY_EVENT, () => true);
   return () => {
     stopped = true;
     unlisteners.splice(0).forEach(stop);

@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProjectSummary } from "../../api/board";
 import type { DocumentDetail, DocumentSummary } from "../../api/documents";
 import { DocsScreen } from "./DocsScreen";
+import { DOCS_LOCATION_KEY } from "./location";
 import { detailOf, meRef, rekanC, summary, version } from "./testData";
 
 const docsApi = vi.hoisted(() => ({
@@ -21,6 +23,33 @@ const docsApi = vi.hoisted(() => ({
   subscribeDocuments: vi.fn((_handler: () => void): (() => void) => () => {}),
 }));
 vi.mock("../../api/documents", () => docsApi);
+
+// Daftar proyek untuk pilihan Lokasi. subscribeBoard dicatat supaya tes bisa
+// meniru event board (anggota proyek berubah).
+const boardMock = vi.hoisted(() => ({ listProjects: vi.fn(), listeners: new Set<() => void>() }));
+vi.mock("../../api/board", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/board")>()),
+  boardApi: { listProjects: boardMock.listProjects },
+  subscribeBoard: (handler: () => void) => {
+    boardMock.listeners.add(handler);
+    return () => boardMock.listeners.delete(handler);
+  },
+}));
+
+// Ringkasan organisasi: hanya isGuest yang dibaca layar Dokumen.
+const orgMock = vi.hoisted(() => ({ overview: vi.fn(), listeners: new Set<() => void>() }));
+vi.mock("../../api/org", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/org")>()),
+  orgApi: { overview: orgMock.overview },
+  subscribeOrg: (handler: () => void) => {
+    orgMock.listeners.add(handler);
+    return () => orgMock.listeners.delete(handler);
+  },
+}));
+
+function overview(isGuest: boolean) {
+  return { publicKey: "me", isSuperadmin: false, isGuest, departmentId: null, decideJoinTeamIds: [] };
+}
 
 // Event Tauri untuk sinkron fitur (mira://feature). Hanya dipakai kalau tes
 // memasang __TAURI_INTERNALS__; di tes lain subscribeFeature tidak berlangganan.
@@ -69,6 +98,11 @@ function row(name: string): HTMLElement {
 
 beforeEach(() => {
   for (const fn of Object.values(docsApi)) fn.mockReset();
+  boardMock.listProjects.mockReset().mockResolvedValue([]);
+  boardMock.listeners.clear();
+  orgMock.overview.mockReset().mockResolvedValue(overview(false));
+  orgMock.listeners.clear();
+  window.localStorage.clear();
   docsApi.subscribeDocuments.mockImplementation(() => () => {});
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   tauriEvent.handlers = [];
@@ -82,6 +116,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.localStorage.clear();
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 });
 
@@ -114,11 +149,11 @@ describe("Layar Dokumen", () => {
     setup([laporan, rab, jadwal, kontrak, brosur]);
     render(<DocsScreen />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Memuat daftar dokumen...");
+    expect(screen.getByText("Memuat daftar dokumen...")).toHaveAttribute("role", "status");
     expect(await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeInTheDocument();
     expect(docsApi.listDocuments).toHaveBeenCalledWith(null);
     expect(screen.getByRole("heading", { level: 1, name: "Dokumen" })).toBeInTheDocument();
-    expect(screen.getByText("Pustaka Umum")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Lokasi" })).toHaveDisplayValue("Pustaka Umum");
 
     expect(within(row("laporan-bulanan.docx")).getByText("Versi 3 · Diubah Anda 5 menit lalu")).toBeInTheDocument();
     expect(within(row("RAB-proyek.xlsx")).getByText(/^Sedang Anda edit di Excel sejak \d{2}\.\d{2}$/)).toBeInTheDocument();
@@ -263,7 +298,7 @@ describe("Layar Dokumen", () => {
     expect(within(dialog).getByText("Dokumen sedang diedit.")).toBeInTheDocument();
   });
 
-  it("Tambah file mengirim path pilihan ke pustaka Umum", async () => {
+  it("Tambah file mengirim path pilihan ke Pustaka Umum", async () => {
     const user = userEvent.setup();
     const added = [summary("n1", "notulen.docx"), summary("n2", "anggaran.xlsx")];
     setup([laporan]);
@@ -276,7 +311,7 @@ describe("Layar Dokumen", () => {
 
     await user.click(await screen.findByRole("button", { name: "Tambah file" }));
     expect(docsApi.addDocuments).toHaveBeenCalledWith(["C:\\Data\\notulen.docx", "C:\\Data\\anggaran.xlsx"], null);
-    expect(await screen.findByText("2 file ditambahkan ke pustaka Umum.")).toBeInTheDocument();
+    expect(await screen.findByText("2 file ditambahkan ke Pustaka Umum.")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 2, name: "notulen.docx" })).toBeInTheDocument();
   });
 
@@ -379,7 +414,11 @@ describe("Layar Dokumen", () => {
     render(<DocsScreen />);
     await screen.findByText("kontrak.docx", { selector: ".doc-name" });
     expect(within(row("kontrak.docx")).getByRole("button", { name: "Lihat bentrok kontrak.docx" })).toBeInTheDocument();
-    expect(await screen.findByText(/Anda tidak punya izin memilih versi/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Anda tidak punya izin memilih versi. Minta rekan yang bisa mengedit file ini untuk memilihnya.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Pakai versi ini/ })).toBeNull();
   });
 
@@ -551,5 +590,286 @@ describe("Layar Dokumen", () => {
     expect(within(heads[0]).getByRole("button", { name: "Pakai versi ini (versi 5)" })).toBeInTheDocument();
     expect(within(heads[0]).getByRole("button", { name: "Gabung manual dari versi 5" })).toBeInTheDocument();
     expect(within(heads[0]).getByRole("button", { name: "Buka versi 5" })).toBeInTheDocument();
+  });
+});
+
+function project(id: string, code: string, name: string): ProjectSummary {
+  return { id, code, name, teamId: "t1", teamName: "Gudang", openCount: 0, taskCount: 0, canManage: false };
+}
+const gudang = project("p1", "PA", "Gudang");
+const kantor = project("p2", "KB", "Kantor Baru");
+const denah = summary("g1", "denah-gudang.pdf", { projectId: "p1", teamId: "t1" });
+
+// Daftar dokumen per lokasi: kunci "" = Pustaka Umum.
+function setupScopes(byScope: Record<string, DocumentSummary[]>) {
+  docsApi.listDocuments.mockImplementation(async (projectId: string | null) => byScope[projectId ?? ""] ?? []);
+  docsApi.getDocument.mockImplementation(async (id: string) => {
+    const found = Object.values(byScope)
+      .flat()
+      .find((d) => d.id === id);
+    if (!found) throw { code: "not_found", message: "Dokumen tidak ditemukan." };
+    return detailOf(found);
+  });
+}
+
+function emitBoard() {
+  act(() => {
+    for (const fn of boardMock.listeners) fn();
+  });
+}
+
+function storedLocation(): unknown {
+  return JSON.parse(window.localStorage.getItem(DOCS_LOCATION_KEY) ?? "null");
+}
+
+describe("Lokasi dokumen", () => {
+  it("select Lokasi: Pustaka Umum bawaan dan satu opsi per proyek", async () => {
+    boardMock.listProjects.mockResolvedValue([gudang, kantor]);
+    setupScopes({ "": [laporan] });
+    render(<DocsScreen />);
+
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    expect(select).toHaveDisplayValue("Pustaka Umum");
+    expect(await screen.findByRole("option", { name: "PA Gudang" })).toBeInTheDocument();
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Pustaka Umum",
+      "PA Gudang",
+      "KB Kantor Baru",
+    ]);
+    expect(select).toHaveAccessibleDescription(
+      "File di Pustaka Umum terlihat oleh semua anggota organisasi, kecuali Tamu.",
+    );
+    expect(await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(docsApi.listDocuments).toHaveBeenCalledWith(null);
+    expect(docsApi.listDocuments).not.toHaveBeenCalledWith("p1");
+  });
+
+  it("memilih proyek menampilkan file proyek itu, mengingat pilihan, dan Tambah file menambah ke proyek", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockResolvedValue([gudang, kantor]);
+    setupScopes({ "": [laporan], p1: [denah] });
+    const added = summary("g2", "notulen.docx", { projectId: "p1", teamId: "t1" });
+    docsApi.pickFilesToAdd.mockResolvedValue(["C:\\Data\\notulen.docx"]);
+    docsApi.addDocuments.mockImplementation(async () => {
+      setupScopes({ "": [laporan], p1: [denah, added] });
+      return [added];
+    });
+    render(<DocsScreen />);
+    await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" });
+
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    await user.selectOptions(select, await screen.findByRole("option", { name: "PA Gudang" }));
+    expect(await screen.findByText("denah-gudang.pdf", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(screen.queryByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeNull();
+    expect(docsApi.listDocuments).toHaveBeenLastCalledWith("p1");
+    expect(screen.getByRole("list", { name: "File di proyek PA Gudang" })).toBeInTheDocument();
+    expect(select).toHaveAccessibleDescription("File di proyek PA Gudang hanya terlihat oleh anggota proyek itu.");
+    expect(storedLocation()).toEqual({ projectId: "p1", label: "PA Gudang" });
+
+    await user.click(screen.getByRole("button", { name: "Tambah file" }));
+    expect(docsApi.addDocuments).toHaveBeenCalledWith(["C:\\Data\\notulen.docx"], "p1");
+    expect(await screen.findByText("notulen.docx ditambahkan ke proyek PA Gudang.")).toBeInTheDocument();
+
+    // Kembali ke Pustaka Umum.
+    await user.selectOptions(select, "Pustaka Umum");
+    expect(await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(storedLocation()).toEqual({ projectId: null });
+  });
+
+  it("proyek tanpa file menampilkan keadaan kosong untuk proyek itu", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [laporan], p1: [] });
+    render(<DocsScreen />);
+    await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" });
+
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    await user.selectOptions(select, await screen.findByRole("option", { name: "PA Gudang" }));
+    expect(await screen.findByRole("heading", { name: "Belum ada file di proyek PA Gudang" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Tambah file" })).toHaveLength(1);
+  });
+
+  it("membuka lagi proyek yang terakhir dipilih setelah daftar proyek terbaca", async () => {
+    window.localStorage.setItem(DOCS_LOCATION_KEY, JSON.stringify({ projectId: "p1", label: "PA Gudang" }));
+    let resolveProjects: (list: ProjectSummary[]) => void = () => {};
+    boardMock.listProjects.mockImplementation(
+      () =>
+        new Promise<ProjectSummary[]>((resolve) => {
+          resolveProjects = resolve;
+        }),
+    );
+    setupScopes({ "": [laporan], p1: [denah] });
+    render(<DocsScreen />);
+
+    expect(screen.getByText("Memuat daftar proyek...")).toHaveAttribute("role", "status");
+    expect(screen.getByRole("combobox", { name: "Lokasi" })).toHaveDisplayValue("PA Gudang");
+    // Daftar Pustaka Umum tidak sempat tampil sebelum proyeknya dipastikan.
+    expect(docsApi.listDocuments).not.toHaveBeenCalled();
+    // Lokasinya belum pasti: Tambah file menunggu dan klik diabaikan.
+    const add = screen.getByRole("button", { name: "Tambah file" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(add);
+    expect(docsApi.pickFilesToAdd).not.toHaveBeenCalled();
+
+    await act(async () => resolveProjects([gudang]));
+    expect(await screen.findByText("denah-gudang.pdf", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(docsApi.listDocuments).toHaveBeenCalledWith("p1");
+    expect(docsApi.listDocuments).not.toHaveBeenCalledWith(null);
+    expect(screen.queryByText("Memuat daftar proyek...")).toBeNull();
+  });
+
+  it("proyek tersimpan yang tidak tersedia lagi: kembali ke Pustaka Umum dengan catatan", async () => {
+    window.localStorage.setItem(DOCS_LOCATION_KEY, JSON.stringify({ projectId: "p9", label: "PX Lama" }));
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [laporan] });
+    render(<DocsScreen />);
+
+    expect(
+      await screen.findByText("Proyek PX Lama tidak tersedia lagi untuk Anda. Menampilkan Pustaka Umum."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Lokasi" })).toHaveDisplayValue("Pustaka Umum");
+    expect(docsApi.listDocuments).not.toHaveBeenCalledWith("p9");
+    expect(storedLocation()).toEqual({ projectId: null });
+  });
+
+  it("dikeluarkan dari proyek yang sedang dilihat: kembali ke Pustaka Umum", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [laporan], p1: [denah] });
+    render(<DocsScreen />);
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    await user.selectOptions(select, await screen.findByRole("option", { name: "PA Gudang" }));
+    await screen.findByText("denah-gudang.pdf", { selector: ".doc-name" });
+
+    boardMock.listProjects.mockResolvedValue([]);
+    emitBoard();
+    expect(
+      await screen.findByText("Proyek PA Gudang tidak tersedia lagi untuk Anda. Menampilkan Pustaka Umum."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "PA Gudang" })).toBeNull();
+  });
+
+  it("event board memuat ulang daftar proyek", async () => {
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [laporan] });
+    render(<DocsScreen />);
+    await screen.findByRole("option", { name: "PA Gudang" });
+
+    boardMock.listProjects.mockResolvedValue([gudang, kantor]);
+    emitBoard();
+    expect(await screen.findByRole("option", { name: "KB Kantor Baru" })).toBeInTheDocument();
+  });
+
+  it("daftar proyek gagal dibaca: Pustaka Umum tetap bisa dipakai dan bisa dicoba lagi", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockRejectedValueOnce({ code: "database", message: "Board tidak bisa dibaca." });
+    setupScopes({ "": [laporan] });
+    render(<DocsScreen />);
+
+    expect(
+      await screen.findByText(/^Daftar proyek belum terbaca \(Board tidak bisa dibaca\.\)\. Pustaka Umum tetap bisa dipakai\./),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Lokasi" })).toHaveDisplayValue("Pustaka Umum");
+
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    await user.click(screen.getByRole("button", { name: "Baca daftar proyek lagi" }));
+    expect(await screen.findByRole("option", { name: "PA Gudang" })).toBeInTheDocument();
+    expect(screen.queryByText(/Daftar proyek belum terbaca/)).toBeNull();
+  });
+
+  it("setelah daftar proyek terbaca lagi, proyek yang diingat dibuka lagi", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(DOCS_LOCATION_KEY, JSON.stringify({ projectId: "p1", label: "PA Gudang" }));
+    boardMock.listProjects.mockRejectedValueOnce({ code: "database", message: "Board tidak bisa dibaca." });
+    setupScopes({ "": [laporan], p1: [denah] });
+    render(<DocsScreen />);
+    expect(await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeInTheDocument();
+    // Pilihan tersimpan tidak dihapus karena kegagalan itu.
+    expect(storedLocation()).toEqual({ projectId: "p1", label: "PA Gudang" });
+
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    await user.click(screen.getByRole("button", { name: "Baca daftar proyek lagi" }));
+    expect(await screen.findByText("denah-gudang.pdf", { selector: ".doc-name" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Lokasi" })).toHaveDisplayValue("PA Gudang");
+  });
+
+  it("pilihan sendiri setelah kegagalan tidak ditimpa proyek yang diingat", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(DOCS_LOCATION_KEY, JSON.stringify({ projectId: "p1", label: "PA Gudang" }));
+    boardMock.listProjects.mockRejectedValueOnce({ code: "database", message: "Board tidak bisa dibaca." });
+    setupScopes({ "": [laporan], p1: [denah] });
+    render(<DocsScreen />);
+    await screen.findByText("laporan-bulanan.docx", { selector: ".doc-name" });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Lokasi" }), "Pustaka Umum");
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    await user.click(screen.getByRole("button", { name: "Baca daftar proyek lagi" }));
+    await screen.findByRole("option", { name: "PA Gudang" });
+    expect(screen.getByRole("combobox", { name: "Lokasi" })).toHaveDisplayValue("Pustaka Umum");
+    expect(docsApi.listDocuments).not.toHaveBeenCalledWith("p1");
+  });
+});
+
+describe("Lokasi dokumen untuk Tamu", () => {
+  it("tanpa Pustaka Umum: proyek pertama terbuka, tanpa Tambah file dan tanpa keterangan kecuali Tamu", async () => {
+    orgMock.overview.mockResolvedValue(overview(true));
+    boardMock.listProjects.mockResolvedValue([gudang, kantor]);
+    setupScopes({ p1: [denah] });
+    render(<DocsScreen />);
+
+    expect(await screen.findByText("denah-gudang.pdf", { selector: ".doc-name" })).toBeInTheDocument();
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["PA Gudang", "KB Kantor Baru"]);
+    expect(select).toHaveDisplayValue("PA Gudang");
+    expect(select).toHaveAccessibleDescription("File di proyek PA Gudang hanya terlihat oleh anggota proyek itu.");
+    expect(screen.queryByText(/kecuali Tamu/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tambah file" })).toBeNull();
+    expect(docsApi.listDocuments).toHaveBeenLastCalledWith("p1");
+  });
+
+  it("Tamu tanpa proyek melihat penjelasan, bukan Pustaka Umum", async () => {
+    orgMock.overview.mockResolvedValue(overview(true));
+    boardMock.listProjects.mockResolvedValue([]);
+    setupScopes({ "": [laporan] });
+    render(<DocsScreen />);
+
+    expect(await screen.findByRole("heading", { name: "Belum ada proyek yang bisa Anda buka" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Sebagai Tamu, Anda hanya melihat file di proyek tempat Anda diundang. Minta pengelola proyek menambahkan Anda.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Lokasi" })).toBeNull();
+    expect(screen.queryByText(/kecuali Tamu/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tambah file" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Pustaka Umum masih kosong" })).toBeNull();
+    expect(screen.queryByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeNull();
+  });
+
+  it("proyek Tamu yang tidak tersedia lagi: pindah ke proyek lain dengan catatan", async () => {
+    orgMock.overview.mockResolvedValue(overview(true));
+    window.localStorage.setItem(DOCS_LOCATION_KEY, JSON.stringify({ projectId: "p9", label: "PX Lama" }));
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ p1: [denah] });
+    render(<DocsScreen />);
+
+    expect(
+      await screen.findByText("Proyek PX Lama tidak tersedia lagi untuk Anda. Menampilkan proyek PA Gudang."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("denah-gudang.pdf", { selector: ".doc-name" })).toBeInTheDocument();
+  });
+
+  it("proyek Tamu tanpa file: keadaan kosong tanpa tombol Tambah file", async () => {
+    orgMock.overview.mockResolvedValue(overview(true));
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ p1: [] });
+    render(<DocsScreen />);
+
+    expect(await screen.findByRole("heading", { name: "Belum ada file di proyek PA Gudang" })).toBeInTheDocument();
+    expect(screen.getByText("File yang ditambahkan anggota proyek muncul di sini. Tamu bisa membuka file, tetapi tidak menambahkannya.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tambah file" })).toBeNull();
   });
 });

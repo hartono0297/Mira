@@ -1,5 +1,5 @@
 import { IconPlus } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import {
   addDocuments,
@@ -22,12 +22,28 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { keys, type DocActions } from "./actions";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentRow } from "./DocumentRow";
-import { appName, errorHint, errorMessage, errorTitle, LIBRARY_LABEL, type ActionKind } from "./text";
+import { readLocation, resolveLocation, writeLocation, type DocsLocation } from "./location";
+import {
+  addedText,
+  appName,
+  emptyTitle,
+  errorHint,
+  errorMessage,
+  errorTitle,
+  goneNote,
+  GUEST_EMPTY_TEXT,
+  GUEST_NO_PROJECT_TEXT,
+  GUEST_NO_PROJECT_TITLE,
+  LIBRARY_LABEL,
+  placeText,
+  projectLabel,
+  visibilityHint,
+  type ActionKind,
+} from "./text";
+import { useIsGuest } from "./useIsGuest";
+import { useProjects } from "./useProjects";
 import { useReload } from "./useReload";
 import "./docs.css";
-
-// Pustaka umum organisasi. Proyek dari Tahap 3 belum ada.
-const PROJECT_ID: string | null = null;
 
 type Feedback =
   | { kind: "ok"; text: string }
@@ -41,9 +57,22 @@ function validList(data: DocumentSummary[] | null): DocumentSummary[] | null {
 }
 
 export function DocsScreen() {
-  const loadList = useCallback(() => listDocuments(PROJECT_ID), []);
-  const list = useReload(loadList, "list");
+  const ids = useId();
+  const projects = useProjects();
+  // Selama ringkasan organisasi belum terbaca, layar bersikap seperti untuk anggota.
+  const isGuest = useIsGuest() === true;
+  // Lokasi yang dipilih (null = Pustaka Umum, atau untuk Tamu: proyek pertama), diingat per laptop.
+  const [chosen, setChosen] = useState<DocsLocation>(readLocation);
+  const resolved = resolveLocation(chosen, projects.list, projects.error !== null, isGuest);
+  // Daftar yang dimuat: null = Pustaka Umum, string = proyek, undefined = tidak ada.
+  const location = resolved.kind === "library" ? null : resolved.kind === "project" ? resolved.id : undefined;
+  const locationLabel = resolved.kind === "project" ? resolved.label : null;
+  const waiting = resolved.kind === "pending";
+
+  const loadList = useCallback(() => listDocuments(location ?? null), [location]);
+  const list = useReload(location === undefined ? null : loadList, location === undefined ? "none" : `list:${location ?? ""}`);
   const docs = validList(list.data);
+  const listLoading = waiting || (location !== undefined && list.loading);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = docs?.find((d) => d.id === selectedId) ?? null;
@@ -55,6 +84,67 @@ export function DocsScreen() {
   const [restore, setRestore] = useState<RestoreTarget | null>(null);
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [restoreError, setRestoreError] = useState<AppError | null>(null);
+
+  // true setelah daftar proyek gagal dibaca dan layar kembali ke lokasi bawaan:
+  // begitu daftar terbaca lagi, proyek yang diingat dibuka lagi, kecuali
+  // pengguna sudah memilih lokasi lain.
+  const restoreSaved = useRef(false);
+
+  // Proyek yang diingat sudah tidak ada di daftar proyek saya (dikeluarkan,
+  // atau proyeknya hilang): kembali ke lokasi bawaan dan beri tahu. Daftar
+  // proyek yang gagal dibaca juga kembali ke lokasi bawaan, tetapi pilihan
+  // tersimpan dibiarkan supaya bisa dibuka lagi.
+  useEffect(() => {
+    if (!chosen) {
+      if (restoreSaved.current && projects.list) {
+        restoreSaved.current = false;
+        const saved = readLocation();
+        if (saved) setChosen(saved);
+      }
+      return;
+    }
+    if (projects.list) {
+      const found = projects.list.find((p) => p.id === chosen.projectId);
+      if (found) {
+        const label = projectLabel(found);
+        if (label !== chosen.label) {
+          const next = { projectId: found.id, label };
+          setChosen(next);
+          writeLocation(next);
+        }
+        return;
+      }
+      setChosen(null);
+      writeLocation(null);
+      setSelectedId(null);
+      // Tamu pindah ke proyek pertama (kalau ada), anggota ke Pustaka Umum.
+      const first = projects.list[0];
+      const next = isGuest ? (first ? projectLabel(first) : undefined) : null;
+      setFeedback({ kind: "ok", text: goneNote(chosen.label, next) });
+    } else if (projects.error) {
+      restoreSaved.current = true;
+      setChosen(null);
+    }
+  }, [chosen, projects.list, projects.error, isGuest]);
+
+  const chooseLocation = useCallback(
+    (value: string) => {
+      restoreSaved.current = false;
+      setFeedback(null);
+      setSelectedId(null);
+      if (value === "") {
+        setChosen(null);
+        writeLocation(null);
+        return;
+      }
+      const found = projects.list?.find((p) => p.id === value);
+      if (!found) return;
+      const next = { projectId: found.id, label: projectLabel(found) };
+      setChosen(next);
+      writeLocation(next);
+    },
+    [projects.list],
+  );
 
   // File terpilih hilang dari daftar (atau belum ada pilihan): pilih file pertama.
   useEffect(() => {
@@ -134,6 +224,11 @@ export function DocsScreen() {
   );
 
   const addFiles = useCallback(() => {
+    // Lokasi dicatat saat tombol ditekan, supaya pesan menyebut tempat file benar-benar ditambahkan.
+    // Lokasi yang belum pasti: tombolnya aria-disabled dan klik diabaikan.
+    if (location === undefined || isGuest) return;
+    const target = location;
+    const label = locationLabel;
     void run(
       keys.add,
       "add",
@@ -141,19 +236,17 @@ export function DocsScreen() {
       async () => {
         const paths = await pickFilesToAdd();
         if (!paths || paths.length === 0) return null;
-        return addDocuments(paths, PROJECT_ID);
+        return addDocuments(paths, target);
       },
       (added) => {
         if (!added || added.length === 0) return null;
         setSelectedId(added[0].id);
         // Tombol Tambah file di keadaan kosong hilang begitu daftar muncul.
         focusDoc(added[0].id);
-        return added.length === 1
-          ? `${added[0].name} ditambahkan ke pustaka ${LIBRARY_LABEL}.`
-          : `${added.length} file ditambahkan ke pustaka ${LIBRARY_LABEL}.`;
+        return addedText(added, label);
       },
     );
-  }, [run, focusDoc]);
+  }, [run, focusDoc, location, locationLabel, isGuest]);
 
   const download = useCallback(
     async (doc: DocumentSummary, version: DocumentVersion) => {
@@ -286,17 +379,31 @@ export function DocsScreen() {
   }, [restore, reloadAll]);
 
   const empty = docs !== null && docs.length === 0;
+  // Penjelasan di bawah select. Selama proyek yang diingat belum pasti, label
+  // tersimpannya yang dipakai. Tamu tidak pernah melihat keterangan Pustaka Umum.
+  const hint =
+    resolved.kind === "library"
+      ? visibilityHint(null)
+      : resolved.kind === "project"
+        ? visibilityHint(resolved.label)
+        : waiting && chosen
+          ? visibilityHint(chosen.label)
+          : null;
+  const pendingOption = waiting && chosen;
+  const hasOptions = !isGuest || pendingOption || (projects.list?.length ?? 0) > 0;
+  const selectValue = resolved.kind === "project" ? resolved.id : pendingOption ? chosen.projectId : "";
   const addBusy = pending === keys.add;
   const now = new Date();
 
   // aria-disabled, bukan disabled: tombol yang dinonaktifkan kehilangan fokus
-  // keyboard di WebView2. Klik selama sibuk ditolak oleh run().
+  // keyboard di WebView2. Klik selama sibuk, atau selama lokasi belum pasti,
+  // ditolak oleh addFiles dan run().
   const addButton = (
     <button
       type="button"
       className="btn"
       onClick={addFiles}
-      aria-disabled={pending !== null || undefined}
+      aria-disabled={pending !== null || waiting || undefined}
       aria-busy={addBusy || undefined}
     >
       <IconPlus size={18} aria-hidden="true" />
@@ -310,9 +417,52 @@ export function DocsScreen() {
         <h1 id="page-title" className="page-title">
           Dokumen
         </h1>
-        <span className="page-sub">Pustaka {LIBRARY_LABEL}</span>
-        {!empty && <div className="docs-head-action">{addButton}</div>}
+        {/* Tamu tidak bisa menambah file (documents::access). */}
+        {!isGuest && !empty && <div className="docs-head-action">{addButton}</div>}
       </header>
+
+      <div className="docs-loc">
+        {hasOptions && (
+          <div className="field">
+            <label htmlFor={`${ids}-loc`}>Lokasi</label>
+            <select
+              id={`${ids}-loc`}
+              value={selectValue}
+              onChange={(e) => chooseLocation(e.target.value)}
+              aria-describedby={hint ? `${ids}-loc-hint` : undefined}
+            >
+              {!isGuest && <option value="">{LIBRARY_LABEL}</option>}
+              {pendingOption && <option value={chosen.projectId}>{chosen.label}</option>}
+              {(projects.list ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {projectLabel(p)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {hint && (
+          <p id={`${ids}-loc-hint`} className="hint">
+            {hint}
+          </p>
+        )}
+        <div aria-live="polite">
+          {projects.list === null && !projects.error && (
+            <p className="hint" role="status">
+              Memuat daftar proyek...
+            </p>
+          )}
+          {projects.error && (
+            <p className="hint">
+              Daftar proyek belum terbaca ({projects.error.message}).
+              {!isGuest && ` ${LIBRARY_LABEL} tetap bisa dipakai.`}{" "}
+              <button type="button" className="link-btn" onClick={() => void projects.reload()}>
+                Baca daftar proyek lagi
+              </button>
+            </p>
+          )}
+        </div>
+      </div>
 
       <div aria-live="polite" className="docs-live">
         {feedback?.kind === "ok" && <p className="docs-ok">{feedback.text}</p>}
@@ -329,13 +479,13 @@ export function DocsScreen() {
         )}
       </div>
 
-      {list.loading && !docs && (
+      {listLoading && !docs && (
         <p className="docs-pad hint" role="status">
           Memuat daftar dokumen...
         </p>
       )}
 
-      {!list.loading && !docs && (
+      {location !== undefined && !listLoading && !docs && (
         <div className="docs-pad docs-narrow" role="alert">
           <ErrorAlert title="Daftar dokumen belum terbaca">
             <p>{list.error?.message ?? "Inti Mira tidak mengirim daftar dokumen."}</p>
@@ -350,20 +500,37 @@ export function DocsScreen() {
         <div className="docs-pad">
           <section className="docs-empty" aria-labelledby="docs-empty-title">
             <h2 id="docs-empty-title" className="docs-empty-title">
-              Pustaka {LIBRARY_LABEL} masih kosong
+              {emptyTitle(locationLabel)}
             </h2>
-            <p>
-              Tambahkan file Word, Excel, PDF, atau jenis lain. Setiap kali file Word atau Excel disimpan, Mira mencatat
-              versi baru, jadi versi lama tetap bisa dibuka dan dipulihkan.
-            </p>
-            <div>{addButton}</div>
+            {isGuest ? (
+              <p>{GUEST_EMPTY_TEXT}</p>
+            ) : (
+              <>
+                <p>
+                  Tambahkan file Word, Excel, PDF, atau jenis lain. Setiap kali file Word atau Excel disimpan, Mira
+                  mencatat versi baru, jadi versi lama tetap bisa dibuka dan dipulihkan.
+                </p>
+                <div>{addButton}</div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
+
+      {resolved.kind === "none" && (
+        <div className="docs-pad">
+          <section className="docs-empty" aria-labelledby="docs-guest-title">
+            <h2 id="docs-guest-title" className="docs-empty-title">
+              {GUEST_NO_PROJECT_TITLE}
+            </h2>
+            <p>{GUEST_NO_PROJECT_TEXT}</p>
           </section>
         </div>
       )}
 
       {docs && docs.length > 0 && (
         <div className="docs-layout">
-          <ul className="doc-list" aria-label={`File di pustaka ${LIBRARY_LABEL}`}>
+          <ul className="doc-list" aria-label={`File di ${placeText(locationLabel)}`}>
             {docs.map((doc) => (
               <DocumentRow
                 key={doc.id}

@@ -3,7 +3,52 @@ import type { AppError } from "../../api";
 import { formatDate, relativeTime } from "../../api/format";
 import type { DocumentKind, DocumentSummary, DocumentVersion, PersonRef } from "../../api/documents";
 
-export const LIBRARY_LABEL = "Umum";
+// Lokasi dokumen: Pustaka Umum (projectId null) atau satu proyek. Label proyek
+// "<KODE> <nama>", sama dengan opsi di select Lokasi. null = Pustaka Umum.
+export const LIBRARY_LABEL = "Pustaka Umum";
+
+export function projectLabel(p: { code: string; name: string }): string {
+  return `${p.code} ${p.name}`;
+}
+
+// Lokasi di tengah kalimat: "Pustaka Umum" atau "proyek PA Gudang".
+export function placeText(label: string | null): string {
+  return label === null ? LIBRARY_LABEL : `proyek ${label}`;
+}
+
+export function addedText(added: { name: string }[], label: string | null): string {
+  const what = added.length === 1 ? added[0].name : `${added.length} file`;
+  return `${what} ditambahkan ke ${placeText(label)}.`;
+}
+
+export function emptyTitle(label: string | null): string {
+  return label === null ? `${LIBRARY_LABEL} masih kosong` : `Belum ada file di proyek ${label}`;
+}
+
+// Sesuai documents::scope::may_view: Pustaka Umum untuk semua anggota aktif
+// bukan Tamu; file proyek hanya untuk anggota proyek itu (termasuk Tamu yang
+// diundang ke proyek itu, yang juga anggota proyek di board).
+export function visibilityHint(label: string | null): string {
+  return label === null
+    ? `File di ${LIBRARY_LABEL} terlihat oleh semua anggota organisasi, kecuali Tamu.`
+    : `File di proyek ${label} hanya terlihat oleh anggota proyek itu.`;
+}
+
+// Proyek yang diingat tidak ada lagi di daftar proyek saya (dikeluarkan, atau
+// proyeknya hilang dari laptop ini). `next` = lokasi yang sekarang tampil
+// (label proyek, atau null untuk Pustaka Umum); undefined = tidak ada lokasi
+// lain (Tamu tanpa proyek).
+export function goneNote(label: string, next?: string | null): string {
+  const gone = `Proyek ${label} tidak tersedia lagi untuk Anda.`;
+  return next === undefined ? gone : `${gone} Menampilkan ${placeText(next)}.`;
+}
+
+// Tamu tidak melihat Pustaka Umum dan tidak bisa menambah file (documents::access).
+export const GUEST_NO_PROJECT_TITLE = "Belum ada proyek yang bisa Anda buka";
+export const GUEST_NO_PROJECT_TEXT =
+  "Sebagai Tamu, Anda hanya melihat file di proyek tempat Anda diundang. Minta pengelola proyek menambahkan Anda.";
+export const GUEST_EMPTY_TEXT =
+  "File yang ditambahkan anggota proyek muncul di sini. Tamu bisa membuka file, tetapi tidak menambahkannya.";
 
 export function person(p: PersonRef): string {
   return p.isMe ? "Anda" : p.displayName;

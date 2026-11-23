@@ -34,7 +34,9 @@ const filesDir = resolve(process.argv[4] ?? "test-files");
 const excelSave = join(dirname(fileURLToPath(import.meta.url)), "excel-save.ps1");
 mkdirSync(shots, { recursive: true });
 const dataDir = mkdtempSync(join(tmpdir(), "mira-docs-"));
-const PORT = 9341;
+// Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
+const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
+const PORT = 9341 + PORT_OFFSET;
 const XLSX = "RAB-proyek-a.xlsx";
 const DOCX = "laporan-bulanan.docx";
 const PDF = "kontrak-draft.pdf";
@@ -80,6 +82,7 @@ async function launch() {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      ...(PORT_OFFSET ? { MIRA_PORT: String(47800 + PORT_OFFSET) } : {}),
       MIRA_TEST_NO_LAUNCH: "1",
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
     },
@@ -157,7 +160,7 @@ try {
   await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Terang").check();
-  await page.getByRole("button", { name: "Dokumen", exact: true }).click();
+  await page.getByRole("button", { name: /^Dokumen\s*(,|$)/ }).click();
   await page.getByText(/masih kosong/).waitFor({ timeout: 10000 });
   check("Layar Dokumen kosong tampil", true);
   await page.screenshot({ path: join(shots, "12-dokumen-kosong-terang.png") });
@@ -302,7 +305,7 @@ try {
   await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(300);
-  await page.getByRole("button", { name: "Dokumen", exact: true }).click();
+  await page.getByRole("button", { name: /^Dokumen\s*(,|$)/ }).click();
   await page.locator("li", { hasText: XLSX }).first().click();
   await page.getByText(/Dipulihkan dari versi 1/).first().waitFor({ timeout: 10000 });
   await page.screenshot({ path: join(shots, "17-dokumen-riwayat-gelap.png") });
@@ -328,7 +331,7 @@ try {
     "pemulihan sesi saat start",
   );
   check("Simpanan saat Mira tertutup menjadi versi 4 setelah start", recovered.current.number === 4);
-  await page.getByRole("button", { name: "Dokumen", exact: true }).click();
+  await page.getByRole("button", { name: /^Dokumen\s*(,|$)/ }).click();
   await page.locator("li", { hasText: XLSX }).first().click();
   await page.getByText(/Versi 4/).first().waitFor({ timeout: 10000 });
   check("Riwayat versi tetap ada setelah restart", true);

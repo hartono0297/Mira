@@ -328,3 +328,47 @@ fn removed_laptop_cannot_change_or_read() {
     );
     assert!(list_projects(&state).unwrap().is_empty());
 }
+
+#[test]
+fn initial_members_must_be_active_members() {
+    let (_t, state) = app();
+    crate::commands::organization(&state, "CV Maju Jaya").unwrap();
+    let me = me(&state);
+    let stranger = "ab".repeat(32);
+    let err = create_project_with_members(
+        &state,
+        &NoopSync,
+        "Gudang",
+        "GD",
+        None,
+        std::slice::from_ref(&stranger),
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "invalid_input");
+    assert!(list_projects(&state).unwrap().is_empty(), "nothing created");
+
+    let many: Vec<String> = (0..200).map(|i| format!("{i:064x}")).collect();
+    let err =
+        create_project_with_members(&state, &NoopSync, "Gudang", "GD", None, &many).unwrap_err();
+    assert_eq!(err.code(), "invalid_input");
+
+    // The creator in the list is fine (always a member anyway).
+    let p = create_project_with_members(
+        &state,
+        &NoopSync,
+        "Gudang",
+        "GD",
+        None,
+        &[me.to_uppercase()],
+    )
+    .unwrap();
+    let members = state
+        .with_core(|c| {
+            let s = crate::permissions::require_state(&c.db)?;
+            Ok(crate::permissions::project_members(&s, &p.id, &me))
+        })
+        .unwrap();
+    assert!(members.registered);
+    assert_eq!(members.members.len(), 1);
+    assert_eq!(members.members[0].public_key, me);
+}

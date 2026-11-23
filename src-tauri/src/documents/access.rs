@@ -157,7 +157,7 @@ fn check_role_and_scope(
     }
     if !scope_allows(conn, me, info.role, scope, action, guests)? {
         return Err(AppError::Forbidden(
-            "Dokumen ini ada di tim atau proyek yang tidak bisa Anda buka.".into(),
+            "Dokumen ini ada di lokasi yang tidak bisa Anda buka. Untuk dokumen proyek, minta pengelola proyek menambahkan Anda.".into(),
         ));
     }
     Ok(())

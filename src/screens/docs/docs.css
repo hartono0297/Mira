@@ -26,6 +26,21 @@
   max-width: 720px;
 }
 
+/* Pilihan lokasi di atas daftar. Lebar dibatasi supaya select tidak
+   membentang selebar layar; nama proyek panjang tetap muat di 480 px. */
+.docs-loc {
+  padding: 16px 24px 0;
+  max-width: 528px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.docs-loc select {
+  width: 100%;
+  min-width: 0;
+}
+
 .docs-retry {
   margin-top: 8px;
   background: var(--bg);

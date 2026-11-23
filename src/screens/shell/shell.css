@@ -274,3 +274,34 @@
 .page-body {
   padding: 24px;
 }
+
+/* Angka "yang menunggu Anda" di menu (badge opsi C). Angkanya yang memberi tahu,
+   warna hanya membantu mata menemukannya; artinya dibacakan lewat teks sr-only.
+   Teks on-accent di atas accent: 5,42:1 terang, 6,51:1 gelap. Tepi pil terhadap
+   latar sidebar, menu aktif, dan sorotan kursor minimal 4,41:1 (terang) dan
+   5,19:1 (gelap), jadi tetap terlihat di menu yang sedang dibuka. */
+.side-count {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mode kontras tinggi Windows membuang latar; garis tepi menjaga bentuk pil. */
+@media (forced-colors: active) {
+  .side-count {
+    border-color: CanvasText;
+  }
+}

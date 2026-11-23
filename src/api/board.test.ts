@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { boardApi, BOARD_EVENT, FEATURE_EVENT, subscribeBoard } from "./board";
+import { boardApi, BOARD_EVENT, DIRECTORY_EVENT, FEATURE_EVENT, subscribeBoard } from "./board";
 
 const tauri = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -31,10 +31,10 @@ afterEach(() => {
 });
 
 describe("subscribeBoard", () => {
-  it("memuat ulang untuk perubahan lokal dan sinkron topik board, tidak untuk topik lain", async () => {
+  it("memuat ulang untuk perubahan lokal, sinkron topik board, dan anggota proyek, tidak untuk topik lain", async () => {
     const handler = vi.fn();
     const stop = subscribeBoard(handler);
-    await vi.waitFor(() => expect(tauri.handlers.size).toBe(2));
+    await vi.waitFor(() => expect(tauri.handlers.size).toBe(3));
 
     emit(BOARD_EVENT, null);
     expect(handler).toHaveBeenCalledTimes(1);
@@ -48,11 +48,15 @@ describe("subscribeBoard", () => {
     emit(FEATURE_EVENT, "board");
     expect(handler).toHaveBeenCalledTimes(2);
 
+    emit(DIRECTORY_EVENT, null);
+    expect(handler).toHaveBeenCalledTimes(3);
+
     stop();
     emit(BOARD_EVENT, null);
     emit(FEATURE_EVENT, { topic: "board" });
-    expect(handler).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => expect(tauri.unlisten).toHaveBeenCalledTimes(2));
+    emit(DIRECTORY_EVENT, null);
+    expect(handler).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(tauri.unlisten).toHaveBeenCalledTimes(3));
   });
 
   it("di luar aplikasi desktop tidak berlangganan", () => {
@@ -60,6 +64,26 @@ describe("subscribeBoard", () => {
     const stop = subscribeBoard(vi.fn());
     expect(tauri.handlers.size).toBe(0);
     stop();
+  });
+});
+
+describe("boardApi.createProject", () => {
+  it("mengirim anggota awal, bawaan daftar kosong", async () => {
+    tauri.invoke.mockResolvedValue({});
+    await boardApi.createProject("Gudang", "GD", "t", ["b"]);
+    expect(tauri.invoke).toHaveBeenCalledWith("board_create_project", {
+      name: "Gudang",
+      code: "GD",
+      teamId: "t",
+      members: ["b"],
+    });
+    await boardApi.createProject("Gudang", "GD");
+    expect(tauri.invoke).toHaveBeenLastCalledWith("board_create_project", {
+      name: "Gudang",
+      code: "GD",
+      teamId: null,
+      members: [],
+    });
   });
 });
 

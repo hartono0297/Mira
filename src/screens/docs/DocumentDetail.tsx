@@ -139,7 +139,7 @@ function ConflictBox({
         </p>
       )}
       {!doc.can.resolve && (
-        <p className="conflict-note">Anda tidak punya izin memilih versi. Minta salah satu rekan anggota tim memilihnya.</p>
+        <p className="conflict-note">Anda tidak punya izin memilih versi. Minta rekan yang bisa mengedit file ini untuk memilihnya.</p>
       )}
     </div>
   );

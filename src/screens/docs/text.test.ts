@@ -5,12 +5,47 @@ import {
   errorMessage,
   fetchState,
   fetchText,
+  addedText,
+  emptyTitle,
+  goneNote,
   NOT_AVAILABLE_TEXT,
   originText,
+  placeText,
+  projectLabel,
   statusLines,
   versionList,
+  visibilityHint,
 } from "./text";
 import { meRef, rekanC, summary, version } from "./testData";
+
+describe("teks lokasi dokumen", () => {
+  it("menyebut lokasi: Pustaka Umum atau proyek dengan kode dan nama", () => {
+    expect(projectLabel({ code: "PA", name: "Gudang" })).toBe("PA Gudang");
+    expect(placeText(null)).toBe("Pustaka Umum");
+    expect(placeText("PA Gudang")).toBe("proyek PA Gudang");
+    expect(addedText([{ name: "a.docx" }], null)).toBe("a.docx ditambahkan ke Pustaka Umum.");
+    expect(addedText([{ name: "a.docx" }, { name: "b.xlsx" }], "PA Gudang")).toBe(
+      "2 file ditambahkan ke proyek PA Gudang.",
+    );
+    expect(emptyTitle(null)).toBe("Pustaka Umum masih kosong");
+    expect(emptyTitle("PA Gudang")).toBe("Belum ada file di proyek PA Gudang");
+  });
+
+  it("menjelaskan siapa yang melihat file, sesuai aturan inti", () => {
+    expect(visibilityHint(null)).toBe("File di Pustaka Umum terlihat oleh semua anggota organisasi, kecuali Tamu.");
+    expect(visibilityHint("PA Gudang")).toBe("File di proyek PA Gudang hanya terlihat oleh anggota proyek itu.");
+  });
+
+  it("catatan proyek yang tidak tersedia lagi", () => {
+    expect(goneNote("PA Gudang", null)).toBe(
+      "Proyek PA Gudang tidak tersedia lagi untuk Anda. Menampilkan Pustaka Umum.",
+    );
+    expect(goneNote("PX Lama", "PA Gudang")).toBe(
+      "Proyek PX Lama tidak tersedia lagi untuk Anda. Menampilkan proyek PA Gudang.",
+    );
+    expect(goneNote("PX Lama")).toBe("Proyek PX Lama tidak tersedia lagi untuk Anda.");
+  });
+});
 
 describe("teks layar Dokumen", () => {
   it("menyebut nomor versi bentrok dengan urutan naik", () => {

@@ -29,7 +29,7 @@ const MIRA_PORT = 47870;
 // Selektor. Semua nama aksesibel ada di sini supaya mudah disesuaikan kalau
 // label di UI berubah sedikit.
 const sel = {
-  nav: (page, name) => page.getByRole("button", { name, exact: true }),
+  nav: (page, name) => page.getByRole("button", { name: new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(,|$)") }),
   themeRadio: (page, label) => page.getByLabel(label, { exact: true }),
   list: (page) => page.getByRole("navigation", { name: /Daftar percakapan/i }),
   channelSection: (page) => sel.list(page).getByRole("region", { name: /^Channel$/ }),

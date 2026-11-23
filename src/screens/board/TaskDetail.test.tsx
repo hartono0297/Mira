@@ -508,7 +508,7 @@ describe("Detail task: Tamu dan izin komentar", () => {
   });
 });
 
-describe("Detail task: penanggung jawab yang tidak bisa ditugaskan lagi", () => {
+describe("Detail task: penanggung jawab yang bukan anggota proyek lagi", () => {
   it("tetap tampil sebagai pilihan terpilih dengan keterangan", async () => {
     const lama = { publicKey: "c".repeat(64), name: "Budi Uji" };
     board.getTask.mockResolvedValue(task({ assignee: lama }));
@@ -516,7 +516,7 @@ describe("Detail task: penanggung jawab yang tidak bisa ditugaskan lagi", () => 
     await openDialog();
     const select = screen.getByLabelText("Penanggung jawab");
     expect(select).toHaveValue(lama.publicKey);
-    expect(within(select).getByRole("option", { name: "Budi Uji (tidak bisa ditugaskan lagi)" })).toBeInTheDocument();
+    expect(within(select).getByRole("option", { name: "Budi Uji (bukan anggota proyek lagi)" })).toBeInTheDocument();
     // Anggota proyek yang lain tidak diberi keterangan.
     expect(within(select).getByRole("option", { name: "Sari Uji" })).toBeInTheDocument();
   });
@@ -526,7 +526,7 @@ describe("Detail task: penanggung jawab yang tidak bisa ditugaskan lagi", () => 
     board.getTask.mockResolvedValue(task({ assignee: lama, canEdit: false, canDelete: false, canComment: false }));
     renderDetail();
     const side = await screen.findByRole("complementary", { name: "Rincian task" });
-    expect(within(side).getByText("Budi Uji (tidak bisa ditugaskan lagi)")).toBeInTheDocument();
+    expect(within(side).getByText("Budi Uji (bukan anggota proyek lagi)")).toBeInTheDocument();
   });
 });
 
@@ -660,8 +660,8 @@ describe("Detail task: dihapus di laptop lain", () => {
   it("proyeknya tidak bisa dibuka lagi: penyebab dijelaskan", async () => {
     renderDetail();
     await openDialog();
-    board.getBoard.mockRejectedValue({ code: "forbidden", message: "Anda bukan anggota tim proyek ini." });
-    board.getTask.mockRejectedValue({ code: "forbidden", message: "Anda bukan anggota tim proyek ini." });
+    board.getBoard.mockRejectedValue({ code: "forbidden", message: "Anda bukan anggota proyek ini. Minta pengelola proyek menambahkan Anda." });
+    board.getTask.mockRejectedValue({ code: "forbidden", message: "Anda bukan anggota proyek ini. Minta pengelola proyek menambahkan Anda." });
     await boardEvent();
     expect(await screen.findByText("Proyek task ini tidak bisa dibuka lagi.")).toBeInTheDocument();
     expect(screen.getByText(/tidak punya akses lagi ke proyek ini/)).toBeInTheDocument();

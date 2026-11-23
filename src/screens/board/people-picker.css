@@ -1,0 +1,304 @@
+/* Pemilih orang (Proyek baru, Tambah anggota). Mengikuti mockup bagian 5 di
+   design/usulan-v0.3.html: kotak cari, tombol saringan per departemen, daftar
+   centang yang bergulir sendiri, lalu nama yang sudah dipilih. Warna hanya
+   lewat token; pasangan yang dipakai sudah dicek AA di kedua mode. */
+
+.pp {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pp-legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* Kotak cari: ikon di dalam kolom, garis --border-strong (3,19:1 terhadap --bg). */
+.pp-search {
+  position: relative;
+  display: flex;
+}
+
+.pp-search svg {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-sec);
+  pointer-events: none;
+}
+
+.pp-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 12px 7px 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 14px;
+}
+
+.pp-search input::placeholder {
+  color: var(--text-sec);
+  opacity: 1;
+}
+
+.pp-search input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+/* Tombol saringan. Yang aktif terisi --accent-soft dengan garis --accent,
+   jadi bedanya isi dan garis, bukan warna teks saja. */
+.pp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pp-filter {
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-sec);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pp-filter:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.pp-filter[aria-pressed="true"],
+.pp-filter[aria-pressed="true"]:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.pp-filter:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+/* Baris orang: avatar inisial, nama, departemen di bawahnya. */
+.pp-fixed,
+.pp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 5px 10px;
+  border-radius: 9px;
+}
+
+/* Baris tetap (pembuat proyek): tanda centang tanpa kotak isian, karena tidak bisa dilepas. */
+.pp-fixed {
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.pp-fixed-mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  background: var(--text-sec);
+  color: var(--bg);
+}
+
+.pp-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Daftar bergulir sendiri supaya dialog tetap muat di jendela 1280x800. */
+  max-height: min(260px, 32vh);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.pp-list.pp-tall,
+.pp-nomatch.pp-tall {
+  height: min(260px, 32vh);
+}
+
+.pp-row {
+  cursor: pointer;
+}
+
+.pp-row:hover {
+  background: var(--hover);
+}
+
+/* Cincin fokus dipasang di baris lewat :has, ke dalam supaya tidak terpotong tepi daftar. */
+.pp-row:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.pp-row input {
+  flex: none;
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.pp-row input:focus-visible {
+  outline: none;
+}
+
+.pp-row:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.pp-av {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pp-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.pp-name {
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pp-dept {
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.pp-empty,
+.pp-nomatch {
+  font-size: 13px;
+}
+
+.pp-nomatch {
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Nama yang sudah dipilih. Seluruh tombol menghapus pilihan; ikon x hanya penanda. */
+.pp-picked {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 8px 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pp-chip svg {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.pp-chip:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.pp-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.pp-summary {
+  font-size: 13px;
+}
+
+/* Nama terpilih dan ringkasan. Tinggi minimum satu baris tombol ditambah dua baris
+   ringkasan, supaya pilihan pertama tidak menggeser seluruh dialog. */
+.pp-chosen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 80px;
+}
+
+/* Dialog Proyek baru dengan pemilih orang. Di jendela lebar: data proyek di kiri,
+   anggota di kanan, supaya seluruh dialog muat di jendela 1280x800 tanpa
+   menggulir dialog dan daftar sekaligus. Di jendela sempit: satu kolom. */
+.np-details {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.np-members {
+  min-width: 0;
+}
+
+@media (min-width: 900px) {
+  .dlg:has(.np-people) {
+    width: min(880px, calc(100vw - 48px));
+  }
+
+  .np-people {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    align-items: start;
+    gap: 14px 28px;
+  }
+
+  .np-people > :not(.np-details):not(.np-members) {
+    grid-column: 1 / -1;
+  }
+}

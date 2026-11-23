@@ -1,4 +1,4 @@
-import { IconEye, IconKeyboard, IconPencil, IconPlus } from "@tabler/icons-react";
+import { IconEye, IconKeyboard, IconPencil, IconPlus, IconUsers } from "@tabler/icons-react";
 import {
   Fragment,
   useCallback,
@@ -16,8 +16,9 @@ import { boardApi, type BoardView, type ColumnId, type ProjectSummary, type Task
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { BoardCard } from "./BoardCard";
 import { applyMove, blockedText, locate, neighbourPlace, samePlace, type Direction, type Place } from "./boardMoves";
-import { COLUMN_NAMES, teamLabel } from "./format";
+import { COLUMN_NAMES, NO_DEPARTMENT, teamLabel } from "./format";
 import type { MoveOption } from "./MoveMenu";
+import { ProjectMembersPanel, useProjectMembers } from "./ProjectMembersPanel";
 import { QuickAdd } from "./QuickAdd";
 import { RenameProjectDialog } from "./RenameProjectDialog";
 import { useBoardLive } from "./useBoardLive";
@@ -41,6 +42,10 @@ type Props = {
   onOpenTask: (taskId: string) => void;
   // Jumlah task terbuka di daftar proyek ikut berubah.
   onProjectsChanged: () => void;
+  // Saya bukan anggota proyek ini lagi: keluar sendiri lewat panel Anggota, atau
+  // inti Rust menolak membuka board-nya (dikeluarkan pengelola).
+  // Dipanggil dengan id proyek, supaya pemanggil bisa memberi callback yang stabil.
+  onLost?: (projectId: string, reason: "left" | "forbidden") => void;
   ref?: Ref<ProjectBoardHandle>;
 };
 
@@ -74,6 +79,7 @@ export function ProjectBoard({
   onHeadingFocused,
   onOpenTask,
   onProjectsChanged,
+  onLost,
   ref,
 }: Props) {
   const load = useCallback(() => boardApi.getBoard(projectId), [projectId]);
@@ -93,6 +99,8 @@ export function ProjectBoard({
   const [drafts, setDrafts] = useState<Record<ColumnId, string>>(EMPTY_DRAFTS);
   const [showKeys, setShowKeys] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
+  const members = useProjectMembers(projectId);
   const [announce, setAnnounce] = useState({ text: "", n: 0 });
   const [failure, setFailure] = useState<MoveFailure | null>(null);
   const moveSeq = useRef(0);
@@ -133,6 +141,12 @@ export function ProjectBoard({
       el.focus();
     }
   });
+
+  // Dikeluarkan dari proyek saat board terbuka: inti Rust menolak dengan forbidden.
+  const forbidden = live.error?.code === "forbidden";
+  useEffect(() => {
+    if (forbidden) onLost?.(projectId, "forbidden");
+  }, [forbidden, onLost, projectId]);
 
   const hasView = !!view;
   useEffect(() => {
@@ -274,6 +288,8 @@ export function ProjectBoard({
     onProjectsChanged();
   }
 
+  if (forbidden && onLost) return null;
+
   if (!view) {
     if (live.loading)
       return (
@@ -297,6 +313,7 @@ export function ProjectBoard({
 
   const { project } = view;
   const readOnly = !view.canCreate;
+  const memberCount = members.view?.registered ? members.view.members.length : null;
 
   return (
     <div className="pb" ref={rootRef} {...rescue}>
@@ -306,13 +323,24 @@ export function ProjectBoard({
           {project.name}
         </h2>
         <span className="chip pb-team">
-          <span className="sr-only">Terlihat oleh </span>
-          {project.teamName ? teamLabel(project.teamName) : "Seluruh organisasi"}
+          <span className="sr-only">Departemen proyek: </span>
+          {project.teamName ? teamLabel(project.teamName) : NO_DEPARTMENT}
         </span>
         <span className="page-sub">
           {project.taskCount} task, {project.openCount} belum selesai
         </span>
         <div className="pb-actions">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-haspopup="dialog"
+            aria-label={memberCount === null ? "Anggota" : `Anggota, ${memberCount} orang`}
+            onClick={() => setShowMembers(true)}
+          >
+            <IconUsers size={16} aria-hidden="true" />
+            Anggota
+            {memberCount !== null && <span className="pb-members-n">{memberCount}</span>}
+          </button>
           {project.canManage && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRenaming(true)}>
               <IconPencil size={16} aria-hidden="true" />
@@ -446,6 +474,15 @@ export function ProjectBoard({
           })}
         </div>
       </div>
+
+      <ProjectMembersPanel
+        open={showMembers}
+        onOpenChange={setShowMembers}
+        projectId={projectId}
+        me={view.me}
+        members={members}
+        onLeft={() => onLost?.(projectId, "left")}
+      />
 
       {project.canManage && (
         <RenameProjectDialog open={renaming} onOpenChange={setRenaming} project={project} onRenamed={renamed} />
