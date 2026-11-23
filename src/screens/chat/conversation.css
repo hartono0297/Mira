@@ -92,13 +92,7 @@
   border-radius: 8px;
 }
 
-.conv-menu {
-  position: relative;
-  flex: none;
-}
-
-/* Bayangan hanya untuk lapisan yang melayang: menu, rincian status, saran mention. */
-.conv-menu-list,
+/* Bayangan hanya untuk lapisan yang melayang: rincian status, saran mention, anggota grup. */
 .conv-pop,
 .conv-mentions,
 .conv-group-pop {
@@ -110,44 +104,6 @@
   background: var(--bg);
   color: var(--text);
   box-shadow: 0 8px 20px var(--scrim);
-}
-
-.conv-menu-list {
-  top: calc(100% + 4px);
-  right: 0;
-  min-width: 220px;
-  padding: 4px;
-  list-style: none;
-}
-
-.conv-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-
-.conv-menu-item:hover,
-.conv-menu-item:focus-visible {
-  background: var(--hover);
-}
-
-.conv-menu-item:focus-visible {
-  outline-offset: -2px;
-}
-
-.conv-menu-danger {
-  color: var(--danger);
 }
 
 /* Isi yang bergulir */
@@ -246,7 +202,8 @@
 }
 
 .conv-msg:hover,
-.conv-msg:focus-within {
+.conv-msg:focus-within,
+.conv-msg-menu-open {
   background: var(--hover);
 }
 
@@ -315,6 +272,25 @@
 .conv-author {
   font-weight: 700;
   overflow-wrap: anywhere;
+}
+
+/* Nama pengirim yang membuka menu orang: tetap terbaca sebagai nama, garis bawah saat disorot. */
+.conv-author-btn {
+  margin: 0 -3px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.conv-author-btn:hover .nwl-name,
+.conv-author-btn[aria-expanded="true"] .nwl-name {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .conv-msg-head time {
@@ -408,7 +384,8 @@
 }
 
 .conv-msg:hover .conv-actions,
-.conv-msg:focus-within .conv-actions {
+.conv-msg:focus-within .conv-actions,
+.conv-msg-menu-open .conv-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -428,8 +405,18 @@
   cursor: pointer;
 }
 
-.conv-action:hover {
+.conv-action:hover,
+.conv-action[aria-expanded="true"] {
   background: var(--hover);
+}
+
+.conv-action-more {
+  padding: 4px 7px;
+}
+
+/* Salin gagal: di bawah kepala, bersama error lain di .conv-live. */
+.conv-copy-error:not(:first-child) {
+  margin-top: 8px;
 }
 
 /* Kartu file */

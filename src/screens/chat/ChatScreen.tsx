@@ -37,6 +37,13 @@ function ChatScreenInner() {
   const [dmError, setDmError] = useState<AppError | null>(null);
   const [request, setRequest] = useState<ConvRequest | null>(null);
   const requestDone = useCallback(() => setRequest(null), []);
+  const requestCount = useRef(0);
+  // Ganti nama atau Tambah orang dari menu sidebar: buka percakapannya, lalu kepala percakapan
+  // membuka dialognya begitu data grup siap.
+  const requestFor = useCallback((conv: string, action: ConvRequest["action"]) => {
+    setSelected(conv);
+    setRequest({ conv, action, n: ++requestCount.current });
+  }, []);
 
   // Pilihan yang sudah tidak ada (channel dihapus, akses dicabut) kembali ke #umum.
   const list = overview?.conversations ?? [];
@@ -47,6 +54,15 @@ function ChatScreenInner() {
     setSelected(null);
     void reload();
   }, [reload]);
+  // Channel dihapus atau keluar dari grup lewat menu sidebar. Daftar sudah dimuat ulang oleh menu;
+  // kalau percakapan itu sedang dibuka, kembali ke percakapan bawaan.
+  const currentId = current?.id ?? null;
+  const removed = useCallback(
+    (conv: string) => {
+      if (conv === currentId) setSelected(null);
+    },
+    [currentId],
+  );
 
   function adopt(summary: ConversationSummary) {
     setOpen(null);
@@ -126,6 +142,9 @@ function ChatScreenInner() {
         onRevealed={revealed}
         staleError={live.error}
         onSelect={setSelected}
+        onRequest={requestFor}
+        onChanged={changed}
+        onRemoved={removed}
         onRetry={changed}
         onNewChannel={() => setOpen("channel")}
         onNewGroup={() => setOpen("group")}

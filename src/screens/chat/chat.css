@@ -74,6 +74,20 @@
   overflow-wrap: anywhere;
 }
 
+/* Aksi menu baris yang gagal (Bisukan, Arsipkan, ...): di atas daftar sampai ditutup. */
+.chat-action-error {
+  margin: 4px 0 6px;
+  font-size: 13px;
+}
+
+.chat-action-error p {
+  overflow-wrap: anywhere;
+}
+
+.chat-action-error .link-btn {
+  margin-top: 4px;
+}
+
 .chat-sec {
   display: flex;
   flex-direction: column;
@@ -130,7 +144,8 @@
     color 120ms ease;
 }
 
-.chat-row:hover {
+.chat-row:hover,
+.chat-row-menu {
   background: var(--hover);
   color: var(--text);
 }

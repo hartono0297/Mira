@@ -1,5 +1,5 @@
 import { IconCheck, IconChecks, IconClock, IconClockShare, type Icon } from "@tabler/icons-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useImperativeHandle, useRef, useState, type KeyboardEvent, type Ref } from "react";
 import { toAppError, type AppError } from "../../api";
 import {
   chatApi,
@@ -23,15 +23,19 @@ export function StateIcon({ state, size = 14 }: { state: DeliveryState; size?: n
   return <Glyph size={size} aria-hidden="true" />;
 }
 
+// Dipakai menu pesan (Lihat status baca): membuka rincian seperti klik pada tombol status.
+export type DeliveryStatusHandle = { open: () => void };
+
 type Props = {
   messageId: string;
   status: MessageStatus;
   kind: ConversationSummary["kind"];
+  ref?: Ref<DeliveryStatusHandle>;
 };
 
 // Status pesan sendiri. Tombolnya membuka daftar per orang dari chat_message_receipts.
 // Ikon dan teks selalu tampil bersama, warna tidak membawa arti sendiri.
-export function DeliveryStatus({ messageId, status, kind }: Props) {
+export function DeliveryStatus({ messageId, status, kind, ref }: Props) {
   const line = deliveryLine(status, kind);
   const [open, setOpen] = useState(false);
   const [receipts, setReceipts] = useState<ReceiptView[] | null>(null);
@@ -73,6 +77,19 @@ export function DeliveryStatus({ messageId, status, kind }: Props) {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
+  function show() {
+    setOpen(true);
+    void load();
+  }
+
+  // Sudah terbuka: fokus dipindah lagi ke rincian supaya pembukaan dari menu tetap terasa.
+  useImperativeHandle(ref, () => ({
+    open: () => {
+      if (open) popRef.current?.focus();
+      else show();
+    },
+  }));
+
   if (!line) return null;
 
   function toggle() {
@@ -80,8 +97,7 @@ export function DeliveryStatus({ messageId, status, kind }: Props) {
       setOpen(false);
       return;
     }
-    setOpen(true);
-    void load();
+    show();
   }
 
   function onKey(e: KeyboardEvent<HTMLDivElement>) {

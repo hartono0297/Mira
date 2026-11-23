@@ -7,11 +7,12 @@ import {
   type ConversationSummary,
   type ConversationView,
   type MessageView,
+  type Person,
 } from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { ConversationActionsContext, type ConversationActions, type ConvRequest } from "./ChatActions";
-import { Composer } from "./Composer";
+import { Composer, type MentionRequest } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
 import { useGroupView } from "./GroupMembers";
 import { messageDomId } from "./MessageItem";
@@ -66,6 +67,9 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  // Salin gagal: tampil juga di layar, bukan hanya untuk pembaca layar.
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [mentionRequest, setMentionRequest] = useState<MentionRequest | null>(null);
 
   // Data grup dipegang di sini: kepala percakapan (anggota, dialog) dan menu orang di pesan
   // (Keluarkan dari grup) memakai data yang sama.
@@ -227,6 +231,16 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
     setToDelete(m);
   }, []);
 
+  // Teks sama berturut-turut (salin dua kali) tetap dibacakan ulang: isinya dibuat berbeda.
+  const onAnnounce = useCallback((text: string, error?: boolean) => {
+    if (error) {
+      setCopyError(text);
+      return;
+    }
+    setCopyError(null);
+    setAnnounce((prev) => (prev === text ? `${text}\u00a0` : text));
+  }, []);
+
   const onJump = useCallback((id: string) => {
     const el = document.getElementById(messageDomId(id));
     if (!el) return;
@@ -321,10 +335,12 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
           kind={summary.kind}
           flashId={flashId}
           loadedIds={loadedIds}
+          canReply={summary.canPost}
           onReply={onReply}
           onDelete={onDelete}
           onJump={onJump}
           onReload={reload}
+          onAnnounce={onAnnounce}
         />
         {messages.length === 0 && (
           <p className="conv-state conv-state-after">
@@ -338,10 +354,14 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
   const group = groupState.group;
   const reloadGroup = groupState.reload;
   const memberKeys = useMemo(() => new Set((view?.members ?? []).map((p) => p.publicKey)), [view]);
+  const canPost = summary.canPost;
   const actions = useMemo<ConversationActions>(
     () => ({
       conv: summary.id,
-      mention: null,
+      // Sebut dari menu pesan atau menu orang: Composer menyisipkan @Nama di posisi kursor.
+      mention: canPost
+        ? (person: Person) => setMentionRequest((prev) => ({ person, n: (prev?.n ?? 0) + 1 }))
+        : null,
       isMember: (pk) => memberKeys.has(pk),
       canRemove: (pk) => !!group?.members.some((m) => m.person.publicKey === pk && m.canRemove),
       removeFromGroup: async (person) => {
@@ -350,7 +370,7 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
         onChangedRef.current();
       },
     }),
-    [summary.id, memberKeys, group, reloadGroup],
+    [summary.id, canPost, memberKeys, group, reloadGroup],
   );
 
   return (
@@ -373,6 +393,15 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
             </button>
           </ErrorAlert>
         )}
+        {copyError && (
+          <div className="conv-copy-error">
+            <ErrorAlert title={copyError}>
+              <button type="button" className="link-btn" onClick={() => setCopyError(null)}>
+                Tutup
+              </button>
+            </ErrorAlert>
+          </div>
+        )}
       </div>
       <div className="conv-scroll" ref={scrollRef} onScroll={onScroll} role="region" aria-label={`Pesan di ${title}`}>
         {body}
@@ -391,6 +420,7 @@ function ConversationPanel({ summary, me, onChanged, onGone, request = null, onR
         }}
         onSent={onSent}
         inputRef={inputRef}
+        mentionRequest={mentionRequest}
       />
       <ConfirmDialog
         open={toDelete !== null}

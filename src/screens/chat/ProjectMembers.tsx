@@ -3,9 +3,8 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type ProjectChatView } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { MemberPanelActions, MemberRow } from "./GroupMembers";
 import { usePeopleDirectory } from "./PeoplePicker";
-import { PersonName } from "./PersonName";
 
 type ProjectChatState = {
   view: ProjectChatView | null;
@@ -114,23 +113,15 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
   } else {
     content = (
       <ul className="conv-members">
-        {members.map((m) => {
-          const department = departments.get(m.person.publicKey);
-          return (
-            <li key={m.person.publicKey} className="conv-member">
-              <span className="pick-av" aria-hidden="true">
-                {initials(m.person.name)}
-              </span>
-              <span className="pick-who">
-                <span className="pick-name">
-                  <PersonName person={m.person} me={m.me} />
-                </span>
-                {department && <span className="pick-dept-line">{department}</span>}
-              </span>
-              {m.manager && <span className="chip chip-on">Pengelola proyek</span>}
-            </li>
-          );
-        })}
+        {members.map((m) => (
+          <MemberRow
+            key={m.person.publicKey}
+            person={m.person}
+            me={m.me}
+            department={departments.get(m.person.publicKey)}
+            chip={m.manager ? "Pengelola proyek" : undefined}
+          />
+        ))}
       </ul>
     );
   }
@@ -162,7 +153,7 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
           role="dialog"
           aria-labelledby={titleId}
           tabIndex={-1}
-          className="conv-group-pop"
+          className="conv-group-pop member-pop"
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.preventDefault();
@@ -179,7 +170,7 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
               Daftar terbaru belum bisa dimuat. Yang tampil adalah daftar terakhir.
             </p>
           )}
-          {content}
+          <MemberPanelActions close={close}>{content}</MemberPanelActions>
           <hr className="conv-group-sep" />
           <p className="conv-pop-note">
             Anggota chat ini selalu sama dengan anggota proyek.{note && ` ${note}`}

@@ -95,7 +95,7 @@ describe("Grup: kepala dan daftar anggota", () => {
     const rows = within(panel).getAllByRole("listitem");
     expect(rows[0]).toHaveTextContent("Penguji (Anda)");
     expect(within(rows[0]).getByText("Pemilik grup")).toBeInTheDocument();
-    expect(within(rows[0]).queryByRole("button")).toBeNull();
+    expect(within(rows[0]).queryByRole("button", { name: /^Keluarkan/ })).toBeNull();
     await waitFor(() => expect(rows[1]).toHaveTextContent("Drafting"));
     expect(within(panel).getByRole("button", { name: "Keluarkan Sari Uji dari grup" })).toBeInTheDocument();
     expect(within(panel).getByRole("button", { name: "Keluarkan Budi Uji dari grup" })).toBeInTheDocument();
@@ -207,7 +207,7 @@ describe("Grup: tambah orang dan ganti nama", () => {
     const { onChanged } = renderConv();
     await screen.findByRole("button", { name: "Tambah orang" });
     await user.click(screen.getByRole("button", { name: "Menu Persiapan pameran" }));
-    await user.click(screen.getByRole("menuitem", { name: "Ganti nama grup" }));
+    await user.click(screen.getByRole("menuitem", { name: "Ganti nama" }));
     const input = screen.getByLabelText("Nama grup");
     expect(input).toHaveValue("Persiapan pameran");
     await user.clear(input);

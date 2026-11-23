@@ -356,14 +356,14 @@ describe("Percakapan: menu kepala", () => {
     await screen.findByText("@Budi Uji");
     const menuBtn = screen.getByRole("button", { name: "Menu #proyek-a" });
     await user.click(menuBtn);
-    await user.click(screen.getByRole("menuitem", { name: "Bisukan notifikasi" }));
+    await user.click(screen.getByRole("menuitem", { name: "Bisukan" }));
     expect(chat.setMuted).toHaveBeenCalledWith(CH, true);
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
 
     // Keyboard: Enter membuka, panah memilih, Enter menjalankan.
     menuBtn.focus();
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("menuitem", { name: "Bisukan notifikasi" })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: "Bisukan" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Arsipkan channel" })).toHaveFocus();
     await user.keyboard("{Enter}");
@@ -390,7 +390,7 @@ describe("Percakapan: menu kepala", () => {
     expect(screen.getByText("Channel ini diarsipkan. Kembalikan dari arsip untuk mengirim pesan.")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Menu #proyek-a" }));
-    await user.click(screen.getByRole("menuitem", { name: "Nyalakan notifikasi" }));
+    await user.click(screen.getByRole("menuitem", { name: "Bunyikan" }));
     expect(chat.setMuted).toHaveBeenCalledWith(CH, false);
     await user.click(screen.getByRole("button", { name: "Menu #proyek-a" }));
     await user.click(screen.getByRole("menuitem", { name: "Kembalikan dari arsip" }));
@@ -415,7 +415,7 @@ describe("Percakapan: menu kepala", () => {
     const user = userEvent.setup();
     renderConv(channel({ canArchive: false, canDelete: false }));
     await user.click(await screen.findByRole("button", { name: "Menu #proyek-a" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Bisukan notifikasi"]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Bisukan"]);
   });
 
   it("error API tampil di bawah kepala", async () => {

@@ -8,7 +8,10 @@ import {
   type ChatSection,
   type ConversationSummary,
 } from "../../api/chat";
+import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import type { ConvRequest } from "./ChatActions";
+import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
 import {
   SECTION_TITLES,
   badgeCount,
@@ -28,6 +31,12 @@ type Props = {
   // Muat ulang terakhir gagal: daftar lama tetap tampil dengan catatan kecil.
   staleError: AppError | null;
   onSelect: (id: string) => void;
+  // Menu baris: Ganti nama atau Tambah orang dijalankan kepala percakapan setelah percakapannya dibuka.
+  onRequest: (conv: string, action: ConvRequest["action"]) => void;
+  // Aksi menu berhasil: muat ulang daftar.
+  onChanged: () => void;
+  // Channel dihapus atau keluar dari grup lewat menu baris.
+  onRemoved: (conv: string) => void;
   onRetry: () => void;
   onNewChannel: () => void;
   onNewGroup: () => void;
@@ -47,6 +56,9 @@ export function ConversationList({
   onRevealed,
   staleError,
   onSelect,
+  onRequest,
+  onChanged,
+  onRemoved,
   onRetry,
   onNewChannel,
   onNewGroup,
@@ -57,6 +69,8 @@ export function ConversationList({
   const [folded, setFolded] = useState<ChatSection[]>(() => overview.folded);
   const ids = useId();
   const groups = groupConversations(overview.conversations);
+  // Error aksi langsung dari menu baris (Bisukan, Arsipkan, dan seterusnya).
+  const [actionError, setActionError] = useState<ActionError | null>(null);
 
   function toggle(section: ChatSection) {
     const next = CHAT_SECTIONS.filter((s) => (s === section ? !folded.includes(s) : folded.includes(s)));
@@ -84,9 +98,16 @@ export function ConversationList({
   const rows = (list: ConversationSummary[]) => (
     <ul className="chat-rows">
       {list.map((c) => (
-        <li key={c.id}>
-          <ListRow summary={c} current={c.id === currentId} onSelect={onSelect} />
-        </li>
+        <ListRow
+          key={c.id}
+          summary={c}
+          current={c.id === currentId}
+          onSelect={onSelect}
+          onRequest={onRequest}
+          onChanged={onChanged}
+          onRemoved={onRemoved}
+          onError={setActionError}
+        />
       ))}
     </ul>
   );
@@ -194,6 +215,21 @@ export function ConversationList({
         </div>
       )}
 
+      <div aria-live="polite">
+        {actionError && (
+          <div className="chat-action-error">
+            <ErrorAlert title={ACTION_ERRORS[actionError.action]}>
+              <p>
+                {actionError.title}: {actionError.error.message}
+              </p>
+              <button type="button" className="link-btn" onClick={() => setActionError(null)}>
+                Tutup
+              </button>
+            </ErrorAlert>
+          </div>
+        )}
+      </div>
+
       {CHAT_SECTIONS.map((section) => {
         const list = groups[section];
         // Tamu tidak punya departemen, channel umum, grup, atau pesan pribadi. Bagian yang
@@ -283,15 +319,28 @@ function rowState(c: ConversationSummary): string | null {
   return null;
 }
 
-function ListRow({
-  summary: c,
-  current,
-  onSelect,
-}: {
+type RowProps = {
   summary: ConversationSummary;
   current: boolean;
   onSelect: (id: string) => void;
-}) {
+  onRequest: (conv: string, action: ConvRequest["action"]) => void;
+  onChanged: () => void;
+  onRemoved: (conv: string) => void;
+  onError: (error: ActionError | null) => void;
+};
+
+// Satu baris percakapan beserta menu klik kanannya (juga tombol Menu dan Shift+F10 di baris).
+// Tidak ada tombol "..." per baris: semua aksinya juga ada di menu "..." kepala percakapan.
+function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemoved, onError }: RowProps) {
+  const menu = useConversationMenu({
+    summary: c,
+    onOpen: () => onSelect(c.id),
+    onChanged,
+    onGone: () => onRemoved(c.id),
+    onRename: () => onRequest(c.id, "rename"),
+    onAdd: () => onRequest(c.id, "add"),
+    onError,
+  });
   const unread = c.unread > 0 || c.mentionUnread > 0;
   const state = rowState(c);
   // Nama lengkap untuk pembaca layar. Lencana dan ikon di dalam tombol hanya tampilan.
@@ -311,44 +360,48 @@ function ListRow({
     unread ? "chat-row-unread" : "",
     c.muted ? "chat-row-muted" : "",
     state ? "chat-row-dim" : "",
+    menu.isOpen ? "chat-row-menu" : "",
   ].filter(Boolean);
 
   return (
-    <button
-      type="button"
-      className={classes.join(" ")}
-      aria-current={current ? "true" : undefined}
-      aria-label={label}
-      onClick={() => onSelect(c.id)}
-      title={[shown, c.locked ? "hanya-baca" : "", state?.toLowerCase() ?? ""].filter(Boolean).join(", ")}
-    >
-      {c.kind === "dm" ? (
-        <span className="chat-av" aria-hidden="true">
-          {initials(c.name)}
+    <li {...menu.triggerProps}>
+      <button
+        type="button"
+        className={classes.join(" ")}
+        aria-current={current ? "true" : undefined}
+        aria-label={label}
+        onClick={() => onSelect(c.id)}
+        title={[shown, c.locked ? "hanya-baca" : "", state?.toLowerCase() ?? ""].filter(Boolean).join(", ")}
+      >
+        {c.kind === "dm" ? (
+          <span className="chat-av" aria-hidden="true">
+            {initials(c.name)}
+          </span>
+        ) : c.kind === "group" || c.kind === "project" ? (
+          <IconUsers size={18} className="chat-kind" aria-hidden="true" />
+        ) : (
+          <span className="chat-hash" aria-hidden="true">
+            #
+          </span>
+        )}
+        <span className="chat-row-text">
+          <span className="chat-row-name">{c.name}</span>
+          {state && <span className="chat-row-hint">{state}</span>}
         </span>
-      ) : c.kind === "group" || c.kind === "project" ? (
-        <IconUsers size={18} className="chat-kind" aria-hidden="true" />
-      ) : (
-        <span className="chat-hash" aria-hidden="true">
-          #
-        </span>
-      )}
-      <span className="chat-row-text">
-        <span className="chat-row-name">{c.name}</span>
-        {state && <span className="chat-row-hint">{state}</span>}
-      </span>
-      {c.locked && <IconLock size={15} className="chat-row-icon" aria-hidden="true" />}
-      {c.muted && <IconBellOff size={15} className="chat-row-icon" aria-hidden="true" />}
-      {c.mentionUnread > 0 && (
-        <span className="chat-at" aria-hidden="true">
-          @
-        </span>
-      )}
-      {count > 0 && (
-        <span className="chat-badge" aria-hidden="true">
-          {badgeCount(count)}
-        </span>
-      )}
-    </button>
+        {c.locked && <IconLock size={15} className="chat-row-icon" aria-hidden="true" />}
+        {c.muted && <IconBellOff size={15} className="chat-row-icon" aria-hidden="true" />}
+        {c.mentionUnread > 0 && (
+          <span className="chat-at" aria-hidden="true">
+            @
+          </span>
+        )}
+        {count > 0 && (
+          <span className="chat-badge" aria-hidden="true">
+            {badgeCount(count)}
+          </span>
+        )}
+      </button>
+      {menu.element}
+    </li>
   );
 }

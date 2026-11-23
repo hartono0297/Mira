@@ -25,6 +25,10 @@ import {
   type MentionQuery,
 } from "./text";
 
+// Permintaan Sebut dari luar kolom pesan (menu pesan, menu orang). `n` membedakan
+// permintaan yang sama berturut-turut.
+export type MentionRequest = { person: Person; n: number };
+
 type Props = {
   summary: ConversationSummary;
   me: string;
@@ -33,6 +37,7 @@ type Props = {
   onCancelReply: () => void;
   onSent: (message: MessageView) => void;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+  mentionRequest?: MentionRequest | null;
 };
 
 // Rekan chat pribadi sedang offline menurut status jaringan. Tanpa data
@@ -63,7 +68,18 @@ export function formerText(summary: ConversationSummary): string {
   return `Anda sudah bukan anggota channel ini. ${KEPT}`;
 }
 
-export function Composer({ summary, me, members, replyTo, onCancelReply, onSent, inputRef }: Props) {
+// Sisipkan "@Nama " di posisi kursor, dengan spasi pemisah kalau huruf sebelumnya bukan spasi.
+export function insertMention(text: string, caret: number, name: string): { text: string; caret: number } {
+  const at = Math.max(0, Math.min(caret, text.length));
+  const before = text.slice(0, at);
+  const after = text.slice(at);
+  const lead = before === "" || /\s$/.test(before) ? "" : " ";
+  const insert = `${lead}@${name} `;
+  const rest = after.startsWith(" ") ? after.slice(1) : after;
+  return { text: before + insert + rest, caret: before.length + insert.length };
+}
+
+export function Composer({ summary, me, members, replyTo, onCancelReply, onSent, inputRef, mentionRequest = null }: Props) {
   const title = conversationTarget(summary);
   const [text, setText] = useState("");
   const [files, setFiles] = useState<PickedFile[]>([]);
@@ -105,6 +121,21 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
       pendingCaret.current = null;
     }
   }, [text, inputRef]);
+
+  // Sebut dari luar: sisipkan di posisi kursor terakhir lalu fokus ke kolom pesan.
+  const handledMention = useRef<number | null>(null);
+  useEffect(() => {
+    if (!mentionRequest || handledMention.current === mentionRequest.n) return;
+    handledMention.current = mentionRequest.n;
+    const el = inputRef.current;
+    if (!el) return;
+    const current = el.value;
+    const next = insertMention(current, el.selectionStart ?? current.length, mentionRequest.person.name);
+    pendingCaret.current = next.caret;
+    setText(next.text);
+    setMention(null);
+    el.focus();
+  }, [mentionRequest, inputRef]);
 
   const suggestions = mention ? filterMembers(members, mention.query, me) : [];
   const listOpen = suggestions.length > 0;
