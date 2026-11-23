@@ -1,4 +1,4 @@
-// Uji ujung ke ujung beberapa "laptop" Mira di satu PC (Tahap 1).
+// Uji ujung ke ujung beberapa "laptop" Mira di satu PC (Tahap 1, disesuaikan v0.3).
 //
 // Menjalankan empat instance mira.exe hasil build release, masing-masing
 // dengan folder data (MIRA_DATA_DIR), port QUIC (MIRA_PORT), dan port debug
@@ -8,7 +8,7 @@
 //
 //   A  Ayu    membuat organisasi, superadmin
 //   B  Budi   bergabung dengan kode Anggota (lewat penemuan otomatis)
-//   C  Citra  bergabung dengan kode Admin tim sekali pakai
+//   C  Citra  bergabung dengan kode Admin departemen sekali pakai
 //   D  Dodi   orang luar: kode salah, kode terpakai, kode kedaluwarsa
 //
 // Pakai:  node scripts/e2e-multi.mjs <path mira.exe> <folder screenshot>
@@ -19,6 +19,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { mainNav, reachNotFound } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/tahap-1");
@@ -60,6 +61,7 @@ async function launch(id, extraEnv = {}) {
       ...process.env,
       MIRA_DATA_DIR: node.dir,
       MIRA_PORT: String(node.port),
+      MIRA_UPDATER_ENDPOINT: "http://127.0.0.1:9/latest.json",
       ...(node.env ?? {}),
       ...extraEnv,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${node.cdp}`,
@@ -191,29 +193,36 @@ try {
     check(`Daftar "Di jaringan" di layar ${id} menampilkan kedua rekan`, others.every((n) => body.includes(n)));
     await running[id].page.screenshot({ path: join(shots, `di-jaringan-${id.toLowerCase()}.png`) });
   }
-  // Screenshot layar Tahap 1 untuk laporan (tidak dihitung sebagai pemeriksaan).
+  // Screenshot untuk laporan (tidak dihitung sebagai pemeriksaan): halaman
+  // Organisasi v0.3 (tab Pengguna, Departemen, Undangan), Pengaturan Jaringan,
+  // dan onboarding D sampai isian kode undangan.
   try {
     const pa = running.A.page;
-    await pa.getByRole("button", { name: /^Organisasi\s*(,|$)/ }).click();
+    const orgTab = (label) => pa.locator("nav.org-tabs-wrap").getByRole("button", { name: label, exact: true });
+    await mainNav(pa, "Organisasi").click();
+    await pa.getByRole("heading", { name: "Organisasi", level: 1 }).waitFor({ timeout: 15000 });
     await sleep(1500);
     await pa.screenshot({ path: join(shots, "organisasi-a.png") });
-    await pa.getByRole("button", { name: /Tim Desain/ }).first().click();
-    await sleep(800);
-    await pa.getByRole("button", { name: /^Undang ke/ }).first().click();
+    await orgTab("Departemen").click();
+    await pa.locator("table.dept-table").getByText("Tim Desain", { exact: true }).waitFor({ timeout: 10000 });
+    await pa.screenshot({ path: join(shots, "organisasi-departemen-a.png") });
+    await orgTab("Undangan").click();
+    await pa.getByRole("button", { name: "Buat kode undangan" }).click();
     await sleep(800);
     await pa.screenshot({ path: join(shots, "dialog-undangan.png") });
     await pa.keyboard.press("Escape");
-    await pa.getByRole("button", { name: "Pengaturan", exact: true }).click();
+    await mainNav(pa, "Pengaturan").click();
     await pa.getByRole("button", { name: "Jaringan", exact: true }).click();
     await sleep(1500);
     await pa.screenshot({ path: join(shots, "pengaturan-jaringan.png") });
     const pd = running.D.page;
     await reload("D");
-    await pd.getByRole("button", { name: /Gabung dengan kode/ }).click();
-    await sleep(4000);
+    await pd.getByRole("heading", { name: "Izinkan Mira di jaringan kantor" }).waitFor({ timeout: 20000 });
+    await sleep(2000);
     await pd.screenshot({ path: join(shots, "panduan-firewall.png") });
-    await pd.getByRole("button", { name: /Lewati, atur nanti|Lanjut ke kode undangan/ }).click();
-    await sleep(800);
+    await reachNotFound(pd);
+    await pd.getByRole("button", { name: /Pakai kode undangan/ }).click();
+    await pd.getByRole("heading", { name: "Gabung dengan kode undangan" }).waitFor({ timeout: 10000 });
     await pd.screenshot({ path: join(shots, "gabung-dengan-kode.png") });
   } catch (e) {
     console.log(`Catatan: screenshot tambahan gagal: ${e.message}`);
