@@ -80,6 +80,9 @@ const MAX_OP_SYNC_RESPONDERS: usize = 2;
 /// initiator sees an aborted session and retries instead of a normal end.
 /// Same value as `RESET_ABORTED` in `feature_net.rs`.
 const FEATURE_RESET_ABORTED: u32 = 0x22;
+/// Stop code for a feature session that is not served (as for an unknown
+/// topic). Same value as `STOP_UNKNOWN_TOPIC` in `feature_net.rs`.
+const FEATURE_STOP_UNKNOWN_TOPIC: u32 = 0x20;
 
 pub(crate) const PORT_RANGE: std::ops::RangeInclusive<u16> = 47800..=47809;
 
@@ -147,6 +150,9 @@ struct PeerEntry {
     opener: String,
     route: Route,
     connected_at: String,
+    /// `Hello.features` of the peer (1 for v0.2). Feature sync runs only
+    /// with peers at `wire::FEATURE_PROTO_VERSION` or above.
+    features: u32,
 }
 
 #[derive(Default)]
@@ -180,6 +186,8 @@ pub(crate) struct Inner {
     sync: Mutex<SyncState>,
     pub(crate) disc: Discovery,
     pub(crate) join_limiter: Mutex<RateLimiter>,
+    /// `join_status_get` only: a waiting requester asks every 5 seconds.
+    pub(crate) join_status_limiter: Mutex<RateLimiter>,
     rejection_limiter: Mutex<RateLimiter>,
     pub(crate) join_slots: Arc<Semaphore>,
     /// Incoming connections (handshaking or established).
@@ -263,6 +271,10 @@ impl Inner {
             disc: Discovery::new(),
             join_limiter: Mutex::new(RateLimiter::new(
                 join::JOIN_ATTEMPTS_PER_MINUTE,
+                Duration::from_secs(60),
+            )),
+            join_status_limiter: Mutex::new(RateLimiter::new(
+                join::JOIN_STATUS_PER_MINUTE,
                 Duration::from_secs(60),
             )),
             rejection_limiter: Mutex::new(RateLimiter::new(
@@ -361,6 +373,28 @@ impl Inner {
             .get(pk)
             .filter(|e| e.conn.close_reason().is_none())
             .map(|e| e.conn.clone())
+    }
+
+    /// `true` when `pk` has a live member connection whose `Hello` carried
+    /// `features >= FEATURE_PROTO_VERSION`. A v0.2 laptop still shares
+    /// project data with the whole department, so v0.3 runs no feature sync
+    /// (records, blobs, the `join` topic) with it, in either direction;
+    /// membership-log sync goes on (plan v03-a section 4).
+    pub(crate) fn feature_capable(&self, pk: &str) -> bool {
+        lock(&self.peers)
+            .get(pk)
+            .is_some_and(|e| e.conn.close_reason().is_none() && feature_capable(e.features))
+    }
+
+    /// `connected_peers` limited to the feature-capable ones, sorted.
+    pub(crate) fn feature_peers(&self) -> Vec<String> {
+        let mut v: Vec<String> = lock(&self.peers)
+            .iter()
+            .filter(|(_, e)| e.conn.close_reason().is_none() && feature_capable(e.features))
+            .map(|(k, _)| k.clone())
+            .collect();
+        v.sort();
+        v
     }
 
     /// `true` when the backend says `pk` is an active member right now.
@@ -593,13 +627,13 @@ impl Inner {
             pk.clone()
         };
         let route = route::classify(remote);
-        if !self.register(&pk, &conn, opener, route) {
+        if !self.register(&pk, &conn, opener, route, hello.features) {
             return Ok(pk);
         }
         // A registered member no longer counts against its IP.
         slot.pending = None;
         self.emit(NetEvent::StatusChanged);
-        tokio::spawn(self.clone().drive(conn, pk.clone(), slot));
+        tokio::spawn(self.clone().drive(conn, pk.clone(), hello.features, slot));
         self.schedule_sync(&pk);
         self.feature_peer_up(&pk);
         Ok(pk)
@@ -645,6 +679,7 @@ impl Inner {
                 .take(MAX_HELLO_ADDRS)
                 .map(|ip| SocketAddr::from((ip, self.listen_port)).to_string())
                 .collect(),
+            features: self.advertised_features(),
         }
     }
 
@@ -702,6 +737,7 @@ impl Inner {
             pk: their_pk,
             listen_port,
             addrs,
+            features,
         }) = msg
         else {
             return Err("Laptop rekan tidak mengirim salam yang benar.".into());
@@ -725,14 +761,27 @@ impl Inner {
             return Err("Laptop rekan berada di organisasi lain.".into());
         }
         let addrs = hello_addresses(&addrs, conn.remote_address());
-        Ok(HelloInfo { listen_port, addrs })
+        // `proto` stays 1 for v0.2 laptops; `features` alone tells v0.2
+        // (1) from v0.3 (2) apart.
+        Ok(HelloInfo {
+            listen_port,
+            addrs,
+            features,
+        })
     }
 
     /// Adds the connection to the registry. Of two live connections with the
     /// same peer, the one opened by the lexicographically smaller key stays;
     /// a newer connection from the same opener replaces the older one.
     /// Returns false when `conn` was closed as the duplicate.
-    fn register(&self, pk: &str, conn: &Connection, opener: String, route: Route) -> bool {
+    fn register(
+        &self,
+        pk: &str,
+        conn: &Connection,
+        opener: String,
+        route: Route,
+        features: u32,
+    ) -> bool {
         let mut peers = lock(&self.peers);
         if self.is_closing() {
             conn.close(VarInt::from_u32(code::SHUTDOWN), b"shutdown");
@@ -759,6 +808,7 @@ impl Inner {
                 opener,
                 route,
                 connected_at: crate::clock::now_rfc3339(),
+                features,
             },
         );
         true
@@ -774,8 +824,9 @@ impl Inner {
         }
     }
 
-    /// Serves the peer's streams until the connection ends.
-    async fn drive(self: Arc<Self>, conn: Connection, pk: String, slot: ConnSlot) {
+    /// Serves the peer's streams until the connection ends. `features` is
+    /// what the peer's `Hello` on this connection said.
+    async fn drive(self: Arc<Self>, conn: Connection, pk: String, features: u32, slot: ConnSlot) {
         let streams = Arc::new(Semaphore::new(tls::MAX_BIDI_STREAMS as usize));
         let op_syncs = Arc::new(Semaphore::new(MAX_OP_SYNC_RESPONDERS));
         while let Ok((mut send, mut recv)) = conn.accept_bi().await {
@@ -788,7 +839,7 @@ impl Inner {
             let pk = pk.clone();
             let op_syncs = op_syncs.clone();
             tokio::spawn(async move {
-                me.handle_stream(&pk, &op_syncs, send, recv).await;
+                me.handle_stream(&pk, features, &op_syncs, send, recv).await;
                 drop(slot);
             });
         }
@@ -815,10 +866,13 @@ impl Inner {
     }
 
     /// One bidirectional stream from member `pk`. `op_syncs` limits the
-    /// op-sync responder sessions of this connection.
+    /// op-sync responder sessions of this connection. `features` is the
+    /// peer's `Hello.features`: below `FEATURE_PROTO_VERSION` only op sync is
+    /// served.
     async fn handle_stream(
         self: &Arc<Self>,
         pk: &str,
+        features: u32,
         op_syncs: &Arc<Semaphore>,
         mut send: SendStream,
         mut recv: RecvStream,
@@ -841,6 +895,18 @@ impl Inner {
                 )
                 .await;
                 let _ = send.finish();
+            }
+            // A v0.2 laptop: no feature session. Stopped and finished like an
+            // unknown topic, which its initiator ends quietly ("done")
+            // instead of retrying as it would after a reset.
+            Ok(Some(Msg::FeatureHave { .. })) if !feature_capable(features) => {
+                let _ = recv.stop(VarInt::from_u32(FEATURE_STOP_UNKNOWN_TOPIC));
+                let _ = send.finish();
+            }
+            // A v0.2 laptop gets no blobs either.
+            Ok(Some(Msg::BlobGet { .. })) if !feature_capable(features) => {
+                let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
+                let _ = recv.stop(VarInt::from_u32(code::PROTOCOL));
             }
             Ok(Some(Msg::FeatureHave { topic, ids })) => {
                 let done = tokio::time::timeout(
@@ -1144,6 +1210,13 @@ pub(crate) fn hello_addresses(addrs: &[String], remote: SocketAddr) -> Vec<Socke
 struct HelloInfo {
     listen_port: u16,
     addrs: Vec<SocketAddr>,
+    /// `Hello.features` (1 when the peer is v0.2).
+    features: u32,
+}
+
+/// `true` for a peer whose `Hello.features` allows feature sync.
+pub(crate) fn feature_capable(features: u32) -> bool {
+    features >= wire::FEATURE_PROTO_VERSION
 }
 
 /// Sends the removal op (if any) on a uni stream, gives it a moment to

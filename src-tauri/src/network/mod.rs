@@ -28,7 +28,7 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -94,6 +94,68 @@ pub struct JoinProof {
 pub struct JoinAccepted {
     pub org: OrgRecord,
     pub ops: Vec<WireOp>,
+}
+
+/// A department a joining laptop can pick (v0.3, `join_info`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinDept {
+    pub id: String,
+    pub name: String,
+}
+
+/// Answer to `join_info_get` (v0.3): the organization's genesis record, its
+/// short fingerprint and the open departments. The requester checks the
+/// genesis record itself; the fingerprint is only shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinInfoWire {
+    pub org: OrgRecord,
+    pub fingerprint: String,
+    pub departments: Vec<JoinDept>,
+}
+
+/// A signed join request on the wire; same shape as
+/// `permissions::SignedJoinRequest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequestWire {
+    pub payload: String,
+    pub sig: String,
+}
+
+/// Answer to `join_request`: the request id and the matching code the
+/// member computed (the requester compares it with its own).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequestOk {
+    pub request_id: String,
+    pub code: String,
+}
+
+/// Answer to `join_status_get`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinStatusWire {
+    Pending,
+    /// Same shape as the invite flow's `JoinAccepted`.
+    Approved(JoinAccepted),
+    /// The signed `join_reject` op and its author's name as the member
+    /// knows it.
+    Rejected {
+        by_name: String,
+        at: String,
+        op: WireOp,
+    },
+    Unknown,
+}
+
+/// A laptop announcing an organization over mDNS (TXT `org`, `on`, `j`).
+/// Hints only: nothing here is authenticated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfficeHint {
+    pub public_key: String,
+    pub address: SocketAddr,
+    pub org: String,
+    /// TXT `on`, at most 63 bytes.
+    pub org_name: Option<String>,
+    /// TXT `j` = `"1"`: an active non-guest member that takes join requests.
+    pub accepts_join: bool,
 }
 
 /// What the backend says about a key proven in a handshake.
@@ -209,6 +271,45 @@ pub trait SyncBackend: Send + Sync + 'static {
         detail: &str,
     );
 
+    /// Organization name for TXT `on` (v0.3). Default: none.
+    fn org_name(&self) -> Option<String> {
+        None
+    }
+
+    /// TXT `j`: this laptop is an active non-guest member and answers
+    /// `join_info_get` and `join_request` (v0.3). Default: no.
+    fn accepts_join_requests(&self) -> bool {
+        false
+    }
+
+    /// Answer to `join_info_get`; `None` when this laptop does not take join
+    /// requests (v0.3).
+    fn join_info(&self) -> Option<JoinInfoWire> {
+        None
+    }
+
+    /// A laptop that is not a member yet sent its signed request directly
+    /// (v0.3). `tls_key` is the key proven in the handshake and `ip` the
+    /// address the connection came from. Refusal codes are listed in the
+    /// contract (`not_member`, `invalid_request`, `wrong_key`,
+    /// `request_expired`, `team_not_found`, `removed`, `busy`).
+    fn join_request(
+        &self,
+        _tls_key: &str,
+        _ip: IpAddr,
+        _request: JoinRequestWire,
+    ) -> Result<JoinRequestOk, JoinReject> {
+        Err(JoinReject::new(
+            "not_member",
+            "Laptop rekan ini tidak bisa menerima permintaan bergabung.",
+        ))
+    }
+
+    /// Status of request `request_id` for the laptop with `tls_key` (v0.3).
+    fn join_status(&self, _tls_key: &str, _request_id: &str) -> JoinStatusWire {
+        JoinStatusWire::Unknown
+    }
+
     /// Of the offered op ids, the ones this laptop does not have yet (answer
     /// to `SyncHave`). Addition to plan 3.1: the default asks for every id,
     /// which is correct (ingest ignores duplicates) but sends everything on
@@ -228,6 +329,9 @@ pub enum NetEvent {
     /// `FeatureSync::ingest` of `topic` reported `changed: true`
     /// (`mira://feature` with `{ "topic": topic }`).
     FeatureChanged { topic: &'static str },
+    /// A join request arrived directly over the join ALPN (v0.3,
+    /// `mira://join-requests`).
+    JoinRequestsChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,6 +444,39 @@ impl Network {
         prove: ProveFn,
     ) -> Result<JoinAccepted, JoinReject> {
         join::join(&self.inner, tag, extra, prove).await
+    }
+
+    /// Laptops announcing an organization over mDNS right now, freshest
+    /// first (v0.3 onboarding). Hints only.
+    pub fn office_hints(&self) -> Vec<OfficeHint> {
+        self.inner.disc.office_hints(&self.inner.me)
+    }
+
+    /// Asks the laptop at `addr` for its organization (`join_info_get`).
+    /// Returns the key it proved in the handshake and its answer.
+    pub async fn join_info_at(
+        &self,
+        addr: SocketAddr,
+    ) -> Result<(String, JoinInfoWire), JoinReject> {
+        join::info_at(&self.inner, addr).await
+    }
+
+    /// Sends this laptop's signed request to the member at `addr`.
+    pub async fn join_request_at(
+        &self,
+        addr: SocketAddr,
+        request: JoinRequestWire,
+    ) -> Result<(String, JoinRequestOk), JoinReject> {
+        join::request_at(&self.inner, addr, request).await
+    }
+
+    /// Asks the member at `addr` for the status of request `request_id`.
+    pub async fn join_status_at(
+        &self,
+        addr: SocketAddr,
+        request_id: &str,
+    ) -> Result<(String, JoinStatusWire), JoinReject> {
+        join::status_at(&self.inner, addr, request_id).await
     }
 
     /// Closes all connections and the endpoint, and stops mDNS.

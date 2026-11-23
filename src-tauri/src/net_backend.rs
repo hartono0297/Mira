@@ -362,6 +362,9 @@ impl AppNet {
                 NetEvent::FeatureChanged { topic } => {
                     handle.emit(EVENT_FEATURE, serde_json::json!({ "topic": topic }))
                 }
+                NetEvent::JoinRequestsChanged => {
+                    handle.emit(crate::org_commands::EVENT_JOIN_REQUESTS, ())
+                }
             };
         });
         let net = Network::start_with_features(cfg, backend.clone(), events, self.features.clone())

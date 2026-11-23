@@ -230,6 +230,10 @@ pub(crate) struct FeatureNet {
     known: Mutex<HashMap<String, KnownIds>>,
     /// Per (connected peer, topic).
     full_syncs: Mutex<HashMap<SessionKey, FullSync>>,
+    /// Tests only: the `Hello.features` this laptop sends, so a test can
+    /// play a v0.2 laptop (1).
+    #[cfg(test)]
+    pub(crate) hello_features: std::sync::atomic::AtomicU32,
 }
 
 impl FeatureNet {
@@ -245,6 +249,8 @@ impl FeatureNet {
             events: Mutex::new(EventGate::default()),
             known: Mutex::new(HashMap::new()),
             full_syncs: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            hello_features: std::sync::atomic::AtomicU32::new(wire::FEATURE_PROTO_VERSION),
         }
     }
 }
@@ -284,10 +290,14 @@ impl FeatureLink for NetLink {
         })
     }
 
+    /// Only peers that run feature sync (`Inner::feature_capable`): a v0.2
+    /// laptop is connected for the membership log but receives no records
+    /// or blobs, so for the features it is as good as offline (chat, for
+    /// example, then leaves it an envelope).
     fn connected_peers(&self) -> Vec<String> {
         self.inner
             .upgrade()
-            .map(|i| i.connected_peers())
+            .map(|i| i.feature_peers())
             .unwrap_or_default()
     }
 }
@@ -970,6 +980,20 @@ enum Prepared {
 }
 
 impl Inner {
+    /// `Hello.features` this laptop sends.
+    pub(crate) fn advertised_features(&self) -> u32 {
+        #[cfg(test)]
+        {
+            self.features
+                .hello_features
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+        #[cfg(not(test))]
+        {
+            wire::FEATURE_PROTO_VERSION
+        }
+    }
+
     /// A local change in `topic`: offer its new ids to all connected peers
     /// after a short delay that merges bursts of calls.
     pub(crate) fn feature_notify(self: &Arc<Self>, topic: &str) {
@@ -996,8 +1020,9 @@ impl Inner {
     /// A member connection to `pk` is registered: call `peer_connected` on
     /// every feature (blocking pool), then fully sync every topic with `pk`.
     /// A quick reconnect is rate limited by `MIN_SESSION_GAP`, not skipped.
+    /// Nothing for a v0.2 peer (`feature_capable`).
     pub(crate) fn feature_peer_up(self: &Arc<Self>, pk: &str) {
-        if self.is_closing() {
+        if self.is_closing() || !self.feature_capable(pk) {
             return;
         }
         let me = self.clone();
@@ -1018,8 +1043,8 @@ impl Inner {
         });
     }
 
-    /// Fully sync every registered topic with every connected peer except
-    /// `except`.
+    /// Fully sync every registered topic with every connected
+    /// feature-capable peer except `except`.
     pub(crate) fn feature_sync_all(self: &Arc<Self>, except: Option<&str>) {
         self.feature_sync_every(except, Offer::Full);
     }
@@ -1028,7 +1053,7 @@ impl Inner {
         if self.is_closing() {
             return;
         }
-        let peers = self.connected_peers();
+        let peers = self.feature_peers();
         for f in self.features.hub.features() {
             for pk in &peers {
                 if Some(pk.as_str()) != except {
@@ -1041,14 +1066,15 @@ impl Inner {
     /// The periodic fallback: forgets full-sync records of peers that are
     /// gone, then schedules every (peer, topic) with `Offer::Periodic`.
     fn feature_periodic(self: &Arc<Self>) {
-        let peers: HashSet<String> = self.connected_peers().into_iter().collect();
+        let peers: HashSet<String> = self.feature_peers().into_iter().collect();
         lock(&self.features.full_syncs).retain(|(pk, _), _| peers.contains(pk));
         self.feature_sync_every(None, Offer::Periodic);
     }
 
-    /// Offer `topic` to every connected peer except `except`.
+    /// Offer `topic` to every connected feature-capable peer except
+    /// `except`.
     fn feature_offer(self: &Arc<Self>, topic: &str, except: Option<&str>, offer: Offer) {
-        for pk in self.connected_peers() {
+        for pk in self.feature_peers() {
             if Some(pk.as_str()) != except {
                 self.schedule_feature(&pk, topic, offer.clone());
             }
@@ -1203,6 +1229,10 @@ impl Inner {
         };
         if !self.is_member(pk) {
             self.recheck_peers();
+            return Done;
+        }
+        // Gone, or a v0.2 laptop (also after reconnecting as one).
+        if !self.feature_capable(pk) {
             return Done;
         }
         let Some(conn) = self.peer_conn(pk) else {

@@ -908,3 +908,117 @@ async fn hub_is_offline_before_start_and_after_shutdown() {
     b.net.shutdown().await;
     assert!(b.hub.connected_peers().is_empty());
 }
+
+// ----- Version gate (v0.3) ---------------------------------------------------
+
+/// Makes `n` send `Hello.features = 1`, as a v0.2 laptop does. Must be
+/// called before `n` connects. The rest of `n` stays v0.3 code, so it still
+/// tries feature sessions and downloads towards v0.3 peers: that is what
+/// exercises the refusals on their side.
+fn play_v02(n: &Node) {
+    n.net
+        .inner
+        .features
+        .hello_features
+        .store(1, Ordering::SeqCst);
+}
+
+/// One laptop announces `features = 1` (v0.2), two announce 2. The
+/// membership log syncs among all three; feature records and blobs flow
+/// only between the two v0.3 laptops, in neither direction with the v0.2
+/// one, and every connection stays up.
+#[tokio::test(flavor = "multi_thread")]
+async fn v02_peer_syncs_the_membership_log_but_no_features() {
+    let (old, new, new2) = trio(172, 173, 174).await;
+    play_v02(&old);
+    let old_rec = old.add("dari laptop lama");
+    let new_rec = new.add("dari laptop baru");
+    let new2_rec = new2.add("dari laptop baru kedua");
+    let old_op = old.backend.add_op(super::testing::op("op laptop lama"));
+    let new_op = new.backend.add_op(super::testing::op("op laptop baru"));
+    let new_blob = new.blobs.add(&blob_bytes(30_000, 7));
+    new.blobs.allow(&old.pk, &new_blob);
+    let old_blob = old.blobs.add(&blob_bytes(30_000, 8));
+    old.blobs.allow(&new.pk, &old_blob);
+
+    mesh(&[&old, &new, &new2]).await;
+
+    // Membership log: everyone gets every op, also from and to v0.2.
+    wait_for("ops reach every laptop", || {
+        [&old, &new, &new2]
+            .iter()
+            .all(|n| n.backend.has_op(&old_op) && n.backend.has_op(&new_op))
+    })
+    .await;
+    // Features between the two v0.3 laptops still sync.
+    wait_for("v0.3 laptops exchange records", || {
+        new.toy.has(&new2_rec) && new2.toy.has(&new_rec)
+    })
+    .await;
+    // The v0.2 laptop (v0.3 code here) did offer to the v0.3 ones, so their
+    // refusal of `FeatureHave` was exercised.
+    wait_for("the v0.2 laptop tried feature sessions", || {
+        old.toy.was_offered_to(&new.pk) && old.toy.was_offered_to(&new2.pk)
+    })
+    .await;
+
+    // Blobs: v0.3 serves nothing to v0.2, and does not ask v0.2.
+    let dest = old.downloads.path().join("dari-baru.bin");
+    let res = old.fetch(&new_blob, 1_000_000, &[&new], &dest).await;
+    assert!(res.is_err(), "{res:?}");
+    assert!(!dest.exists());
+    assert!(
+        !new.blobs.was_asked(&old.pk, &new_blob),
+        "a v0.3 laptop looked up a blob for a v0.2 peer"
+    );
+    let dest = new.downloads.path().join("dari-lama.bin");
+    let res = new.fetch(&old_blob, 1_000_000, &[&old], &dest).await;
+    assert!(res.is_err(), "{res:?}");
+    assert!(!dest.exists());
+    assert!(
+        !old.blobs.was_asked(&new.pk, &old_blob),
+        "a v0.3 laptop asked a v0.2 peer for a blob"
+    );
+
+    // More rounds must not change anything.
+    for n in [&old, &new, &new2] {
+        n.net.refresh();
+    }
+    tokio::time::sleep(GRACE).await;
+
+    for v3 in [&new, &new2] {
+        assert!(
+            !v3.toy.was_offered_to(&old.pk),
+            "a v0.3 laptop offered records to a v0.2 peer"
+        );
+        assert!(v3.toy.served_to(&old.pk).is_empty());
+        assert!(
+            !v3.toy.was_connected_to(&old.pk),
+            "peer_connected was called for a v0.2 peer"
+        );
+        assert!(
+            v3.toy.ingested_from(&old.pk).is_empty(),
+            "records from a v0.2 peer reached ingest"
+        );
+        assert!(!v3.toy.has(&old_rec));
+        // Connected for the membership log, offline for the features.
+        assert!(v3.net.connected_peers().contains(&old.pk));
+        assert!(!v3.hub.connected_peers().contains(&old.pk));
+    }
+    assert_eq!(new.hub.connected_peers(), vec![new2.pk.clone()]);
+    assert!(old.toy.ingested_any().is_empty(), "v0.2 received records");
+    assert!(!old.toy.has(&new_rec) && !old.toy.has(&new2_rec));
+    assert!(old.toy.served_to(&new.pk).is_empty());
+    assert!(old.toy.served_to(&new2.pk).is_empty());
+
+    // Connections stay up, and the membership log keeps syncing.
+    assert!(old.connected_to(&new) && new.connected_to(&old));
+    assert!(old.connected_to(&new2) && new2.connected_to(&old));
+    let later = new.backend.add_op(super::testing::op("op sesudahnya"));
+    new.net.refresh();
+    wait_for("a later op reaches the v0.2 laptop", || {
+        old.backend.has_op(&later)
+    })
+    .await;
+    shutdown(&[&old, &new, &new2]).await;
+}

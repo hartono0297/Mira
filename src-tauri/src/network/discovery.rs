@@ -30,18 +30,68 @@ const MAX_CANDIDATES: usize = 256;
 const MAX_CANDIDATES_PER_KEY: usize = 4;
 /// Peers dialed at the same time.
 const MAX_CONCURRENT_DIALS: usize = 8;
+/// Longest TXT `on` (organization name) in bytes, sent and read (contract
+/// 8.1). Keeps the whole TXT record well inside one mDNS packet.
+const MAX_TXT_ORG_NAME: usize = 63;
 
 struct MdnsHandle {
     daemon: ServiceDaemon,
-    /// Full service name and org of the current advertisement.
-    registered: Option<(String, String)>,
+    /// Full service name and contents of the current advertisement.
+    registered: Option<(String, Advert)>,
+}
+
+/// What this laptop announces besides its key. A change of any field
+/// (organization, its name, or whether join requests are taken)
+/// re-registers the service so browsers see the new TXT.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Advert {
+    /// TXT `org`.
+    org: String,
+    /// TXT `on`, already cut to `MAX_TXT_ORG_NAME`; left out when `None`.
+    org_name: Option<String>,
+    /// TXT `j` = `"1"`. Left out (not `"0"`) when false, so the record stays
+    /// what a v0.2 laptop sends and readers only test for `"1"`.
+    accepts_join: bool,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Candidate {
     pub pk: String,
     pub org: Option<String>,
+    /// TXT `on`, cleaned by `parse_txt_org_name`. Unauthenticated hint.
+    pub org_name: Option<String>,
+    /// TXT `j` == `"1"`. Unauthenticated hint.
+    pub accepts_join: bool,
     pub seen: Instant,
+}
+
+/// `name` cut at a character boundary to at most `MAX_TXT_ORG_NAME` bytes.
+fn txt_org_name(name: &str) -> String {
+    truncate_at_char(name, MAX_TXT_ORG_NAME).to_owned()
+}
+
+/// The longest prefix of `s` with at most `max` bytes that ends on a
+/// character boundary.
+fn truncate_at_char(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// TXT `on` as received: anyone on the LAN can send anything, so at most
+/// `MAX_TXT_ORG_NAME` bytes, no control characters, trimmed. Empty: `None`.
+fn parse_txt_org_name(raw: &str) -> Option<String> {
+    let cleaned: String = truncate_at_char(raw, MAX_TXT_ORG_NAME)
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    let trimmed = cleaned.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 struct Backoff {
@@ -84,6 +134,32 @@ impl Discovery {
 
     pub(crate) fn mdns_running(&self) -> bool {
         lock(&self.mdns).is_some()
+    }
+
+    /// Laptops announcing an organization (TXT `org`, `on`, `j`), freshest
+    /// first, without this laptop and without candidates older than
+    /// `CANDIDATE_TTL` (v0.3 onboarding). Hints only.
+    pub(crate) fn office_hints(&self, me: &str) -> Vec<super::OfficeHint> {
+        let now = Instant::now();
+        let mut v: Vec<(Instant, super::OfficeHint)> = lock(&self.candidates)
+            .iter()
+            .filter(|(_, c)| c.pk != me && now.duration_since(c.seen) < CANDIDATE_TTL)
+            .filter_map(|(a, c)| {
+                let org = c.org.clone()?;
+                Some((
+                    c.seen,
+                    super::OfficeHint {
+                        public_key: c.pk.clone(),
+                        address: *a,
+                        org,
+                        org_name: c.org_name.clone(),
+                        accepts_join: c.accepts_join,
+                    },
+                ))
+            })
+            .collect();
+        v.sort_by_key(|x| std::cmp::Reverse(x.0));
+        v.into_iter().map(|(_, h)| h).collect()
     }
 
     /// mDNS candidates advertising an organization, freshest first.
@@ -185,30 +261,56 @@ pub(crate) async fn start_mdns(inner: &Arc<Inner>) {
     refresh_mdns(inner).await;
 }
 
-/// Advertises this laptop when it has an organization, with the current org
-/// in TXT; withdraws the advertisement otherwise.
+/// Advertises this laptop when it has an organization, with the current
+/// org, its name and whether it takes join requests in TXT; withdraws the
+/// advertisement otherwise. Called on start, `Network::refresh` and new ops,
+/// which covers renames and role changes.
 pub(crate) async fn refresh_mdns(inner: &Arc<Inner>) {
-    let desired = inner.backend.org_id();
+    if !inner.disc.mdns_running() {
+        return;
+    }
+    // Backend reads may hit the database: keep them off the async workers.
+    let desired = inner
+        .blocking(|b| {
+            b.org_id().map(|org| Advert {
+                org,
+                org_name: b
+                    .org_name()
+                    .map(|n| txt_org_name(&n))
+                    .filter(|n| !n.is_empty()),
+                accepts_join: b.accepts_join_requests(),
+            })
+        })
+        .await;
+    let Some(desired) = desired else {
+        return;
+    };
     let mut old_unregister = None;
     {
         let mut guard = lock(&inner.disc.mdns);
         let Some(h) = guard.as_mut() else {
             return;
         };
-        if h.registered.as_ref().map(|(_, o)| o) == desired.as_ref() {
+        if h.registered.as_ref().map(|(_, a)| a) == desired.as_ref() {
             return;
         }
         if let Some((fullname, _)) = h.registered.take() {
             old_unregister = h.daemon.unregister(&fullname).ok();
         }
-        if let Some(org) = desired {
+        if let Some(advert) = desired {
             let instance = &inner.me[..16];
             let host = format!("mira-{instance}.local.");
-            let props = [
+            let mut props = vec![
                 ("v", "1".to_owned()),
                 ("pk", inner.me.clone()),
-                ("org", org.clone()),
+                ("org", advert.org.clone()),
             ];
+            if let Some(name) = &advert.org_name {
+                props.push(("on", name.clone()));
+            }
+            if advert.accepts_join {
+                props.push(("j", "1".to_owned()));
+            }
             let result = ServiceInfo::new(
                 SERVICE_TYPE,
                 instance,
@@ -223,7 +325,7 @@ pub(crate) async fn refresh_mdns(inner: &Arc<Inner>) {
                 h.daemon.register(info).map(|()| fullname)
             });
             match result {
-                Ok(fullname) => h.registered = Some((fullname, org)),
+                Ok(fullname) => h.registered = Some((fullname, advert)),
                 Err(e) => inner
                     .disc
                     .set_mdns_status(false, Some(format!("Iklan mDNS gagal: {e}"))),
@@ -271,6 +373,8 @@ async fn browse_loop(weak: Weak<Inner>, rx: mdns_sd::Receiver<ServiceEvent>) {
             .get_property_val_str("org")
             .filter(|o| wire::is_hex_id32(o))
             .map(str::to_owned);
+        let org_name = svc.get_property_val_str("on").and_then(parse_txt_org_name);
+        let accepts_join = svc.get_property_val_str("j") == Some("1");
         let port = svc.get_port();
         let mut added = false;
         for ip in svc.get_addresses_v4() {
@@ -283,6 +387,8 @@ async fn browse_loop(weak: Weak<Inner>, rx: mdns_sd::Receiver<ServiceEvent>) {
                 Candidate {
                     pk: pk.to_owned(),
                     org: org.clone(),
+                    org_name: org_name.clone(),
+                    accepts_join,
                     seen: Instant::now(),
                 },
             );
@@ -479,6 +585,8 @@ mod tests {
                 Candidate {
                     pk: pk.clone(),
                     org: Some("0".repeat(32)),
+                    org_name: None,
+                    accepts_join: false,
                     seen: t0 + Duration::from_millis(u64::from(i)),
                 },
             );
@@ -488,6 +596,8 @@ mod tests {
             Candidate {
                 pk: "b".repeat(64),
                 org: Some("0".repeat(32)),
+                org_name: None,
+                accepts_join: false,
                 seen: t0,
             },
         );
@@ -504,5 +614,134 @@ mod tests {
         let newest: Vec<u8> = (10 - MAX_CANDIDATES_PER_KEY as u8..10).collect();
         assert_eq!(kept, newest);
         assert_eq!(map.len(), MAX_CANDIDATES_PER_KEY + 1);
+    }
+
+    #[test]
+    fn txt_org_name_cuts_at_a_char_boundary() {
+        // Short names stay as they are.
+        assert_eq!(txt_org_name("Biro Arsitektur"), "Biro Arsitektur");
+        assert_eq!(txt_org_name(""), "");
+
+        // Exactly 63 bytes stays whole; 64 loses the last byte.
+        let exact = "a".repeat(63);
+        assert_eq!(txt_org_name(&exact), exact);
+        let over = "b".repeat(64);
+        assert_eq!(txt_org_name(&over), "b".repeat(63));
+
+        // Two-byte letters: 31 of them are 62 bytes, the 32nd would end at 64.
+        let accents = "Ü".repeat(40);
+        let cut = txt_org_name(&accents);
+        assert_eq!(cut, "Ü".repeat(31));
+        assert_eq!(cut.len(), 62);
+
+        // A long name with accents and emoji: never longer than 63 bytes,
+        // always valid UTF-8, always a prefix of the original.
+        let name = "Biro Arsitektur Ünïcödé Sejahtera 🏗️ Cabang Jakarta Selatan 🌴 dan Sekitarnya";
+        assert!(name.len() > 63);
+        let cut = txt_org_name(name);
+        assert!(cut.len() <= 63, "{} bytes", cut.len());
+        assert!(name.starts_with(&cut));
+        assert!(cut.len() >= 60, "cut no more than one character: {cut:?}");
+
+        // A four-byte emoji straddling byte 63 is dropped whole.
+        let emoji = format!("{}🌴", "x".repeat(61));
+        assert_eq!(emoji.len(), 65);
+        assert_eq!(txt_org_name(&emoji), "x".repeat(61));
+        // One that ends exactly at byte 63 is kept.
+        let fits = format!("{}🌴", "x".repeat(59));
+        assert_eq!(fits.len(), 63);
+        assert_eq!(txt_org_name(&fits), fits);
+    }
+
+    #[test]
+    fn txt_org_name_from_the_lan_is_cleaned() {
+        assert_eq!(
+            parse_txt_org_name("  Kantor Pusat  ").as_deref(),
+            Some("Kantor Pusat")
+        );
+        assert_eq!(parse_txt_org_name(""), None);
+        assert_eq!(parse_txt_org_name("   "), None);
+        assert_eq!(parse_txt_org_name("\u{7}\n\t"), None);
+        assert_eq!(
+            parse_txt_org_name("Kan\u{0}tor\nPusat\u{1b}").as_deref(),
+            Some("KantorPusat")
+        );
+        // At most 63 bytes are read, at a character boundary.
+        let long = "é".repeat(100);
+        let got = parse_txt_org_name(&long).expect("not empty");
+        assert_eq!(got, "é".repeat(31));
+        assert_eq!(parse_txt_org_name(&"z".repeat(300)), Some("z".repeat(63)));
+    }
+
+    fn hint_candidate(
+        pk: char,
+        org: Option<&str>,
+        name: Option<&str>,
+        j: bool,
+        seen: Instant,
+    ) -> Candidate {
+        Candidate {
+            pk: pk.to_string().repeat(64),
+            org: org.map(str::to_owned),
+            org_name: name.map(str::to_owned),
+            accepts_join: j,
+            seen,
+        }
+    }
+
+    #[test]
+    fn office_hints_lists_fresh_org_candidates_newest_first() {
+        let d = Discovery::new();
+        let me = "e".repeat(64);
+        let org = "0123456789abcdef0123456789abcdef";
+        let now = Instant::now();
+        let addr = |n: u8| SocketAddr::from(([10, 0, 0, n], 47800));
+        d.add_candidate(
+            addr(1),
+            hint_candidate('a', Some(org), Some("Kantor"), true, now),
+        );
+        d.add_candidate(
+            addr(2),
+            hint_candidate('b', Some(org), None, false, now + Duration::from_millis(5)),
+        );
+        // No organization: an unjoined laptop, not an office.
+        d.add_candidate(addr(3), hint_candidate('c', None, None, false, now));
+        // This laptop itself.
+        d.add_candidate(
+            addr(4),
+            hint_candidate('e', Some(org), Some("Kantor"), true, now),
+        );
+        // Stale: past `CANDIDATE_TTL` (only when the clock allows it).
+        // Inserted directly, since `add_candidate` prunes stale entries.
+        if let Some(old) = now.checked_sub(CANDIDATE_TTL + Duration::from_secs(1)) {
+            lock(&d.candidates).insert(
+                addr(5),
+                hint_candidate('f', Some(org), Some("Lama"), true, old),
+            );
+        }
+
+        let hints = d.office_hints(&me);
+        assert_eq!(hints.len(), 2, "{hints:?}");
+        assert_eq!(
+            hints[0],
+            super::super::OfficeHint {
+                public_key: "b".repeat(64),
+                address: addr(2),
+                org: org.to_owned(),
+                org_name: None,
+                accepts_join: false,
+            }
+        );
+        assert_eq!(
+            hints[1],
+            super::super::OfficeHint {
+                public_key: "a".repeat(64),
+                address: addr(1),
+                org: org.to_owned(),
+                org_name: Some("Kantor".to_owned()),
+                accepts_join: true,
+            }
+        );
+        assert!(Discovery::new().office_hints(&me).is_empty());
     }
 }
