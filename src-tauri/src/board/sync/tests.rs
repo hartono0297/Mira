@@ -1536,3 +1536,37 @@ fn an_oversized_first_change_is_refused_before_the_probe() {
     assert!(store::project(&b.conn, &id).is_err());
     assert_eq!(rejected(&b.conn), ["board_bad_project"]);
 }
+
+#[test]
+fn a_broken_task_from_an_older_version_does_not_freeze_the_board() {
+    let (mut a, mut b) = pair();
+    let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+        .unwrap()
+        .value;
+    let other = mutate(&mut a, &p.id, |d, s| d.create_task(s, new_task("lain")));
+    send(&a, &mut b, &p.id);
+
+    // B holds a task with `subtasks: "x"`, as v0.3 accepted from a peer.
+    use automerge::ROOT;
+    use automerge::ReadDoc;
+    use automerge::transaction::Transactable;
+    mutate(&mut b, &p.id, |d, s| {
+        let id = d.create_task(s, new_task("lama"))?;
+        let tasks = d.raw().get(ROOT, "tasks").unwrap().unwrap().1;
+        let t = d.raw().get(&tasks, id.as_str()).unwrap().unwrap().1;
+        d.raw().put(&t, "subtasks", "x").unwrap();
+        Ok(id)
+    });
+
+    // Changes from A to other tasks still go through on B.
+    mutate(&mut a, &p.id, |d, s| d.add_subtask(s, &other, "baru", None));
+    mutate(&mut a, &p.id, |d, s| d.create_task(s, new_task("baru")));
+    let r = send(&a, &mut b, &p.id);
+    assert_eq!((r.applied, r.rejected), (2, 0));
+    let on_b = tasks(&b, &p.id);
+    assert_eq!(on_b.len(), 3);
+    let lain = on_b.iter().find(|t| t.id == other).unwrap();
+    assert_eq!(lain.subtasks.len(), 1);
+    assert!(on_b.iter().find(|t| t.title == "lama").unwrap().subtasks.is_empty());
+    view_json(&b, &p.id);
+}

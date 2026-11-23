@@ -442,10 +442,12 @@ fn nobody_can_create_a_task_at_someone_elses_id() {
         // Refused by a laptop without A's change...
         let mut without = BoardDoc::load(&doc.save(), &A).unwrap();
         assert!(accept(&mut without, cb.clone(), &b).is_err());
-        // ...and by one that has it, so A's change is never blocked.
+        // ...and by one that has it, so A's change is never blocked. B's
+        // change does not depend on A's, so the key is judged missing on
+        // both laptops and the binding check refuses it on both.
         let mut with = BoardDoc::load(&doc.save(), &A).unwrap();
         accept(&mut with, ca.clone(), &a).unwrap();
-        assert!(judge(&with, &cb).is_err());
+        assert!(accept(&mut with, cb, &b).is_err());
     }
 }
 
@@ -1045,4 +1047,631 @@ fn ticking_a_subtask_ticked_concurrently_is_allowed() {
     accept(&mut doc, c, &b).unwrap();
     let o = entry(&mut doc, &task_a, "subtasks", &sid);
     assert_eq!(doc.raw().get_all(&o, "done_at").unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Predecessors, objects missing at the dependencies and new-entry contents
+// (security review of v0.4).
+
+use automerge::ExpandedChange;
+
+/// The Automerge operation id behind an object or value id.
+fn op_id(id: &ObjId) -> OpId {
+    let s = id.to_string();
+    let (ctr, actor) = s.split_once('@').unwrap();
+    OpId(ctr.parse().unwrap(), ActorId::from(hex::decode(actor).unwrap()))
+}
+
+/// `c` with its operations or dependencies edited and encoded again: what
+/// a modified app could send.
+fn rewrite(c: &Change, f: impl FnOnce(&mut ExpandedChange)) -> Change {
+    let mut e = c.decode();
+    e.hash = None;
+    f(&mut e);
+    Change::from(e)
+}
+
+fn pred_of(ids: &[OpId]) -> SortedVec<OpId> {
+    let mut v: Vec<OpId> = ids.to_vec();
+    v.sort();
+    SortedVec::from(v)
+}
+
+/// Index of the first operation of `e` at map key `key`.
+fn op_at(e: &ExpandedChange, key: &str) -> usize {
+    e.operations
+        .iter()
+        .position(|o| o.key == Key::Map(key.into()))
+        .unwrap_or_else(|| panic!("no op at {key}"))
+}
+
+/// `base()` where `task_a` holds a subtask and a time entry of A, as
+/// `(doc, task_a, subtask id, entry id)`. The entry runs from 07:59 to T0.
+fn with_parts() -> (BoardDoc, String, String, String) {
+    let (mut doc, task_a, _, _) = base();
+    let a = hex32(&A);
+    let mut ids = (String::new(), String::new());
+    let c = change_by(&mut doc, &A, |d| {
+        let s = Stamp { actor: &a, at: T0 };
+        ids.0 = d.add_subtask(s, &task_a, "Punya A", None).unwrap();
+        ids.1 = d.log_time(s, &task_a, 60, "").unwrap();
+    });
+    accept(&mut doc, c, &a).unwrap();
+    (doc, task_a, ids.0, ids.1)
+}
+
+#[test]
+fn a_put_cannot_remove_values_under_another_key() {
+    let (mut doc, task_a, _, _) = with_parts();
+    let b = hex32(&B);
+    let t = task_obj(&mut doc, &task_a);
+    let (_, subtasks) = doc.raw().get(&t, "subtasks").unwrap().unwrap();
+    let (_, time) = doc.raw().get(&t, "time").unwrap().unwrap();
+    let honest = change_by(&mut doc, &B, |d| {
+        let changes = TaskChanges {
+            due: Some(Some("2026-12-01".into())),
+            ..Default::default()
+        };
+        d.update_task(Stamp { actor: &b, at: T1 }, &task_a, &changes, &|_| String::new())
+            .unwrap();
+    });
+    let wipe = rewrite(&honest, |e| {
+        let i = op_at(e, "updated_at");
+        let mut pred: Vec<OpId> = e.operations[i].pred.iter().cloned().collect();
+        pred.extend([op_id(&subtasks), op_id(&time)]);
+        e.operations[i].pred = pred_of(&pred);
+    });
+    // Without the rule Automerge really drops both maps.
+    let mut raw = BoardDoc::load(&doc.save(), &A).unwrap();
+    raw.apply(wipe.clone()).unwrap();
+    let t2 = task_obj(&mut raw, &task_a);
+    assert!(raw.raw().get(&t2, "subtasks").unwrap().is_none());
+    assert!(raw.raw().get(&t2, "time").unwrap().is_none());
+    let err = judge(&doc, &wipe).unwrap_err();
+    assert!(err.contains("menimpa nilai"), "{err}");
+    accept(&mut doc, honest, &b).unwrap();
+}
+
+#[test]
+fn a_map_made_on_old_dependencies_cannot_replace_the_existing_one() {
+    let (mut doc, task_a, _) = old_base();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    let old = doc.save();
+    // A makes the first subtask (and the map) of the old task.
+    let ca = change_by(&mut doc, &A, |d| {
+        d.add_subtask(Stamp { actor: &a, at: T0 }, &task_a, "Dari A", None)
+            .unwrap();
+    });
+    accept(&mut doc, ca, &a).unwrap();
+    let t = task_obj(&mut doc, &task_a);
+    let (_, map_a) = doc.raw().get(&t, "subtasks").unwrap().unwrap();
+    // B, built on the document before A's change, makes the map too.
+    let mut before_a = BoardDoc::load(&old, &B).unwrap();
+    let cb = change_by(&mut before_a, &B, |d| {
+        d.add_subtask(Stamp { actor: &b, at: T0 }, &task_a, "Dari B", None)
+            .unwrap();
+    });
+    let forged = rewrite(&cb, |e| {
+        let i = op_at(e, "subtasks");
+        e.operations[i].pred = pred_of(&[op_id(&map_a)]);
+    });
+    assert!(judge(&doc, &forged).is_err(), "pred ke map A");
+    // The honest concurrent map stays allowed: both maps are kept.
+    accept(&mut doc, cb, &b).unwrap();
+    assert_eq!(doc.task(&task_a).unwrap().unwrap().subtasks.len(), 2);
+}
+
+#[test]
+fn a_new_entry_cannot_name_someone_elses_as_predecessor() {
+    let (mut doc, task_a, sid, eid) = with_parts();
+    let b = hex32(&B);
+    let s_obj = entry(&mut doc, &task_a, "subtasks", &sid);
+    let e_obj = entry(&mut doc, &task_a, "time", &eid);
+    let t = task_obj(&mut doc, &task_a);
+    let (_, comments) = doc.raw().get(&t, "comments").unwrap().unwrap();
+    let cid = doc.raw().keys(&comments).next().unwrap();
+    let (_, c_obj) = doc.raw().get(&comments, &cid).unwrap().unwrap();
+    let (_, list) = doc.raw().get(&t, "activity").unwrap().unwrap();
+    let (_, first_entry) = doc.raw().get(&list, 0).unwrap().unwrap();
+
+    let s = Stamp { actor: &b, at: T1 };
+    let cases: Vec<(&str, Change, OpId)> = vec![
+        (
+            "catatan baru menimpa catatan A",
+            change_by(&mut doc, &B, |d| {
+                d.log_time(s, &task_a, 60, "").unwrap();
+            }),
+            op_id(&e_obj),
+        ),
+        (
+            "subtask baru menimpa subtask A",
+            change_by(&mut doc, &B, |d| {
+                d.add_subtask(s, &task_a, "x", None).unwrap();
+            }),
+            op_id(&s_obj),
+        ),
+        (
+            "komentar baru menimpa komentar A",
+            change_by(&mut doc, &B, |d| {
+                d.add_comment(s, &task_a, "x").unwrap();
+            }),
+            op_id(&c_obj),
+        ),
+    ];
+    for (label, honest, victim) in cases {
+        // The make of the new entry is the first map made at a key.
+        let forged = rewrite(&honest, |e| {
+            let i = e
+                .operations
+                .iter()
+                .position(|o| matches!(o.action, OpType::Make(ObjType::Map)) && !o.insert)
+                .unwrap();
+            e.operations[i].pred = pred_of(std::slice::from_ref(&victim));
+        });
+        assert!(judge(&doc, &forged).is_err(), "{label}");
+        judge(&doc, &honest).unwrap_or_else(|e| panic!("{label} jujur: {e}"));
+    }
+    // A new activity entry that names an old one.
+    let honest = change_by(&mut doc, &B, |d| {
+        d.add_comment(s, &task_a, "y").unwrap();
+    });
+    let forged = rewrite(&honest, |e| {
+        let i = e.operations.iter().position(|o| o.insert).unwrap();
+        e.operations[i].pred = pred_of(&[op_id(&first_entry)]);
+    });
+    assert!(judge(&doc, &forged).is_err(), "riwayat baru menimpa riwayat lama");
+}
+
+#[test]
+fn an_inner_conflict_cannot_forge_the_owner_of_a_new_entry() {
+    let (mut doc, task_a, _, _) = with_parts();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    for part in ["time", "subtasks"] {
+        let field = if part == "time" { "by" } else { "created_by" };
+        let nonce = random_id();
+        let id = if part == "time" {
+            derive_time_id(&b, &nonce)
+        } else {
+            derive_subtask_id(&b, &nonce)
+        };
+        // Two puts of the owner in one change: A first, then B over it.
+        let honest = change_by(&mut doc, &B, |d| {
+            let m = part_obj(d, &task_a, part);
+            let am = d.raw();
+            let e = am.put_object(&m, id.as_str(), ObjType::Map).unwrap();
+            am.put(&e, "nonce", nonce.as_str()).unwrap();
+            am.put(&e, field, a.as_str()).unwrap();
+            am.put(&e, field, b.as_str()).unwrap();
+        });
+        // The second one no longer names the first: both stay, a conflict.
+        let conflict = rewrite(&honest, |e| {
+            let i = e
+                .operations
+                .iter()
+                .rposition(|o| o.key == Key::Map(field.into()))
+                .unwrap();
+            e.operations[i].pred = SortedVec::new();
+        });
+        let err = judge(&doc, &conflict).unwrap_err();
+        assert!(err.contains("lebih dari satu nilai"), "{part}: {err}");
+        // Applied anyway, the authorship check reads every value.
+        let mut raw = BoardDoc::load(&doc.save(), &A).unwrap();
+        raw.apply(conflict).unwrap();
+        let o = entry(&mut raw, &task_a, part, &id);
+        assert_eq!(raw.raw().get_all(&o, field).unwrap().len(), 2);
+        let made = vec![(o.to_string(), id.clone())];
+        let needs = if part == "time" {
+            Needs {
+                new_time: made,
+                ..Needs::default()
+            }
+        } else {
+            Needs {
+                new_subtasks: made,
+                ..Needs::default()
+            }
+        };
+        let err = check_new_authorship(&raw, &needs, &b).unwrap_err();
+        assert!(err.contains("atas nama"), "{part}: {err}");
+        // The honest second put leaves one value: fine.
+        let mut fresh = BoardDoc::load(&doc.save(), &A).unwrap();
+        assert!(accept(&mut fresh, honest, &b).unwrap().creates());
+    }
+}
+
+#[test]
+fn an_object_missing_from_the_dependencies_is_refused_on_every_laptop() {
+    let (mut doc, task_a, _, _) = base();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    let old_heads = doc.heads();
+    let mut sid = String::new();
+    let mut eid = String::new();
+    let mut task = String::new();
+    let h = change_by(&mut doc, &A, |d| {
+        let s = Stamp { actor: &a, at: T0 };
+        sid = d.add_subtask(s, &task_a, "Punya A", None).unwrap();
+        eid = d.log_time(s, &task_a, 60, "").unwrap();
+        task = d.create_task(s, TaskInit::default()).unwrap();
+    });
+    let mut with = BoardDoc::load(&doc.save(), &A).unwrap();
+    accept(&mut with, h, &a).unwrap();
+    let without = BoardDoc::load(&doc.save(), &A).unwrap();
+
+    let s = Stamp { actor: &b, at: T1 };
+    let sa = Stamp { actor: &a, at: T1 };
+    type Edit<'a> = Box<dyn Fn(&mut BoardDoc) + 'a>;
+    let edits: Vec<(&str, &[u8; 32], Edit)> = vec![
+        (
+            "judul subtask",
+            &B,
+            Box::new(|d| {
+                let ch = SubtaskChanges {
+                    title: Some("diubah".into()),
+                    ..Default::default()
+                };
+                d.update_subtask(s, &task_a, &sid, &ch).unwrap();
+            }),
+        ),
+        (
+            "catatan waktu",
+            &A,
+            Box::new(|d| {
+                let o = entry(d, &task_a, "time", &eid);
+                d.raw().put(&o, "note", "x").unwrap();
+            }),
+        ),
+        (
+            "pindah task baru",
+            &B,
+            Box::new(|d| d.move_task(s, &task, ColumnId::Doing, 0).unwrap()),
+        ),
+        (
+            "subtask di task baru",
+            &A,
+            Box::new(|d| {
+                d.add_subtask(sa, &task, "x", None).unwrap();
+            }),
+        ),
+    ];
+    for (label, who, edit) in edits {
+        let real = change_by(&mut with, who, |d| edit(d));
+        let stale = rewrite(&real, |e| e.deps = old_heads.clone());
+        let on_with = judge(&with, &stale).unwrap_err();
+        let on_without = judge(&without, &stale).unwrap_err();
+        assert_eq!(on_with, on_without, "{label}");
+        assert!(on_with.contains("tidak ada pada perubahan"), "{label}: {on_with}");
+        // With its real dependencies the same edit is fine.
+        judge(&with, &real).unwrap_or_else(|e| panic!("{label}: {e}"));
+    }
+}
+
+#[test]
+fn a_deleted_subtask_cannot_be_made_again_in_another_map() {
+    // Two conflicting `subtasks` maps on an old task, one per laptop.
+    let (mut doc, task_a, _) = old_base();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    let ca = change_by(&mut doc, &A, |x| {
+        x.add_subtask(Stamp { actor: &a, at: T0 }, &task_a, "Dari A", None)
+            .unwrap();
+    });
+    let cb = change_by(&mut doc, &B, |x| {
+        x.add_subtask(Stamp { actor: &b, at: T0 }, &task_a, "Dari B", None)
+            .unwrap();
+    });
+    accept(&mut doc, ca, &a).unwrap();
+    accept(&mut doc, cb, &b).unwrap();
+    let t = doc.task(&task_a).unwrap().unwrap();
+    let sa = t.subtasks.iter().find(|s| s.title == "Dari A").unwrap().id.clone();
+    let c = change_by(&mut doc, &A, |x| {
+        x.delete_subtask(Stamp { actor: &a, at: T1 }, &task_a, &sa).unwrap();
+    });
+    accept(&mut doc, c, &a).unwrap();
+    // A makes the same id again in the map that does not hold it.
+    let task = task_obj(&mut doc, &task_a);
+    let maps: Vec<ObjId> = doc
+        .raw()
+        .get_all(&task, "subtasks")
+        .unwrap()
+        .into_iter()
+        .map(|(_, m)| m)
+        .collect();
+    let other = maps
+        .into_iter()
+        .find(|m| doc.raw().get(m, sa.as_str()).unwrap().is_none())
+        .unwrap();
+    let nonce = {
+        let o = entry(&mut doc, &task_a, "subtasks", &sa);
+        let (v, _) = doc.raw().get(&o, "nonce").unwrap().unwrap();
+        v.as_str().unwrap().to_owned()
+    };
+    let c = change_by(&mut doc, &A, |x| {
+        let am = x.raw();
+        let s = am.put_object(&other, sa.as_str(), ObjType::Map).unwrap();
+        am.put(&s, "nonce", nonce.as_str()).unwrap();
+        am.put(&s, "created_by", a.as_str()).unwrap();
+        am.put(&s, "title", "hidup lagi").unwrap();
+        am.put(&s, "deleted", false).unwrap();
+    });
+    let err = judge(&doc, &c).unwrap_err();
+    assert!(err.contains("menimpa subtask"), "{err}");
+}
+
+#[test]
+fn values_from_another_laptop_are_checked() {
+    let (mut doc, task_a, sid, eid) = with_parts();
+    let b = hex32(&B);
+    let long_rank = format!("{}1", "z".repeat(rank::MAX_RANK_LEN));
+    type Edit = Box<dyn Fn(&mut AutoCommit, &ObjId)>;
+    let lr = long_rank.clone();
+    let lr2 = long_rank;
+    let null = automerge::ScalarValue::Null;
+    let bad: Vec<(&str, &[u8; 32], On, Edit)> = vec![
+        ("rank task panjang", &B, On::Task, Box::new(move |am, o| am.put(o, "rank", lr.as_str()).unwrap())),
+        ("rank task bukan base62", &B, On::Task, Box::new(|am, o| am.put(o, "rank", "a b").unwrap())),
+        ("rank subtask panjang", &B, On::Live, Box::new(move |am, o| am.put(o, "rank", lr2.as_str()).unwrap())),
+        ("judul subtask panjang", &B, On::Live, Box::new(|am, o| am.put(o, "title", "x".repeat(201)).unwrap())),
+        ("done_by orang lain", &B, On::Live, Box::new(|am, o| am.put(o, "done_by", hex32(&A)).unwrap())),
+        ("done_at bukan waktu", &B, On::Live, Box::new(|am, o| am.put(o, "done_at", "kemarin").unwrap())),
+        ("timer jalan lagi", &A, On::Entry, Box::new(move |am, o| am.put(o, "end", null.clone()).unwrap())),
+        ("selesai sebelum mulai", &A, On::Entry, Box::new(|am, o| am.put(o, "end", "2026-11-23T07:00:00Z").unwrap())),
+        ("mulai setelah selesai", &A, On::Entry, Box::new(|am, o| am.put(o, "start", "2026-11-24T08:00:00Z").unwrap())),
+        ("start bukan waktu", &A, On::Entry, Box::new(|am, o| am.put(o, "start", "pagi").unwrap())),
+        ("catatan panjang", &A, On::Entry, Box::new(|am, o| am.put(o, "note", "x".repeat(201)).unwrap())),
+        (
+            "waktu terlalu panjang",
+            &A,
+            On::Entry,
+            Box::new(|am, o| am.put(o, "end", format!("2026-11-23T09:00:00.{}Z", "1".repeat(40))).unwrap()),
+        ),
+    ];
+    let edit_on = |doc: &mut BoardDoc, who: &[u8; 32], on: On, edit: &Edit| {
+        change_by(doc, who, |d| {
+            let obj = match on {
+                On::Task => task_obj(d, &task_a),
+                On::Live => entry(d, &task_a, "subtasks", &sid),
+                _ => entry(d, &task_a, "time", &eid),
+            };
+            edit(d.raw(), &obj);
+        })
+    };
+    for (label, who, on, edit) in &bad {
+        let c = edit_on(&mut doc, who, *on, edit);
+        assert!(judge(&doc, &c).is_err(), "{label} harus ditolak");
+    }
+    // The same fields with good values pass.
+    let good: Vec<(&str, &[u8; 32], On, Edit)> = vec![
+        ("rank task", &B, On::Task, Box::new(|am, o| am.put(o, "rank", "a1").unwrap())),
+        ("judul 200 karakter", &B, On::Live, Box::new(|am, o| am.put(o, "title", "é".repeat(200)).unwrap())),
+        ("done_by sendiri", &B, On::Live, Box::new(move |am, o| am.put(o, "done_by", b.as_str()).unwrap())),
+        ("done_at", &B, On::Live, Box::new(|am, o| am.put(o, "done_at", T1).unwrap())),
+        ("selesai", &A, On::Entry, Box::new(|am, o| am.put(o, "end", "2026-11-23T16:30:00+07:00").unwrap())),
+    ];
+    for (label, who, on, edit) in &good {
+        let c = edit_on(&mut doc, who, *on, edit);
+        judge(&doc, &c).unwrap_or_else(|e| panic!("{label}: {e}"));
+    }
+}
+
+#[test]
+fn new_subtasks_and_entries_hold_only_their_known_fields() {
+    let (mut doc, task_a, _, _) = with_parts();
+    let b = hex32(&B);
+    let long_rank = format!("{}1", "z".repeat(rank::MAX_RANK_LEN));
+    type Extra = Box<dyn Fn(&mut AutoCommit, &ObjId)>;
+    let cases: Vec<(&str, bool, Extra)> = vec![
+        ("isian asing subtask", true, Box::new(|am, s| am.put(s, "warna", "merah").unwrap())),
+        ("isian asing catatan", false, Box::new(|am, e| am.put(e, "jam", 5).unwrap())),
+        (
+            "objek bersarang",
+            true,
+            Box::new(|am, s| {
+                am.put_object(s, "title", ObjType::Text).unwrap();
+            }),
+        ),
+        ("rank panjang", true, Box::new(move |am, s| am.put(s, "rank", long_rank.as_str()).unwrap())),
+        ("done_by orang lain", true, Box::new(|am, s| am.put(s, "done_by", hex32(&A)).unwrap())),
+        ("created_at bukan waktu", true, Box::new(|am, s| am.put(s, "created_at", "t1").unwrap())),
+        ("judul panjang", true, Box::new(|am, s| am.put(s, "title", "x".repeat(201)).unwrap())),
+        ("selesai sebelum mulai", false, Box::new(|am, e| am.put(e, "end", "2026-11-23T07:00:00Z").unwrap())),
+        ("catatan panjang", false, Box::new(|am, e| am.put(e, "note", "x".repeat(201)).unwrap())),
+        ("hapus isian", true, Box::new(|am, s| am.delete(s, "title").unwrap())),
+    ];
+    for (label, is_sub, extra) in cases {
+        let nonce = random_id();
+        let c = change_by(&mut doc, &B, |x| {
+            let (id, part) = if is_sub {
+                (derive_subtask_id(&b, &nonce), "subtasks")
+            } else {
+                (derive_time_id(&b, &nonce), "time")
+            };
+            if is_sub {
+                raw_subtask(x, &task_a, &id, &b, Some(&nonce));
+            } else {
+                raw_entry(x, &task_a, &id, &b, Some(&nonce));
+            }
+            let o = entry(x, &task_a, part, &id);
+            extra(x.raw(), &o);
+        });
+        assert!(judge(&doc, &c).is_err(), "{label} harus ditolak");
+    }
+}
+
+#[test]
+fn a_task_holds_a_bounded_number_of_entries_from_other_laptops() {
+    let (mut doc, task_a, _, _) = base();
+    let b = hex32(&B);
+    let make = |doc: &mut BoardDoc, part: &str, n: usize| {
+        change_by(doc, &B, |x| {
+            let m = part_obj(x, &task_a, part);
+            let am = x.raw();
+            for _ in 0..n {
+                let nonce = random_id();
+                let id = if part == "time" {
+                    derive_time_id(&b, &nonce)
+                } else {
+                    derive_subtask_id(&b, &nonce)
+                };
+                let e = am.put_object(&m, id.as_str(), ObjType::Map).unwrap();
+                am.put(&e, "nonce", nonce.as_str()).unwrap();
+            }
+        })
+    };
+    let c = make(&mut doc, "subtasks", MAX_PEER_SUBTASKS + 1);
+    let err = judge(&doc, &c).unwrap_err();
+    assert!(err.contains("paling banyak"), "{err}");
+    // Up to the limit, counted with what the task already holds.
+    let c = make(&mut doc, "subtasks", MAX_PEER_SUBTASKS - 1);
+    judge(&doc, &c).unwrap();
+    doc.apply(c).unwrap();
+    let c = make(&mut doc, "subtasks", 1);
+    judge(&doc, &c).unwrap();
+    let c = make(&mut doc, "subtasks", 2);
+    assert!(judge(&doc, &c).is_err());
+    let c = make(&mut doc, "time", MAX_PEER_TIME_ENTRIES + 1);
+    assert!(judge(&doc, &c).is_err());
+}
+
+#[test]
+fn touched_tasks_lists_every_task_a_change_writes_into() {
+    let (mut doc, task_a, task_b, _) = with_parts();
+    let b = hex32(&B);
+    let mut new_id = String::new();
+    let c = change_by(&mut doc, &B, |d| {
+        let s = Stamp { actor: &b, at: T1 };
+        new_id = d.create_task(s, TaskInit::default()).unwrap();
+        d.add_subtask(s, &new_id, "di task baru", None).unwrap();
+        d.start_timer(s, &task_a).unwrap();
+        d.add_comment(s, &task_a, "oke").unwrap();
+    });
+    let needs = accept(&mut doc, c, &b).unwrap();
+    let want: BTreeSet<String> = [task_a.clone(), new_id].into_iter().collect();
+    assert_eq!(needs.touched_tasks, want);
+    assert!(!needs.touched_tasks.contains(&task_b));
+    let c = change_by(&mut doc, &B, |d| d.rename_project("Nama Lain").unwrap());
+    assert!(judge(&doc, &c).unwrap().touched_tasks.is_empty());
+}
+
+#[test]
+fn honest_flows_with_several_writes_to_one_key_pass() {
+    let (mut doc, task_a, sid, _) = with_parts();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    // A new task with a subtask and a timer in the same change: fields of
+    // the new task and its new entries are written more than once.
+    let c = change_by(&mut doc, &B, |d| {
+        let s = Stamp { actor: &b, at: T1 };
+        let id = d.create_task(s, TaskInit::default()).unwrap();
+        let sub = d.add_subtask(s, &id, "satu", None).unwrap();
+        let ch = SubtaskChanges {
+            done: Some(true),
+            title: Some("dua".into()),
+            ..Default::default()
+        };
+        d.update_subtask(s, &id, &sub, &ch).unwrap();
+        d.start_timer(s, &id).unwrap();
+        let later = Stamp {
+            actor: &b,
+            at: "2026-11-23T10:00:00Z",
+        };
+        d.stop_timer(later, &id, "beres").unwrap();
+    });
+    accept(&mut doc, c, &b).unwrap();
+    // Ticking, unticking and renaming one subtask in one change.
+    let c = change_by(&mut doc, &A, |d| {
+        let s = Stamp { actor: &a, at: T1 };
+        for done in [true, false, true] {
+            let ch = SubtaskChanges {
+                done: Some(done),
+                title: Some(format!("{done}")),
+                ..Default::default()
+            };
+            d.update_subtask(s, &task_a, &sid, &ch).unwrap();
+        }
+    });
+    accept(&mut doc, c, &a).unwrap();
+    // Editing a description someone else wrote (deletes of their
+    // characters) and replacing the labels.
+    let c = change_by(&mut doc, &A, |d| {
+        let ch = TaskChanges {
+            description: Some("baru sekali".into()),
+            ..Default::default()
+        };
+        d.update_task(Stamp { actor: &a, at: T1 }, &task_a, &ch, &|_| String::new())
+            .unwrap();
+    });
+    accept(&mut doc, c, &a).unwrap();
+    let c = change_by(&mut doc, &B, |d| {
+        let ch = TaskChanges {
+            description: Some("baru".into()),
+            labels: Some(vec!["x".into(), "y".into()]),
+            ..Default::default()
+        };
+        d.update_task(Stamp { actor: &b, at: T1 }, &task_a, &ch, &|_| String::new())
+            .unwrap();
+    });
+    accept(&mut doc, c, &b).unwrap();
+    assert_eq!(doc.task(&task_a).unwrap().unwrap().description, "baru");
+}
+
+#[test]
+fn counters_and_marks_are_refused_everywhere() {
+    let (mut doc, task_a, _, eid) = with_parts();
+    let b = hex32(&B);
+    // An increment in place of a put, in a new entry and in an old one.
+    let new_entry = change_by(&mut doc, &B, |d| {
+        d.log_time(Stamp { actor: &b, at: T1 }, &task_a, 60, "x").unwrap();
+    });
+    let old_entry = change_by(&mut doc, &A, |d| {
+        let o = entry(d, &task_a, "time", &eid);
+        d.raw().put(&o, "note", "x").unwrap();
+    });
+    for (label, c) in [("catatan baru", new_entry), ("catatan lama", old_entry)] {
+        let forged = rewrite(&c, |e| {
+            let i = op_at(e, "note");
+            e.operations[i].action = OpType::Increment(5);
+        });
+        let err = judge(&doc, &forged).unwrap_err();
+        assert!(err.contains("penghitung"), "{label}: {err}");
+    }
+}
+
+#[test]
+fn text_edits_refer_only_to_characters_at_their_dependencies() {
+    let (mut doc, task_a, _, _) = base();
+    let a = hex32(&A);
+    let b = hex32(&B);
+    let old_heads = doc.heads();
+    let describe = |doc: &mut BoardDoc, who: &[u8; 32], actor: &str, text: &str| {
+        change_by(doc, who, |d| {
+            let ch = TaskChanges {
+                description: Some(text.into()),
+                ..Default::default()
+            };
+            d.update_task(Stamp { actor, at: T1 }, &task_a, &ch, &|_| String::new())
+                .unwrap();
+        })
+    };
+    let h = describe(&mut doc, &A, &a, "abc");
+    let mut with = BoardDoc::load(&doc.save(), &A).unwrap();
+    accept(&mut with, h, &a).unwrap();
+    let without = BoardDoc::load(&doc.save(), &A).unwrap();
+    // B appends after A's characters but claims the older heads.
+    let real = describe(&mut with, &B, &b, "abcd");
+    judge(&with, &real).unwrap();
+    let stale = rewrite(&real, |e| e.deps = old_heads.clone());
+    let on_with = judge(&with, &stale).unwrap_err();
+    assert_eq!(on_with, judge(&without, &stale).unwrap_err());
+    assert!(on_with.contains("merujuk elemen"), "{on_with}");
+    // A second value for a character is refused.
+    let c = change_by(&mut with, &B, |d| {
+        let t = task_obj(d, &task_a);
+        let am = d.raw();
+        let (_, text) = am.get(&t, "description").unwrap().unwrap();
+        am.put(&text, 0, "z").unwrap();
+    });
+    assert!(judge(&with, &c).is_err());
 }

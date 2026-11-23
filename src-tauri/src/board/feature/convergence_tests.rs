@@ -1389,3 +1389,77 @@ fn a_record_refused_by_the_old_rules_is_asked_for_again_after_the_update() {
     assert_eq!(sorted_titles(&o.citra.task(&pid, &task)), ["Dari Sari"]);
     assert!(!o.citra.is_refused(&first));
 }
+
+/// The heads of `l`'s copy of project `pid`.
+fn doc_heads(l: &Lap, pid: &str) -> Vec<automerge::ChangeHash> {
+    l.core(|c| {
+        let mut d = store::load_doc(&c.db, pid, &store::actor_of(&c.identity))?;
+        Ok(d.heads())
+    })
+}
+
+/// Like [`forge`], but the change claims `deps` as its dependencies: what a
+/// modified app could send to make a change look older than it is.
+fn forge_with_deps(
+    author: &Lap,
+    source: &Lap,
+    pid: &str,
+    deps: Vec<automerge::ChangeHash>,
+    f: impl FnOnce(&mut AutoCommit, &str),
+) -> SignedChange {
+    let real = forge(author, source, pid, f);
+    let change = automerge::Change::try_from(real.bytes.as_slice()).unwrap();
+    let mut e = change.decode();
+    e.hash = None;
+    e.deps = deps;
+    let change = automerge::Change::from(e);
+    author.core(|c| Ok(sign_change(&c.identity, pid, &change)))
+}
+
+#[test]
+fn an_edit_of_a_subtask_missing_from_its_dependencies_is_refused_everywhere() {
+    let o = office();
+    let pid = shared_project(&o, &o.budi, "Peluncuran produk", "PL");
+    let task = new_task(&o.budi, &pid, "Spanduk");
+    let dewi = o.member("Dewi");
+    o.add_to_project(&pid, &dewi);
+    sync_all(&o.all()).unwrap();
+    pull(o.budi.me(), dewi.me()).unwrap();
+    let before_subtask = doc_heads(&o.citra, &pid);
+
+    // Sari adds a subtask; only Budi gets it for now.
+    commands::add_subtask(&o.sari.state, &NoopSync, &pid, &task, "Dari Sari", None).unwrap();
+    pull(o.sari.me(), o.budi.me()).unwrap();
+    let sid = o.budi.task(&pid, &task).subtasks[0].id.clone();
+    assert!(dewi.task(&pid, &task).subtasks.is_empty());
+
+    // Citra renames it on a copy of Budi's document, but the change claims
+    // only the heads from before the subtask existed.
+    let (task_id, sub_id) = (task.clone(), sid.clone());
+    let forged = forge_with_deps(&o.citra, &o.budi, &pid, before_subtask, move |am, _| {
+        let tasks = obj(am, &ROOT, "tasks");
+        let t = obj(am, &tasks, &task_id);
+        let subtasks = obj(am, &t, "subtasks");
+        let s = obj(am, &subtasks, &sub_id);
+        am.put(&s, "title", "Diganti Citra").unwrap();
+    });
+
+    // Budi holds the subtask, Dewi does not: both refuse it for good.
+    for l in [&o.budi, &dewi] {
+        let heads = l.heads(&pid);
+        let got = ingest(l, &o.citra, vec![record(&forged)]);
+        assert_eq!(got.rejected, 1, "{}", l.pk);
+        assert!(l.is_refused(&forged.record_id()));
+        assert_eq!(l.heads(&pid), heads);
+    }
+
+    // After everyone syncs, every laptop holds the same document.
+    let four = [o.sari.me(), o.budi.me(), o.citra.me(), dewi.me()];
+    sync_all(&four).unwrap();
+    for l in [&o.sari, &o.citra, &dewi] {
+        assert_eq!(l.heads(&pid), o.budi.heads(&pid));
+        let t = l.task(&pid, &task);
+        assert_eq!(t.subtasks.len(), 1);
+        assert_eq!(t.subtasks[0].title, "Dari Sari");
+    }
+}
