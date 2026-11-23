@@ -1,10 +1,24 @@
-import { IconArchive, IconArchiveOff, IconBell, IconBellOff, IconDots, IconTrash, type Icon } from "@tabler/icons-react";
+import {
+  IconArchive,
+  IconArchiveOff,
+  IconBell,
+  IconBellOff,
+  IconDots,
+  IconLock,
+  IconLockOpen,
+  IconPencil,
+  IconTrash,
+  IconUserPlus,
+  IconUsers,
+  type Icon,
+} from "@tabler/icons-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type ConversationSummary } from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { AddPeopleDialog, GroupMembers, RenameGroupDialog, useGroupView } from "./GroupMembers";
 import { conversationTitle, scopeLabel } from "./text";
 
 type Props = {
@@ -13,7 +27,7 @@ type Props = {
   onGone: () => void;
 };
 
-type Action = "mute" | "archive" | "delete";
+type Action = "mute" | "archive" | "delete" | "lock" | "rename";
 
 type MenuItem = { key: Action; label: string; icon: Icon; danger?: boolean };
 
@@ -21,6 +35,8 @@ const ERROR_TITLES: Record<Action, string> = {
   mute: "Notifikasi belum bisa diubah",
   archive: "Arsip belum bisa diubah",
   delete: "Channel belum bisa dihapus",
+  lock: "Status hanya-baca belum bisa diubah",
+  rename: "Nama grup belum bisa diganti",
 };
 
 export function ConversationHeader({ summary, onChanged, onGone }: Props) {
@@ -34,6 +50,14 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
   const menuRef = useRef<HTMLUListElement>(null);
   const menuId = useId();
   const alive = useRef(true);
+  const isGroup = summary.kind === "group";
+  const groupState = useGroupView(
+    isGroup ? summary.id : null,
+    `${summary.memberCount}|${summary.name}|${summary.former}`,
+  );
+  const group = groupState.group;
+  const [adding, setAdding] = useState(false);
+  const [renaming, setRenaming] = useState(false);
 
   useEffect(() => {
     alive.current = true;
@@ -48,6 +72,8 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
     setError(null);
     setConfirmDelete(false);
     setDeleteError(null);
+    setAdding(false);
+    setRenaming(false);
   }, [summary.id]);
 
   const items: MenuItem[] = [
@@ -55,6 +81,16 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
       ? { key: "mute", label: "Nyalakan notifikasi", icon: IconBell }
       : { key: "mute", label: "Bisukan notifikasi", icon: IconBellOff },
   ];
+  if (isGroup && group?.canRename && !summary.former) {
+    items.push({ key: "rename", label: "Ganti nama grup", icon: IconPencil });
+  }
+  if (summary.kind === "channel" && summary.canLock) {
+    items.push(
+      summary.locked
+        ? { key: "lock", label: "Buka untuk semua", icon: IconLockOpen }
+        : { key: "lock", label: "Jadikan hanya-baca", icon: IconLock },
+    );
+  }
   if (summary.kind === "channel" && summary.canArchive) {
     items.push(
       summary.archived
@@ -130,10 +166,14 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
       setConfirmDelete(true);
       return;
     }
-    const ok =
-      key === "mute"
-        ? await run("mute", () => chatApi.setMuted(summary.id, !summary.muted))
-        : await run("archive", () => chatApi.setArchived(summary.id, !summary.archived));
+    if (key === "rename") {
+      setRenaming(true);
+      return;
+    }
+    let ok: boolean;
+    if (key === "mute") ok = await run("mute", () => chatApi.setMuted(summary.id, !summary.muted));
+    else if (key === "lock") ok = await run("lock", () => chatApi.setLocked(summary.id, !summary.locked));
+    else ok = await run("archive", () => chatApi.setArchived(summary.id, !summary.archived));
     if (ok) onChanged();
   }
 
@@ -161,10 +201,31 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
             {initials(title)}
           </span>
         )}
-        <div className="conv-head-text">
+        {isGroup && (
+          <span className="conv-head-icon" aria-hidden="true">
+            <IconUsers size={20} />
+          </span>
+        )}
+        <div className={isGroup ? "conv-head-text conv-head-group" : "conv-head-text"}>
           <h2 className="conv-title">{title}</h2>
+          {isGroup && (
+            <GroupMembers
+              memberCount={summary.memberCount}
+              title={title}
+              state={groupState}
+              onChanged={onChanged}
+              onGone={onGone}
+            />
+          )}
           <p className="conv-scope">
-            <span>{scopeLabel(summary)}</span>
+            {!isGroup && <span>{scopeLabel(summary)}</span>}
+            {summary.locked && (
+              <span className="chip conv-chip-muted">
+                <IconLock size={12} aria-hidden="true" />
+                Hanya-baca
+              </span>
+            )}
+            {summary.former && <span className="chip">Bukan anggota lagi</span>}
             {summary.archived && <span className="chip">Diarsipkan</span>}
             {summary.muted && (
               <span className="chip conv-chip-muted">
@@ -174,6 +235,12 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
             )}
           </p>
         </div>
+        {isGroup && group?.canAdd && !summary.former && (
+          <button type="button" className="btn btn-ghost btn-sm conv-add" onClick={() => setAdding(true)}>
+            <IconUserPlus size={16} aria-hidden="true" />
+            Tambah orang
+          </button>
+        )}
         <div className="conv-menu">
           <button
             ref={buttonRef}
@@ -226,6 +293,31 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
           </div>
         )}
       </div>
+      {isGroup && group && (
+        <>
+          <AddPeopleDialog
+            open={adding}
+            onOpenChange={setAdding}
+            group={group}
+            onAdded={() => {
+              setAdding(false);
+              void groupState.reload();
+              onChanged();
+            }}
+          />
+          <RenameGroupDialog
+            open={renaming}
+            onOpenChange={setRenaming}
+            conv={summary.id}
+            name={group.name}
+            onRenamed={() => {
+              setRenaming(false);
+              void groupState.reload();
+              onChanged();
+            }}
+          />
+        </>
+      )}
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}

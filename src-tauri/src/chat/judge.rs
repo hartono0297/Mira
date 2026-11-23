@@ -125,6 +125,12 @@ pub fn judge(ctx: &Ctx, rec: &VerifiedRecord, now: OffsetDateTime) -> AppResult<
         // the envelope's recipient, checked when applied
         // (`envelope::apply_ack`), whether or not the envelope is known here.
         Body::EnvelopeAck { .. } => Ok(Verdict::Accept),
+        // TODO(v03-c): replaced by the group and lock rules.
+        Body::ChannelLock { .. }
+        | Body::GroupCreate { .. }
+        | Body::GroupAdd { .. }
+        | Body::GroupRemove { .. }
+        | Body::GroupRename { .. } => Ok(Verdict::Defer),
     }
 }
 

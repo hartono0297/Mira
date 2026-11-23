@@ -467,6 +467,7 @@ impl<'a> Ctx<'a> {
                     deleted: false,
                 }));
             }
+            Some(Conv::Group(_)) => return Ok(None),
             Some(Conv::Channel(id)) => id,
         };
         let row = channel_row(self.conn, conv)?;

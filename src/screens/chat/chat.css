@@ -79,11 +79,18 @@
   flex-direction: column;
 }
 
+/* Judul bagian (Umum, Departemen, Proyek, Grup, Pesan pribadi). Seluruh judul adalah tombol
+   lipat; jarak atas memisahkan bagian tanpa garis tambahan. */
 .chat-lbl {
-  margin: 14px 8px 4px;
+  margin: 10px 0 2px;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-sec);
+}
+
+.chat-sec-body {
+  display: flex;
+  flex-direction: column;
 }
 
 .chat-rows {
@@ -178,8 +185,26 @@
   color: var(--text-sec);
 }
 
-.chat-row-mute {
+.chat-kind {
   flex: none;
+  width: 22px;
+}
+
+/* Gembok (hanya-baca) dan lonceng coret (dibisukan). Artinya juga ada di nama tombol. */
+.chat-row-icon {
+  flex: none;
+  color: var(--text-sec);
+}
+
+/* Bukan anggota lagi atau diarsipkan: lebih tipis, dan keadaannya tertulis di baris kedua
+   (.chat-row-hint), jadi tidak hanya dibedakan lewat tebal huruf. */
+.chat-row-dim {
+  font-weight: 500;
+}
+
+.chat-row-dim .chat-av {
+  background: transparent;
+  border: 1px solid var(--border-strong);
   color: var(--text-sec);
 }
 
@@ -229,22 +254,23 @@
 
 .chat-new {
   align-self: flex-start;
-  margin: 8px 8px 0;
+  margin: 4px 6px 2px;
 }
 
 .chat-fold {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 30px;
-  margin-left: -4px;
-  padding: 2px 6px 2px 4px;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 10px 4px 6px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-sec);
   font-size: 12px;
   font-weight: 700;
+  text-align: left;
   cursor: pointer;
 }
 
@@ -253,9 +279,33 @@
   color: var(--text);
 }
 
-.chat-fold-count {
-  margin-left: 2px;
-  font-variant-numeric: tabular-nums;
+/* Bagian yang berisi percakapan terbuka tidak bisa dilipat (lihat title tombolnya). */
+.chat-fold[aria-disabled="true"] {
+  cursor: default;
+}
+
+.chat-fold-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Satu ikon panah, diputar saat terlipat: posisinya tidak melompat. */
+.chat-fold-icon {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.chat-fold[aria-expanded="false"] .chat-fold-icon {
+  transform: rotate(-90deg);
+}
+
+/* Jumlah belum dibaca di judul yang terlipat. Kalau semuanya dari percakapan yang
+   dibisukan, lencananya netral seperti di baris. */
+.chat-fold-quiet .chat-badge {
+  background: transparent;
+  border: 1px solid var(--text-sec);
+  color: var(--text-sec);
+  line-height: 18px;
 }
 
 /* Panel kanan. Isi pertamanya (panel percakapan) mengisi seluruh tinggi. */
@@ -432,7 +482,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-row {
+  .chat-row,
+  .chat-fold-icon {
     transition: none;
   }
 }

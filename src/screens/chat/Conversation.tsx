@@ -1,14 +1,20 @@
 import { IconLoader2 } from "@tabler/icons-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
-import { chatApi, type ConversationSummary, type ConversationView, type MessageView } from "../../api/chat";
+import {
+  chatApi,
+  type ConversationEvent,
+  type ConversationSummary,
+  type ConversationView,
+  type MessageView,
+} from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { Composer } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
 import { messageDomId } from "./MessageItem";
-import { MessageList } from "./MessageList";
-import { conversationTitle, groupMessages, mergeMessages, messagePreview } from "./text";
+import { buildTimeline, mergeEvents, MessageList } from "./MessageList";
+import { conversationTitle, mergeMessages, messagePreview } from "./text";
 import { useChatLive } from "./useChatLive";
 import "./conversation.css";
 
@@ -44,6 +50,7 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
   const view = live.data;
 
   const [older, setOlder] = useState<MessageView[]>([]);
+  const [olderEvents, setOlderEvents] = useState<ConversationEvent[]>([]);
   const [olderHasMore, setOlderHasMore] = useState<boolean | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<AppError | null>(null);
@@ -75,11 +82,13 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
   }, []);
 
   const messages = useMemo(() => (view ? mergeMessages(older, view.messages) : []), [older, view]);
-  const items = useMemo(() => groupMessages(messages), [messages]);
+  const events = useMemo(() => (view ? mergeEvents(olderEvents, view.events ?? []) : []), [olderEvents, view]);
+  const items = useMemo(() => buildTimeline(messages, events), [messages, events]);
   const loadedIds = useMemo(() => new Set(messages.map((m) => m.id)), [messages]);
   const hasMore = olderHasMore ?? view?.hasMore ?? false;
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const announcedFor = useRef<string | null | undefined>(undefined);
+  const seenEvents = useRef<Set<string> | null>(null);
 
   // Pembaca layar: hanya pesan baru dari orang lain yang dibacakan. Riwayat saat
   // dibuka dan pesan lama yang dimuat di atas tidak ikut dibacakan.
@@ -97,24 +106,40 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
     }
   }, [view, lastMessage]);
 
-  // Gulir: ke bawah saat pertama dibuka, ikut pesan baru kalau pengguna di
-  // dekat bawah atau pesan itu kiriman sendiri, dan tetap di tempat saat
-  // pesan lama ditambahkan di atas.
+  // Kejadian grup baru (orang ditambahkan, keluar, ganti nama) dibacakan sekali. Kejadian
+  // yang sudah ada saat dibuka dan yang ikut termuat bersama pesan lama tidak dibacakan.
+  useEffect(() => {
+    if (!view) return;
+    const latest = view.events ?? [];
+    if (seenEvents.current === null) {
+      seenEvents.current = new Set(latest.map((e) => e.id));
+      return;
+    }
+    const fresh = latest.filter((e) => !seenEvents.current!.has(e.id));
+    fresh.forEach((e) => seenEvents.current!.add(e.id));
+    if (fresh.length > 0) setAnnounce(fresh[fresh.length - 1].text);
+  }, [view]);
+
+  // Gulir: ke bawah saat pertama dibuka, ikut pesan atau kejadian baru kalau pengguna
+  // di dekat bawah atau pesan itu kiriman sendiri, dan tetap di tempat saat pesan lama
+  // ditambahkan di atas.
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el || messages.length === 0) return;
-    const last = messages[messages.length - 1];
+    const last = items[items.length - 1];
+    if (!el || !last || last.kind === "day") return;
+    const key = last.kind === "message" ? last.message.id : `ev-${last.event.id}`;
+    const mine = last.kind === "message" && last.message.mine;
     if (restoreFromBottom.current !== null) {
       el.scrollTop = el.scrollHeight - restoreFromBottom.current;
       restoreFromBottom.current = null;
     } else if (!scrolledOnce.current) {
       el.scrollTop = el.scrollHeight;
       scrolledOnce.current = true;
-    } else if (last.id !== lastId.current && (nearBottom.current || last.mine)) {
+    } else if (key !== lastId.current && (nearBottom.current || mine)) {
       el.scrollTop = el.scrollHeight;
     }
-    lastId.current = last.id;
-  }, [messages]);
+    lastId.current = key;
+  }, [items]);
 
   // Tandai dibaca: saat dibuka dengan pesan belum dibaca, atau saat pesan baru
   // dari orang lain datang. Satu panggilan per pesan terakhir dari orang lain.
@@ -152,6 +177,7 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
       const el = scrollRef.current;
       restoreFromBottom.current = el ? el.scrollHeight - el.scrollTop : null;
       setOlder((prev) => mergeMessages(page.messages, prev));
+      setOlderEvents((prev) => mergeEvents(page.events ?? [], prev));
       setOlderHasMore(page.hasMore);
     } catch (err) {
       if (alive.current) setOlderError(toAppError(err));
@@ -246,7 +272,7 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
         </ErrorAlert>
       </div>
     );
-  } else if (messages.length === 0) {
+  } else if (messages.length === 0 && events.length === 0) {
     body = (
       <p className="conv-state">
         {summary.canPost
@@ -288,6 +314,11 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
           onJump={onJump}
           onReload={reload}
         />
+        {messages.length === 0 && (
+          <p className="conv-state conv-state-after">
+            {summary.canPost ? "Belum ada pesan. Tulis pesan pertama di kolom bawah." : "Belum ada pesan."}
+          </p>
+        )}
       </>
     );
   }

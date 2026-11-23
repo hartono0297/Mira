@@ -23,6 +23,7 @@ pub mod audience;
 pub mod commands;
 pub mod fetch;
 pub mod files;
+pub mod groups;
 pub mod hooks;
 pub mod judge;
 pub mod model;

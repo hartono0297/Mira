@@ -187,6 +187,14 @@ pub fn apply(
             insert_record(conn, rec, true, from, now)?;
             envelope::apply_ack(ctx, rec.author(), envelope, *failed, fx)?;
         }
+        Body::ChannelLock { .. }
+        | Body::GroupCreate { .. }
+        | Body::GroupAdd { .. }
+        | Body::GroupRemove { .. }
+        | Body::GroupRename { .. } => {
+            insert_record(conn, rec, true, from, now)?;
+            fx.visible = true;
+        }
     }
     Ok(())
 }

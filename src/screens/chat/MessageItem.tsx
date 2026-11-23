@@ -3,6 +3,7 @@ import type { ConversationSummary, MessageView } from "../../api/chat";
 import { initials } from "../../components/initials";
 import { DeliveryStatus } from "./DeliveryStatus";
 import { FileCard } from "./FileCard";
+import { PersonName } from "./PersonName";
 import { authorName, formatTime, fullTime, segmentMentions } from "./text";
 
 type Props = {
@@ -54,7 +55,7 @@ export function MessageItem({ message, grouped, me, kind, flash, replyLoaded, on
           </span>
         ) : (
           <p className="conv-msg-head">
-            <span className="conv-author">{name}</span>
+            <span className="conv-author">{message.mine ? name : <PersonName person={message.author} />}</span>
             <time dateTime={message.at} title={fullTime(message.at)}>
               {time}
             </time>
