@@ -688,8 +688,9 @@ pub fn is_file_name(name: &str) -> bool {
             .any(|c| c.is_control() || is_format_char(c) || "\\/:*?\"<>|".contains(c))
 }
 
-/// Extensions Windows runs or interprets as code when a file is opened. Such
-/// attachments are offered for saving only, never opened from Mira.
+/// Extensions Windows runs or interprets as code when a file is opened, plus
+/// the macOS ones in [`crate::runnable`]. Such attachments are offered for
+/// saving only, never opened from Mira.
 pub fn is_executable_name(name: &str) -> bool {
     const EXT: &[&str] = &[
         "exe",
@@ -750,7 +751,9 @@ pub fn is_executable_name(name: &str) -> bool {
         "shs",
     ];
     name.rsplit_once('.')
-        .map(|(_, ext)| EXT.contains(&ext.to_ascii_lowercase().as_str()))
+        .map(|(_, ext)| {
+            EXT.contains(&ext.to_ascii_lowercase().as_str()) || crate::runnable::is_macos_runnable(ext)
+        })
         .unwrap_or(false)
 }
 
@@ -1204,6 +1207,10 @@ mod tests {
         }
         assert!(is_executable_name("Laporan.pdf.exe"));
         assert!(is_executable_name("pintasan.LNK"));
+        // macOS apps, installers and Terminal scripts.
+        assert!(is_executable_name("pasang.command"));
+        assert!(is_executable_name("Mira.dmg"));
+        assert!(is_executable_name("skrip.SH"));
         assert!(!is_executable_name("laporan.pdf"));
         assert!(!is_executable_name("tanpa-ekstensi"));
 

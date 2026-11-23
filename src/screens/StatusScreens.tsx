@@ -2,6 +2,7 @@ import { IconAlertTriangle, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useRef } from "react";
 import type { AppError } from "../api";
 import { Logo } from "../components/Logo";
+import { isMac } from "../platform";
 import "./status.css";
 
 export function LoadingScreen() {
@@ -19,9 +20,13 @@ export function LoadingScreen() {
 function nextStep(error: AppError): string {
   switch (error.code) {
     case "no_tauri":
-      return "Tutup halaman ini, lalu buka Mira lewat ikon aplikasinya di menu Start atau di desktop.";
+      return isMac()
+        ? "Tutup halaman ini, lalu buka Mira dari folder Aplikasi atau Launchpad."
+        : "Tutup halaman ini, lalu buka Mira lewat ikon aplikasinya di menu Start atau di desktop.";
     case "keystore":
-      return "Mira menyimpan kunci laptop di Windows Credential Manager. Coba lagi. Kalau tetap gagal, mulai ulang laptop lalu buka Mira lagi.";
+      return isMac()
+        ? "Mira menyimpan kunci laptop di Keychain macOS. Coba lagi. Kalau macOS menanyakan izin Keychain untuk Mira, pilih Izinkan. Kalau tetap gagal, mulai ulang laptop lalu buka Mira lagi."
+        : "Mira menyimpan kunci laptop di Windows Credential Manager. Coba lagi. Kalau tetap gagal, mulai ulang laptop lalu buka Mira lagi.";
     case "key_mismatch":
       return "Jangan hapus folder data Mira. Hubungi admin organisasi Anda dan sebutkan kode error di bawah.";
     case "database":

@@ -48,7 +48,7 @@ export function inviteErrorText(error: AppError): ErrorText {
         steps: [
           "Sambungkan laptop ini ke Wi-Fi atau kabel LAN kantor yang sama dengan rekan. Wi-Fi tamu biasanya memisahkan laptop satu sama lain.",
           "Kalau sedang di luar kantor, nyalakan VPN kantor.",
-          "Pastikan Windows Firewall mengizinkan Mira, di laptop ini dan di laptop rekan.",
+          "Pastikan firewall di laptop ini dan di laptop rekan mengizinkan Mira (Windows Firewall di Windows, Firewall macOS di MacBook).",
           "Minta rekan membuka Pengaturan > Jaringan di Mira, lalu isi alamat laptopnya di kolom Alamat laptop rekan.",
         ],
       };

@@ -340,10 +340,11 @@ impl Drop for FetchTurn {
 }
 
 /// Key for the per-`dest` lock: `dest` without `.` parts or doubled
-/// separators, lowercase on Windows (case-insensitive file names).
+/// separators, lowercase on Windows and macOS (NTFS and APFS file names are
+/// case-insensitive by default).
 fn dest_key(dest: &Path) -> PathBuf {
     let clean: PathBuf = dest.components().collect();
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "macos")) {
         PathBuf::from(clean.to_string_lossy().to_lowercase())
     } else {
         clean
@@ -1439,7 +1440,11 @@ mod tests {
         let b = dest_key(Path::new("/data/unduhan/Foto.JPG"));
         assert_eq!(a, b);
         let upper = dest_key(Path::new("/data/unduhan/FOTO.jpg"));
-        assert_eq!(upper == b, cfg!(windows), "case folds on Windows only");
+        assert_eq!(
+            upper == b,
+            cfg!(any(windows, target_os = "macos")),
+            "case folds on Windows and macOS only"
+        );
     }
 
     #[tokio::test]

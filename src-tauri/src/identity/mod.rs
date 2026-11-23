@@ -1,13 +1,13 @@
 //! This laptop's identity: an Ed25519 key pair plus a display name.
 //!
-//! The secret key lives only in the `KeyStore` (Windows Credential Manager,
-//! F-ID-04). The database holds the public key, display name and creation time.
+//! The secret key lives only in the `KeyStore` (Windows Credential Manager or
+//! the macOS login keychain, F-ID-04). The database holds the public key, display name and creation time.
 //! A missing or mismatching secret is reported as `key_mismatch`; a new key is
 //! never generated silently because that would replace the person's identity.
 
 mod keystore;
 
-pub use keystore::{KEYRING_SERVICE, KeyStore, KeyringStore, MemoryKeyStore, SecretKey};
+pub use keystore::{KEYRING_SERVICE, KeyStore, KeyringStore, MemoryKeyStore, STORE_NAME, SecretKey};
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hex::FromHex;
@@ -126,7 +126,7 @@ pub fn ensure_identity(conn: &Connection, keystore: &dyn KeyStore) -> AppResult<
             let account = keystore_account(&public_key_hex);
             let secret = keystore.get(&account)?.ok_or_else(|| {
                 AppError::KeyMismatch(format!(
-                    "Kunci laptop ini tidak ditemukan di Windows Credential Manager (entri {account}). \
+                    "Kunci laptop ini tidak ditemukan di {STORE_NAME} (entri {account}). \
                      Data Mira ada, tapi tanpa kunci itu Mira tidak bisa bertindak atas nama identitas ini. \
                      Mira tidak membuat kunci baru otomatis supaya identitas Anda tidak berganti. \
                      Pulihkan kunci dari cadangan, atau minta bantuan admin."
@@ -134,12 +134,11 @@ pub fn ensure_identity(conn: &Connection, keystore: &dyn KeyStore) -> AppResult<
             })?;
             let signing_key = SigningKey::from_bytes(&secret);
             if hex::encode(signing_key.verifying_key().as_bytes()) != public_key_hex {
-                return Err(AppError::KeyMismatch(
-                    "Kunci laptop di Windows Credential Manager tidak cocok dengan identitas yang tersimpan di data Mira. \
+                return Err(AppError::KeyMismatch(format!(
+                    "Kunci laptop di {STORE_NAME} tidak cocok dengan identitas yang tersimpan di data Mira. \
                      Mira tidak membuat kunci baru otomatis supaya identitas Anda tidak berganti. \
                      Pulihkan kunci yang benar dari cadangan, atau minta bantuan admin."
-                        .into(),
-                ));
+                )));
             }
             Ok(Identity {
                 signing_key,
@@ -318,7 +317,7 @@ mod tests {
 
         let err = ensure_identity(&conn, &store).unwrap_err();
         assert_eq!(err.code(), "key_mismatch");
-        assert!(err.to_string().contains("Windows Credential Manager"));
+        assert!(err.to_string().contains(STORE_NAME));
         let stored: String = conn
             .query_row("SELECT public_key FROM identity", [], |r| r.get(0))
             .unwrap();

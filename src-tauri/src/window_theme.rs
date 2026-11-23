@@ -48,13 +48,34 @@ pub fn system_prefers_dark() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(windows))]
+/// Whether macOS uses the dark appearance: the global default
+/// `AppleInterfaceStyle` is `Dark` (also while "Auto" is dark); it is missing
+/// in light mode. Read only, through `/usr/bin/defaults`.
+#[cfg(target_os = "macos")]
+pub fn system_prefers_dark() -> bool {
+    use std::process::{Command, Stdio};
+
+    Command::new("/usr/bin/defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|out| {
+            out.status.success()
+                && String::from_utf8_lossy(&out.stdout)
+                    .trim()
+                    .eq_ignore_ascii_case("dark")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn system_prefers_dark() -> bool {
     false
 }
 
 /// Window background for startup, from the `theme.mode` setting (when the
-/// database is available) and the Windows app theme.
+/// database is available) and the system app theme (Windows or macOS).
 pub fn initial_background(conn: Option<&Connection>) -> Color {
     let mode = conn.and_then(|c| crate::settings::get(c, MODE_SETTING_KEY).ok().flatten());
     let (r, g, b) = background_for(mode.as_deref(), system_prefers_dark());

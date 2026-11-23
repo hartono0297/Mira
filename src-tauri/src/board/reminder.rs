@@ -386,7 +386,7 @@ fn notify_error(detail: String) -> AppError {
     ))
 }
 
-/// Today's date in the Windows time zone (UTC if it cannot be read).
+/// Today's date in the system time zone (UTC if it cannot be read).
 pub fn local_today() -> Date {
     let now = clock::now();
     match UtcOffset::current_local_offset() {

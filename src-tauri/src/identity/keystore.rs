@@ -14,7 +14,17 @@
 //!
 //! An entry read with any other persist mode is rewritten with
 //! `CRED_PERSIST_LOCAL_MACHINE` (same bytes and fields); if that rewrite fails
-//! the key is still returned. Other platforms keep using `keyring`.
+//! the key is still returned.
+//!
+//! On macOS `KeyringStore` uses `keyring` (feature `apple-native`): a generic
+//! password in this user's login keychain (keyring's "User" domain), with
+//! service (keychain item name) `id.mira.desktop` and account
+//! `device-key-<pk>`, the same names as on Windows. The item holds the raw 32
+//! secret bytes. Keychain items stay on this Mac unless the user turns on
+//! iCloud Keychain sync, which only syncs the data protection keychain, not
+//! the login keychain used here.
+//!
+//! Other platforms use `keyring`'s default store with the same names.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -35,7 +45,16 @@ pub trait KeyStore: Send + Sync {
 
 pub const KEYRING_SERVICE: &str = "id.mira.desktop";
 
-/// Secrets in the OS credential store (Windows Credential Manager).
+/// Name of the OS key store in messages for the user.
+#[cfg(windows)]
+pub const STORE_NAME: &str = "Windows Credential Manager";
+#[cfg(target_os = "macos")]
+pub const STORE_NAME: &str = "Keychain macOS";
+#[cfg(not(any(windows, target_os = "macos")))]
+pub const STORE_NAME: &str = "penyimpanan kunci sistem";
+
+/// Secrets in the OS credential store (Windows Credential Manager, macOS
+/// login keychain).
 pub struct KeyringStore {
     service: String,
 }
@@ -66,9 +85,9 @@ impl Default for KeyringStore {
 }
 
 fn bad_length_error() -> AppError {
-    AppError::KeyMismatch(
-        "Kunci laptop di Windows Credential Manager rusak (panjangnya tidak sesuai).".into(),
-    )
+    AppError::KeyMismatch(format!(
+        "Kunci laptop di {STORE_NAME} rusak (panjangnya tidak sesuai)."
+    ))
 }
 
 /// Copies a stored secret straight into its wiped-on-drop buffer, so no
@@ -84,7 +103,7 @@ fn secret_from_slice(bytes: &[u8]) -> AppResult<SecretKey> {
 
 fn store_error(detail: impl std::fmt::Display) -> AppError {
     AppError::Keystore(format!(
-        "Windows Credential Manager tidak bisa diakses untuk menyimpan atau membaca kunci laptop. Detail: {detail}"
+        "{STORE_NAME} tidak bisa diakses untuk menyimpan atau membaca kunci laptop. Detail: {detail}"
     ))
 }
 
@@ -123,10 +142,22 @@ fn win_error(err: wincred::Error) -> AppError {
 
 #[cfg(not(windows))]
 impl KeyringStore {
+    /// macOS: always the user's login keychain ("User" domain), never the
+    /// System or Common keychain, so no admin rights are needed.
+    #[cfg(target_os = "macos")]
+    fn entry(&self, account: &str) -> AppResult<keyring::Entry> {
+        keyring::Entry::new_with_target(MACOS_KEYCHAIN, &self.service, account).map_err(store_error)
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn entry(&self, account: &str) -> AppResult<keyring::Entry> {
         keyring::Entry::new(&self.service, account).map_err(store_error)
     }
 }
+
+/// keyring's target name for the login keychain on macOS.
+#[cfg(target_os = "macos")]
+const MACOS_KEYCHAIN: &str = "User";
 
 #[cfg(not(windows))]
 impl KeyStore for KeyringStore {
@@ -427,6 +458,26 @@ mod tests {
         );
     }
 
+    /// macOS: the entry lives in the login keychain with the same service
+    /// and account names as on Windows. Building an `Entry` does not touch
+    /// the keychain.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_entry_uses_login_keychain() {
+        use keyring::macos::{MacCredential, MacKeychainDomain};
+
+        let account = format!("device-key-{}", "ab".repeat(32));
+        let entry = KeyringStore::new().entry(&account).unwrap();
+        let cred = entry
+            .get_credential()
+            .downcast_ref::<MacCredential>()
+            .unwrap();
+        assert_eq!(cred.domain, MacKeychainDomain::User);
+        assert_eq!(cred.service, KEYRING_SERVICE);
+        assert_eq!(cred.account, account);
+        assert_eq!(STORE_NAME, "Keychain macOS");
+    }
+
     /// Deletes the throwaway entry even when an assertion fails.
     struct Cleanup<'a>(&'a KeyringStore, &'a str);
 
@@ -436,8 +487,10 @@ mod tests {
         }
     }
 
-    /// Touches the real Windows Credential Manager with a throwaway entry.
-    /// Run with `cargo test -- --ignored keystore`.
+    /// Touches the real OS key store (Windows Credential Manager, macOS login
+    /// keychain) with a throwaway entry. Run with
+    /// `cargo test -- --ignored keystore`. On macOS the keychain may ask to
+    /// allow access the first time.
     #[test]
     #[ignore = "uses the real OS credential store"]
     fn keyring_store_roundtrip() {

@@ -2,9 +2,16 @@
 //!
 //! `MIRA_DATA_DIR` overrides the default so several instances can run side by
 //! side on one laptop (needed to test LAN features in Tahap 1). Without it the
-//! Tauri local app data folder is used (`%LOCALAPPDATA%\id.mira.desktop` on
-//! Windows). Local, not roaming: a roaming profile must never carry one
-//! laptop's identity or a live SQLite file to another laptop.
+//! Tauri local app data folder is used:
+//! - Windows: `%LOCALAPPDATA%\id.mira.desktop` (local, not roaming: a roaming
+//!   profile must never carry one laptop's identity or a live SQLite file to
+//!   another laptop);
+//! - macOS: `~/Library/Application Support/id.mira.desktop` (Tauri maps both
+//!   the local and the roaming data folder there; it is not synced by iCloud
+//!   Drive, and Time Machine backs it up like any other file in the home
+//!   folder).
+//!
+//! The key itself never lives in this folder (see `identity::keystore`).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -50,7 +57,7 @@ pub fn resolve_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResu
     choose_data_dir(std::env::var_os(DATA_DIR_ENV), || {
         app.path().app_local_data_dir().map_err(|e| {
             AppError::Internal(format!(
-                "Folder data aplikasi Windows tidak ditemukan. Detail: {e}"
+                "Folder data aplikasi di laptop ini tidak ditemukan. Detail: {e}"
             ))
         })
     })

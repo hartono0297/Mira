@@ -3,6 +3,7 @@ import { toAppError, type AppError } from "../../api";
 import { chatApi, type NotifyMode } from "../../api/chat";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { systemName } from "../../platform";
 
 type Props = {
   open: boolean;
@@ -65,7 +66,7 @@ export function NotifySettings({ open, onOpenChange, mode, onSaved }: Props) {
       open={open}
       onOpenChange={onOpenChange}
       title="Notifikasi chat"
-      description="Notifikasi muncul di Windows saat jendela Mira tidak sedang di depan. Pengaturan ini hanya untuk laptop ini."
+      description={`Notifikasi muncul di ${systemName()} saat jendela Mira tidak sedang di depan. Pengaturan ini hanya untuk laptop ini.`}
     >
       <fieldset className="chat-opts">
         <legend className="sr-only">Kirim notifikasi untuk</legend>

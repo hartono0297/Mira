@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 // Worker dibundel Vite sebagai aset lokal (tidak ada CDN; aplikasi offline penuh).
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { isMac } from "../../platform";
 
 // Data pendukung pdf.js (cMaps, font standar, wasm, profil ICC) disalin ke
 // dist/pdfjs/ oleh plugin kecil di vite.config.ts dan dilayani dari folder
@@ -126,10 +127,16 @@ export function describePdfError(err: unknown): PdfErrorText {
         detail: "Mira belum bisa membuka PDF yang dikunci. Buka kuncinya di aplikasi PDF lain, simpan tanpa kata sandi, lalu buka lagi di sini.",
       };
     case "runtime":
-      return {
-        title: "Komponen tampilan Windows perlu diperbarui",
-        detail: "Microsoft Edge WebView2 di komputer ini terlalu lama untuk menampilkan PDF. Jalankan Windows Update atau pasang ulang Mira, lalu coba lagi.",
-      };
+      return isMac()
+        ? {
+            title: "Komponen tampilan macOS perlu diperbarui",
+            detail:
+              "WebKit di Mac ini terlalu lama untuk menampilkan PDF. Perbarui macOS lewat Pengaturan Sistem > Umum > Pembaruan Perangkat Lunak, lalu coba lagi.",
+          }
+        : {
+            title: "Komponen tampilan Windows perlu diperbarui",
+            detail: "Microsoft Edge WebView2 di komputer ini terlalu lama untuk menampilkan PDF. Jalankan Windows Update atau pasang ulang Mira, lalu coba lagi.",
+          };
     default: {
       const message = err instanceof Error && err.message ? ` (${err.message})` : "";
       return {

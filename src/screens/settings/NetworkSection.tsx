@@ -6,6 +6,7 @@ import { CopyButton } from "../../components/CopyButton";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { FirewallGuide } from "../../components/FirewallGuide";
+import { firewallName } from "../../platform";
 import { NetStateLine } from "../shell/NetworkPanel";
 import { useNetwork, validStatus } from "../shell/NetworkContext";
 
@@ -48,7 +49,7 @@ export function NetworkSection() {
         </>
       )}
 
-      <h3 className="set-sub">Windows Firewall</h3>
+      <h3 className="set-sub">{firewallName()}</h3>
       <FirewallGuide />
     </section>
   );

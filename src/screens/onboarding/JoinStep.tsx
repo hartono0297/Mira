@@ -5,6 +5,7 @@ import { checkInviteCode, cleanInviteInput, formatInviteCode } from "../../api/i
 import { inviteErrorText } from "../../api/messages";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { firewallName } from "../../platform";
 import { StepHeading } from "./StepHeading";
 
 type Props = {
@@ -171,7 +172,7 @@ export function JoinStep({ onBack, onFirewall, onJoined, onReload }: Props) {
             )}
             {errors.server.code === "no_peer_found" && (
               <button type="button" className="btn btn-ghost onb-inline-btn" onClick={onFirewall}>
-                Periksa Windows Firewall
+                Periksa {firewallName()}
               </button>
             )}
             {(errors.server.code === "already_in_org" || errors.server.code === "name_required") && (

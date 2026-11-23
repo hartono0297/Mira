@@ -21,6 +21,7 @@ pub mod paths;
 pub mod peers;
 pub mod permissions;
 pub mod qr;
+pub mod runnable;
 pub mod settings;
 pub mod signing;
 pub mod state;

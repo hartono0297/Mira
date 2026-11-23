@@ -72,6 +72,16 @@
   gap: 8px;
 }
 
+/* Manual steps on macOS, numbered like the join troubleshooting list. */
+.fw-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
 .fw-admin {
   margin-top: 6px;
 }

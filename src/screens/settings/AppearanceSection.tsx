@@ -1,4 +1,5 @@
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { systemName } from "../../platform";
 import type { ThemeMode } from "../../theme/mode";
 import { useTheme } from "../../theme/ThemeProvider";
 import { plannedThemes, themes, type TokenSet } from "../../theme/tokens";
@@ -6,7 +7,7 @@ import { plannedThemes, themes, type TokenSet } from "../../theme/tokens";
 const MODE_LABELS: Record<ThemeMode, string> = {
   light: "Terang",
   dark: "Gelap",
-  system: "Ikuti Windows",
+  system: `Ikuti ${systemName()}`,
 };
 
 const MODES: ThemeMode[] = ["light", "dark", "system"];

@@ -181,6 +181,18 @@ fn excel_save(working: &Path, content: &str) {
     fs::remove_file(&old).unwrap();
 }
 
+/// Office for Mac: the new content is written in a hidden `.sb-` folder next to
+/// the working copy and renamed onto it (atomic replace), then the helper
+/// folder goes away.
+fn mac_safe_save(working: &Path, content: &str) {
+    let helper = working.parent().unwrap().join(".sb-6c1f02a1-Ab12Cd");
+    fs::create_dir(&helper).unwrap();
+    let temp = helper.join(working.file_name().unwrap());
+    fs::write(&temp, content).unwrap();
+    fs::rename(&temp, working).unwrap();
+    fs::remove_dir(&helper).unwrap();
+}
+
 fn lock_file(working: &Path) -> PathBuf {
     let name = working.file_name().unwrap().to_string_lossy();
     working.with_file_name(format!("~${name}"))
@@ -232,6 +244,56 @@ fn edit_save_and_close_in_excel_makes_one_version_and_ends_the_session() {
         h.sync_calls(),
         vec![
             "added Anggaran.xlsx 1",
+            "editing true",
+            "version 2",
+            "editing false"
+        ]
+    );
+}
+
+/// Word for Mac: the owner file (first two characters dropped, written in
+/// NFD) marks the file open; opening only touches metadata, which records no
+/// version; one safe save is one version; removing the owner file ends the
+/// session.
+#[test]
+fn mac_word_edit_session_makes_one_version_and_ends_with_the_owner_file() {
+    let h = Harness::new();
+    let doc = h.add("Laporan Kaf\u{e9} Mei.docx", "versi satu");
+    h.env.start_edit(&doc.id, None).unwrap();
+    let working = h.working(&doc.id);
+    assert!(working.ends_with("Laporan Kaf\u{e9} Mei.docx"));
+
+    let lock = working.with_file_name("~$poran Kafe\u{301} Mei.docx");
+    fs::write(&lock, "pemilik").unwrap();
+    wait_until("lock seen", || h.session(&doc.id).unwrap().lock_seen);
+
+    // Opening updates metadata only (macOS sets an xattr); same content.
+    fs::File::options()
+        .write(true)
+        .open(&working)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now())
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(1000));
+    assert_eq!(h.versions(&doc.id).len(), 1);
+
+    mac_safe_save(&working, "versi dua");
+    wait_until("version 2", || h.versions(&doc.id).len() == 2);
+    std::thread::sleep(Duration::from_millis(1000));
+    assert_eq!(h.versions(&doc.id).len(), 2);
+    assert_eq!(h.content(&h.versions(&doc.id)[0]), "versi dua");
+    assert!(h.session(&doc.id).is_some(), "still open in Word");
+
+    fs::remove_file(&lock).unwrap();
+    wait_until("session ended", || h.session(&doc.id).is_none());
+    wait_until("working folder removed", || {
+        !h.env.working_dir(&doc.id).exists()
+    });
+    assert_eq!(h.versions(&doc.id).len(), 2);
+    assert_eq!(
+        h.sync_calls(),
+        vec![
+            "added Laporan Kaf\u{e9} Mei.docx 1",
             "editing true",
             "version 2",
             "editing false"
@@ -549,6 +611,14 @@ fn executables_are_never_launched() {
     let dest = h.tmp.path().join("setup salinan.exe");
     h.env.export_version(&doc.id, None, &dest).unwrap();
     assert!(dest.is_file());
+
+    // macOS apps, installers and Terminal scripts are refused the same way.
+    for name in ["pasang.command", "Mira.dmg", "skrip.sh", "Pemasang.PKG"] {
+        let doc = h.add(name, "isi");
+        let err = h.env.open_read_only(&doc.id, None).unwrap_err();
+        assert_eq!(err.code(), "invalid_input", "{name}");
+    }
+    assert!(h.opened().is_empty());
 }
 
 #[test]
@@ -568,6 +638,14 @@ fn long_names_are_shortened_for_office() {
     assert_eq!(fit_file_name(dir, "a.docx"), "a.docx");
     let fitted = fit_file_name(dir, &"x".repeat(300));
     assert_eq!(fitted.chars().count(), MAX_OPEN_PATH_CHARS - 8);
+
+    // APFS allows 255 UTF-8 bytes per name: 150 three-byte characters fit
+    // the character limit but not the byte limit.
+    let wide = format!("{}.docx", "\u{6587}".repeat(150));
+    let fitted = fit_file_name(Path::new("/d"), &wide);
+    assert!(fitted.len() <= MAX_NAME_BYTES, "{}", fitted.len());
+    assert!(fitted.ends_with(".docx"));
+    assert_eq!(fitted.chars().count(), (MAX_NAME_BYTES - 5) / 3 + 5);
 }
 
 #[test]

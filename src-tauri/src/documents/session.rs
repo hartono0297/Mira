@@ -3,7 +3,7 @@
 //! copies, and recovering edit sessions when Mira starts.
 //!
 //! No Tauri types here, so tests drive it directly. The Tauri side
-//! (`documents::runtime`) supplies the [`Launcher`] (Windows "open with the
+//! (`documents::runtime`) supplies the [`Launcher`] ("open with the
 //! default app") and the [`DocumentEvents`] emitter.
 //!
 //! Locking:
@@ -47,7 +47,7 @@ pub const WORKING_DIR: &str = "working";
 /// Folder under the data folder with read-only copies, one subfolder per version.
 pub const VIEW_DIR: &str = "view";
 
-/// Opens a file with the app Windows associates with it (Word, Excel, ...).
+/// Opens a file with the default app for its type (Word, Excel, ...).
 pub trait Launcher: Send + Sync {
     fn open(&self, path: &Path) -> AppResult<()>;
 }
@@ -744,15 +744,22 @@ fn remove_dir_best_effort(dir: &Path) {
     }
 }
 
-/// Excel refuses paths longer than about 218 characters; working and view
-/// copies stay below this.
+/// Excel for Windows refuses paths longer than about 218 characters; working
+/// and view copies stay below this. The same limit is kept on macOS, where
+/// paths may be longer (`~/Library/Application Support/id.mira.desktop/...`
+/// leaves about 110 characters for the name), so a document opens on both.
 const MAX_OPEN_PATH_CHARS: usize = 200;
 
+/// Longest file name in UTF-8 bytes on APFS (255). Windows allows 255 UTF-16
+/// units, which a name within this byte limit never exceeds.
+const MAX_NAME_BYTES: usize = 255;
+
 /// `name` for a file in `dir`, with the part before the extension shortened
-/// when `<dir>\<name>` would be longer than [`MAX_OPEN_PATH_CHARS`].
+/// when `<dir>/<name>` would be longer than [`MAX_OPEN_PATH_CHARS`] characters
+/// or the name longer than [`MAX_NAME_BYTES`] bytes.
 fn fit_file_name(dir: &Path, name: &str) -> String {
     let room = MAX_OPEN_PATH_CHARS.saturating_sub(dir.to_string_lossy().chars().count() + 1);
-    if name.chars().count() <= room {
+    if name.chars().count() <= room && name.len() <= MAX_NAME_BYTES {
         return name.to_owned();
     }
     let (stem, ext) = match name.rfind('.') {
@@ -760,14 +767,17 @@ fn fit_file_name(dir: &Path, name: &str) -> String {
         _ => (name, ""),
     };
     let keep = room.saturating_sub(ext.chars().count()).max(1);
-    let short: String = stem.chars().take(keep).collect();
+    let mut short: String = stem.chars().take(keep).collect();
+    while short.len() + ext.len() > MAX_NAME_BYTES && short.pop().is_some() {}
     let short = short.trim_end_matches([' ', '.']);
     let short = if short.is_empty() { "file" } else { short };
     format!("{short}{ext}")
 }
 
 /// Extensions Windows would run instead of open. Mira never launches them,
-/// even read-only, because a rekan could have added such a file.
+/// even read-only, because a rekan could have added such a file. The macOS
+/// ones (`.app`, `.command`, `.sh`, `.pkg`, `.dmg`, `.scpt`, ...) are in
+/// [`crate::runnable`] and are refused on every platform as well.
 const BLOCKED_EXTENSIONS: &[&str] = &[
     "exe", "bat", "cmd", "com", "lnk", "js", "jse", "vbs", "vbe", "vb", "wsf", "wsh", "ws", "ps1",
     "psm1", "hta", "msi", "msp", "scr", "pif", "reg", "cpl", "jar", "msc", "scf", "url",
@@ -779,7 +789,7 @@ fn check_launchable(name: &str) -> AppResult<()> {
         .rsplit_once('.')
         .map(|(_, e)| e.trim().to_ascii_lowercase())
         .unwrap_or_default();
-    if BLOCKED_EXTENSIONS.contains(&ext.as_str()) {
+    if BLOCKED_EXTENSIONS.contains(&ext.as_str()) || crate::runnable::is_macos_runnable(&ext) {
         return Err(AppError::InvalidInput(
             "File jenis ini tidak dibuka dari Mira demi keamanan. Pakai Simpan salinan.".into(),
         ));

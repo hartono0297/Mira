@@ -5,6 +5,7 @@ import { validateDisplayName, validateOrgName } from "../../api/validation";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { FirewallGuide } from "../../components/FirewallGuide";
+import { firewallName } from "../../platform";
 import { Logo } from "../../components/Logo";
 import { JoinStep } from "./JoinStep";
 import { StepHeading } from "./StepHeading";
@@ -59,14 +60,14 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
           )}
           {hasName && view.kind === "create-firewall" && (
             <FirewallStep
-              lead={`Organisasi ${view.org.name} sudah dibuat. Supaya laptop rekan bisa menemukan dan menyambung ke laptop ini, Windows Firewall perlu mengizinkan Mira.`}
+              lead={`Organisasi ${view.org.name} sudah dibuat. Supaya laptop rekan bisa menemukan dan menyambung ke laptop ini, ${firewallName()} perlu mengizinkan Mira.`}
               continueLabel="Buka Mira"
               onContinue={() => onOrganization(view.org)}
             />
           )}
           {hasName && view.kind === "join-firewall" && (
             <FirewallStep
-              lead="Kode undangan diperiksa oleh laptop rekan lewat jaringan kantor. Sebelum memasukkan kode, pastikan Windows Firewall mengizinkan Mira."
+              lead={`Kode undangan diperiksa oleh laptop rekan lewat jaringan kantor. Sebelum memasukkan kode, pastikan ${firewallName()} mengizinkan Mira.`}
               continueLabel="Lanjut ke kode undangan"
               onBack={() => setView({ kind: "choice" })}
               onContinue={() => setView({ kind: "join" })}

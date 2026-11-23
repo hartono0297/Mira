@@ -1,6 +1,7 @@
 import { IconRefresh, IconShieldCheck, IconShieldExclamation, IconShieldQuestion } from "@tabler/icons-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, toAppError, type AppError, type FirewallStatus, type NetworkCategory } from "../api";
+import { firewallName, isMac } from "../platform";
 import { CopyButton } from "./CopyButton";
 import { ErrorAlert } from "./ErrorAlert";
 import "./firewall.css";
@@ -11,6 +12,9 @@ const CATEGORY_LABELS: Record<NetworkCategory, string> = {
   domain: "Domain kantor",
 };
 
+// Where the macOS firewall settings live, in the words of the Indonesian macOS UI.
+const MAC_SETTINGS = "Pengaturan Sistem > Jaringan > Firewall";
+
 type Load = { kind: "loading" } | { kind: "error"; error: AppError } | { kind: "ready"; status: FirewallStatus };
 type Request = { kind: "idle" } | { kind: "busy" } | { kind: "started" } | { kind: "not_started" } | { kind: "error"; error: AppError };
 
@@ -19,7 +23,9 @@ type Props = {
   footer?: (status: FirewallStatus | null) => ReactNode;
 };
 
-// Panduan Windows Firewall (F-ID-03). Dipakai di onboarding dan di Pengaturan > Jaringan.
+// Panduan firewall (F-ID-03). Dipakai di onboarding dan di Pengaturan > Jaringan.
+// Windows: status aturan dan tombol izin (UAC). macOS: status dan langkah manual,
+// Mira tidak mengubah firewall macOS sendiri.
 export function FirewallGuide({ footer }: Props) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [request, setRequest] = useState<Request>({ kind: "idle" });
@@ -59,23 +65,29 @@ export function FirewallGuide({ footer }: Props) {
   }
 
   const status = load.kind === "ready" ? load.status : null;
+  // The core says which firewall it read; before that, the webview decides.
+  const mac = status ? status.platform === "macos" : isMac();
+  const name = firewallName(mac);
+  const needsAction = status !== null && status.supported && status.rule !== "allowed";
 
   return (
     <div className="fw">
       <div aria-live="polite" className="fw-live">
-        {load.kind === "loading" && <p className="hint">Memeriksa Windows Firewall...</p>}
+        {load.kind === "loading" && <p className="hint">Memeriksa {name}...</p>}
         {load.kind === "error" && (
-          <ErrorAlert title="Status Windows Firewall belum terbaca">
+          <ErrorAlert title={`Status ${name} belum terbaca`}>
             <p>{load.error.message}</p>
             <p>Anda tetap bisa melanjutkan. Kalau rekan nanti tidak bisa tersambung, periksa lagi dari Pengaturan, bagian Jaringan.</p>
           </ErrorAlert>
         )}
-        {status && <RuleLine status={status} />}
+        {status && (mac ? <MacRuleLine status={status} /> : <RuleLine status={status} />)}
       </div>
 
-      {status && status.supported && <Profiles status={status} />}
+      {status && status.supported && !mac && <Profiles status={status} />}
 
-      {status && status.supported && status.rule !== "allowed" && (
+      {needsAction && mac && <MacSteps status={status} />}
+
+      {needsAction && !mac && (
         <div className="fw-allow">
           <div className="fw-allow-row">
             <button
@@ -147,8 +159,8 @@ function RuleLine({ status }: { status: FirewallStatus }) {
       <p className="fw-rule">
         <IconShieldQuestion size={20} aria-hidden="true" />
         <span>
-          Pemeriksaan firewall hanya ada di Windows. Kalau rekan tidak bisa tersambung, izinkan Mira menerima sambungan
-          UDP di firewall sistem ini.
+          Pemeriksaan firewall hanya ada di Windows dan macOS. Kalau rekan tidak bisa tersambung, izinkan Mira menerima
+          sambungan UDP di firewall sistem ini.
         </span>
       </p>
     );
@@ -191,6 +203,78 @@ function RuleLine({ status }: { status: FirewallStatus }) {
         </p>
       );
   }
+}
+
+// macOS: the status sentence, plus the core's detail when it explains the cause
+// (firewall off, "block all incoming connections", Mira set to block).
+function MacRuleLine({ status }: { status: FirewallStatus }) {
+  const detail = status.detail ? ` ${status.detail}` : "";
+  switch (status.rule) {
+    case "allowed":
+      return (
+        <p className="fw-rule fw-rule-ok">
+          <IconShieldCheck size={20} aria-hidden="true" />
+          <span>
+            Firewall macOS tidak menghalangi Mira. Laptop rekan bisa menyambung ke laptop ini.{detail}
+          </span>
+        </p>
+      );
+    case "blocked":
+      return (
+        <p className="fw-rule fw-rule-bad">
+          <IconShieldExclamation size={20} aria-hidden="true" />
+          <span>Firewall macOS memblokir Mira, jadi laptop rekan tidak bisa menyambung ke laptop ini.{detail}</span>
+        </p>
+      );
+    case "missing":
+      return (
+        <p className="fw-rule fw-rule-bad">
+          <IconShieldExclamation size={20} aria-hidden="true" />
+          <span>
+            Firewall macOS menyala dan Mira belum ada di daftarnya. Saat Mira mulai menerima sambungan, macOS akan
+            bertanya apakah Mira boleh menerima sambungan masuk. Pilih Izinkan.
+          </span>
+        </p>
+      );
+    default:
+      return (
+        <p className="fw-rule">
+          <IconShieldQuestion size={20} aria-hidden="true" />
+          <span>Mira belum bisa membaca status Firewall macOS.{detail} Langkah di bawah tetap bisa Anda ikuti.</span>
+        </p>
+      );
+  }
+}
+
+// macOS has no permission request Mira can start, so the guide lists the
+// manual steps and the Terminal command for IT.
+function MacSteps({ status }: { status: FirewallStatus }) {
+  return (
+    <div className="fw-allow">
+      <p className="fw-label">Kalau pertanyaan macOS terlewat atau Anda memilih Tolak</p>
+      <ol className="fw-steps">
+        <li>Buka {MAC_SETTINGS}, lalu klik Pilihan.</li>
+        <li>Cari Mira di daftar. Kalau belum ada, klik tombol tambah (+), lalu pilih aplikasi Mira.</li>
+        <li>Atur Mira ke Izinkan sambungan masuk, lalu klik OK.</li>
+        <li>Kembali ke Mira, lalu tekan Periksa lagi.</li>
+      </ol>
+      <p className="hint">Mengubah pengaturan firewall meminta kata sandi admin Mac ini.</p>
+
+      {status.adminCommand && (
+        <div className="fw-admin">
+          <p className="fw-label">Tidak punya hak admin di Mac ini?</p>
+          <p className="hint fw-admin-text">
+            Kirim perintah ini ke tim IT kantor. Perintah ini dijalankan di Terminal dan mengizinkan Mira menerima
+            sambungan dari laptop rekan lewat Firewall macOS.
+          </p>
+          <div className="copy-block">
+            <pre>{status.adminCommand}</pre>
+            <CopyButton text={status.adminCommand} label="Salin perintah" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Profiles({ status }: { status: FirewallStatus }) {

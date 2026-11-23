@@ -1,4 +1,5 @@
 import { ROLE_LABELS, type AppState, type OrgInfo } from "../../api";
+import { keyStoreName } from "../../platform";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -24,7 +25,7 @@ export function DeviceSection({ state }: { state: AppState & { organization: Org
           <dd>
             <span className="mono selectable">{identity.fingerprint}</span>
             <span className="fact-note">
-              Penanda kunci unik laptop ini. Kunci rahasianya tersimpan di penyimpanan kredensial Windows.
+              Penanda kunci unik laptop ini. Kunci rahasianya tersimpan di {keyStoreName()}.
             </span>
           </dd>
         </div>

@@ -102,6 +102,7 @@ export function network(overrides: Partial<NetworkStatus> = {}): NetworkStatus {
 
 export function firewall(overrides: Partial<FirewallStatus> = {}): FirewallStatus {
   return {
+    platform: "windows",
     supported: true,
     rule: "missing",
     profiles: [{ name: "Jaringan Kantor", category: "private", interfaceAlias: "Wi-Fi" }],

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, toAppError, type AppError } from "../../api";
 import { REMINDER_DAY_BEFORE, REMINDER_DUE_DAY } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { systemName } from "../../platform";
 import "./task.css";
 
 type Key = typeof REMINDER_DAY_BEFORE | typeof REMINDER_DUE_DAY;
@@ -75,7 +76,7 @@ export function ReminderSettings() {
         Pengingat tenggat
       </h3>
       <p className="rem-note">
-        Untuk task yang ditugaskan ke Anda dan belum selesai. Notifikasi muncul di Windows, hanya di laptop ini. Kalau
+        Untuk task yang ditugaskan ke Anda dan belum selesai. Notifikasi muncul di {systemName()}, hanya di laptop ini. Kalau
         laptop mati saat waktunya, pengingat muncul begitu laptop dinyalakan dan Mira berjalan lagi.
       </p>
       {!values && !loadError && (

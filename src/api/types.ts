@@ -118,7 +118,12 @@ export type NetworkStatus = {
 export type FirewallRule = "allowed" | "blocked" | "missing" | "unknown";
 export type NetworkCategory = "public" | "private" | "domain";
 
+// Which firewall the status describes. Windows: rules and a UAC request.
+// macOS: read-only status; Mira only explains how to allow it.
+export type FirewallPlatform = "windows" | "macos" | "other";
+
 export type FirewallStatus = {
+  platform: FirewallPlatform;
   supported: boolean;
   rule: FirewallRule;
   profiles: { name: string; category: NetworkCategory; interfaceAlias: string }[];

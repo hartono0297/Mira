@@ -13,7 +13,8 @@
 //! - Perubahan lokal memberi tahu jaringan lewat `HubOutbox`
 //!   (`FeatureHub::notify_changed("sign")`).
 //! - Folder ekspor: `MIRA_EXPORT_DIR` kalau diisi, kalau tidak folder Unduhan
-//!   Windows, kalau itu pun gagal `<data_dir>/ekspor`.
+//!   pengguna dari Tauri (`download_dir`: `%USERPROFILE%\Downloads` di
+//!   Windows, `~/Downloads` di macOS), kalau itu pun gagal `<data_dir>/ekspor`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -254,6 +254,64 @@ describe("Onboarding langkah firewall", () => {
     expect(screen.getByRole("button", { name: "Lanjut ke kode undangan" })).toBeInTheDocument();
   });
 
+  it("macOS: tanpa tombol izin Windows, ada langkah Pengaturan Sistem dan perintah Terminal", async () => {
+    const user = userEvent.setup();
+    const adminCommand =
+      "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add '/Applications/Mira.app' && sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp '/Applications/Mira.app'";
+    invoke.mockImplementation(
+      router({
+        get_firewall_status: firewall({
+          platform: "macos",
+          rule: "missing",
+          profiles: [],
+          programPath: "/Applications/Mira.app",
+          adminCommand,
+        }),
+      }),
+    );
+    setup();
+    await user.click(screen.getByRole("button", { name: /Gabung dengan kode/ }));
+
+    expect(await screen.findByText(/Mira belum ada di daftarnya/)).toBeInTheDocument();
+    expect(screen.getByText(/Pilih Izinkan\./)).toBeInTheDocument();
+    expect(screen.getByText(/Pengaturan Sistem > Jaringan > Firewall/)).toBeInTheDocument();
+    expect(screen.getByText(adminCommand)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Salin perintah" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Izinkan lewat Windows Firewall" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Jaringan yang sedang dipakai/)).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("request_firewall_rule", undefined);
+  });
+
+  it("macOS: firewall memblokir Mira, keterangan dari inti ikut tampil", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation(
+      router({
+        get_firewall_status: firewall({
+          platform: "macos",
+          rule: "blocked",
+          profiles: [],
+          detail: "Firewall macOS sedang memblokir semua sambungan masuk, termasuk untuk Mira.",
+        }),
+      }),
+    );
+    setup();
+    await user.click(screen.getByRole("button", { name: /Gabung dengan kode/ }));
+    expect(await screen.findByText(/Firewall macOS memblokir Mira/)).toBeInTheDocument();
+    expect(screen.getByText(/memblokir semua sambungan masuk/)).toBeInTheDocument();
+    expect(screen.getByText(/Atur Mira ke Izinkan sambungan masuk/)).toBeInTheDocument();
+  });
+
+  it("macOS: firewall sudah mengizinkan, tidak ada langkah tambahan", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation(
+      router({ get_firewall_status: firewall({ platform: "macos", rule: "allowed", profiles: [] }) }),
+    );
+    setup();
+    await user.click(screen.getByRole("button", { name: /Gabung dengan kode/ }));
+    expect(await screen.findByText(/Firewall macOS tidak menghalangi Mira/)).toBeInTheDocument();
+    expect(screen.queryByText(/Pengaturan Sistem/)).not.toBeInTheDocument();
+  });
+
   it("status firewall gagal dibaca: error jelas dan tetap bisa dilewati", async () => {
     const user = userEvent.setup();
     invoke.mockImplementation(

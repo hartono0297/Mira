@@ -1,7 +1,7 @@
 //! Process-wide state managed by Tauri.
 //!
 //! Initialization (open database, load or create the laptop key) can fail, for
-//! example when the key is missing from Windows Credential Manager. The app
+//! example when the key is missing from the OS key store. The app
 //! must still open its window and show a clear error, so a failure is kept
 //! out of `Core` and initialization is retried on the next command. That also
 //! makes the frontend's "Coba lagi" button meaningful.

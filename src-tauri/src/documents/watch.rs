@@ -12,6 +12,17 @@
 //!
 //! Lock state is always read back from the folder ([`lock_present`]) after things settle and
 //! on a slow poll, so a missed notify event cannot leave an edit session hanging.
+//!
+//! Backends: `ReadDirectoryChangesW` on Windows, FSEvents on macOS. FSEvents coalesces: one
+//! callback may carry several flags for a path (created, modified, renamed, removed, xattr), and
+//! notify turns each flag into its own event, all with the same path. Only the file name
+//! matters here, so the order and number of those events do not; every one restarts the quiet
+//! period. Dropped-event notices (`MustScanSubDirs`) arrive as rescan events and re-check every
+//! document. Paths from FSEvents are canonical (`/private/var/...` for `/var/...`), which is
+//! why the watched folder is canonicalized too, and names may come in NFD, which is why names
+//! are compared with [`name_key`]. A metadata-only event (macOS sets the
+//! `com.apple.lastuseddate#PS` xattr when a file is opened) also settles, which is harmless: a
+//! settle with unchanged content records no version.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -25,7 +36,7 @@ use std::time::{Duration, Instant};
 use notify::event::{Event, EventKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
-use super::office::{SettleTracker, is_lock_file_for, lock_present};
+use super::office::{SettleTracker, is_lock_file_for, lock_present, name_key};
 use crate::error::{AppError, AppResult};
 
 pub const DEFAULT_SETTLE: Duration = Duration::from_millis(1500);
@@ -152,7 +163,7 @@ impl OfficeWatcher {
             })?;
         let target = Target {
             dir_key: path_key(&dir),
-            name_key: name.to_lowercase(),
+            name_key: name_key(&name),
             name,
             dir,
         };
@@ -265,14 +276,19 @@ fn strip_verbatim(path: &Path) -> PathBuf {
 }
 
 /// Comparison key for a folder: no verbatim prefix, one separator style, no trailing separator,
-/// and lowercase on Windows where paths are case-insensitive.
+/// and folded with [`name_key`] (NFC, lowercase) on Windows and macOS, whose default file
+/// systems (NTFS, APFS) are case-insensitive; APFS is also normalization-insensitive.
 fn path_key(path: &Path) -> String {
     let stripped = strip_verbatim(path);
     let mut s = stripped.to_string_lossy().replace('/', "\\");
     while s.len() > 1 && s.ends_with('\\') {
         s.pop();
     }
-    if cfg!(windows) { s.to_lowercase() } else { s }
+    if cfg!(any(windows, target_os = "macos")) {
+        name_key(&s)
+    } else {
+        s
+    }
 }
 
 /// True when the target exists and can be opened for reading right now.
@@ -381,12 +397,12 @@ impl Worker {
             };
             let parent_key = path_key(parent);
             let name = name.to_string_lossy();
-            let name_key = name.to_lowercase();
+            let key = name_key(&name);
             for (id, target) in &shared.targets {
                 if target.dir_key != parent_key {
                     continue;
                 }
-                if name_key == target.name_key {
+                if key == target.name_key {
                     push_unique(&mut touched.files, id);
                 } else if is_lock_file_for(&name, &target.name) {
                     push_unique(&mut touched.locks, id);
@@ -566,6 +582,11 @@ mod tests {
     }
 
     fn watch(watcher: &OfficeWatcher, id: &str, file: &Path) {
+        if cfg!(target_os = "macos") {
+            // Let fseventsd journal the setup writes first, so they cannot show up as
+            // events after the watch starts.
+            thread::sleep(Duration::from_millis(300));
+        }
         watcher.watch(id, file).unwrap();
         // Give the backend a moment to arm the directory watch.
         thread::sleep(Duration::from_millis(100));
@@ -601,6 +622,41 @@ mod tests {
         fs::remove_file(&old_tmp).unwrap();
     }
 
+    /// Office for Mac, sandboxed safe save: a hidden `.dat.nosync` scratch file, the new content
+    /// written inside a hidden `.sb-` folder next to the document, an atomic rename onto the
+    /// document (it never disappears), then the helpers are removed.
+    fn mac_safe_save(file: &Path, content: &[u8]) {
+        let dir = file.parent().unwrap();
+        let scratch = dir.join(".dat.nosync0d4a.3jXWxy");
+        fs::write(&scratch, b"x").unwrap();
+        let helper = dir.join(".sb-6c1f02a1-Ab12Cd");
+        fs::create_dir(&helper).unwrap();
+        let temp = helper.join(file.file_name().unwrap());
+        fs::write(&temp, content).unwrap();
+        thread::sleep(STEP);
+        fs::rename(&temp, file).unwrap();
+        thread::sleep(STEP);
+        fs::remove_dir(&helper).unwrap();
+        fs::remove_file(&scratch).unwrap();
+    }
+
+    /// Excel for Mac: write the 8-hex temp file, delete the document, rename the temp file to
+    /// the document name (the document is missing for a moment).
+    fn mac_excel_save(file: &Path, content: &[u8]) {
+        let dir = file.parent().unwrap();
+        let temp = dir.join("Cedd4100");
+        fs::write(&temp, content).unwrap();
+        thread::sleep(STEP);
+        fs::remove_file(file).unwrap();
+        thread::sleep(STEP);
+        fs::rename(&temp, file).unwrap();
+    }
+
+    /// Feeds an event to the worker as if the backend had sent it.
+    fn inject(watcher: &OfficeWatcher, event: Event) {
+        watcher.send(Msg::Event(Ok(event)));
+    }
+
     #[test]
     fn watcher_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
@@ -627,6 +683,109 @@ mod tests {
         sink.wait_for(&settled("doc-x"), 1);
         thread::sleep(QUIET);
         assert_eq!(sink.calls(), vec![settled("doc-x")]);
+    }
+
+    #[test]
+    fn mac_safe_save_settles_once() {
+        let (root, sink, watcher) = setup();
+        let file = working_copy(root.path(), "doc-a", "laporan-bulanan.docx");
+        watch(&watcher, "doc-a", &file);
+        mac_safe_save(&file, b"versi 2");
+        sink.wait_for(&settled("doc-a"), 1);
+        thread::sleep(QUIET);
+        assert_eq!(sink.calls(), vec![settled("doc-a")]);
+        assert_eq!(fs::read(&file).unwrap(), b"versi 2");
+    }
+
+    #[test]
+    fn mac_excel_delete_then_rename_settles_once() {
+        let (root, sink, watcher) = setup();
+        let file = working_copy(root.path(), "doc-x", "RAB proyek.xlsx");
+        watch(&watcher, "doc-x", &file);
+        mac_excel_save(&file, b"versi 2");
+        sink.wait_for(&settled("doc-x"), 1);
+        thread::sleep(QUIET);
+        assert_eq!(sink.calls(), vec![settled("doc-x")]);
+    }
+
+    /// Word for Mac: the owner file name may be written in NFD while Mira named the document in
+    /// NFC. Open, save, close gives appeared, settled, released in that order.
+    #[test]
+    fn mac_word_session_with_decomposed_owner_file() {
+        let (root, sink, watcher) = setup();
+        let file = working_copy(root.path(), "doc-a", "Laporan Kaf\u{e9} Mei.docx");
+        let lock = file
+            .parent()
+            .unwrap()
+            .join("~$poran Kafe\u{301} Mei.docx");
+        watch(&watcher, "doc-a", &file);
+        fs::write(&lock, b"pemilik").unwrap();
+        sink.wait_for(&appeared("doc-a"), 1);
+
+        mac_safe_save(&file, b"versi 2");
+        fs::remove_file(&lock).unwrap();
+        sink.wait_for(&released("doc-a"), 1);
+        thread::sleep(QUIET);
+        assert_eq!(
+            sink.calls(),
+            vec![appeared("doc-a"), settled("doc-a"), released("doc-a")]
+        );
+    }
+
+    /// What FSEvents delivers, fed in directly so it runs on every platform: one coalesced
+    /// change arrives as several events for the same path, with the name in another case and
+    /// in NFD; helper files and the `.sb-` folder content are ignored; a rescan re-checks every
+    /// document.
+    #[test]
+    fn fsevents_style_coalesced_events() {
+        use notify::event::{
+            CreateKind, DataChange, Flag, MetadataKind, ModifyKind, RemoveKind, RenameMode,
+        };
+
+        let (root, sink, watcher) = setup();
+        let file = working_copy(root.path(), "doc-a", "Laporan Kaf\u{e9}.docx");
+        watch(&watcher, "doc-a", &file);
+        let dir = strip_verbatim(&fs::canonicalize(file.parent().unwrap()).unwrap());
+
+        // Helpers next to the document and files inside the helper folder: nothing.
+        for path in [
+            dir.join(".dat.nosync0d4a.3jXWxy"),
+            dir.join(".sb-6c1f02a1-Ab12Cd"),
+            dir.join(".sb-6c1f02a1-Ab12Cd").join("Laporan Kaf\u{e9}.docx"),
+            dir.join("Cedd4100"),
+        ] {
+            inject(
+                &watcher,
+                Event::new(EventKind::Create(CreateKind::Any)).add_path(path.clone()),
+            );
+            inject(
+                &watcher,
+                Event::new(EventKind::Remove(RemoveKind::Any)).add_path(path),
+            );
+        }
+        thread::sleep(QUIET);
+        assert_eq!(sink.calls(), Vec::<Call>::new());
+
+        // One coalesced FSEvents record (created, renamed, modified, xattr) for the target.
+        let target = dir.join("LAPORAN KAFE\u{301}.DOCX");
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Name(RenameMode::Any)),
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::Extended)),
+        ] {
+            inject(&watcher, Event::new(kind).add_path(target.clone()));
+        }
+        sink.wait_for(&settled("doc-a"), 1);
+        thread::sleep(QUIET);
+        assert_eq!(sink.calls(), vec![settled("doc-a")]);
+
+        // Dropped events: FSEvents asks for a rescan, every document settles once more.
+        inject(&watcher, Event::new(EventKind::Other).set_flag(Flag::Rescan));
+        sink.wait_for(&settled("doc-a"), 2);
+        thread::sleep(QUIET);
+        assert_eq!(sink.count(&settled("doc-a")), 2);
+        assert_eq!(sink.calls().len(), 2);
     }
 
     #[test]
@@ -801,7 +960,7 @@ mod tests {
     fn differently_cased_path_still_matches() {
         let (root, sink, watcher) = setup();
         let file = working_copy(root.path(), "doc-a", "Laporan.docx");
-        let given = if cfg!(windows) {
+        let given = if cfg!(any(windows, target_os = "macos")) {
             file.parent().unwrap().join("LAPORAN.DOCX")
         } else {
             file.clone()
@@ -847,10 +1006,14 @@ mod tests {
             path_key(Path::new(r"\\?\C:\Data\working\abc")),
             path_key(Path::new("C:/Data/working/abc/"))
         );
-        if cfg!(windows) {
+        if cfg!(any(windows, target_os = "macos")) {
             assert_eq!(
                 path_key(Path::new(r"C:\DATA\Working\ABC")),
                 path_key(Path::new(r"c:\data\working\abc"))
+            );
+            assert_eq!(
+                path_key(Path::new("/Users/budi/Library/Application Support/Kafe\u{301}")),
+                path_key(Path::new("/users/BUDI/Library/Application Support/Kaf\u{e9}/"))
             );
         }
         assert_eq!(

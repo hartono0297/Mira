@@ -50,7 +50,8 @@ struct DocumentChanged<'a> {
     document_id: &'a str,
 }
 
-/// Opens files with the app Windows associates with them.
+/// Opens files with the default app for their type (Windows shell, `open` on
+/// macOS), through the opener plugin.
 struct OpenerLauncher {
     app: AppHandle,
 }

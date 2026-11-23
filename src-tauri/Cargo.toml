@@ -24,7 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core", "zeroize"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
-keyring = { version = "3", features = ["windows-native"] }
+# Windows: only used by the keystore tests (the app calls Credential Manager
+# directly). macOS: the login keychain, through the Security framework.
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 thiserror = "2.0.21"
 hex = "0.4.3"
@@ -43,6 +45,9 @@ x509-parser = "0.18.1"
 automerge = "0.12.0"
 tauri-plugin-notification = "2"
 notify = "9.0.0"
+# Office lock and file names compared in NFC: macOS apps often write
+# decomposed (NFD) names. Already in the tree through lopdf.
+unicode-normalization = "0.1.26"
 tauri-plugin-dialog = "2.8.4"
 # Tahap 5 (tanda tangan PDF): kunci turunan PIN dan enkripsi gambar tanda tangan.
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }

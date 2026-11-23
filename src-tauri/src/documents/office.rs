@@ -11,18 +11,40 @@
 //!   (`A1B2C3D4`). Its lock file is `~$` + the full name.
 //! - LibreOffice locks with `.~lock.<name>#`.
 //!
+//! Microsoft Office for Mac (Word, Excel, PowerPoint 16.x) keeps the same `~$` owner file next
+//! to the document while it is open, when the folder is writable. Saving goes through a temp
+//! file and a replace. The temp names vary by version, for example `~Word Work File ... .tmp`,
+//! a hidden `.dat.nosync....` file, a hidden `.sb-<hex>-<suffix>` folder next to the document
+//! for sandboxed saves (or a temp folder elsewhere on the same volume), or Excel's
+//! 8-hex-character temp file. The final step is a rename onto the document name (an atomic
+//! replace, or delete-then-rename like Windows), so the watcher only needs the target
+//! name and the lock name; the temp names never matter. Cocoa may write file names in
+//! decomposed Unicode (NFD), so names are compared through [`name_key`] (NFC, lowercase).
+//!
 //! [`SettleTracker`] turns a burst of such events into one "settled" signal per document.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use unicode_normalization::UnicodeNormalization;
+
+/// Comparison key for a file name: NFC, then lowercase. `Café.docx` written as NFD by a macOS
+/// app and as NFC by Mira give the same key.
+pub fn name_key(file_name: &str) -> String {
+    file_name.nfc().collect::<String>().to_lowercase()
+}
+
 /// True for files Office (or LibreOffice) creates next to a document while it is open or being
-/// saved: lock files (`~$*`, `.~lock.*#`), `*.tmp` (Word `~WRL0001.tmp`, `~WRD0000.tmp`) and
-/// Excel's extensionless 8-hex-character temp files (`A1B2C3D4`). Case-insensitive.
+/// saved: lock files (`~$*`, `.~lock.*#`), `*.tmp` (Word `~WRL0001.tmp`, `~WRD0000.tmp`, Word for
+/// Mac `~Word Work File L_1234.tmp`), Excel's extensionless 8-hex-character temp files
+/// (`A1B2C3D4`), and the hidden macOS save helpers (`.dat.nosync*`, `.sb-*`). Case-insensitive.
 pub fn is_office_temp_file(file_name: &str) -> bool {
-    let lower = file_name.to_lowercase();
+    let lower = name_key(file_name);
     if lower.starts_with("~$") {
+        return true;
+    }
+    if lower.starts_with(".dat.nosync") || lower.starts_with(".sb-") {
         return true;
     }
     if lower.starts_with(".~lock.") && lower.ends_with('#') {
@@ -37,10 +59,11 @@ pub fn is_office_temp_file(file_name: &str) -> bool {
 /// True when `file_name` is an Office or LibreOffice lock file for `target_name`, ignoring case:
 /// `~$` + name (Excel, short Word names), `~$` + name without its first one or two characters
 /// (Word drops them for longer names, `laporan-bulanan.docx` -> `~$poran-bulanan.docx`), or
-/// `.~lock.` + name + `#` (LibreOffice).
+/// `.~lock.` + name + `#` (LibreOffice). Office for Mac names its owner files the same way.
+/// Unicode normalization does not matter (see [`name_key`]).
 pub fn is_lock_file_for(file_name: &str, target_name: &str) -> bool {
-    let file = file_name.to_lowercase();
-    let target = target_name.to_lowercase();
+    let file = name_key(file_name);
+    let target = name_key(target_name);
     if target.is_empty() {
         return false;
     }
@@ -158,9 +181,38 @@ mod tests {
             "3E4F2A10",
             ".~lock.laporan.odt#",
             ".~lock.RAB proyek.xlsx#",
+            // Office for Mac.
+            "~Word Work File L_1234.tmp",
+            ".dat.nosync0d4a.3jXWxy",
+            ".sb-6c1f02a1-Ab12Cd",
+            "Cedd4100",
         ] {
             assert!(is_office_temp_file(name), "{name} should be temp");
         }
+    }
+
+    #[test]
+    fn name_key_ignores_case_and_unicode_normalization() {
+        let nfc = "Caf\u{e9} Proposal.docx";
+        let nfd = "Cafe\u{301} proposal.DOCX";
+        assert_ne!(nfc, nfd);
+        assert_eq!(name_key(nfc), name_key(nfd));
+        assert_eq!(name_key("RAB.xlsx"), "rab.xlsx");
+    }
+
+    #[test]
+    fn mac_lock_names_written_decomposed_still_match() {
+        // Word for Mac drops the first two characters of a long name, like Windows, and may
+        // write the rest in NFD.
+        assert!(is_lock_file_for(
+            "~$poran Kafe\u{301} Mei.docx",
+            "Laporan Kaf\u{e9} Mei.docx"
+        ));
+        assert!(is_lock_file_for("~$Re\u{301}sume\u{301}.docx", "R\u{e9}sum\u{e9}.docx"));
+        assert!(!is_lock_file_for(
+            "~$poran Kafe Mei.docx",
+            "Laporan Kaf\u{e9} Mei.docx"
+        ));
     }
 
     #[test]
