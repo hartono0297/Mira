@@ -98,6 +98,8 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg);
+  /* Tumpukan tanda gabung di keterangan tidak boleh tergambar ke luar kotak. */
+  overflow: hidden;
 }
 
 .req-note-label {

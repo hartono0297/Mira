@@ -5,8 +5,10 @@ import type { AppState } from "../../api";
 import { appState, firewall, org, router, rustError } from "../../test/fixtures";
 import { ThemeProvider } from "../../theme/ThemeProvider";
 import { device, office, outgoing, searchResult } from "./joinFixtures";
+import { noteHasForbiddenChars } from "./OfficeStep";
 import { Onboarding } from "./Onboarding";
 import { GRACE_MS } from "./SearchStep";
+import { OFFICE_STEP } from "./texts";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -357,7 +359,12 @@ describe("Onboarding: kantor ditemukan", () => {
       "aria-live",
       "polite",
     );
-    expect(screen.getByText(/Misalnya jabatan atau nomor karyawan/)).toBeInTheDocument();
+    // Keterangan membantu admin mengenali orangnya, bukan bukti identitas.
+    expect(OFFICE_STEP.noteHint).toBe(
+      "Misalnya jabatan atau nomor karyawan, supaya admin lebih mudah mengenali Anda. Paling banyak 80 karakter.",
+    );
+    expect(screen.getByText(OFFICE_STEP.noteHint)).toBeInTheDocument();
+    expect(screen.queryByText(/yakin ini Anda/)).not.toBeInTheDocument();
     await u.type(note, "a".repeat(90));
     expect(note).toHaveValue("a".repeat(80));
     expect(screen.getByText("80 dari 80 karakter")).toBeInTheDocument();
@@ -399,6 +406,83 @@ describe("Onboarding: kantor ditemukan", () => {
     expect(note).toHaveFocus();
     expect(note).toHaveAttribute("aria-invalid", "true");
     expect(calls("join_send_request")).toHaveLength(0);
+  });
+
+  it("keterangan dengan karakter pengisi Hangul: ditolak sebelum dikirim", async () => {
+    const u = user();
+    commands({ join_search: searchResult({ offices: [office()] }), join_send_request: outgoing() });
+    setup();
+    await searchUntilFound(u);
+    const note = screen.getByLabelText(NOTE);
+    await u.type(note, "Staf\u{3164}desain");
+    await u.selectOptions(screen.getByLabelText("Departemen"), "Desain");
+    await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
+    expect(await screen.findByText("Keterangan berisi karakter yang tidak diizinkan.")).toBeInTheDocument();
+    expect(note).toHaveFocus();
+    expect(calls("join_send_request")).toHaveLength(0);
+  });
+
+  it("pemeriksaan keterangan: karakter tak terlihat, pemilih varian, tag, dan tumpukan tanda gabung ditolak", () => {
+    const rejected = [
+      "a\u{7}b",
+      "a\u{202E}b",
+      "a\u{200B}b",
+      "a\u{115F}b",
+      "a\u{1160}b",
+      "a\u{3164}b",
+      "a\u{FFA0}b",
+      "a\u{2800}b",
+      "a\u{34F}b",
+      "a\u{FE00}b",
+      "a\u{FE0F}b",
+      "a\u{E0000}b",
+      "a\u{E0041}b",
+      "a\u{E007F}b",
+      // Tiga tanda gabung berturut-turut, dari setiap rentang.
+      "a\u{301}\u{302}\u{303}",
+      "a\u{1AB0}\u{1AB1}\u{1AB2}",
+      "a\u{1DC0}\u{1DC1}\u{1DC2}",
+      "a\u{20D0}\u{20D1}\u{20D2}",
+      "a\u{FE20}\u{FE21}\u{FE22}",
+      // Campuran rentang tetap dihitung berturut-turut.
+      "a\u{301}\u{1DC0}\u{20D0}",
+    ];
+    for (const s of rejected) expect(noteHasForbiddenChars(s), JSON.stringify(s)).toBe(true);
+
+    const allowed = [
+      "Staf desain, NIK 1042",
+      // Dua tanda gabung berturut-turut masih wajar (misalnya huruf Vietnam).
+      "Nguye\u{302}\u{303}n",
+      "a\u{301}\u{302}b\u{303}\u{304}",
+      "Caf\u{E9} \u{1F600}",
+      "\u{AC00}\u{B098}\u{B2E4}",
+    ];
+    for (const s of allowed) expect(noteHasForbiddenChars(s), JSON.stringify(s)).toBe(false);
+  });
+
+  it("formulir kantor menyebut data yang dikirim dan siapa yang bisa melihatnya", async () => {
+    const u = user();
+    commands({ join_search: searchResult({ offices: [office()] }) });
+    setup();
+    await searchUntilFound(u);
+    expect(OFFICE_STEP.sharedWithNote).toBe(
+      "Nama Anda, nama laptop, nama akun login laptop ini, alamat IP, dan keterangan tersimpan di catatan kantor dan bisa dilihat admin kantor.",
+    );
+    const line = screen.getByText(OFFICE_STEP.sharedWithNote);
+    const submit = screen.getByRole("button", { name: "Kirim permintaan" });
+    expect(submit.getAttribute("aria-describedby")?.split(" ")).toContain(line.id);
+  });
+
+  it("formulir kantor v0.3: data yang dikirim tanpa akun login dan keterangan", async () => {
+    const u = user();
+    commands({ join_search: searchResult({ offices: [office({ acceptsNote: false })] }) });
+    setup();
+    await searchUntilFound(u);
+    expect(OFFICE_STEP.shared).toBe(
+      "Nama Anda, nama laptop, dan alamat IP tersimpan di catatan kantor dan bisa dilihat admin kantor.",
+    );
+    expect(screen.getByText(OFFICE_STEP.shared)).toBeInTheDocument();
+    expect(screen.queryByText(OFFICE_STEP.sharedWithNote)).not.toBeInTheDocument();
   });
 
   it("keterangan berisi spasi saja dikirim sebagai null", async () => {

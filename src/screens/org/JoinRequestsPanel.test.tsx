@@ -109,21 +109,27 @@ describe("Permintaan bergabung: tampilan", () => {
     expect(within(rina).getByText("192.168.1.23")).toHaveClass("mono");
     expect(fact(rina, "Sistem")).toHaveTextContent("Windows 11 24H2");
     expect(fact(rina, "Versi Mira")).toHaveTextContent("0.3.0");
-    expect(fact(rina, "Akun login")).toHaveTextContent("rina.w");
-    expect(fact(rina, "Akun login")).toHaveClass("mono");
+    // Akun login dan keterangan diisi oleh laptop peminta sendiri: labelnya
+    // mengatakan itu, supaya admin tidak menganggapnya sudah diperiksa Mira.
+    expect(CARD_TEXT.account).toBe("Akun login (dilaporkan laptop peminta)");
+    expect(fact(rina, CARD_TEXT.account)).toHaveTextContent("rina.w");
+    expect(fact(rina, CARD_TEXT.account)).toHaveClass("mono");
     // Label keterangan dibacakan sekali: figcaption memberi nama figure (browser
     // menurunkannya sendiri; jsdom belum), kutipannya tanpa nama sendiri.
-    expect(within(rina).getAllByText("Keterangan")).toHaveLength(1);
+    expect(CARD_TEXT.note).toBe("Keterangan dari peminta (belum diperiksa)");
+    expect(within(rina).getAllByText(CARD_TEXT.note)).toHaveLength(1);
     const noteFigure = within(rina).getByRole("figure");
-    expect(within(noteFigure).getByText("Keterangan", { selector: "figcaption" })).toBeInTheDocument();
+    expect(within(noteFigure).getByText(CARD_TEXT.note, { selector: "figcaption" })).toBeInTheDocument();
     const noteQuote = within(noteFigure).getByRole("blockquote");
     expect(noteQuote).toHaveTextContent("Drafter baru di proyek Gedung B, nomor karyawan 0412.");
     expect(noteQuote).not.toHaveAttribute("aria-labelledby");
     expect(noteQuote).toHaveAttribute("dir", "auto");
     expect(within(rina).getByText("4F2A 91C0")).toBeInTheDocument();
     expect(within(rina).getByText(CARD_TEXT.verifyHint)).toBeInTheDocument();
+    // Petunjuk verifikasi tidak boleh mengarahkan admin ke nomor dari keterangan:
+    // keterangan ditulis peminta, jadi bisa berisi nomor milik penipu.
     expect(CARD_TEXT.verifyHint).toBe(
-      "Pastikan orangnya benar: telepon atau datangi dia, lalu minta ia membacakan kode di layarnya. Setujui hanya kalau kodenya sama.",
+      "Pastikan orangnya benar: telepon dia di nomor yang sudah Anda kenal, bukan nomor dari keterangan, atau datangi mejanya. Minta ia membacakan kode di layarnya, dan setujui hanya kalau kodenya sama.",
     );
     expect(within(rina).getByText("Diterima lewat laptop Andi")).toBeInTheDocument();
 
@@ -132,11 +138,11 @@ describe("Permintaan bergabung: tampilan", () => {
     expect(within(fajar).getByText("Drafting")).toBeInTheDocument();
     expect(within(fajar).getByText("Tidak tercatat")).toBeInTheDocument();
     // Mira v0.3 tidak mengirim keterangan dan akun: tanpa label kosong.
-    expect(within(fajar).queryByText("Keterangan")).not.toBeInTheDocument();
+    expect(within(fajar).queryByText(CARD_TEXT.note)).not.toBeInTheDocument();
     expect(within(fajar).queryByRole("figure")).not.toBeInTheDocument();
     expect(within(fajar).queryByRole("blockquote")).not.toBeInTheDocument();
-    expect(fact(fajar, "Akun login")).toHaveTextContent("Tidak dikirim (Mira versi lama)");
-    expect(fact(fajar, "Akun login")).not.toHaveClass("mono");
+    expect(fact(fajar, CARD_TEXT.account)).toHaveTextContent("Tidak dikirim");
+    expect(fact(fajar, CARD_TEXT.account)).not.toHaveClass("mono");
     expect(within(fajar).getByText(CARD_TEXT.verifyHint)).toBeInTheDocument();
     expect(within(fajar).getByText("7KQ2 X0M9")).toBeInTheDocument();
     expect(within(fajar).queryByText(/Diterima lewat laptop/)).not.toBeInTheDocument();
@@ -163,37 +169,25 @@ describe("Permintaan bergabung: tampilan", () => {
     expect(quote.querySelector("img")).toBeNull();
     expect(quote).toHaveClass("req-note-text");
     // Akun dikirim tapi kosong: bukan versi lama.
-    expect(fact(dewi, "Akun login")).toHaveTextContent("Tidak tercatat");
+    expect(fact(dewi, CARD_TEXT.account)).toHaveTextContent("Tidak tercatat");
 
     const eko = card("Eko");
-    expect(within(eko).queryByText("Keterangan")).not.toBeInTheDocument();
-    expect(fact(eko, "Akun login")).toHaveTextContent("eko");
+    expect(within(eko).queryByText(CARD_TEXT.note)).not.toBeInTheDocument();
+    expect(fact(eko, CARD_TEXT.account)).toHaveTextContent("eko");
   });
 
-  it("akun tidak dikirim: versi lama hanya kalau peminta memakai Mira di bawah 0.4", async () => {
+  it("akun tidak dikirim: tertulis netral, tanpa menebak alasannya dari versi yang dilaporkan peminta", async () => {
     const without = (id: string, name: string, appVersion: string) =>
       joinRequest(id, name, { appVersion, note: null, account: null, ip: null });
-    setup([
-      without("v1", "Gita", "0.3.9"),
-      without("v2", "Hadi", "0.4.0"),
-      without("v3", "Indah", "0.10.2"),
-      without("v4", "Joko", "1.0"),
-      without("v5", "Kiki", "versi-uji"),
-      without("v6", "Lina", ""),
-    ]);
+    setup([without("v1", "Gita", "0.3.9"), without("v2", "Hadi", "0.4.0"), without("v3", "Kiki", "versi-uji")]);
     await openTab();
     await screen.findByRole("heading", { name: "Gita" });
 
-    // Peminta v0.4 ke atas: akunnya tidak sampai karena laptop kantor yang menjawab masih versi lama.
-    for (const name of ["Hadi", "Indah", "Joko"]) {
-      expect(fact(card(name), "Akun login")).toHaveTextContent(CARD_TEXT.accountOldOffice);
+    expect(CARD_TEXT.accountNotSent).toBe("Tidak dikirim");
+    for (const name of ["Gita", "Hadi", "Kiki"]) {
+      expect(fact(card(name), CARD_TEXT.account).textContent).toBe(CARD_TEXT.accountNotSent);
     }
-    // Di bawah 0.4, atau versinya tidak terbaca: Mira peminta yang versi lama.
-    for (const name of ["Gita", "Kiki", "Lina"]) {
-      expect(fact(card(name), "Akun login")).toHaveTextContent(CARD_TEXT.accountOldVersion);
-    }
-    expect(CARD_TEXT.accountOldVersion).toBe("Tidak dikirim (Mira versi lama)");
-    expect(CARD_TEXT.accountOldOffice).toBe("Tidak dikirim (ada laptop kantor yang masih memakai Mira versi lama)");
+    expect(screen.queryByText(/versi lama/)).not.toBeInTheDocument();
   });
 
   it("memuat", async () => {

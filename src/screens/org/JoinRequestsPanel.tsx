@@ -16,30 +16,20 @@ const NOT_RECORDED = "Tidak tercatat";
 // Teks kartu permintaan, dikumpulkan di satu tempat untuk terjemahan nanti.
 export const CARD_TEXT = {
   department: "Departemen",
-  note: "Keterangan",
+  // Keterangan dan akun login ditulis oleh laptop peminta sendiri. Labelnya
+  // mengatakan itu, supaya admin tidak menganggapnya sudah diperiksa.
+  note: "Keterangan dari peminta (belum diperiksa)",
   laptop: "Laptop",
-  account: "Akun login",
-  // `account` null dari peminta di bawah v0.4: Mira-nya belum mengirim akun login.
-  accountOldVersion: "Tidak dikirim (Mira versi lama)",
-  // `account` null dari peminta v0.4 ke atas: laptop kantor yang menjawabnya
-  // masih v0.3, jadi peminta tidak mengirim akun dan keterangan.
-  accountOldOffice: "Tidak dikirim (ada laptop kantor yang masih memakai Mira versi lama)",
+  account: "Akun login (dilaporkan laptop peminta)",
+  // Alasannya tidak ditebak dari versi Mira, karena versi itu juga laporan peminta.
+  accountNotSent: "Tidak dikirim",
   ip: "Alamat IP",
   os: "Sistem",
   appVersion: "Versi Mira",
   codeLabel: "Kode cocok",
   verifyHint:
-    "Pastikan orangnya benar: telepon atau datangi dia, lalu minta ia membacakan kode di layarnya. Setujui hanya kalau kodenya sama.",
+    "Pastikan orangnya benar: telepon dia di nomor yang sudah Anda kenal, bukan nomor dari keterangan, atau datangi mejanya. Minta ia membacakan kode di layarnya, dan setujui hanya kalau kodenya sama.",
 } as const;
-
-// Versi Mira peminta sudah mengirim akun login (v0.4 ke atas). Versi yang tidak
-// terbaca dianggap lama.
-function sendsAccount(appVersion: string | null | undefined): boolean {
-  const m = /^\s*v?(\d+)\.(\d+)/.exec(appVersion ?? "");
-  if (!m) return false;
-  const major = Number(m[1]);
-  return major > 0 || Number(m[2]) >= 4;
-}
 
 // Isi bebas dari peminta: kosong atau hanya spasi dianggap tidak ada.
 function filled(s: string | null | undefined): string | null {
@@ -372,11 +362,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                   <div>
                     <dt>{CARD_TEXT.account}</dt>
                     <dd className={account ? "mono" : undefined}>
-                      {r.account == null
-                        ? sendsAccount(r.appVersion)
-                          ? CARD_TEXT.accountOldOffice
-                          : CARD_TEXT.accountOldVersion
-                        : (account ?? NOT_RECORDED)}
+                      {r.account == null ? CARD_TEXT.accountNotSent : (account ?? NOT_RECORDED)}
                     </dd>
                   </div>
                   <div>

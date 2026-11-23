@@ -17,8 +17,16 @@ export type OfficeDraft = {
 };
 
 // Karakter yang ditolak inti Rust (identity::has_forbidden_chars): kontrol,
-// bidi, dan karakter tak terlihat.
-const FORBIDDEN_CHARS = /[\p{Cc}\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\uFFF9-\uFFFB]/u;
+// bidi, dan karakter tak terlihat. Ditambah karakter yang tampil kosong
+// (pengisi Hangul, Braille kosong, penggabung grafem), pemilih varian, dan tag.
+const FORBIDDEN_CHARS =
+  /[\p{Cc}\u00AD\u034F\u061C\u115F\u1160\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB\u{E0000}-\u{E007F}]/u;
+// Lebih dari dua tanda gabung berturut-turut bisa menumpuk dan menutupi baris lain.
+const COMBINING_RUN = /[\u0300-\u036F\u1AB0-\u1AFF\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}/u;
+
+export function noteHasForbiddenChars(note: string): boolean {
+  return FORBIDDEN_CHARS.test(note) || COMBINING_RUN.test(note);
+}
 
 type Props = {
   offices: FoundOffice[];
@@ -59,6 +67,7 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
     noteHint: useId(),
     noteCount: useId(),
     noteErr: useId(),
+    shared: useId(),
     blocked: useId(),
     confirm: useId(),
     empty: useId(),
@@ -97,7 +106,7 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
       return;
     }
     const trimmedNote = acceptsNote ? note.trim() : "";
-    if (FORBIDDEN_CHARS.test(trimmedNote)) {
+    if (noteHasForbiddenChars(trimmedNote)) {
       setErrors({ ...NO_ERRORS, note: OFFICE_STEP.noteForbidden });
       noteRef.current?.focus();
       return;
@@ -286,6 +295,10 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
         </div>
       )}
 
+      <p id={ids.shared} className="hint">
+        {acceptsNote ? OFFICE_STEP.sharedWithNote : OFFICE_STEP.shared}
+      </p>
+
       <div aria-live="polite">
         {errors.server && (
           <ErrorAlert title="Permintaan belum terkirim">
@@ -300,7 +313,7 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
           className="btn"
           disabled={sending || blocked}
           aria-busy={sending || undefined}
-          aria-describedby={blocked ? (office?.conflict ? ids.blocked : ids.empty) : undefined}
+          aria-describedby={blocked ? `${office?.conflict ? ids.blocked : ids.empty} ${ids.shared}` : ids.shared}
         >
           {sending ? OFFICE_STEP.sending : OFFICE_STEP.submit}
         </button>

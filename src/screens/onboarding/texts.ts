@@ -40,9 +40,14 @@ export const OFFICE_STEP = {
   // Nama aksesibel memuat teks yang terlihat ("Ubah"), lalu menyebut apa yang diubah.
   editNameLabel: "Ubah nama",
   noteLabel: "Keterangan untuk admin (opsional)",
-  noteHint: `Misalnya jabatan atau nomor karyawan, supaya admin yakin ini Anda. Paling banyak ${JOIN_NOTE_MAX_CHARS} karakter.`,
+  noteHint: `Misalnya jabatan atau nomor karyawan, supaya admin lebih mudah mengenali Anda. Paling banyak ${JOIN_NOTE_MAX_CHARS} karakter.`,
   noteCount: (n: number) => `${n} dari ${JOIN_NOTE_MAX_CHARS} karakter`,
   noteForbidden: "Keterangan berisi karakter yang tidak diizinkan.",
+  // Data yang ikut permintaan dan disimpan kantor. Kantor dengan laptop v0.3
+  // (acceptsNote false) tidak menerima akun login dan keterangan.
+  sharedWithNote:
+    "Nama Anda, nama laptop, nama akun login laptop ini, alamat IP, dan keterangan tersimpan di catatan kantor dan bisa dilihat admin kantor.",
+  shared: "Nama Anda, nama laptop, dan alamat IP tersimpan di catatan kantor dan bisa dilihat admin kantor.",
   submit: "Kirim permintaan",
   sending: "Mengirim permintaan...",
 };
