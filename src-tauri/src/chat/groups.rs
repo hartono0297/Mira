@@ -438,8 +438,12 @@ fn fold_round(
     };
     let mut seq = 0;
     state.join(&create.author, &create.author, create.at, &mut seq);
+    // Joining does not depend on `eligible`: the judge refuses guests and
+    // unknown keys, and someone removed from the organization later keeps
+    // their place in the history (the audience leaves them out), so the ops
+    // they made while active stay valid.
     for pk in members {
-        if eligible(pk) && !state.is_member(pk) {
+        if !state.is_member(pk) {
             state.join(pk, &create.author, create.at, &mut seq);
         }
     }
@@ -464,7 +468,7 @@ fn fold_round(
             GroupOpKind::Add { members } => {
                 let mut joined = Vec::new();
                 for pk in members {
-                    if eligible(pk) && !state.is_member(pk) {
+                    if !state.is_member(pk) {
                         state.join(pk, author, op.at, &mut seq);
                         joined.push(pk.clone());
                     }

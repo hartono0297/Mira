@@ -18,12 +18,16 @@
 //! already (only on channels and membership): a reply target, the message a
 //! delete names and the envelope an ack names are checked when the record is
 //! applied or shown, so every laptop stores the same records whatever order
-//! they arrive in.
+//! they arrive in. Groups are the exception (docs/plans/v03-c.md section 4):
+//! a group op is judged on its own causal past, which its `deps` close, so
+//! it waits (Defer) until those ops are here and then gets the same verdict
+//! everywhere; group content waits for the op that added its author.
 
 use rusqlite::OptionalExtension;
 use time::OffsetDateTime;
 
-use super::audience::{ConvInfo, Ctx, Scope};
+use super::audience::{ConvInfo, Ctx, Scope, was_superadmin_at};
+use super::groups::{self, GroupOp};
 use super::model::{Body, ChannelScope, CipherFileRef, Rejection, VerifiedRecord, channel_conv};
 use crate::blobs::AUTO_REPLICATE_MAX_BYTES;
 use crate::error::AppResult;
@@ -125,12 +129,12 @@ pub fn judge(ctx: &Ctx, rec: &VerifiedRecord, now: OffsetDateTime) -> AppResult<
         // the envelope's recipient, checked when applied
         // (`envelope::apply_ack`), whether or not the envelope is known here.
         Body::EnvelopeAck { .. } => Ok(Verdict::Accept),
-        // TODO(v03-c): replaced by the group and lock rules.
-        Body::ChannelLock { .. }
-        | Body::GroupCreate { .. }
-        | Body::GroupAdd { .. }
-        | Body::GroupRemove { .. }
-        | Body::GroupRename { .. } => Ok(Verdict::Defer),
+        Body::ChannelLock { conv, .. } => channel_lock(ctx, rec, st, conv),
+        Body::GroupCreate { members, .. } => Ok(group_create(ctx, rec, members)),
+        Body::GroupAdd { conv, members, .. } => group_op(ctx, rec, st, conv, members),
+        Body::GroupRemove { conv, .. } | Body::GroupRename { conv, .. } => {
+            group_op(ctx, rec, st, conv, &[])
+        }
     }
 }
 
@@ -177,6 +181,22 @@ fn may_post(
 ) -> AppResult<Verdict> {
     if let Scope::Direct(a, b) = &info.scope {
         return Ok(direct_rights(ctx, a, b, author, at));
+    }
+    if info.is_group() {
+        if is_guest(ctx, author) {
+            return Ok(forbidden("tamu tidak bisa menulis di grup"));
+        }
+        // A member now, or at the record's time (removed members' earlier
+        // messages stay). Otherwise the op that added the author may not be
+        // here yet.
+        let member = ctx
+            .group(&info.conv)?
+            .is_some_and(|g| g.member_at(author, at));
+        return Ok(if member {
+            Verdict::Accept
+        } else {
+            Verdict::Defer
+        });
     }
     if st == Standing::Active && ctx.in_audience(info, author)? {
         return Ok(Verdict::Accept);
@@ -242,13 +262,19 @@ fn channel_create(
     if is_guest(ctx, author) {
         return Ok(forbidden("tamu tidak bisa membuat channel"));
     }
+    if let ChannelScope::Org = scope {
+        // v0.3: Umum channels are for superadmins only. A channel made by
+        // someone who was a superadmin at the time stays valid after they
+        // lose the role (v0.2 channels, plan section 7).
+        if (st == Standing::Active && ctx.dir.is_superadmin(author))
+            || was_superadmin_at(ctx.conn, author, rec.at)?
+        {
+            return Ok(Verdict::Accept);
+        }
+        return Ok(forbidden("hanya superadmin yang bisa membuat channel umum"));
+    }
     if st == Standing::RemovedBefore {
-        return Ok(match scope {
-            ChannelScope::Org => {
-                forbidden("hak superadmin pembuat yang sudah dikeluarkan tidak bisa diperiksa")
-            }
-            _ => Verdict::Accept,
-        });
+        return Ok(Verdict::Accept);
     }
     Ok(match scope {
         // PRD F-CHAT-01: members make channels in their team or project;
@@ -281,7 +307,7 @@ fn admin_rights(ctx: &Ctx, info: &ConvInfo, author: &str, st: Standing) -> AppRe
     if ctx.is_admin(info, author)? {
         return Ok(Verdict::Accept);
     }
-    if is_guest(ctx, author) || matches!(info.scope, Scope::Direct(..)) {
+    if is_guest(ctx, author) || matches!(info.scope, Scope::Direct(..) | Scope::Group(_)) {
         return Ok(forbidden("bukan admin percakapan ini"));
     }
     // An admin grant may not have reached this laptop yet.
@@ -331,8 +357,92 @@ pub fn delete_applies(
     if deleter == message_author {
         return Ok(true);
     }
-    if matches!(info.scope, Scope::Direct(..)) {
+    if matches!(info.scope, Scope::Direct(..) | Scope::Group(_)) {
         return Ok(false);
     }
     ctx.is_admin(info, deleter)
+}
+
+/// `channel_lock`: Umum channels other than `#umum`, by a superadmin now.
+/// The lock itself is last-writer-wins like archive; messages that arrive in
+/// a locked channel are still accepted (only the sender is held back), so
+/// every laptop keeps the same records.
+fn channel_lock(ctx: &Ctx, rec: &VerifiedRecord, st: Standing, conv: &str) -> AppResult<Verdict> {
+    let Some(info) = ctx.conv(conv)? else {
+        return Ok(Verdict::Defer);
+    };
+    if info.scope != Scope::Org {
+        return Ok(forbidden(
+            "hanya channel umum selain #umum yang bisa dijadikan hanya-baca",
+        ));
+    }
+    if info.deleted {
+        return Ok(Verdict::Accept);
+    }
+    if st == Standing::Active && ctx.dir.is_superadmin(rec.author()) {
+        return Ok(Verdict::Accept);
+    }
+    Ok(forbidden(
+        "hanya superadmin yang bisa mengubah channel menjadi hanya-baca",
+    ))
+}
+
+/// `group_create`: an author who is not a guest, members who are known and
+/// not guests (an unknown key may be a colleague whose join op is not here
+/// yet).
+fn group_create(ctx: &Ctx, rec: &VerifiedRecord, members: &[String]) -> Verdict {
+    if is_guest(ctx, rec.author()) {
+        return forbidden("tamu tidak bisa membuat grup");
+    }
+    group_targets(ctx, members)
+}
+
+fn group_targets(ctx: &Ctx, targets: &[String]) -> Verdict {
+    for pk in targets {
+        match ctx.dir.member(pk) {
+            None => return Verdict::Defer,
+            Some(m) if m.guest => {
+                return reject("guest_not_allowed", "tamu tidak bisa dimasukkan ke grup");
+            }
+            Some(_) => {}
+        }
+    }
+    Verdict::Accept
+}
+
+/// `group_add`, `group_remove`, `group_rename`: the group and every op the
+/// record builds on must be here (Defer otherwise); then the author's right
+/// is checked on that causal past, which is the same on every laptop.
+fn group_op(
+    ctx: &Ctx,
+    rec: &VerifiedRecord,
+    st: Standing,
+    conv: &str,
+    targets: &[String],
+) -> AppResult<Verdict> {
+    if is_guest(ctx, rec.author()) {
+        return Ok(forbidden("tamu tidak bisa mengubah grup"));
+    }
+    let targets = group_targets(ctx, targets);
+    if targets != Verdict::Accept {
+        return Ok(targets);
+    }
+    let Some((_, op)) = GroupOp::from_record(rec) else {
+        return Ok(reject("bad_format", "bukan op grup"));
+    };
+    let ops = ctx.group_ops(conv)?;
+    let eligible = ctx.group_eligible();
+    match groups::check_right(&ops, &op, &eligible) {
+        Ok(()) => Ok(Verdict::Accept),
+        Err("missing_deps" | "no_group") => Ok(Verdict::Defer),
+        // A removed member's ops from before their removal are stored as
+        // they are; the fold decides what they did. Refusing them here would
+        // depend on today's organization, not on the group's history.
+        Err(_) if st == Standing::RemovedBefore => Ok(Verdict::Accept),
+        Err("not_group_owner") => Ok(reject(
+            "not_group_owner",
+            "hanya pemilik grup yang bisa mengeluarkan orang lain",
+        )),
+        Err(_) => Ok(reject("not_group_member", "pembuat bukan anggota grup ini")),
+    }
 }

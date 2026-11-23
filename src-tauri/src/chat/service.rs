@@ -15,8 +15,8 @@ use super::seal::{self, FileKey, SealedContent};
 use super::store::{self, Effects};
 use super::sync::{ChatSync, NOTIFY_SETTING};
 use super::view::{
-    ChatOverview, ConversationSummary, ConversationView, MessageView, NewChannelScope, NotifyMode,
-    ProjectRef, ReceiptView, ScopeKind, TeamRef,
+    ChatOverview, ConversationSummary, ConversationView, GroupView, MessageView, NewChannelScope,
+    NotifyMode, ProjectRef, ReceiptView, ScopeKind, TeamRef,
 };
 use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
 use crate::clock;
@@ -157,15 +157,8 @@ fn check_send(
 ) -> AppResult<(super::audience::ConvInfo, String)> {
     require_member(ctx)?;
     let info = readable(ctx, conv)?;
-    if info.archived {
-        return Err(forbidden(
-            "Channel ini diarsipkan. Kembalikan dulu sebelum mengirim pesan.",
-        ));
-    }
-    if !read::can_post(ctx, &info)? {
-        return Err(forbidden(
-            "Kamu tidak bisa mengirim pesan di percakapan ini.",
-        ));
+    if let Some(reason) = read::post_blocked(ctx, &info)? {
+        return Err(forbidden(&reason));
     }
     let text = clean_text(text)?;
     if files > MAX_FILES {
@@ -269,11 +262,24 @@ impl ChatSync {
                 .iter()
                 .map(|r| read::message_view(ctx, &self.blobs, &facts, r))
                 .collect::<AppResult<Vec<_>>>()?;
+            // Group events in the loaded range: from the oldest loaded
+            // message on, or all of them when nothing older exists.
+            let mut events = match ctx.group(conv)? {
+                Some(g) if info.is_group() => read::group_events(ctx, &g),
+                _ => Vec::new(),
+            };
+            if has_more && let Some(first) = rows.first() {
+                events.retain(|e| e.at >= first.at);
+            }
+            if let Some(b) = before.as_deref().and_then(|b| read::message_row(ctx.conn, b).ok().flatten()) {
+                events.retain(|e| e.at < b.at);
+            }
             Ok(ConversationView {
                 conversation: read::summary(ctx, &info)?,
                 members: read::people(&ctx.dir, &ctx.audience(&info)?),
                 messages,
                 has_more,
+                events,
             })
         })
     }
@@ -371,14 +377,20 @@ impl ChatSync {
     pub fn mark_read(&self, conv: &str) -> AppResult<()> {
         self.with_ctx(|ctx, identity, fx| {
             require_member(ctx)?;
-            readable(ctx, conv)?;
             let now = clock::now();
             ctx.conn.execute(
                 "INSERT INTO chat_conv_settings (conv, opened_at) VALUES (?1, ?2)
                  ON CONFLICT (conv) DO UPDATE SET opened_at = excluded.opened_at",
                 rusqlite::params![conv, format_time(now)],
             )?;
-            let ids = read::unread_ids(ctx.conn, conv, ctx.me())?;
+            let info = readable(ctx, conv)?;
+            // No receipts from outside the conversation (a former member):
+            // the others would not accept them.
+            let ids = if ctx.in_audience(&info, ctx.me())? {
+                read::unread_ids(ctx.conn, conv, ctx.me())?
+            } else {
+                Vec::new()
+            };
             for chunk in ids.chunks(MAX_RECEIPT_MESSAGES) {
                 let body = Body::Receipt {
                     conv: conv.to_owned(),
@@ -423,6 +435,11 @@ impl ChatSync {
         self.with_ctx(|ctx, identity, fx| {
             require_member(ctx)?;
             let info = readable(ctx, conv)?;
+            if info.is_group() {
+                return Err(invalid(
+                    "Grup tidak bisa diarsipkan. Anggota bisa keluar dari grup.",
+                ));
+            }
             if !info.is_channel() {
                 return Err(invalid("Chat pribadi tidak bisa diarsipkan."));
             }
@@ -448,6 +465,11 @@ impl ChatSync {
         self.with_ctx(|ctx, identity, fx| {
             require_member(ctx)?;
             let info = readable(ctx, conv)?;
+            if info.is_group() {
+                return Err(invalid(
+                    "Grup tidak bisa dihapus. Anggota bisa keluar dari grup.",
+                ));
+            }
             if !info.is_channel() {
                 return Err(invalid("Chat pribadi tidak bisa dihapus."));
             }
@@ -496,6 +518,153 @@ impl ChatSync {
         })
     }
 
+    /// Superadmin: an Umum channel other than `#umum` becomes read-only for
+    /// everyone else, or open again.
+    pub fn set_locked(&self, conv: &str, locked: bool) -> AppResult<()> {
+        self.with_ctx(|ctx, identity, fx| {
+            require_member(ctx)?;
+            let info = readable(ctx, conv)?;
+            if info.scope == Scope::Umum {
+                return Err(forbidden("#umum selalu terbuka untuk semua anggota."));
+            }
+            if !read::can_lock(ctx, &info) {
+                return Err(forbidden(
+                    "Hanya superadmin yang bisa mengubah channel umum menjadi hanya-baca.",
+                ));
+            }
+            if info.locked == locked {
+                return Ok(());
+            }
+            let body = Body::ChannelLock {
+                conv: conv.to_owned(),
+                locked,
+            };
+            store::create(ctx, identity, body, after_last_lock(ctx, conv)?, fx)?;
+            Ok(())
+        })
+    }
+
+    /// A new group with this laptop's person as owner and `members` (active
+    /// members who are not guests).
+    pub fn create_group(&self, name: &str, members: Vec<String>) -> AppResult<ConversationSummary> {
+        self.with_ctx(|ctx, identity, fx| {
+            require_member(ctx)?;
+            let me = ctx.me().to_owned();
+            if !ctx.dir.is_full_member(&me) {
+                return Err(forbidden("Tamu tidak bisa membuat grup."));
+            }
+            let name = group_name(name)?;
+            let members = group_targets(ctx, members, &me, &[])?;
+            let body = Body::GroupCreate {
+                group: model::random_hex32(),
+                name,
+                members,
+            };
+            let rec = store::create(ctx, identity, body, clock::now(), fx)?;
+            let conv = rec
+                .body()
+                .conv()
+                .ok_or_else(|| AppError::Internal("Grup tanpa id.".into()))?;
+            let info = ctx.conv(&conv)?.ok_or_else(read::not_found_conv)?;
+            read::summary(ctx, &info)
+        })
+    }
+
+    pub fn group(&self, conv: &str) -> AppResult<GroupView> {
+        self.with_ctx(|ctx, _, _| {
+            require_member(ctx)?;
+            let info = readable(ctx, conv)?;
+            if !info.is_group() {
+                return Err(invalid("Percakapan ini bukan grup."));
+            }
+            read::group_view(ctx, &info)
+        })
+    }
+
+    pub fn group_add(&self, conv: &str, members: Vec<String>) -> AppResult<()> {
+        self.group_change(conv, |ctx, g, me| {
+            let current: Vec<String> = g.members.iter().map(|m| m.pk.clone()).collect();
+            let members = group_targets(ctx, members, me, &current)?;
+            Ok(Some(Body::GroupAdd {
+                conv: conv.to_owned(),
+                members,
+                deps: g.heads(),
+            }))
+        })
+    }
+
+    /// The owner removes someone else. Leaving is [`ChatSync::group_leave`].
+    pub fn group_remove(&self, conv: &str, member: &str) -> AppResult<()> {
+        self.group_change(conv, |ctx, g, me| {
+            if member == me {
+                return Err(invalid("Untuk keluar dari grup, pakai Keluar dari grup."));
+            }
+            let eligible = ctx.group_eligible();
+            if g.effective_owner(&eligible) != Some(me) {
+                return Err(forbidden(
+                    "Hanya pemilik grup yang bisa mengeluarkan orang.",
+                ));
+            }
+            if !g.is_member(member) {
+                return Err(AppError::NotFound("Orang ini sudah tidak ada di grup.".into()));
+            }
+            Ok(Some(Body::GroupRemove {
+                conv: conv.to_owned(),
+                member: member.to_owned(),
+                deps: g.heads(),
+            }))
+        })
+    }
+
+    pub fn group_leave(&self, conv: &str) -> AppResult<()> {
+        self.group_change(conv, |_, g, me| {
+            Ok(Some(Body::GroupRemove {
+                conv: conv.to_owned(),
+                member: me.to_owned(),
+                deps: g.heads(),
+            }))
+        })
+    }
+
+    pub fn group_rename(&self, conv: &str, name: &str) -> AppResult<()> {
+        let name = group_name(name)?;
+        self.group_change(conv, |_, g, _| {
+            if g.name == name {
+                return Ok(None);
+            }
+            Ok(Some(Body::GroupRename {
+                conv: conv.to_owned(),
+                name: name.clone(),
+                deps: g.heads(),
+            }))
+        })
+    }
+
+    /// Runs `make` for a group this laptop's person is in and signs the op
+    /// it returns (`None`: nothing to change).
+    fn group_change(
+        &self,
+        conv: &str,
+        make: impl FnOnce(&Ctx, &super::groups::GroupState, &str) -> AppResult<Option<Body>>,
+    ) -> AppResult<()> {
+        self.with_ctx(|ctx, identity, fx| {
+            require_member(ctx)?;
+            let me = ctx.me().to_owned();
+            let info = readable(ctx, conv)?;
+            if !info.is_group() {
+                return Err(invalid("Percakapan ini bukan grup."));
+            }
+            if !ctx.in_audience(&info, &me)? {
+                return Err(forbidden("Anda sudah tidak ada di grup ini."));
+            }
+            let g = ctx.group(conv)?.ok_or_else(read::not_found_conv)?;
+            if let Some(body) = make(ctx, &g, &me)? {
+                store::create(ctx, identity, body, clock::now(), fx)?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn set_notify(&self, mode: NotifyMode) -> AppResult<()> {
         self.with_ctx(|ctx, _, fx| {
             crate::settings::set(ctx.conn, NOTIFY_SETTING, mode.as_str())?;
@@ -517,6 +686,69 @@ impl ChatSync {
             Ok(())
         })
     }
+}
+
+/// A tidied group name, or an Indonesian error.
+fn group_name(input: &str) -> AppResult<String> {
+    model::normalize_group_name(input)
+        .ok_or_else(|| invalid("Nama grup harus 1 sampai 50 karakter."))
+}
+
+/// Checks the people to put in a group: active members who are not guests,
+/// not this laptop's person and not `current` members. Sorted and unique.
+fn group_targets(
+    ctx: &Ctx,
+    members: Vec<String>,
+    me: &str,
+    current: &[String],
+) -> AppResult<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for pk in members {
+        if pk == me || current.contains(&pk) || out.contains(&pk) {
+            continue;
+        }
+        if !model::is_key(&pk) {
+            return Err(invalid("Kunci rekan tidak valid."));
+        }
+        match ctx.dir.member(&pk) {
+            None => return Err(AppError::NotFound("Rekan ini tidak ditemukan.".into())),
+            Some(m) if m.guest => {
+                return Err(forbidden("Tamu tidak bisa dimasukkan ke grup."));
+            }
+            Some(m) if !m.active => {
+                return Err(forbidden(&format!(
+                    "{} sudah bukan anggota organisasi.",
+                    ctx.dir.name(&pk)
+                )));
+            }
+            Some(_) => out.push(pk),
+        }
+    }
+    if out.is_empty() {
+        return Err(invalid("Pilih minimal satu orang yang belum ada di grup."));
+    }
+    if out.len() + current.len().max(1) > model::MAX_GROUP_MEMBERS {
+        return Err(invalid("Satu grup paling banyak 100 orang."));
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Like [`after_last_archive`] for `channel_lock` records.
+fn after_last_lock(ctx: &Ctx, conv: &str) -> AppResult<time::OffsetDateTime> {
+    let now = clock::now();
+    let last: Option<String> = ctx.conn.query_row(
+        "SELECT max(at) FROM chat_records WHERE conv = ?1 AND kind = 'channel_lock'",
+        [conv],
+        |r| r.get(0),
+    )?;
+    let last = last
+        .as_deref()
+        .and_then(crate::permissions::format::parse_time);
+    Ok(match last {
+        Some(t) if t >= now => t + time::Duration::seconds(1),
+        _ => now,
+    })
 }
 
 /// Now, or one second after the latest archive record when the clock is
@@ -569,6 +801,9 @@ fn channel_scope(ctx: &Ctx, me: &str, scope: NewChannelScope) -> AppResult<Chann
             }
             Ok(ChannelScope::Project { id })
         }
+        (ScopeKind::Group, _) => Err(invalid(
+            "Grup dibuat lewat Grup baru, bukan sebagai channel.",
+        )),
         (_, None) => Err(invalid("Pilih tim atau proyek untuk channel ini.")),
     }
 }
@@ -604,7 +839,10 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
         let Some(info) = ctx.conv(&conv)? else {
             continue;
         };
-        if !info.deleted && ctx.in_audience(&info, &me)? {
+        if info.deleted {
+            continue;
+        }
+        if ctx.in_audience(&info, &me)? || read::is_former(ctx, &info)? {
             convs.push(read::summary(ctx, &info)?);
         }
     }
@@ -625,18 +863,13 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
             convs.push(read::summary(ctx, &info)?);
         }
     }
+    // Section order, then active before archived and former, then latest.
     convs.sort_by(|a, b| {
-        let group = |s: &ConversationSummary| {
-            if s.archived {
-                2
-            } else if s.kind == super::view::ConversationKind::Channel {
-                0
-            } else {
-                1
-            }
-        };
-        group(a)
-            .cmp(&group(b))
+        let rest = |s: &ConversationSummary| s.archived || s.former;
+        a.section
+            .cmp(&b.section)
+            .then_with(|| rest(a).cmp(&rest(b)))
+            .then_with(|| b.is_umum.cmp(&a.is_umum))
             .then_with(|| b.last_at.cmp(&a.last_at))
             .then_with(|| a.name.cmp(&b.name))
     });
@@ -646,18 +879,12 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
         .into_iter()
         .filter(|p| *p != me)
         .collect();
-    let mut teams: Vec<TeamRef> = ctx
-        .dir
-        .teams
-        .iter()
-        .filter(|(id, _)| ctx.dir.in_team(id, &me))
-        .map(|(id, t)| TeamRef {
-            id: id.clone(),
-            name: t.name.clone(),
-        })
-        .collect();
-    teams.sort_by(|a, b| a.name.cmp(&b.name));
+    let my_department = ctx.dir.department_of(&me).map(|(id, t)| TeamRef {
+        id: id.to_owned(),
+        name: t.name.clone(),
+    });
     let mut projects = Vec::new();
+    let mut other_projects = 0u32;
     for p in ctx.projects.projects(ctx.conn)? {
         if ctx.in_project(&p.id, &me)? {
             projects.push(ProjectRef {
@@ -665,20 +892,28 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
                 name: p.name,
                 team_id: p.team_id,
             });
+        } else {
+            other_projects = other_projects.saturating_add(1);
         }
     }
     let full = ctx.dir.is_full_member(&me);
+    let superadmin = full && ctx.dir.is_superadmin(&me);
     let notify = crate::settings::get(ctx.conn, NOTIFY_SETTING)?
         .map_or(NotifyMode::All, |m| NotifyMode::parse(&m));
     Ok(ChatOverview {
         me: me.clone(),
+        is_superadmin: superadmin,
+        is_guest: ctx.dir.member(&me).is_some_and(|m| m.guest),
         can_create_channel: full,
-        can_create_org_channel: full && ctx.dir.is_superadmin(&me),
+        can_create_org_channel: superadmin,
+        can_create_group: full,
         can_direct_message: full,
         conversations: convs,
         people: read::people(&ctx.dir, &people_keys),
-        teams,
+        teams: my_department.iter().cloned().collect(),
+        my_department,
         projects,
+        other_projects,
         notify,
     })
 }

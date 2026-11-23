@@ -12,10 +12,12 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use rusqlite::{Connection, OptionalExtension};
 use time::OffsetDateTime;
 
+use super::groups::{self, GroupOp, GroupState};
 use super::model::{self, Conv};
 use crate::board::{
     self,
@@ -29,6 +31,8 @@ use crate::permissions::{self, format::parse_time};
 pub const ORG_SCOPE_NAME: &str = "Seluruh kantor";
 /// Channel name used when a project name has no usable characters.
 pub const PROJECT_FALLBACK_NAME: &str = "proyek";
+/// Shown as the scope of a group.
+pub const GROUP_SCOPE_NAME: &str = "Grup";
 
 /// A board project as chat sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +183,8 @@ pub struct MemberInfo {
 pub struct TeamInfo {
     pub name: String,
     pub deleted: bool,
+    /// Archived department (v0.3): its channel is read-only.
+    pub archived: bool,
     /// Public key to "is team admin".
     pub members: HashMap<String, bool>,
 }
@@ -258,21 +264,23 @@ impl Directory {
     }
 
     fn load_teams(&mut self, conn: &Connection) -> AppResult<()> {
-        let mut stmt = conn.prepare("SELECT id, name, deleted FROM teams")?;
+        let mut stmt = conn.prepare("SELECT id, name, deleted, archived FROM teams")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, i64>(2)? != 0,
+                r.get::<_, i64>(3)? != 0,
             ))
         })?;
         for row in rows {
-            let (id, name, deleted) = row?;
+            let (id, name, deleted, archived) = row?;
             self.teams.insert(
                 id,
                 TeamInfo {
                     name,
                     deleted,
+                    archived,
                     members: HashMap::new(),
                 },
             );
@@ -342,6 +350,62 @@ impl Directory {
         self.team(team)
             .is_some_and(|t| t.members.get(pk).copied().unwrap_or(false))
     }
+
+    /// The department `pk` is in now (one at most in v0.3).
+    pub fn department_of(&self, pk: &str) -> Option<(&str, &TeamInfo)> {
+        let mut found: Vec<(&str, &TeamInfo)> = self
+            .teams
+            .iter()
+            .filter(|(_, t)| !t.deleted && t.members.contains_key(pk))
+            .map(|(id, t)| (id.as_str(), t))
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(b.0));
+        found.into_iter().next()
+    }
+}
+
+/// Whether `pk` was a superadmin at `at` according to the membership log:
+/// the founder from the start, then every applied `superadmin_add`,
+/// `superadmin_remove` and `member_remove` naming `pk` dated at or before
+/// `at`, in fold (lamport) order. Used for Umum channels made by someone who
+/// is not a superadmin any more (v0.2 channels, docs/plans/v03-c.md section
+/// 7). Like every record time, `at` is the author's claim.
+pub fn was_superadmin_at(conn: &Connection, pk: &str, at: OffsetDateTime) -> AppResult<bool> {
+    let Some(org) = crate::org::load_organization(conn)? else {
+        return Ok(false);
+    };
+    let mut state = org.founder_public_key == pk
+        && parse_time(&org.created_at).is_none_or(|created| created <= at);
+    let mut stmt = conn.prepare(
+        "SELECT id FROM org_ops
+         WHERE status = 'applied' AND kind IN ('superadmin_add', 'superadmin_remove', 'member_remove')
+         ORDER BY lamport, author, id",
+    )?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for id in ids {
+        let Some(op) = permissions::load_op(conn, &id)? else {
+            continue;
+        };
+        let Ok(payload) = serde_json::from_str::<permissions::Payload>(&op.payload) else {
+            continue;
+        };
+        if parse_time(&payload.at).is_none_or(|t| t > at) {
+            continue;
+        }
+        match payload.body {
+            permissions::Body::SuperadminAdd { member } if member == pk => state = true,
+            permissions::Body::SuperadminRemove { member }
+            | permissions::Body::MemberRemove { member }
+                if member == pk =>
+            {
+                state = false;
+            }
+            _ => {}
+        }
+    }
+    Ok(state)
 }
 
 /// What a conversation is.
@@ -352,6 +416,8 @@ pub enum Scope {
     Org,
     Team(String),
     Project(String),
+    /// A group (`gr:` conversation), by group id.
+    Group(String),
     Direct(String, String),
 }
 
@@ -367,11 +433,27 @@ pub struct ConvInfo {
     pub created: bool,
     pub archived: bool,
     pub deleted: bool,
+    /// Umum channel a superadmin made read-only (`channel_lock`).
+    pub locked: bool,
 }
 
 impl ConvInfo {
+    /// A channel: not a chat pribadi and not a group.
     pub fn is_channel(&self) -> bool {
-        !matches!(self.scope, Scope::Direct(..))
+        !matches!(self.scope, Scope::Direct(..) | Scope::Group(_))
+    }
+
+    pub fn is_group(&self) -> bool {
+        matches!(self.scope, Scope::Group(_))
+    }
+
+    pub fn is_direct(&self) -> bool {
+        matches!(self.scope, Scope::Direct(..))
+    }
+
+    /// In the Umum section (`#umum` and office-wide channels).
+    pub fn is_umum_section(&self) -> bool {
+        matches!(self.scope, Scope::Umum | Scope::Org)
     }
 }
 
@@ -410,6 +492,8 @@ pub struct Ctx<'a> {
     convs: RefCell<HashMap<String, Option<ConvInfo>>>,
     /// Members of every project, loaded on first use.
     project_members: RefCell<Option<HashMap<String, HashSet<String>>>>,
+    /// Folded groups by conversation, loaded on first use.
+    groups: RefCell<HashMap<String, Option<Rc<GroupState>>>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -420,6 +504,7 @@ impl<'a> Ctx<'a> {
             projects,
             convs: RefCell::new(HashMap::new()),
             project_members: RefCell::new(None),
+            groups: RefCell::new(HashMap::new()),
         }
     }
 
@@ -439,6 +524,74 @@ impl<'a> Ctx<'a> {
     /// Drops cached answers after a channel or board change.
     pub fn forget(&self, conv: &str) {
         self.convs.borrow_mut().remove(conv);
+        self.groups.borrow_mut().remove(conv);
+    }
+
+    /// Every stored op of the group `conv`.
+    pub fn group_ops(&self, conv: &str) -> AppResult<Vec<GroupOp>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT body FROM chat_records
+             WHERE conv = ?1 AND body IS NOT NULL
+               AND kind IN ('group_create', 'group_add', 'group_remove', 'group_rename')",
+        )?;
+        let bodies = stmt
+            .query_map([conv], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(bodies
+            .iter()
+            .filter_map(|b| model::parse_stored(b).ok())
+            .filter_map(|rec| GroupOp::from_record(&rec))
+            .filter(|(c, _)| c == conv)
+            .map(|(_, op)| op)
+            .collect())
+    }
+
+    /// Eligible for groups: an active member who is not a guest.
+    pub fn group_eligible(&self) -> impl Fn(&str) -> bool + '_ {
+        |pk: &str| self.dir.is_full_member(pk)
+    }
+
+    /// The folded group, or `None` when its `group_create` is not here.
+    pub fn group(&self, conv: &str) -> AppResult<Option<Rc<GroupState>>> {
+        if let Some(hit) = self.groups.borrow().get(conv) {
+            return Ok(hit.clone());
+        }
+        let ops = self.group_ops(conv)?;
+        let eligible = self.group_eligible();
+        let state = groups::fold_conv(conv, &ops, &eligible).map(Rc::new);
+        self.groups
+            .borrow_mut()
+            .insert(conv.to_owned(), state.clone());
+        Ok(state)
+    }
+
+    /// Group conversations whose `group_create` is stored here.
+    pub fn all_group_convs(&self) -> AppResult<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT conv FROM chat_records
+             WHERE kind = 'group_create' AND body IS NOT NULL AND conv IS NOT NULL ORDER BY conv",
+        )?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Latest `channel_lock` of `conv` by `(at, id)`.
+    fn locked(&self, conv: &str) -> AppResult<bool> {
+        let body: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT body FROM chat_records
+                 WHERE conv = ?1 AND kind = 'channel_lock' AND body IS NOT NULL
+                 ORDER BY at DESC, id DESC LIMIT 1",
+                [conv],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(body
+            .and_then(|b| model::parse_stored(&b).ok())
+            .is_some_and(|rec| matches!(rec.body(), model::Body::ChannelLock { locked: true, .. })))
     }
 
     /// The conversation, or `None` when this laptop does not know it (yet).
@@ -465,17 +618,31 @@ impl<'a> Ctx<'a> {
                     created: false,
                     archived: false,
                     deleted: false,
+                    locked: false,
                 }));
             }
-            Some(Conv::Group(_)) => return Ok(None),
+            Some(Conv::Group(id)) => {
+                return Ok(self.group(conv)?.map(|g| ConvInfo {
+                    conv: conv.to_owned(),
+                    scope: Scope::Group(id),
+                    name: g.name.clone(),
+                    scope_name: GROUP_SCOPE_NAME.to_owned(),
+                    created: true,
+                    archived: false,
+                    deleted: false,
+                    locked: false,
+                }));
+            }
             Some(Conv::Channel(id)) => id,
         };
         let row = channel_row(self.conn, conv)?;
         let (archived, deleted) = row
             .as_ref()
             .map_or((false, false), |r| (r.archived, r.deleted));
-        let base = |scope, name: String, scope_name: String, created| ConvInfo {
+        let locked = self.locked(conv)?;
+        let base = |scope: Scope, name: String, scope_name: String, created| ConvInfo {
             conv: conv.to_owned(),
+            locked: locked && matches!(scope, Scope::Org),
             scope,
             name,
             scope_name,
@@ -572,6 +739,10 @@ impl<'a> Ctx<'a> {
             Scope::Umum | Scope::Org => self.dir.is_full_member(pk),
             Scope::Team(t) => self.dir.in_team(t, pk),
             Scope::Project(p) => self.in_project(p, pk)?,
+            Scope::Group(_) => {
+                self.dir.is_full_member(pk)
+                    && self.group(&info.conv)?.is_some_and(|g| g.is_member(pk))
+            }
             Scope::Direct(a, b) => {
                 (pk == a || pk == b) && self.dir.is_full_member(a) && self.dir.is_full_member(b)
             }
@@ -596,6 +767,16 @@ impl<'a> Ctx<'a> {
             Scope::Project(p) => self.with_project_members(p, |set| {
                 set.map(|s| s.iter().cloned().collect()).unwrap_or_default()
             })?,
+            Scope::Group(_) => self
+                .group(&info.conv)?
+                .map(|g| {
+                    g.members
+                        .iter()
+                        .filter(|m| self.dir.is_full_member(&m.pk))
+                        .map(|m| m.pk.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
             Scope::Direct(a, b) => {
                 if self.dir.is_full_member(a) && self.dir.is_full_member(b) {
                     vec![a.clone(), b.clone()]
@@ -622,13 +803,15 @@ impl<'a> Ctx<'a> {
             // Same as the board's project manager (v0.3): a superadmin only
             // administers a project as one of its members (F-ROLE-11).
             Scope::Project(p) => self.projects.is_manager(self.conn, p, pk)?,
-            Scope::Direct(..) => false,
+            // Groups have no admin: an owner removes people, nobody deletes
+            // other people's messages.
+            Scope::Group(_) | Scope::Direct(..) => false,
         })
     }
 
-    /// The conversation ids of every channel this laptop can name: `#umum`,
-    /// membership-log channels, created channels and the channels of projects
-    /// the board syncs.
+    /// The conversation ids of every channel and group this laptop can name:
+    /// `#umum`, membership-log channels, created channels, the channels of
+    /// projects the board syncs, and groups whose `group_create` is here.
     pub fn all_channel_convs(&self) -> AppResult<Vec<String>> {
         let mut set: HashSet<String> = HashSet::new();
         set.insert(model::channel_conv(&self.dir.umum));
@@ -646,6 +829,7 @@ impl<'a> Ctx<'a> {
         for row in stmt.query_map([], |r| r.get::<_, String>(0))? {
             set.insert(row?);
         }
+        set.extend(self.all_group_convs()?);
         let mut out: Vec<String> = set.into_iter().collect();
         out.sort();
         Ok(out)
