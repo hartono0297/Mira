@@ -42,9 +42,16 @@
 //!   mengizinkannya (penanda tangan terakhir). Isinya hanya teks font
 //!   standar dan garis tipis seperti `appendAuditPage`: tanpa gambar,
 //!   XObject, shading, `cm`, atau bidang terisi (lihat `Checker::check_new_page`).
-//! - Tidak ada aksi aktif (`/JS`, `/JavaScript`, `/AA`, `/OpenAction`,
+//! - Tidak ada aksi aktif baru (`/JS`, `/JavaScript`, `/AA`, `/OpenAction`,
 //!   `/Launch`, `/EmbeddedFile(s)`, `/URI`, `/SubmitForm`, ...) di objek
-//!   baru atau berubah.
+//!   baru atau berubah. Aksi yang sama persis dengan versi lama (misalnya
+//!   `/AA` halaman, tautan URI langsung di `/Annots`) ikut tertulis ulang
+//!   bersama kamus halaman dan tidak dihitung.
+//!
+//! Gagal membuka isi lama yang perlu dipindai (filter yang tidak didukung,
+//! terlalu besar) atau membaca MediaBox halaman adalah batas pemeriksa, bukan
+//! bukti perubahan: ditolak sebagai `pdf_invalid`. Gambar lama (JPEG, JBIG2,
+//! CCITT, JPX) tidak dipindai karena tidak memakai nama sumber daya.
 //!
 //! Stempel di halaman lama tidak boleh bisa menutup isi lama (misalnya
 //! menimpa "Rp 10.000.000" dengan bidang putih lalu menulis angka lain):
@@ -182,10 +189,15 @@ fn changes(detail: impl AsRef<str>) -> IncrementError {
     }
 }
 
+/// Batas pemeriksa (format yang tidak bisa dibuka, file terlalu besar), bukan
+/// bukti perubahan isi. Pesannya tampil apa adanya di layar penanda tangan.
 fn invalid(detail: impl AsRef<str>) -> IncrementError {
     IncrementError {
         code: "pdf_invalid",
-        message: format!("PDF versi baru tidak bisa diperiksa ({}).", detail.as_ref()),
+        message: format!(
+            "Mira belum bisa memeriksa hasil tanda tangan pada PDF ini, jadi tanda tangan belum disimpan. Ini masalah format file, bukan tanda isi dokumen diubah. Minta pengirim menyimpan ulang PDF dari aplikasi asalnya, lalu membuat permintaan baru. Rincian: {}.",
+            detail.as_ref()
+        ),
     }
 }
 
@@ -693,10 +705,13 @@ impl<'a> Checker<'a> {
     }
 
     fn run(mut self) -> Res<IncrementInfo> {
-        // Aksi aktif di objek baru atau berubah.
+        // Aksi aktif baru di objek baru atau berubah. Objek yang berubah
+        // dibandingkan dengan versi lamanya: aksi yang sudah ada sebelumnya
+        // (misalnya /AA halaman atau tautan URI langsung di /Annots) ikut
+        // tertulis ulang saat kamus halaman diubah dan tidak dihitung menambah.
         for id in self.added.iter().chain(self.changed.iter()) {
             if let Some(obj) = self.new.objects.get(id) {
-                check_no_active(obj, 0)?;
+                check_no_active(self.old.objects.get(id), obj, 0)?;
             }
         }
 
@@ -943,7 +958,7 @@ impl<'a> Checker<'a> {
                 _ => None,
             });
             let page_area = media_box_area(self.new, id)
-                .ok_or_else(|| changes(format!("ukuran halaman {number} tidak terbaca")))?;
+                .ok_or_else(|| invalid(format!("ukuran halaman {number} tidak terbaca")))?;
             let mut stamp = StampCheck::new(
                 Mode::Stamp,
                 self.new,
@@ -1191,10 +1206,14 @@ impl<'a> Checker<'a> {
                 Ok(Object::Dictionary(d)) => Some(d),
                 _ => None,
             };
+            // Hanya Form XObject yang berisi operator. Gambar (JPEG, JBIG2,
+            // CCITT dari pindaian, foto dari Word atau Chrome) tidak memakai
+            // nama sumber daya, dan filternya sering tidak bisa dibuka lopdf.
             for (_, v) in category(b"XObject").map(|d| d.iter()).into_iter().flatten() {
                 if let Object::Reference(r) = v
                     && let Some(Object::Stream(s)) = self.old.objects.get(r)
                     && !s.dict.has(b"Resources")
+                    && !matches!(s.dict.get(b"Subtype"), Ok(Object::Name(n)) if n == b"Image")
                 {
                     targets.push(*r);
                 }
@@ -1218,10 +1237,12 @@ impl<'a> Checker<'a> {
             let Some(Object::Stream(s)) = self.old.objects.get(&id) else {
                 continue;
             };
+            // Gagal membuka isi lama adalah batas pemeriksa, bukan bukti
+            // perubahan: tetap ditolak, tetapi sebagai `pdf_invalid`.
             let bytes = decode(s)
-                .map_err(|_| changes(format!("isi lama halaman {number} tidak bisa diperiksa")))?;
+                .map_err(|_| invalid(format!("isi lama halaman {number} tidak bisa dibuka")))?;
             budget = budget.checked_sub(bytes.len()).ok_or_else(|| {
-                changes(format!(
+                invalid(format!(
                     "isi lama halaman {number} terlalu besar untuk diperiksa"
                 ))
             })?;
@@ -1453,20 +1474,49 @@ fn same_resolved(old: &Document, new: &Document, a: &Object, b: &Object) -> bool
 // ---------------------------------------------------------------------------
 // Aksi aktif
 
-fn check_no_active(obj: &Object, depth: usize) -> Res<()> {
+/// Menolak aksi aktif di `obj` yang tidak ada di `old` (nilai objek yang
+/// sama di versi lama, `None` untuk objek baru). Bagian yang sama persis
+/// dengan versi lama dilewati; larik dibandingkan per posisi. Referensi
+/// tidak diikuti: objek yang ditunjuk diperiksa sendiri kalau baru atau
+/// berubah.
+fn check_no_active(old: Option<&Object>, obj: &Object, depth: usize) -> Res<()> {
     if depth > MAX_DEPTH {
         return Err(changes("objek terlalu dalam"));
     }
     match obj {
-        Object::Array(a) => a.iter().try_for_each(|o| check_no_active(o, depth + 1)),
-        Object::Dictionary(d) => check_dict_active(d, depth),
-        Object::Stream(s) => check_dict_active(&s.dict, depth),
+        Object::Array(a) => {
+            let old = match old {
+                Some(Object::Array(o)) => Some(o),
+                _ => None,
+            };
+            a.iter().enumerate().try_for_each(|(i, o)| {
+                let prev = old.and_then(|p| p.get(i));
+                if prev.is_some_and(|p| same(p, o, 0)) {
+                    return Ok(());
+                }
+                check_no_active(prev, o, depth + 1)
+            })
+        }
+        Object::Dictionary(d) => check_dict_active(old_dict(old), d, depth),
+        Object::Stream(s) => check_dict_active(old_dict(old), &s.dict, depth),
         _ => Ok(()),
     }
 }
 
-fn check_dict_active(d: &Dictionary, depth: usize) -> Res<()> {
+fn old_dict(old: Option<&Object>) -> Option<&Dictionary> {
+    match old {
+        Some(Object::Dictionary(d)) => Some(d),
+        Some(Object::Stream(s)) => Some(&s.dict),
+        _ => None,
+    }
+}
+
+fn check_dict_active(old: Option<&Dictionary>, d: &Dictionary, depth: usize) -> Res<()> {
     for (k, v) in d.iter() {
+        let prev = old.and_then(|o| o.get(k).ok());
+        if prev.is_some_and(|p| same(p, v, 0)) {
+            continue;
+        }
         if matches!(
             k.as_slice(),
             b"JS"
@@ -1500,7 +1550,7 @@ fn check_dict_active(d: &Dictionary, depth: usize) -> Res<()> {
         {
             return Err(changes("menambah aksi aktif"));
         }
-        check_no_active(v, depth + 1)?;
+        check_no_active(prev, v, depth + 1)?;
     }
     Ok(())
 }
@@ -4274,5 +4324,214 @@ mod tests {
         }
         // Anggaran penuh lagi untuk pemeriksaan berikutnya.
         assert_eq!(code(&old, &new), "ok");
+    }
+
+    /// `pdf` dengan satu perubahan di kamus halaman pertama (disimpan ulang
+    /// utuh oleh lopdf, jadi menjadi "versi lama" baru).
+    fn with_first_page(pdf: &[u8], edit: impl FnOnce(&mut Document, ObjectId)) -> Vec<u8> {
+        let mut doc = Document::load_mem(pdf).unwrap();
+        let page = *doc.get_pages().get(&1).unwrap();
+        edit(&mut doc, page);
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    }
+
+    fn add_xobject(doc: &mut Document, page: ObjectId, name: &str, stream: Stream) {
+        let id = doc.add_object(stream);
+        let res = doc
+            .get_dictionary_mut(page)
+            .unwrap()
+            .get_mut(b"Resources")
+            .unwrap()
+            .as_dict_mut()
+            .unwrap();
+        res.set("XObject", dictionary! { name => id });
+    }
+
+    #[test]
+    fn gambar_lama_yang_tidak_bisa_dibuka_tidak_menolak_stempel() {
+        // Pindaian dan foto (DCTDecode, JBIG2, CCITT, JPX) tidak bisa dibuka
+        // lopdf dan tidak memakai nama sumber daya, jadi tidak ikut dipindai.
+        for filter in ["DCTDecode", "JBIG2Decode", "CCITTFaxDecode", "JPXDecode"] {
+            let old = with_first_page(&sample_pdf(2), |doc, page| {
+                let image = Stream::new(
+                    dictionary! {
+                        "Type" => "XObject",
+                        "Subtype" => "Image",
+                        "Width" => 4,
+                        "Height" => 4,
+                        "ColorSpace" => "DeviceGray",
+                        "BitsPerComponent" => 8,
+                        "Filter" => filter,
+                    },
+                    b"\xff\xd8 bukan data gambar yang bisa dibuka".to_vec(),
+                );
+                add_xobject(doc, page, "Im0", image);
+            });
+            assert_eq!(code(&old, &stamp(&old, TAG)), "ok", "{filter}");
+        }
+    }
+
+    #[test]
+    fn isi_lama_yang_tidak_bisa_dibuka_ditolak_sebagai_pdf_invalid() {
+        // Form XObject tanpa Resources memakai sumber daya halaman, jadi harus
+        // dipindai. Kalau tidak bisa dibuka, versi baru tetap ditolak, tetapi
+        // bukan dengan kode perubahan isi.
+        let old = with_first_page(&sample_pdf(2), |doc, page| {
+            let form = Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Form",
+                    "BBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+                    "Filter" => "JBIG2Decode",
+                },
+                b"tidak bisa dibuka".to_vec(),
+            );
+            add_xobject(doc, page, "Fm0", form);
+        });
+        let err = check_increment(&old, &stamp(&old, TAG)).unwrap_err();
+        assert_eq!(err.code, "pdf_invalid", "{}", err.message);
+        assert!(
+            err.message.contains("bukan tanda isi dokumen diubah"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn aksi_lama_di_halaman_yang_distempel_tidak_dihitung_menambah() {
+        let old = with_first_page(&sample_pdf(2), |doc, page| {
+            let d = doc.get_dictionary_mut(page).unwrap();
+            d.set(
+                "AA",
+                dictionary! { "O" => dictionary! { "S" => "GoTo", "D" => vec![Object::Reference(page), "Fit".into()] } },
+            );
+            d.set(
+                "Annots",
+                vec![Object::Dictionary(dictionary! {
+                    "Type" => "Annot",
+                    "Subtype" => "Link",
+                    "Rect" => vec![72.into(), 700.into(), 200.into(), 720.into()],
+                    "A" => dictionary! { "S" => "URI", "URI" => Object::string_literal("https://example.com/") },
+                })],
+            );
+        });
+        assert_eq!(code(&old, &stamp(&old, TAG)), "ok");
+
+        // Aksi halaman yang diganti tetap ditolak.
+        let mut inc = Increment::open(&old);
+        let page = inc.page_ids()[0];
+        let Object::Dictionary(mut d) = inc.current(page) else {
+            panic!("halaman bukan kamus")
+        };
+        d.set(
+            "AA",
+            dictionary! { "O" => dictionary! { "S" => "JavaScript", "JS" => Object::string_literal("app.alert(1)") } },
+        );
+        inc.put(page, Object::Dictionary(d));
+        inc.stamp_page(0, TAG);
+        assert_eq!(code(&old, &inc.finish()), "version_changes_content");
+
+        // Alamat tautan lama yang diganti juga ditolak.
+        let mut inc = Increment::open(&old);
+        let Object::Dictionary(mut d) = inc.current(page) else {
+            panic!("halaman bukan kamus")
+        };
+        let Ok(Object::Array(annots)) = d.get_mut(b"Annots") else {
+            panic!("Annots bukan larik")
+        };
+        let Some(Object::Dictionary(link)) = annots.first_mut() else {
+            panic!("tautan tidak ada")
+        };
+        link.set(
+            "A",
+            dictionary! { "S" => "URI", "URI" => Object::string_literal("https://contoh.invalid/") },
+        );
+        inc.put(page, Object::Dictionary(d));
+        inc.stamp_page(0, TAG);
+        assert_eq!(code(&old, &inc.finish()), "version_changes_content");
+    }
+
+    // Fixture "dunia nyata" (`npm run fixtures:sign-real`): PDF cetak Chrome
+    // berfoto JPEG, pindaian, tiruan Word (hybrid xref, bertag), linearized,
+    // incremental update lama, AcroForm, /Contents larik, Resources warisan,
+    // /AA halaman, anotasi langsung. Dibaca saat tes berjalan supaya fixture
+    // baru ikut teruji tanpa mengubah kode.
+    fn real_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sign/real")
+    }
+
+    fn real_files(filter: impl Fn(&str) -> bool) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(real_dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| filter(n))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn pdf_dunia_nyata_dua_penanda_tangan_dan_halaman_catatan_lolos() {
+        let chains = real_files(|n| n.ends_with(".signed.txt"));
+        assert!(chains.len() >= 11, "fixture kurang: {chains:?}");
+        for txt in chains {
+            let name = txt.trim_end_matches(".signed.txt");
+            let lens: Vec<usize> = std::fs::read_to_string(real_dir().join(&txt))
+                .unwrap()
+                .split_whitespace()
+                .map(|n| n.parse().unwrap())
+                .collect();
+            let signed = std::fs::read(real_dir().join(format!("{name}.signed.pdf"))).unwrap();
+            let original = std::fs::read(real_dir().join(format!("{name}.pdf"))).unwrap();
+            assert_eq!(lens.len(), 4, "{name}");
+            assert_eq!(lens[3], signed.len(), "{name}");
+            assert_eq!(&signed[..lens[0]], original.as_slice(), "{name}");
+            // Penanda tangan pertama dan kedua (tanpa halaman baru), lalu
+            // penanda tangan terakhir dengan halaman catatan.
+            for (step, w) in lens.windows(2).enumerate() {
+                let last = step == 2;
+                let rules = IncrementRules {
+                    allow_new_pages: last,
+                };
+                match check_increment_with(&signed[..w[0]], &signed[..w[1]], &rules) {
+                    Ok(info) => {
+                        assert_eq!(info.added_pages, usize::from(last), "{name} langkah {step}");
+                    }
+                    Err(e) => panic!("{name} langkah {step}: {} {}", e.code, e.message),
+                }
+            }
+            // Dua stempel sekaligus juga lolos.
+            assert_eq!(code(&signed[..lens[0]], &signed[..lens[2]]), "ok", "{name}");
+        }
+    }
+
+    #[test]
+    fn pdf_dunia_nyata_yang_isinya_diubah_tetap_ditolak() {
+        let tampered = real_files(|n| n.starts_with("tamper-") && n.ends_with(".pdf"));
+        let kinds: Vec<&str> = tampered
+            .iter()
+            .map(|n| n.split('.').next().unwrap())
+            .collect();
+        for kind in [
+            "tamper-content-stream",
+            "tamper-remove-page",
+            "tamper-replace-image",
+            "tamper-remap-image",
+            "tamper-form-value",
+            "tamper-mediabox",
+            "tamper-annot-uri",
+            "tamper-page-aa",
+        ] {
+            assert!(kinds.contains(&kind), "fixture {kind} tidak ada");
+        }
+        for file in tampered {
+            let base = file.split('.').nth(1).unwrap();
+            let old = std::fs::read(real_dir().join(format!("{base}.pdf"))).unwrap();
+            let new = std::fs::read(real_dir().join(&file)).unwrap();
+            assert!(new.starts_with(&old), "{file}");
+            assert_eq!(code(&old, &new), "version_changes_content", "{file}");
+        }
     }
 }

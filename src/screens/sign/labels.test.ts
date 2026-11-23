@@ -213,6 +213,12 @@ describe("label sinkron dari rekan", () => {
     expect(v("already_signed")).toBe("Versi dari Budi tidak dipakai karena Budi sudah menandatangani versi lain dokumen ini.");
     expect(v("not_your_turn")).toBe("Versi dari Budi ditolak karena dibuat sebelum giliran Budi.");
     expect(v("on_rejected")).toMatch(/^Versi dari Budi ditolak karena ditandatangani di atas versi lain/);
+    // pdf_invalid juga dipakai bukti stempel untuk PDF yang tidak bisa diperiksa:
+    // tidak boleh terdengar seperti tuduhan mengubah isi.
+    expect(v("pdf_invalid")).toBe("Versi dari Budi ditolak karena Mira tidak bisa membaca atau memeriksa file PDF-nya.");
+    // Pesan teknis dari inti (kode lain) tampil apa adanya, bukan pesan perubahan isi.
+    const technical = "Mira belum bisa memeriksa hasil tanda tangan pada PDF ini, jadi tanda tangan belum disimpan.";
+    expect(signErrorMessage({ code: "pdf_invalid", message: technical })).toBe(technical);
     for (const code of ["version_not_prefix", "pdf_invalid", "tag_missing", "outdated_version", "not_allowed", "request_closed", "invalid_record"]) {
       expect(v(code)).toMatch(/^Versi dari Budi (ditolak|tidak dipakai) karena /);
       expect(v(code)).not.toMatch(/startxref|katalog|Anda/);
