@@ -1,0 +1,109 @@
+/* Pemilih bahasa. Memakai bahasa visual kartu Mode di Pengaturan (garis
+   border-strong, pilihan aktif accent-soft + garis accent 2px), jadi pasangan
+   warnanya sama dengan yang sudah lolos cek kontras di sana. */
+.lang-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.lang-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.lang-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  transition: background-color 120ms ease;
+}
+
+.lang-option:hover {
+  background: var(--hover);
+}
+
+.lang-option:has(input:checked) {
+  border: 2px solid var(--accent);
+  padding: 0 13px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.lang-option:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Cincin fokus pindah ke label di atas, jadi radio sendiri tidak perlu dua cincin. */
+.lang-option input:focus-visible {
+  outline: none;
+}
+
+.lang-option input {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.lang-picker-full {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lang-picker-full .lang-option {
+  min-width: 180px;
+}
+
+/* Onboarding: sebaris, label kecil di kiri. */
+.lang-picker-compact .lang-fieldset {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lang-legend {
+  float: left;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.lang-picker-compact .lang-options {
+  gap: 6px;
+}
+
+.lang-picker-compact .lang-option {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.lang-picker-compact .lang-option:has(input:checked) {
+  padding: 0 9px;
+}
+
+.lang-picker-compact .set-live:not(:empty) {
+  margin-top: 8px;
+}
+
+.lang-picker .set-live:not(:empty) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
