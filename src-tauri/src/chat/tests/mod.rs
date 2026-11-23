@@ -6,6 +6,9 @@ mod rejects;
 mod review;
 mod scoping;
 mod titipan;
+mod v03_groups;
+mod v03_scoping;
+mod v03_umum;
 
 use super::model::{self, Body, VerifiedRecord};
 use super::testutil::Laptop;
