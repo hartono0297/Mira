@@ -4,6 +4,16 @@ import { menuItems, SEPARATOR, type MenuAction, type MenuEntry } from "./items";
 import { MenuPopup, type MenuAnchor } from "./MenuPopup";
 import { isTextField } from "./useContextMenu";
 
+function dialogOf(el: Element | null): HTMLElement | null {
+  return el?.closest<HTMLElement>("[role=dialog]") ?? null;
+}
+
+// setRangeText tidak memicu event input, padahal state React mengikuti event itu.
+function setText(el: HTMLInputElement | HTMLTextAreaElement, text: string, start: number, end: number) {
+  el.setRangeText(text, start, end, "end");
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 // Teks menu kolom teks, terkumpul di satu tempat.
 export const TEXT_MENU = {
   label: "Menu teks",
@@ -23,7 +33,7 @@ type Saved =
   | { kind: "input"; el: HTMLInputElement | HTMLTextAreaElement; start: number; end: number }
   | { kind: "editable"; el: HTMLElement; range: Range | null };
 
-type OpenState = { anchor: MenuAnchor; items: MenuEntry[] };
+type OpenState = { anchor: MenuAnchor; items: MenuEntry[]; container: HTMLElement | null };
 
 function isInput(el: Field): el is HTMLInputElement | HTMLTextAreaElement {
   return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
@@ -79,9 +89,18 @@ function exec(command: string, value?: string): boolean {
   }
 }
 
+// Teks yang akan disalin sudah dicatat saat menu dibuka, jadi tidak
+// bergantung pada seleksi yang mungkin hilang. execCommand hanya cadangan.
 async function copyText(text: string) {
-  if (exec("copy")) return;
-  await navigator.clipboard?.writeText(text);
+  try {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Jatuh ke execCommand di bawah.
+  }
+  exec("copy");
 }
 
 async function pasteInto(saved: Saved) {
@@ -98,7 +117,7 @@ async function pasteInto(saved: Saved) {
   }
   // insertText menjaga riwayat Ctrl+Z dan memicu event input, jadi state React ikut berubah.
   if (exec("insertText", text)) return;
-  if (saved.kind === "input") saved.el.setRangeText(text, saved.start, saved.end, "end");
+  if (saved.kind === "input") setText(saved.el, text, saved.start, saved.end);
 }
 
 function selectAll(saved: Saved) {
@@ -133,7 +152,7 @@ export function textFieldItems(el: Field): MenuEntry[] {
       restore(saved);
       if (exec("cut")) return;
       void navigator.clipboard?.writeText(text).then(() => {
-        if (saved.kind === "input") saved.el.setRangeText("", saved.start, saved.end, "end");
+        if (saved.kind === "input") setText(saved.el, "", saved.start, saved.end);
       });
     },
   };
@@ -205,13 +224,13 @@ export function TextFieldMenu() {
       const target = e.target;
       if (isTextField(target) && !(target instanceof HTMLInputElement && target.disabled)) {
         returnTo.current = target;
-        setOpen({ anchor: anchorFor(e, target), items: textFieldItems(target) });
+        setOpen({ anchor: anchorFor(e, target), items: textFieldItems(target), container: dialogOf(target) });
         return;
       }
       const text = window.getSelection()?.toString() ?? "";
       if (text.trim().length > 0 && target instanceof Element) {
         returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        setOpen({ anchor: anchorFor(e, target), items: selectionItems(text) });
+        setOpen({ anchor: anchorFor(e, target), items: selectionItems(text), container: dialogOf(target) });
       }
     };
     document.addEventListener("contextmenu", onContextMenu);
@@ -223,6 +242,16 @@ export function TextFieldMenu() {
     setOpen(null);
   }, []);
 
+  // Kolom asalnya hilang (misalnya dialog ditutup dari tempat lain): menu ikut tutup.
+  useEffect(() => {
+    if (!open) return;
+    const watch = new MutationObserver(() => {
+      if (returnTo.current && !returnTo.current.isConnected) setOpen(null);
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+    return () => watch.disconnect();
+  }, [open]);
+
   if (!open) return null;
   return (
     <MenuPopup
@@ -231,6 +260,7 @@ export function TextFieldMenu() {
       items={open.items}
       anchor={open.anchor}
       owner={null}
+      container={open.container}
       onClose={close}
       onSelect={(item) => {
         // Aksi teks mengatur fokus dan seleksinya sendiri.

@@ -306,8 +306,11 @@ fn create_main_window(
         .first()
         .cloned()
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
-    let mut builder =
-        WebviewWindowBuilder::from_config(app.handle(), &config)?.background_color(background);
+    // Akses papan klip untuk menu teks (Tempel) tanpa prompt izin WebView2
+    // yang berbahasa Inggris. Halaman hanya frontend Mira sendiri (CSP 'self').
+    let mut builder = WebviewWindowBuilder::from_config(app.handle(), &config)?
+        .background_color(background)
+        .enable_clipboard_access();
     if let Some(dir) = instance_dir {
         let folder = dir
             .file_name()

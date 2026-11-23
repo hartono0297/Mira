@@ -260,6 +260,25 @@ describe("Layar Dokumen", () => {
     await waitFor(() => expect(title).toHaveFocus());
   });
 
+  it("kotak bentrok yang dipasang ulang karena ganti lokasi tidak memindah fokus", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [kontrak, laporan], p1: [denah] });
+    render(<DocsScreen />);
+    await screen.findByRole("heading", { level: 2, name: "kontrak.docx" });
+
+    await user.click(within(row("kontrak.docx")).getByRole("button", { name: "Selesaikan bentrok kontrak.docx" }));
+    const title = screen.getByRole("heading", { level: 3, name: "Dua versi tersimpan berdampingan" });
+    await waitFor(() => expect(title).toHaveFocus());
+
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    await user.selectOptions(select, await screen.findByRole("option", { name: "PA Gudang" }));
+    await screen.findByRole("heading", { level: 2, name: "denah-gudang.pdf" });
+    await user.selectOptions(select, "Pustaka Umum");
+    await screen.findByRole("heading", { level: 3, name: "Dua versi tersimpan berdampingan" });
+    expect(select).toHaveFocus();
+  });
+
   it("memulihkan versi lama meminta konfirmasi dulu", async () => {
     const user = userEvent.setup();
     setup([laporan]);
@@ -1030,7 +1049,7 @@ describe("Menu klik kanan baris file", () => {
     let menu = await rightClick(user, "laporan-bulanan.docx");
     expect(item(menu, "edit")).toHaveAttribute("aria-disabled", "true");
     expect(item(menu, "edit")).toHaveAccessibleDescription("Membuka...");
-    expect(item(menu, "open")).toHaveAccessibleDescription("Menunggu aksi lain selesai");
+    expect(item(menu, "open")).toHaveAccessibleDescription("Tunggu aksi lain selesai");
     await user.keyboard("{Escape}");
 
     menu = await rightClick(user, "brosur.pdf");
@@ -1059,6 +1078,29 @@ describe("Menu klik kanan baris file", () => {
     expect(row("brosur.pdf")).toHaveClass("is-selected");
     const title = screen.getByRole("heading", { level: 3, name: "Riwayat versi" });
     await waitFor(() => expect(title).toHaveFocus());
+  });
+
+  it("setelah Lihat riwayat versi, panel yang dipasang ulang karena ganti lokasi tidak memindah fokus", async () => {
+    const user = userEvent.setup();
+    boardMock.listProjects.mockResolvedValue([gudang]);
+    setupScopes({ "": [laporan, brosur], p1: [denah] });
+    render(<DocsScreen />);
+    await screen.findByRole("heading", { level: 2, name: "laporan-bulanan.docx" });
+
+    const menu = await rightClick(user, "brosur.pdf");
+    await user.click(item(menu, "history"));
+    await waitFor(() => expect(screen.getByRole("heading", { level: 3, name: "Riwayat versi" })).toHaveFocus());
+
+    const select = screen.getByRole("combobox", { name: "Lokasi" });
+    await user.selectOptions(select, await screen.findByRole("option", { name: "PA Gudang" }));
+    await screen.findByRole("heading", { level: 2, name: "denah-gudang.pdf" });
+    await screen.findByRole("heading", { level: 3, name: "Riwayat versi" });
+    expect(select).toHaveFocus();
+
+    await user.selectOptions(select, "Pustaka Umum");
+    await screen.findByRole("heading", { level: 2, name: "laporan-bulanan.docx" });
+    await screen.findByRole("heading", { level: 3, name: "Riwayat versi" });
+    expect(select).toHaveFocus();
   });
 
   it("Salin nama menyalin nama file dan mengabarkannya; gagal menyalin juga dikabarkan", async () => {

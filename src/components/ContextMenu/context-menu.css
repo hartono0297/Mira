@@ -92,3 +92,16 @@
   min-width: 34px;
   padding: 5px 8px;
 }
+
+/* Mode kontras tinggi Windows: latar sorotan hilang, jadi pakai garis dan
+   warna sistem supaya item yang disorot dan item nonaktif tetap terlihat. */
+@media (forced-colors: active) {
+  .cmenu-item:focus {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .cmenu-item[aria-disabled="true"] {
+    color: GrayText;
+  }
+}

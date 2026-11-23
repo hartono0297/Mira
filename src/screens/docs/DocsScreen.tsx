@@ -26,6 +26,7 @@ import { readLocation, resolveLocation, writeLocation, type DocsLocation } from 
 import {
   addedText,
   appName,
+  CLIPBOARD_MISSING,
   COPY_FAILED_TITLE,
   copiedText,
   emptyTitle,
@@ -361,7 +362,7 @@ export function DocsScreen() {
       copyName: (doc) => {
         const write = navigator.clipboard
           ? navigator.clipboard.writeText(doc.name)
-          : Promise.reject(new Error("Clipboard tidak tersedia di jendela ini."));
+          : Promise.reject(new Error(CLIPBOARD_MISSING));
         write.then(
           () => setFeedback({ kind: "ok", text: copiedText(doc.name) }),
           (err: unknown) => setFeedback({ kind: "error", title: COPY_FAILED_TITLE, error: toAppError(err), hint: null }),

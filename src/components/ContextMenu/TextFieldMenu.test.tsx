@@ -98,16 +98,16 @@ describe("TextFieldMenu", () => {
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, "Ayu Lestari".length]);
   });
 
-  it("Salin menjalankan perintah copy dengan seleksi yang dipulihkan", async () => {
+  it("Salin menulis teks terpilih ke papan klip dan memulihkan seleksi", async () => {
     const user = setup();
-    const exec = vi.fn(() => true);
-    Object.defineProperty(document, "execCommand", { value: exec, configurable: true });
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", { value: { writeText, readText: vi.fn() }, configurable: true });
     const input = screen.getByRole("textbox", { name: "Nama" }) as HTMLInputElement;
     input.focus();
     input.setSelectionRange(0, 3);
     rightClick(input);
     await user.keyboard("{ArrowDown}{Enter}");
-    expect(exec).toHaveBeenCalledWith("copy", false, undefined);
+    expect(writeText).toHaveBeenCalledWith("Ayu");
     expect(input).toHaveFocus();
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, 3]);
   });

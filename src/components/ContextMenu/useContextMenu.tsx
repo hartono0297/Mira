@@ -1,9 +1,9 @@
-import { IconDots } from "@tabler/icons-react";
-import { useCallback, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { IconCopy, IconDots } from "@tabler/icons-react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { toAppError, type AppError } from "../../api";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { ErrorAlert } from "../ErrorAlert";
-import { isDisabled, isSeparator, type MenuAction, type MenuEntry } from "./items";
+import { isDisabled, isSeparator, SEPARATOR, type MenuAction, type MenuEntry } from "./items";
 import { MenuPopup, type MenuAnchor } from "./MenuPopup";
 
 type Options = {
@@ -12,7 +12,35 @@ type Options = {
   items: MenuEntry[];
 };
 
-type OpenState = { anchor: MenuAnchor; returnTo: HTMLElement | null; owner: HTMLElement | null };
+type OpenState = {
+  anchor: MenuAnchor;
+  returnTo: HTMLElement | null;
+  owner: HTMLElement | null;
+  // Item tambahan di atas menu, misalnya Salin untuk teks yang dipilih di baris.
+  extra?: MenuEntry[];
+  focusLast?: boolean;
+};
+
+// Teks Salin untuk teks yang dipilih di dalam baris. Sama dengan menu teks global.
+const COPY_SELECTION = "Salin";
+
+// Event dari portal (dialog, menu) naik lewat pohon React ke baris, padahal
+// elemennya tidak ada di dalam baris. Event seperti itu bukan milik baris.
+function fromInside(e: { target: EventTarget | null; currentTarget: HTMLElement }): boolean {
+  return e.target instanceof Node && e.currentTarget.contains(e.target);
+}
+
+function dialogOf(el: Element | null): HTMLElement | null {
+  return el?.closest<HTMLElement>("[role=dialog]") ?? null;
+}
+
+// Teks yang dipilih di dalam baris, supaya klik kanan di atasnya tetap bisa Salin.
+function selectionIn(area: HTMLElement): string {
+  const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+  const text = sel?.toString() ?? "";
+  if (!text.trim() || !sel?.anchorNode || !area.contains(sel.anchorNode)) return "";
+  return text;
+}
 
 const FOCUSABLE = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
@@ -48,7 +76,7 @@ export type ContextMenuHandle = {
     onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
   };
   // Buka menu di bawah elemen ini (dipakai MenuButton).
-  openAt: (el: HTMLElement, align?: "start" | "end") => void;
+  openAt: (el: HTMLElement, align?: "start" | "end", focusLast?: boolean) => void;
   close: () => void;
   isOpen: boolean;
   menuId: string;
@@ -96,14 +124,37 @@ export function useContextMenu({ label, items }: Options): ContextMenuHandle {
     [close],
   );
 
+  // Item bisa habis selagi menu terbuka (misalnya orangnya dikeluarkan oleh
+  // admin lain). Menu kosong tidak dibiarkan melayang.
+  useEffect(() => {
+    if (open && !hasItems && !open.extra?.length) close(true);
+  }, [open, hasItems, close]);
+
   const onContextMenu = useCallback(
     (e: MouseEvent<HTMLElement>) => {
-      if (e.defaultPrevented) return;
+      if (e.defaultPrevented || !fromInside(e)) return;
       if (isTextField(e.target)) return;
-      e.preventDefault();
-      if (Date.now() - keyboardAt.current < 400) return;
-      if (!hasItems) return;
       const area = e.currentTarget;
+      const selected = selectionIn(area);
+      if (Date.now() - keyboardAt.current < 400) {
+        e.preventDefault();
+        return;
+      }
+      // Tanpa item, menu teks global yang memutuskan (Salin untuk teks terpilih).
+      if (!hasItems) return;
+      e.preventDefault();
+      const extra: MenuEntry[] = selected
+        ? [
+            {
+              id: "copy-selection",
+              label: COPY_SELECTION,
+              icon: <IconCopy size={16} />,
+              shortcut: "Ctrl+C",
+              onSelect: () => navigator.clipboard?.writeText(selected),
+            },
+            SEPARATOR,
+          ]
+        : [];
       const rect = area.getBoundingClientRect();
       // Event dari keyboard (tanpa posisi kursor yang masuk akal) dibuka di bawah baris.
       const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
@@ -111,14 +162,14 @@ export function useContextMenu({ label, items }: Options): ContextMenuHandle {
         inside && (e.clientX !== 0 || e.clientY !== 0)
           ? { kind: "point", x: e.clientX, y: e.clientY }
           : { kind: "element", rect, align: "start" };
-      setOpen({ anchor, returnTo: focusTarget(e.target, area), owner: null });
+      setOpen({ anchor, returnTo: focusTarget(e.target, area), owner: null, extra });
     },
     [hasItems],
   );
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLElement>) => {
-      if (!isMenuKey(e) || isTextField(e.target)) return;
+      if (!isMenuKey(e) || isTextField(e.target) || !fromInside(e)) return;
       e.preventDefault();
       e.stopPropagation();
       keyboardAt.current = Date.now();
@@ -134,9 +185,9 @@ export function useContextMenu({ label, items }: Options): ContextMenuHandle {
   );
 
   const openAt = useCallback(
-    (el: HTMLElement, align: "start" | "end" = "end") => {
+    (el: HTMLElement, align: "start" | "end" = "end", focusLast = false) => {
       if (!hasItems) return;
-      setOpen({ anchor: { kind: "element", rect: el.getBoundingClientRect(), align }, returnTo: el, owner: el });
+      setOpen({ anchor: { kind: "element", rect: el.getBoundingClientRect(), align }, returnTo: el, owner: el, focusLast });
     },
     [hasItems],
   );
@@ -161,9 +212,11 @@ export function useContextMenu({ label, items }: Options): ContextMenuHandle {
         <MenuPopup
           id={menuId}
           label={label}
-          items={items}
+          items={open.extra?.length ? [...open.extra, ...items] : items}
           anchor={open.anchor}
           owner={open.owner}
+          container={dialogOf(open.returnTo)}
+          focusLast={open.focusLast}
           onClose={close}
           onSelect={select}
         />
@@ -229,7 +282,7 @@ export function MenuButton({ menu, label, disabled, className, icon }: ButtonPro
       onKeyDown={(e) => {
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
           e.preventDefault();
-          if (!menu.isOpen) menu.openAt(e.currentTarget);
+          if (!menu.isOpen) menu.openAt(e.currentTarget, "end", e.key === "ArrowUp");
         }
       }}
     >

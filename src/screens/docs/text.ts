@@ -125,8 +125,9 @@ export const OPEN_READONLY_LABEL = "Buka hanya baca";
 export const HISTORY_LABEL = "Lihat riwayat versi";
 export const EXPORT_LABEL = "Simpan salinan";
 export const COPY_NAME_LABEL = "Salin nama";
-export const WAIT_REASON = "Menunggu aksi lain selesai";
+export const WAIT_REASON = "Tunggu aksi lain selesai";
 export const COPY_FAILED_TITLE = "Nama file belum bisa disalin";
+export const CLIPBOARD_MISSING = "Papan klip tidak tersedia di jendela ini.";
 export const copiedText = (name: string) => `Nama ${name} disalin.`;
 
 // Simpan salinan butuh isi versi sekarang di laptop ini.
