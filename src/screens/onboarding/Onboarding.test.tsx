@@ -128,7 +128,7 @@ describe("Onboarding: kantor ditemukan", () => {
     await u.click(screen.getByRole("button", { name: "Minta bergabung" }));
 
     expect(await screen.findByRole("heading", { name: "Menunggu persetujuan" })).toHaveFocus();
-    expect(invoke).toHaveBeenCalledWith("join_send_request", { officeKey: "org-biro:fp1", teamId: "t-des" });
+    expect(invoke).toHaveBeenCalledWith("join_send_request", { officeKey: "org-biro:fp1", teamId: "t-des", confirmFingerprint: null });
     expect(calls("save_display_name")).toHaveLength(0);
     expect(screen.getByText("4F2A 91C0")).toBeInTheDocument();
     expect(screen.getByText("7KQ2-M9XD")).toBeInTheDocument();
@@ -237,7 +237,7 @@ describe("Onboarding: kantor ditemukan", () => {
     expect(calls("join_cancel")).toHaveLength(1);
   });
 
-  it("kantor kembar dengan identitas bentrok: peringatan dan tombol kirim mati", async () => {
+  it("kantor kembar dengan identitas bentrok: kirim baru bisa setelah sidik dicocokkan", async () => {
     const u = user();
     commands({
       join_search: searchResult({
@@ -246,6 +246,7 @@ describe("Onboarding: kantor ditemukan", () => {
           office({ key: "b", fingerprint: "BBBB-2222", conflict: true }),
         ],
       }),
+      join_send_request: outgoing(),
     });
     setup();
     await startSearch(u);
@@ -256,8 +257,25 @@ describe("Onboarding: kantor ditemukan", () => {
     expect(screen.getByText("BBBB-2222")).toBeInTheDocument();
 
     await u.click(screen.getAllByRole("radio")[0]);
+    await u.selectOptions(screen.getByLabelText("Departemen"), "Administrasi");
     expect(screen.getByRole("button", { name: "Minta bergabung" })).toBeDisabled();
-    expect(screen.getByText(/Permintaan ke kantor ini dimatikan/)).toBeInTheDocument();
+    expect(screen.getByText(/minta ia membacakan sidik organisasi/)).toBeInTheDocument();
+
+    await u.click(screen.getByRole("checkbox", { name: /Sidik dari superadmin sama dengan AAAA-1111/ }));
+    // Pindah kantor membatalkan centang.
+    await u.click(screen.getAllByRole("radio")[1]);
+    expect(screen.getByRole("checkbox", { name: /BBBB-2222/ })).not.toBeChecked();
+    await u.click(screen.getAllByRole("radio")[0]);
+    await u.selectOptions(screen.getByLabelText("Departemen"), "Administrasi");
+    await u.click(screen.getByRole("checkbox", { name: /Sidik dari superadmin sama dengan AAAA-1111/ }));
+    await u.click(screen.getByRole("button", { name: "Minta bergabung" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("join_send_request", {
+        officeKey: "a",
+        teamId: "t-adm",
+        confirmFingerprint: "AAAA-1111",
+      }),
+    );
   });
 
   it("beberapa kantor bernama sama: pilih kantor dulu, lalu kirim ke kantor itu", async () => {
@@ -280,7 +298,7 @@ describe("Onboarding: kantor ditemukan", () => {
     await u.click(second);
     await u.selectOptions(screen.getByLabelText("Departemen"), "Administrasi");
     await u.click(screen.getByRole("button", { name: "Minta bergabung" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("join_send_request", { officeKey: "b", teamId: "t-adm" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("join_send_request", { officeKey: "b", teamId: "t-adm", confirmFingerprint: null }));
   });
 
   it("kantor tanpa departemen: menjelaskan dan tidak bisa mengirim", async () => {

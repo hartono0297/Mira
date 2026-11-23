@@ -188,6 +188,8 @@ pub(crate) struct Inner {
     pub(crate) join_limiter: Mutex<RateLimiter>,
     /// `join_status_get` only: a waiting requester asks every 5 seconds.
     pub(crate) join_status_limiter: Mutex<RateLimiter>,
+    /// All join sessions together (`join::JOIN_GLOBAL_PER_MINUTE`).
+    pub(crate) join_global_limiter: Mutex<RateLimiter>,
     rejection_limiter: Mutex<RateLimiter>,
     pub(crate) join_slots: Arc<Semaphore>,
     /// Incoming connections (handshaking or established).
@@ -275,6 +277,10 @@ impl Inner {
             )),
             join_status_limiter: Mutex::new(RateLimiter::new(
                 join::JOIN_STATUS_PER_MINUTE,
+                Duration::from_secs(60),
+            )),
+            join_global_limiter: Mutex::new(RateLimiter::new(
+                join::JOIN_GLOBAL_PER_MINUTE,
                 Duration::from_secs(60),
             )),
             rejection_limiter: Mutex::new(RateLimiter::new(

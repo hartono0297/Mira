@@ -86,8 +86,10 @@ export const joinApi = {
   // Alamat laptop rekan yang diketik (VPN, Wi-Fi terpisah).
   connectAddress: (address: string) => call<FoundOffice[]>("join_connect_address", { address }),
   // Menyimpan nama tampilan dulu lewat api.saveDisplayName.
-  sendRequest: (officeKey: string, teamId: string) =>
-    call<OutgoingJoinRequest>("join_send_request", { officeKey, teamId }),
+  // confirmFingerprint: sidik pendek yang sudah dicocokkan dengan superadmin.
+  // Wajib untuk kantor yang conflict, selain itu null.
+  sendRequest: (officeKey: string, teamId: string, confirmFingerprint: string | null = null) =>
+    call<OutgoingJoinRequest>("join_send_request", { officeKey, teamId, confirmFingerprint }),
   outgoing: () => call<OutgoingJoinRequest | null>("join_outgoing"),
   // Dipanggil tiap 5 detik selama layar menunggu terbuka.
   poll: () => call<JoinPoll>("join_poll"),

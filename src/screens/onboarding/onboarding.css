@@ -349,6 +349,26 @@
   font-weight: 600;
 }
 
+.onb-blocked p {
+  margin: 0 0 4px;
+}
+
+/* Seluruh baris bisa diklik, setinggi target sentuh minimum. */
+.onb-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.onb-confirm input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
 .onb-other {
   font-size: 13px;
   text-align: right;

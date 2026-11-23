@@ -84,7 +84,9 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
     }
   }
 
-  const undelivered = request.lastError && !request.lastSentAt;
+  // mark_join_sent menulis lastSentAt di setiap percobaan dan mengosongkan
+  // lastError kalau ada laptop rekan yang menerima.
+  const undelivered = Boolean(request.lastError);
 
   return (
     <div className="onb-form">

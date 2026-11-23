@@ -27,6 +27,9 @@ export function OfficeStep({ offices, identity, onIdentity, onSent, onOther }: P
   const [teamId, setTeamId] = useState("");
   const [errors, setErrors] = useState<Errors>(NO_ERRORS);
   const [sending, setSending] = useState(false);
+  // Kantor yang bentrok (id sama, sidik beda) baru bisa dikirimi setelah orangnya
+  // mencocokkan sidik dengan superadmin lewat telepon atau datang ke mejanya.
+  const [confirmedKey, setConfirmedKey] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const teamRef = useRef<HTMLSelectElement>(null);
   const firstRadioRef = useRef<HTMLInputElement>(null);
@@ -39,17 +42,20 @@ export function OfficeStep({ offices, identity, onIdentity, onSent, onOther }: P
     teamHint: useId(),
     teamErr: useId(),
     blocked: useId(),
+    confirm: useId(),
     empty: useId(),
   };
 
   const office = offices.find((o) => o.key === officeKey) ?? null;
   const departments = office && Array.isArray(office.departments) ? office.departments : [];
   const twins = offices.some((o) => o.sameName || o.conflict);
-  const blocked = office !== null && (office.conflict || departments.length === 0);
+  const confirmed = office !== null && confirmedKey === office.key;
+  const blocked = office !== null && ((office.conflict && !confirmed) || departments.length === 0);
 
   function pickOffice(key: string) {
     setOfficeKey(key);
     setTeamId("");
+    setConfirmedKey(null);
     setErrors(NO_ERRORS);
   }
 
@@ -90,7 +96,7 @@ export function OfficeStep({ offices, identity, onIdentity, onSent, onOther }: P
       return;
     }
     try {
-      const request = await joinApi.sendRequest(office.key, teamId);
+      const request = await joinApi.sendRequest(office.key, teamId, office.conflict ? office.fingerprint : null);
       onSent(request);
     } catch (err) {
       setSending(false);
@@ -149,7 +155,7 @@ export function OfficeStep({ offices, identity, onIdentity, onSent, onOther }: P
                   Sidik organisasi <span className="mono">{o.fingerprint}</span>
                 </span>
                 {o.conflict && (
-                  <span className="onb-office-warn">Identitasnya bentrok dengan kantor lain. Permintaan tidak bisa dikirim ke sini.</span>
+                  <span className="onb-office-warn">Identitasnya bentrok dengan kantor lain. Cocokkan sidiknya dulu.</span>
                 )}
                 {!o.conflict && o.sameName && <span className="onb-office-warn">Namanya sama dengan kantor lain.</span>}
               </span>
@@ -221,10 +227,25 @@ export function OfficeStep({ offices, identity, onIdentity, onSent, onOther }: P
       )}
 
       {office?.conflict && (
-        <p className="onb-blocked" id={ids.blocked}>
-          Permintaan ke kantor ini dimatikan karena ada kantor lain dengan identitas yang sama. Cocokkan sidiknya dengan
-          superadmin, lalu pilih kantor yang benar.
-        </p>
+        <div className="onb-blocked" id={ids.blocked}>
+          <p>
+            Ada kantor lain dengan identitas yang sama. Telepon superadmin dan minta ia membacakan sidik organisasi di
+            menu Organisasi miliknya. Kirim permintaan hanya kalau sidiknya sama dengan{" "}
+            <span className="mono">{office.fingerprint}</span>.
+          </p>
+          <label className="onb-confirm" htmlFor={ids.confirm}>
+            <input
+              id={ids.confirm}
+              type="checkbox"
+              checked={confirmed}
+              onChange={(e) => setConfirmedKey(e.target.checked ? office.key : null)}
+              disabled={sending}
+            />
+            <span>
+              Sidik dari superadmin sama dengan <span className="mono">{office.fingerprint}</span>
+            </span>
+          </label>
+        </div>
       )}
 
       <div aria-live="polite">

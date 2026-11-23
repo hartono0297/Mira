@@ -4,7 +4,7 @@
 //!
 //! Every call takes the core lock briefly; nothing here awaits.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 
 use tauri::{AppHandle, Emitter};
@@ -12,14 +12,19 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::clock;
 use crate::error::{AppError, AppResult};
-use crate::network::feature::FeatureHub;
+use crate::network::feature::{FeatureHub, TOPIC_JOIN};
+use crate::network::wire::{self, MAX_FRAME, Msg};
 use crate::network::{
-    self, AddressSource, IngestOutcome, JoinAccepted, JoinChallenge, JoinProof, JoinReject,
-    KnownAddress, NetConfig, NetEvent, Network, OrgRecord, PeerAuth, SyncBackend, WireOp,
+    self, AddressSource, IngestOutcome, JoinAccepted, JoinChallenge, JoinDept, JoinInfoWire,
+    JoinProof, JoinReject, JoinRequestOk, JoinRequestWire, JoinStatusWire, KnownAddress, NetConfig,
+    NetEvent, Network, OrgRecord, PeerAuth, SyncBackend, WireOp,
 };
 use crate::org::Organization;
 use crate::peers;
-use crate::permissions::{self, JoinProofData, Membership, PeerAuthState, SignedOp};
+use crate::permissions::{
+    self, JoinProofData, JoinRequestRefusal, JoinStatusAnswer, Membership, PeerAuthState,
+    SignedJoinRequest, SignedOp,
+};
 use crate::state::MiraState;
 
 pub const PORT_ENV: &str = "MIRA_PORT";
@@ -263,6 +268,106 @@ impl SyncBackend for MiraBackend {
             .map_err(|code| JoinReject::new(code.code(), &code.message()))
     }
 
+    fn org_name(&self) -> Option<String> {
+        self.state
+            .with_core(|c| {
+                if permissions::membership(&c.db, &c.identity)? != Membership::Active {
+                    return Ok(None);
+                }
+                Ok(crate::org::load_organization(&c.db)?.map(|o| o.name))
+            })
+            .ok()
+            .flatten()
+    }
+
+    fn accepts_join_requests(&self) -> bool {
+        self.state
+            .with_core(|c| permissions::join_info(&c.db))
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    fn join_info(&self) -> Option<JoinInfoWire> {
+        let r = self.state.with_core(|c| permissions::join_info(&c.db));
+        log_err("join_info", r).flatten().map(|info| JoinInfoWire {
+            org: org_record(info.org),
+            fingerprint: info.fingerprint,
+            departments: info
+                .departments
+                .into_iter()
+                .map(|d| JoinDept {
+                    id: d.id,
+                    name: d.name,
+                })
+                .collect(),
+        })
+    }
+
+    fn join_request(
+        &self,
+        tls_key: &str,
+        ip: IpAddr,
+        request: JoinRequestWire,
+    ) -> Result<JoinRequestOk, JoinReject> {
+        let signed = SignedJoinRequest {
+            payload: request.payload,
+            sig: request.sig,
+        };
+        let r = self.state.with_core(|c| {
+            Ok(permissions::receive_join_request(
+                &mut c.db,
+                &c.identity,
+                &signed,
+                tls_key,
+                Some(ip),
+                clock::now(),
+            ))
+        });
+        let refused = |r: JoinRequestRefusal| JoinReject::new(r.code(), r.message());
+        match log_err("join_request", r) {
+            Some(Ok((request_id, code))) => Ok(JoinRequestOk { request_id, code }),
+            Some(Err(refusal)) => Err(refused(refusal)),
+            None => Err(refused(JoinRequestRefusal::Busy)),
+        }
+    }
+
+    fn join_status(&self, tls_key: &str, request_id: &str) -> JoinStatusWire {
+        let r = self
+            .state
+            .with_core(|c| permissions::join_status_for(&c.db, request_id, tls_key));
+        match log_err("join_status", r) {
+            Some(JoinStatusAnswer::Pending) => JoinStatusWire::Pending,
+            Some(JoinStatusAnswer::Approved(data)) => {
+                let msg = Msg::JoinStatusApproved {
+                    accepted: JoinAccepted {
+                        org: org_record(data.org),
+                        ops: data.ops.into_iter().map(to_wire).collect(),
+                    },
+                };
+                // The network cannot send a larger frame; the requester then
+                // keeps asking (and sees "pending").
+                let len = wire::encoded_len(&msg);
+                if len > MAX_FRAME {
+                    eprintln!(
+                        "Mira: persetujuan bergabung terlalu besar untuk dikirim ({len} byte)."
+                    );
+                    return JoinStatusWire::Unknown;
+                }
+                match msg {
+                    Msg::JoinStatusApproved { accepted } => JoinStatusWire::Approved(accepted),
+                    _ => JoinStatusWire::Unknown,
+                }
+            }
+            Some(JoinStatusAnswer::Rejected { by_name, at, op }) => JoinStatusWire::Rejected {
+                by_name,
+                at,
+                op: to_wire(op),
+            },
+            Some(JoinStatusAnswer::Unknown) | None => JoinStatusWire::Unknown,
+        }
+    }
+
     fn known_addresses(&self) -> Vec<KnownAddress> {
         let r = self.state.with_core(|c| peers::known(&c.db));
         log_err("known_addresses", r)
@@ -360,10 +465,16 @@ impl AppNet {
                 NetEvent::StatusChanged => handle.emit(EVENT_NETWORK, ()),
                 NetEvent::OrgChanged => handle.emit(EVENT_DIRECTORY, ()),
                 NetEvent::FeatureChanged { topic } => {
+                    // Forwarded join requests: the approver list and the
+                    // OS notification (contract 7 and 8.6).
+                    if topic == TOPIC_JOIN {
+                        crate::join_sync::join_requests_changed(&handle);
+                    }
                     handle.emit(EVENT_FEATURE, serde_json::json!({ "topic": topic }))
                 }
                 NetEvent::JoinRequestsChanged => {
-                    handle.emit(crate::org_commands::EVENT_JOIN_REQUESTS, ())
+                    crate::join_sync::join_requests_changed(&handle);
+                    Ok(())
                 }
             };
         });

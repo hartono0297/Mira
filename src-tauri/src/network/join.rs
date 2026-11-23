@@ -53,6 +53,24 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const FINAL_LINGER: Duration = Duration::from_secs(5);
 /// Remote IPs tracked by a limiter before old entries are dropped.
 const MAX_TRACKED_IPS: usize = 4096;
+/// Join sessions of every kind from all addresses together, per minute.
+/// Each one can cost a fold and an Argon2id run under the core lock, so a
+/// host rotating addresses must not be able to keep the laptop busy.
+pub(crate) const JOIN_GLOBAL_PER_MINUTE: usize = 240;
+const GLOBAL_KEY: IpAddr = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+
+/// The address a limit counts against: the IPv4 address, or the /64 of an
+/// IPv6 address (one LAN host can use any address of its /64, the same
+/// grouping as `permissions::ip_group`).
+pub(crate) fn limit_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => IpAddr::V4(v4),
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            IpAddr::V6(std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+        }
+    }
+}
 
 /// Sliding-window limit per remote IP.
 pub(crate) struct RateLimiter {
@@ -113,7 +131,7 @@ pub(crate) async fn serve(inner: &Arc<Inner>, conn: Connection) {
         return;
     };
     let remote = conn.remote_address();
-    let Some(_per_ip) = inner.joins_by_ip.try_acquire(remote.ip()) else {
+    let Some(_per_ip) = inner.joins_by_ip.try_acquire(limit_key(remote.ip())) else {
         conn.close(VarInt::from_u32(code::PROTOCOL), b"busy");
         return;
     };
@@ -162,7 +180,10 @@ fn over_limit(inner: &Inner, client_pk: &str, remote: SocketAddr, status: bool) 
     } else {
         &inner.join_limiter
     };
-    if lock(limiter).check(remote.ip(), Instant::now()) {
+    let now = Instant::now();
+    if lock(limiter).check(limit_key(remote.ip()), now)
+        && lock(&inner.join_global_limiter).check(GLOBAL_KEY, now)
+    {
         return None;
     }
     inner.log_rejection(
@@ -777,6 +798,28 @@ pub(crate) async fn status_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limits_count_an_ipv6_slash_64_as_one_address() {
+        let a: IpAddr = "fd00:1:2:3:aaaa::1".parse().unwrap();
+        let b: IpAddr = "fd00:1:2:3:bbbb::9".parse().unwrap();
+        let other: IpAddr = "fd00:1:2:4::1".parse().unwrap();
+        assert_eq!(limit_key(a), limit_key(b));
+        assert_ne!(limit_key(a), limit_key(other));
+        let v4: IpAddr = [192, 168, 1, 20].into();
+        assert_eq!(limit_key(v4), v4);
+        let mapped: IpAddr = "::ffff:192.168.1.20".parse().unwrap();
+        assert_eq!(limit_key(mapped), v4);
+        // A host rotating addresses inside its /64 hits the per-address limit.
+        let mut l = RateLimiter::new(JOIN_ATTEMPTS_PER_MINUTE, Duration::from_secs(60));
+        let t0 = Instant::now();
+        for i in 0..JOIN_ATTEMPTS_PER_MINUTE as u16 {
+            let ip = IpAddr::V6(std::net::Ipv6Addr::new(0xfd00, 1, 2, 3, i, 0, 0, 1));
+            assert!(l.check(limit_key(ip), t0));
+        }
+        let ip = IpAddr::V6(std::net::Ipv6Addr::new(0xfd00, 1, 2, 3, 999, 0, 0, 1));
+        assert!(!l.check(limit_key(ip), t0));
+    }
 
     #[test]
     fn status_limiter_allows_twenty_per_minute_beside_the_join_limiter() {
