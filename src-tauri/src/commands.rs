@@ -82,6 +82,11 @@ pub async fn create_organization(
     name: String,
 ) -> AppResult<OrgInfo> {
     let info = organization(&state, &name)?;
+    // v0.3: the founder's name, OS and version for the user list now.
+    state.with_core(|c| {
+        crate::join_commands::publish_device(c);
+        Ok(())
+    })?;
     crate::net_backend::after_change(&net, &app).await;
     Ok(info)
 }

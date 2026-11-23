@@ -1,23 +1,26 @@
 import { IconArrowLeft, IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { useId, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { api, toAppError, type AppError, type OrgInfo } from "../../api";
+import { api, toAppError, type AppError, type IdentityInfo, type OrgInfo } from "../../api";
 import { checkInviteCode, cleanInviteInput, formatInviteCode } from "../../api/inviteCode";
 import { inviteErrorText } from "../../api/messages";
+import { validateDisplayName } from "../../api/validation";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { firewallName } from "../../platform";
 import { StepHeading } from "./StepHeading";
 
 type Props = {
+  identity: IdentityInfo;
+  onIdentity: (identity: IdentityInfo) => void;
   onBack: () => void;
   onFirewall: () => void;
   onJoined: (org: OrgInfo) => void;
   onReload: () => void;
 };
 
-type Errors = { code: string | null; address: string | null; server: AppError | null };
+type Errors = { name: string | null; code: string | null; address: string | null; server: AppError | null };
 
-const NO_ERRORS: Errors = { code: null, address: null, server: null };
+const NO_ERRORS: Errors = { name: null, code: null, address: null, server: null };
 
 // Kode diformat jadi XXXX-XXXX-... saat kursor di ujung isian. Kalau pengguna
 // mengedit di tengah, teks dibiarkan supaya kursor tidak melompat.
@@ -27,7 +30,15 @@ export function formatWhileTyping(e: ChangeEvent<HTMLInputElement>): string {
   return atEnd ? formatInviteCode(cleanInviteInput(raw)) : raw;
 }
 
-export function JoinStep({ onBack, onFirewall, onJoined, onReload }: Props) {
+export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, onReload }: Props) {
+  // Isian nama hanya kalau nama belum pernah disimpan. Tetap tampil setelah
+  // tersimpan di tengah jalan, supaya form tidak berubah bentuk saat mengirim.
+  const [askName] = useState(identity.displayName === null);
+  const [name, setName] = useState(identity.displayName ?? "");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const nameId = useId();
+  const nameHint = useId();
+  const nameErr = useId();
   const [code, setCode] = useState("");
   const [address, setAddress] = useState("");
   const [showAddress, setShowAddress] = useState(false);
@@ -46,16 +57,34 @@ export function JoinStep({ onBack, onFirewall, onJoined, onReload }: Props) {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (searching) return;
+    const nameProblem = askName ? validateDisplayName(name) : null;
     const check = checkInviteCode(code);
-    if (!check.ok) {
-      setErrors({ ...NO_ERRORS, code: check.error });
-      codeRef.current?.focus();
+    if (nameProblem || !check.ok) {
+      setErrors({ ...NO_ERRORS, name: nameProblem, code: check.ok ? null : check.error });
+      if (nameProblem) nameRef.current?.focus();
+      else codeRef.current?.focus();
       return;
     }
     setCode(check.code);
     const addr = address.trim();
     setErrors(NO_ERRORS);
     setSearching(true);
+    const trimmed = name.trim();
+    if (askName && trimmed !== identity.displayName) {
+      try {
+        onIdentity(await api.saveDisplayName(trimmed));
+      } catch (err) {
+        const error = toAppError(err);
+        setSearching(false);
+        if (error.code === "invalid_name") {
+          setErrors({ ...NO_ERRORS, name: error.message });
+          nameRef.current?.focus();
+        } else {
+          setErrors({ ...NO_ERRORS, server: error });
+        }
+        return;
+      }
+    }
     try {
       const org = await api.joinWithCode(check.code, showAddress && addr ? addr : null);
       onJoined(org);
@@ -83,8 +112,32 @@ export function JoinStep({ onBack, onFirewall, onJoined, onReload }: Props) {
     <form className="onb-form" onSubmit={submit} noValidate aria-busy={searching || undefined}>
       <StepHeading>Gabung dengan kode undangan</StepHeading>
       <p className="onb-lead">
-        Minta kode undangan ke admin tim Anda. Kode berisi 20 huruf dan angka, misalnya ABCD-EFGH-JKMN-PQRS-TVWX.
+        Minta kode undangan ke superadmin atau admin departemen Anda. Kode berisi 20 huruf dan angka, misalnya
+        ABCD-EFGH-JKMN-PQRS-TVWX.
       </p>
+
+      {askName && (
+        <div className="field">
+          <label htmlFor={nameId}>Nama tampilan</label>
+          <input
+            ref={nameRef}
+            id={nameId}
+            name="displayName"
+            autoComplete="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-invalid={errors.name ? true : undefined}
+            aria-describedby={`${nameHint} ${nameErr}`}
+            disabled={searching}
+          />
+          <p id={nameHint} className="hint">
+            Nama yang dilihat rekan kerja, 1 sampai 50 karakter.
+          </p>
+          <div id={nameErr} aria-live="polite">
+            {errors.name && <FieldError text={errors.name} />}
+          </div>
+        </div>
+      )}
 
       <div className="field">
         <label htmlFor={codeId}>Kode undangan</label>

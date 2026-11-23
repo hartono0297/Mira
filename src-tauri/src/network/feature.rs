@@ -55,6 +55,9 @@ pub const TOPIC_CHAT: &str = "chat";
 pub const TOPIC_BOARD: &str = "board";
 pub const TOPIC_DOCS: &str = "docs";
 pub const TOPIC_SIGN: &str = "sign";
+/// Join requests forwarded to the laptops that may decide them (v0.3,
+/// `join_sync.rs`).
+pub const TOPIC_JOIN: &str = "join";
 
 /// Boxed future returned by [`FeatureLink::fetch_blob`].
 pub type BlobFuture = Pin<Box<dyn Future<Output = Result<u64, String>> + Send>>;

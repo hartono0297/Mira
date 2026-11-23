@@ -15,8 +15,11 @@ use super::{MiraBackend, from_wire, organization, proof_to_wire};
 use crate::clock;
 use crate::error::AppResult;
 use crate::identity::{self, MemoryKeyStore};
-use crate::network::{NetConfig, NetEvent, Network, ProveFn};
-use crate::org::{self, OrgInfo, Role};
+use crate::join_commands::{self as join, FoundOffice, JoinClient, JoinPoll};
+use crate::join_sync::JoinFeature;
+use crate::network::feature::FeatureHub;
+use crate::network::{NetConfig, NetEvent, Network, ProveFn, SyncBackend};
+use crate::org::{self, OrgInfo, Organization, Role};
 use crate::peers;
 use crate::permissions::{
     self, ChannelView, InviteRole, InviteView, MemberStatus, MemberView, Membership, TeamRole,
@@ -57,7 +60,10 @@ async fn start_net(state: &MiraState, org_changed: &Arc<AtomicUsize>) -> Network
         })
         .expect("identity");
     let counter = org_changed.clone();
-    Network::start(
+    // Every laptop forwards join requests (topic `join`, v0.3).
+    let hub = Arc::new(FeatureHub::default());
+    hub.register(Arc::new(JoinFeature::new(state.clone())));
+    Network::start_with_features(
         NetConfig {
             identity_secret,
             public_key,
@@ -70,6 +76,7 @@ async fn start_net(state: &MiraState, org_changed: &Arc<AtomicUsize>) -> Network
                 counter.fetch_add(1, Ordering::Relaxed);
             }
         }),
+        hub,
     )
     .await
     .expect("network starts")
@@ -565,4 +572,329 @@ async fn team_channel_reaches_only_team_members() {
     );
     assert_eq!(c.team_scoped_ops(&desain), 1);
     shutdown(&[&a, &b, &c]).await;
+}
+
+// ----- v0.3: joining by request (docs/plans/v0.3-kontrak.md 8) -----------------
+
+impl Node {
+    /// Requests this laptop may decide.
+    fn pending_joins(&self) -> Vec<permissions::JoinRequestView> {
+        self.core(|c| {
+            let Some(s) = permissions::load_state(&c.db)? else {
+                return Ok(Vec::new());
+            };
+            permissions::pending_join_requests(&c.db, &s, c.identity.public_key_hex(), clock::now())
+        })
+    }
+
+    /// Join requests stored on this laptop (received or forwarded).
+    fn stored_join_requests(&self) -> Vec<String> {
+        self.core(|c| {
+            let mut stmt = c.db.prepare("SELECT id FROM join_requests ORDER BY id")?;
+            let ids = stmt
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
+    }
+
+    fn org(&self) -> Organization {
+        self.core(|c| org::load_organization(&c.db))
+            .expect("organization")
+    }
+
+    fn outgoing(&self) -> Option<permissions::OutgoingJoinRequest> {
+        self.core(|c| permissions::outgoing_join_request(&c.db))
+    }
+
+    /// `join_connect_address` with `other`'s loopback address.
+    async fn connect_office(
+        &self,
+        client: &JoinClient,
+        other: &Node,
+    ) -> AppResult<Vec<FoundOffice>> {
+        join::connect_address(&self.state, &self.net, client, &other.addr().to_string()).await
+    }
+
+    async fn poll(&self, client: &JoinClient) -> JoinPoll {
+        join::poll(&self.state, &self.net, client, || {})
+            .await
+            .unwrap_or_else(|e| panic!("{}: poll [{}] {e}", self.name, e.code()))
+    }
+
+    /// Polls once a second (the screen polls every 5) until `done`.
+    async fn poll_until(
+        &self,
+        client: &JoinClient,
+        what: &str,
+        done: impl Fn(&JoinPoll) -> bool,
+    ) -> JoinPoll {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let p = self.poll(client).await;
+            if done(&p) {
+                return p;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for: {what} (last {p:?})"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+}
+
+/// A founds "CV Maju Jaya" with "Tim Desain", B joins with an invite code;
+/// both connected.
+async fn pair() -> (Node, Node, String) {
+    let (a, desain) = Node::founder("Andi", "CV Maju Jaya", "Tim Desain").await;
+    let (_, code) = a.invite(&desain, InviteRole::Member, Validity::H24, clock::now());
+    let b = Node::new("Budi").await;
+    b.join(&code, &a).await.expect("B joins");
+    b.know(&a);
+    a.net.refresh();
+    wait_until("A and B connected", || a.connected(&b) && b.connected(&a)).await;
+    (a, b, desain)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_laptop_joins_by_request_through_a_member() {
+    let Office { a, b, c, .. } = office().await;
+    let keuangan = a.create_team("Tim Keuangan");
+    wait_until("B knows Tim Keuangan", || {
+        b.team_id("Tim Keuangan").is_some()
+    })
+    .await;
+
+    let n = Node::new("Nina").await;
+    // What the mDNS advertisement carries (TXT `on`, `j`).
+    let backend_a = MiraBackend::new(a.state.clone());
+    assert_eq!(backend_a.org_name().as_deref(), Some("CV Maju Jaya"));
+    assert!(backend_a.accepts_join_requests());
+    assert!(!MiraBackend::new(n.state.clone()).accepts_join_requests());
+
+    let client = JoinClient::default();
+    let offices = n
+        .connect_office(&client, &b)
+        .await
+        .expect("B answers join_info");
+    assert_eq!(offices.len(), 1);
+    let office = &offices[0];
+    let real = a.org();
+    assert_eq!(office.name, "CV Maju Jaya");
+    assert_eq!(office.org_id, real.id);
+    assert_eq!(
+        office.fingerprint,
+        permissions::org_fingerprint_short(&real)
+    );
+    assert_eq!(office.peer_count, 1);
+    assert!(!office.conflict && !office.same_name);
+    let names: Vec<&str> = office.departments.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["Tim Desain", "Tim Keuangan"]);
+
+    let out = join::send_request(&n.state, &n.net, &client, &office.key, &keuangan, None)
+        .await
+        .expect("request sent");
+    assert_eq!(out.team_name, "Tim Keuangan");
+    assert_eq!(out.org_fingerprint, office.fingerprint);
+    assert_eq!(out.display_name, "Nina");
+    assert!(out.last_sent_at.is_some());
+    assert_eq!(out.last_error, None);
+    assert_eq!(b.stored_join_requests(), vec![out.request_id.clone()]);
+    assert!(b.pending_joins().is_empty(), "B may not decide");
+
+    wait_until("the request reaches A over topic join", || {
+        a.pending_joins().iter().any(|r| r.id == out.request_id)
+    })
+    .await;
+    let card = a
+        .pending_joins()
+        .into_iter()
+        .find(|r| r.id == out.request_id)
+        .unwrap();
+    assert_eq!(card.code, out.code, "same matching code on both screens");
+    assert_eq!(card.display_name, "Nina");
+    assert_eq!(card.team_id, keuangan);
+    assert_eq!(card.seen_by_name.as_deref(), Some("Budi"));
+    assert_eq!(card.ip.as_deref(), Some("127.0.0.1"));
+    settle(&[&a, &b, &c]).await;
+    // C is admin of Tim Desain, not Tim Keuangan: nothing forwarded to it.
+    assert!(c.pending_joins().is_empty());
+    assert!(c.stored_join_requests().is_empty());
+
+    assert!(matches!(n.poll(&client).await, JoinPoll::Pending { .. }));
+    a.core(|c| permissions::approve_join(&mut c.db, &c.identity, &out.request_id, clock::now()));
+    a.net.refresh();
+    let p = n
+        .poll_until(&client, "N sees the approval", |p| {
+            matches!(p, JoinPoll::Approved { .. })
+        })
+        .await;
+    let JoinPoll::Approved { org: info } = p else {
+        unreachable!()
+    };
+    assert_eq!(info.name, "CV Maju Jaya");
+    assert_eq!(info.role, Role::Member);
+    assert_eq!(n.membership(), Membership::Active);
+    assert_eq!(n.org(), real);
+    assert!(n.outgoing().is_none());
+    let dept = n.core(|c| {
+        Ok(permissions::load_state(&c.db)?
+            .and_then(|s| s.department_of(&n.pk).map(|(t, _)| t.id.clone())))
+    });
+    assert_eq!(dept.as_deref(), Some(keuangan.as_str()));
+    // The laptop profile is published at once (device_set), not on next start.
+    let device = n.core(|c| {
+        Ok(permissions::load_state(&c.db)?
+            .and_then(|s| s.member(&n.pk).and_then(|m| m.device.clone())))
+    });
+    assert_eq!(
+        device.map(|d| d.app_version),
+        Some(crate::device::current().app_version)
+    );
+    // The typed address became a manual address.
+    let manual = n.core(|c| peers::manual_addresses(&c.db));
+    assert!(manual.iter().any(|m| m.address == b.addr().to_string()));
+
+    n.know(&a);
+    wait_until("N connects to A as a member", || {
+        n.connected(&a) && a.connected(&n)
+    })
+    .await;
+    assert_eq!(a.member_status(&n.pk), Some(MemberStatus::Active));
+    shutdown(&[&a, &b, &c, &n]).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejected_request_can_be_sent_again() {
+    let (a, b, desain) = pair().await;
+    let n = Node::new("Nina").await;
+    let client = JoinClient::default();
+    let offices = n.connect_office(&client, &b).await.expect("office");
+    let first = join::send_request(&n.state, &n.net, &client, &offices[0].key, &desain, None)
+        .await
+        .expect("request sent");
+    wait_until("A has the request", || {
+        a.pending_joins().iter().any(|r| r.id == first.request_id)
+    })
+    .await;
+
+    a.core(|c| permissions::reject_join(&mut c.db, &c.identity, &first.request_id, clock::now()));
+    a.net.refresh();
+    let p = n
+        .poll_until(&client, "N sees the rejection", |p| {
+            matches!(p, JoinPoll::Rejected { .. })
+        })
+        .await;
+    let JoinPoll::Rejected { request } = p else {
+        unreachable!()
+    };
+    assert_eq!(request.request_id, first.request_id);
+    assert_eq!(request.status, permissions::OutgoingStatus::Rejected);
+    assert_eq!(request.decided_by_name.as_deref(), Some("Andi"));
+    assert!(request.decided_at.is_some());
+    assert!(!n.has_org());
+    // Rejected stays rejected without asking anyone.
+    assert!(matches!(n.poll(&client).await, JoinPoll::Rejected { .. }));
+
+    let again = join::resend(&n.state, &n.net, &client)
+        .await
+        .expect("resend");
+    assert_ne!(again.request_id, first.request_id);
+    assert_ne!(again.code, first.code);
+    assert_eq!(again.status, permissions::OutgoingStatus::Pending);
+    assert_eq!(again.team_id, desain);
+    assert_eq!(again.last_error, None);
+    wait_until("A has the new request", || {
+        a.pending_joins().iter().any(|r| r.id == again.request_id)
+    })
+    .await;
+    assert!(matches!(n.poll(&client).await, JoinPoll::Pending { .. }));
+
+    join::cancel(&n.state, &client).await.expect("cancel");
+    assert!(n.outgoing().is_none());
+    assert!(matches!(n.poll(&client).await, JoinPoll::None));
+    shutdown(&[&a, &b, &n]).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rogue_office_with_the_same_id_is_flagged_and_gets_nothing() {
+    let (a, b, desain) = pair().await;
+    let real = a.org();
+    // R copies the office's id and name under its own genesis record.
+    let r = Node::new("Rudi").await;
+    r.core(|c| {
+        let mut fake = Organization {
+            id: real.id.clone(),
+            name: real.name.clone(),
+            founder_public_key: c.identity.public_key_hex().to_owned(),
+            created_at: clock::now_rfc3339(),
+            genesis_signature: String::new(),
+        };
+        fake.genesis_signature = hex::encode(c.identity.sign(&fake.genesis_message()).to_bytes());
+        c.db.execute(
+            "INSERT INTO organizations (id, name, founder_public_key, created_at, genesis_signature)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                fake.id,
+                fake.name,
+                fake.founder_public_key,
+                fake.created_at,
+                fake.genesis_signature
+            ],
+        )?;
+        Ok(())
+    });
+    let rogue_desain = r.create_team("Tim Desain");
+
+    let n = Node::new("Nina").await;
+    let client = JoinClient::default();
+    let real_offices = n.connect_office(&client, &b).await.expect("real office");
+    let fake_offices = n.connect_office(&client, &r).await.expect("rogue answers");
+    assert_eq!(fake_offices.len(), 1);
+    let (good, fake) = (&real_offices[0], &fake_offices[0]);
+    assert_eq!(fake.org_id, good.org_id);
+    assert_eq!(fake.name, good.name);
+    assert_ne!(fake.key, good.key);
+    assert_ne!(fake.fingerprint, good.fingerprint);
+    assert_eq!(good.fingerprint, permissions::org_fingerprint_short(&real));
+    assert!(fake.conflict && fake.same_name);
+
+    let found = join::search(&n.net, &client).await;
+    assert_eq!(found.offices.len(), 2);
+    assert!(found.offices.iter().all(|o| o.conflict && o.same_name));
+    assert!(!found.org_seen && !found.mdns_ok, "mDNS is off in tests");
+
+    for (key, team) in [(&good.key, &desain), (&fake.key, &rogue_desain)] {
+        let err = join::send_request(&n.state, &n.net, &client, key, team, None)
+            .await
+            .expect_err("conflicting office");
+        assert_eq!(err.code(), "forbidden");
+        assert!(err.to_string().contains("sidik organisasi"));
+    }
+    assert!(n.outgoing().is_none());
+    settle(&[&a, &b, &r]).await;
+    for x in [&a, &b, &r] {
+        assert!(
+            x.stored_join_requests().is_empty(),
+            "{} got a request",
+            x.name
+        );
+    }
+
+    // A wrong fingerprint does not unlock it either.
+    let err = join::send_request(&n.state, &n.net, &client, &good.key, &desain, Some(&fake.fingerprint))
+        .await
+        .expect_err("fingerprint of the other office");
+    assert_eq!(err.code(), "forbidden");
+    // After comparing the fingerprint with the superadmin: sent, and only to
+    // laptops that answered with the real genesis.
+    let out = join::send_request(&n.state, &n.net, &client, &good.key, &desain, Some(&good.fingerprint))
+        .await
+        .expect("confirmed office");
+    assert_eq!(out.org_fingerprint, good.fingerprint);
+    assert_eq!(b.stored_join_requests(), vec![out.request_id.clone()]);
+    settle(&[&a, &b, &r]).await;
+    assert!(r.stored_join_requests().is_empty(), "the rogue got the request");
+    shutdown(&[&a, &b, &r, &n]).await;
 }

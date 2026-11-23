@@ -1,13 +1,14 @@
 //! In-memory `SyncBackend` for network tests.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 
 use super::wire::op_id;
 use super::{
-    AddressSource, IngestOutcome, JoinAccepted, JoinChallenge, JoinProof, JoinReject, KnownAddress,
-    OrgRecord, PeerAuth, SyncBackend, WireOp,
+    AddressSource, IngestOutcome, JoinAccepted, JoinChallenge, JoinInfoWire, JoinProof, JoinReject,
+    JoinRequestOk, JoinRequestWire, JoinStatusWire, KnownAddress, OrgRecord, PeerAuth, SyncBackend,
+    WireOp,
 };
 
 /// Builds an opaque op with a dummy signature.
@@ -46,6 +47,16 @@ pub struct MemState {
     /// Every (peer, ids) answered by `ops_for`, with the ids returned.
     pub served: Vec<(String, Vec<String>)>,
     pub on_ingest: Option<IngestHook>,
+    /// Answer to `join_info`; `None`: this laptop takes no join requests.
+    pub join_info: Option<JoinInfoWire>,
+    /// Answer to every `join_request`; `None` refuses with `not_member`.
+    pub join_request_answer: Option<Result<JoinRequestOk, JoinReject>>,
+    /// Every (tls_key, ip, request) given to `join_request`.
+    pub join_requests: Vec<(String, IpAddr, JoinRequestWire)>,
+    /// request id -> answer to `join_status`; missing ids are `Unknown`.
+    pub join_statuses: HashMap<String, JoinStatusWire>,
+    /// Every (tls_key, request_id) given to `join_status`.
+    pub status_asks: Vec<(String, String)>,
 }
 
 #[derive(Default)]
@@ -225,6 +236,38 @@ impl SyncBackend for MemoryBackend {
                 },
                 ops: s.ops.values().cloned().collect(),
             })
+        })
+    }
+
+    fn join_info(&self) -> Option<JoinInfoWire> {
+        self.with(|s| s.join_info.clone())
+    }
+
+    fn join_request(
+        &self,
+        tls_key: &str,
+        ip: IpAddr,
+        request: JoinRequestWire,
+    ) -> Result<JoinRequestOk, JoinReject> {
+        self.with(|s| {
+            s.join_requests.push((tls_key.to_owned(), ip, request));
+            s.join_request_answer.clone().unwrap_or_else(|| {
+                Err(JoinReject::new(
+                    "not_member",
+                    "Laptop rekan ini tidak bisa menerima permintaan bergabung.",
+                ))
+            })
+        })
+    }
+
+    fn join_status(&self, tls_key: &str, request_id: &str) -> JoinStatusWire {
+        self.with(|s| {
+            s.status_asks
+                .push((tls_key.to_owned(), request_id.to_owned()));
+            s.join_statuses
+                .get(request_id)
+                .cloned()
+                .unwrap_or(JoinStatusWire::Unknown)
         })
     }
 

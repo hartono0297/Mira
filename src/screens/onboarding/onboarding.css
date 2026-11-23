@@ -59,9 +59,10 @@
   color: var(--text);
 }
 
-.onb-key {
+/* Hint tepat di bawah judul, menempel ke judulnya. */
+.onb-sub {
+  margin-top: -10px;
   font-size: 13px;
-  color: var(--text-sec);
 }
 
 .onb-actions {
@@ -185,4 +186,308 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.onb-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.onb-choice:disabled:hover {
+  background: var(--card);
+  border-color: var(--border-strong);
+}
+
+/* (a) Mencari kantor. Putaran ikon menandai pencarian yang masih berjalan dan
+   berhenti bersama layarnya; prefers-reduced-motion mematikannya (global.css). */
+.onb-search {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.onb-search strong {
+  font-size: 15px;
+}
+
+.onb-spin {
+  flex: none;
+  color: var(--accent);
+  animation: onb-spin 1s linear infinite;
+}
+
+@keyframes onb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Daftar pasangan label dan nilai: laptop, alamat, kode cocok. */
+.onb-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.onb-kv dt {
+  color: var(--text-sec);
+}
+
+.onb-kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.onb-box {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+/* Kode cocok: dibacakan lewat telepon dan dicocokkan dengan layar penyetuju,
+   jadi besar dan rata lebar. */
+.onb-match {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}
+
+/* Sidik organisasi di layar (b). */
+.onb-fp {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.onb-fp-code {
+  margin-left: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* Pilihan kantor kalau ada beberapa kantor di jaringan. */
+.onb-offices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.onb-offices legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.onb-office {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  cursor: pointer;
+}
+
+.onb-office input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.onb-office:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.onb-office:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.onb-office-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.onb-office-name {
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.onb-office-fp {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.onb-office-warn {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onb-blocked {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.onb-blocked p {
+  margin: 0 0 4px;
+}
+
+/* Seluruh baris bisa diklik, setinggi target sentuh minimum. */
+.onb-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.onb-confirm input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.onb-other {
+  font-size: 13px;
+  text-align: right;
+}
+
+/* Keterangan tenang: bukan error, tidak perlu tindakan segera. */
+.onb-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 13px;
+}
+
+.onb-note strong {
+  font-size: 14px;
+}
+
+.onb-note + .onb-note {
+  margin-top: 8px;
+}
+
+.onb-label {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.onb-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+/* (d) Alamat laptop rekan: isian langsung di dalam pilihannya. */
+.onb-way {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.onb-way > svg {
+  flex: none;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.onb-way-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.onb-way-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.onb-way-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.onb-way-row input {
+  flex: 1 1 180px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 15px;
+}
+
+.onb-way-row input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.onb-way-row input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.onb-way-row .btn {
+  min-height: 40px;
+}
+
+/* Contoh isian memakai text-sec supaya lolos 4,5:1 di dua mode. */
+.onb .field input::placeholder,
+.onb-way-row input::placeholder {
+  color: var(--text-sec);
+  opacity: 1;
+}
+
+.onb-sep {
+  margin: 4px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 480px) {
+  .onb {
+    padding: 24px 16px;
+  }
+
+  .onb-card {
+    padding: 22px 18px 24px;
+  }
 }

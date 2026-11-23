@@ -14,6 +14,8 @@ pub mod documents;
 pub mod error;
 pub mod firewall;
 pub mod identity;
+pub mod join_commands;
+pub mod join_sync;
 pub mod net_backend;
 pub mod network;
 pub mod network_commands;
@@ -142,6 +144,10 @@ pub fn run() {
             documents.spawn_recovery();
             app.manage(signing::session::SignSessions::default());
             signing::peer_sync::register(app.handle());
+            // v0.3 join requests: topic `join`, approver notifications, and
+            // the requester's in-memory state.
+            join_sync::register(app.handle());
+            app.manage(join_commands::JoinClient::default());
             // Chat (Tahap 2): registers with the FeatureHub and starts the
             // attachment downloader.
             let chat = chat::runtime::ChatRuntime::install(app.handle());
@@ -198,6 +204,14 @@ pub fn run() {
             org_commands::org_set_label_archived,
             org_commands::org_set_label_assigned,
             org_screen::org_fingerprint,
+            join_commands::join_device,
+            join_commands::join_search,
+            join_commands::join_connect_address,
+            join_commands::join_send_request,
+            join_commands::join_outgoing,
+            join_commands::join_poll,
+            join_commands::join_cancel,
+            join_commands::join_resend,
             network_commands::get_network_status,
             network_commands::add_manual_address,
             network_commands::remove_manual_address,

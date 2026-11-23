@@ -11,10 +11,17 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::feature::FeatureRecord;
-use super::{JoinAccepted, JoinProof, WireOp};
+use super::{JoinAccepted, JoinInfoWire, JoinProof, JoinRequestWire, WireOp};
 
 /// Protocol version carried in `Hello`.
 pub const PROTO_VERSION: u32 = 1;
+
+/// Feature protocol version carried in `Hello.features` (v0.3). A peer
+/// that sends no `features` field (v0.2) counts as 1. Feature sync (board,
+/// chat, documents, signing, join) runs only with peers at 2 or above,
+/// because v0.2 laptops still share project data with a whole department.
+/// See docs/plans/v03-a.md for why this is a new field and not `proto`.
+pub const FEATURE_PROTO_VERSION: u32 = 2;
 
 /// Largest frame accepted anywhere.
 pub const MAX_FRAME: usize = 4 * 1024 * 1024;
@@ -35,6 +42,8 @@ pub enum Msg {
         pk: String,
         listen_port: u16,
         addrs: Vec<String>,
+        /// `FEATURE_PROTO_VERSION` of the sender; 1 when absent (v0.2).
+        features: u32,
     },
     SyncHave {
         ids: Vec<String>,
@@ -65,6 +74,32 @@ pub enum Msg {
         code: String,
         message: String,
     },
+    /// v0.3 join request flow (docs/plans/v0.3-kontrak.md 8.2). One request
+    /// and one answer per session on the join ALPN.
+    JoinInfoGet,
+    JoinInfo {
+        info: JoinInfoWire,
+    },
+    JoinRequest {
+        request: JoinRequestWire,
+    },
+    JoinRequestOk {
+        request_id: String,
+        code: String,
+    },
+    JoinStatusGet {
+        request_id: String,
+    },
+    JoinStatusPending,
+    JoinStatusApproved {
+        accepted: JoinAccepted,
+    },
+    JoinStatusRejected {
+        by_name: String,
+        at: String,
+        op: WireOp,
+    },
+    JoinStatusUnknown,
     /// Feature sync (`feature.rs`): ids of one topic the sender offers. The
     /// first frame of a feature session's bidirectional stream.
     FeatureHave {
@@ -160,6 +195,11 @@ macro_rules! variant {
     }};
 }
 
+/// `Hello.features` of a peer that does not send the field (v0.2).
+fn v02_features() -> u32 {
+    1
+}
+
 /// Parses a frame body (without the length prefix).
 ///
 /// Two steps: first only the tag, then the fields straight into the
@@ -172,13 +212,28 @@ pub fn decode(body: &[u8]) -> Result<Msg, WireError> {
     }
     let tag: Tag = parse(body)?;
     let msg = match tag.t.as_str() {
-        "hello" => variant!(body, Hello {
-            proto: u32,
-            org: String,
-            pk: String,
-            listen_port: u16,
-            addrs: Vec<String>,
-        }),
+        "hello" => {
+            // Not `variant!`: `features` is optional (absent from v0.2).
+            #[derive(Deserialize)]
+            struct Body {
+                proto: u32,
+                org: String,
+                pk: String,
+                listen_port: u16,
+                addrs: Vec<String>,
+                #[serde(default = "v02_features")]
+                features: u32,
+            }
+            let b: Body = parse(body)?;
+            Msg::Hello {
+                proto: b.proto,
+                org: b.org,
+                pk: b.pk,
+                listen_port: b.listen_port,
+                addrs: b.addrs,
+                features: b.features,
+            }
+        }
         "sync_have" => variant!(body, SyncHave { ids: Vec<String> }),
         "sync_want" => variant!(body, SyncWant { ids: Vec<String> }),
         "sync_ops" => variant!(body, SyncOps { ops: Vec<WireOp> }),
@@ -205,6 +260,38 @@ pub fn decode(body: &[u8]) -> Result<Msg, WireError> {
                 message: String
             }
         ),
+        "join_info_get" => Msg::JoinInfoGet,
+        "join_info" => variant!(body, JoinInfo { info: JoinInfoWire }),
+        "join_request" => variant!(
+            body,
+            JoinRequest {
+                request: JoinRequestWire
+            }
+        ),
+        "join_request_ok" => variant!(
+            body,
+            JoinRequestOk {
+                request_id: String,
+                code: String
+            }
+        ),
+        "join_status_get" => variant!(body, JoinStatusGet { request_id: String }),
+        "join_status_pending" => Msg::JoinStatusPending,
+        "join_status_approved" => variant!(
+            body,
+            JoinStatusApproved {
+                accepted: JoinAccepted
+            }
+        ),
+        "join_status_rejected" => variant!(
+            body,
+            JoinStatusRejected {
+                by_name: String,
+                at: String,
+                op: WireOp,
+            }
+        ),
+        "join_status_unknown" => Msg::JoinStatusUnknown,
         "feature_have" => variant!(body, FeatureHave { topic: String, ids: Vec<String> }),
         "feature_want" => variant!(body, FeatureWant { topic: String, ids: Vec<String> }),
         "feature_records" => variant!(body, FeatureRecords {
@@ -373,6 +460,7 @@ mod tests {
                 pk: "b".repeat(64),
                 listen_port: 47800,
                 addrs: vec!["192.168.1.10:47800".into()],
+                features: FEATURE_PROTO_VERSION,
             },
             Msg::SyncHave {
                 ids: vec!["c".repeat(64)],
@@ -540,6 +628,7 @@ mod tests {
                 pk: "b".repeat(64),
                 listen_port: 47800,
                 addrs: vec!["192.168.1.10:47800".into()],
+                features: FEATURE_PROTO_VERSION,
             },
             Msg::SyncHave {
                 ids: vec!["c".repeat(64)],
@@ -580,6 +669,10 @@ mod tests {
                 code: "invite_not_found".into(),
                 message: "x".into(),
             },
+        ]
+        .into_iter()
+        .chain(join_request_messages())
+        .chain([
             Msg::FeatureHave {
                 topic: "chat".into(),
                 ids: vec!["d".repeat(64)],
@@ -599,7 +692,133 @@ mod tests {
             Msg::BlobRefused {
                 code: "busy".into(),
             },
+        ])
+        .collect()
+    }
+
+    fn sample_org() -> crate::network::OrgRecord {
+        crate::network::OrgRecord {
+            id: "a".repeat(32),
+            name: "Kantor \"Pusat\" \u{e9}".into(),
+            founder_public_key: "f".repeat(64),
+            created_at: "2026-11-22T08:00:00Z".into(),
+            genesis_signature: "0".repeat(128),
+        }
+    }
+
+    /// The v0.3 join request messages, in the order of `JOIN_REQUEST_TAGS`.
+    fn join_request_messages() -> Vec<Msg> {
+        let op = WireOp {
+            payload: "{\"kind\":\"join_reject\"}".into(),
+            sig: "0".repeat(128),
+        };
+        vec![
+            Msg::JoinInfoGet,
+            Msg::JoinInfo {
+                info: JoinInfoWire {
+                    org: sample_org(),
+                    fingerprint: "ABCD-EF12".into(),
+                    departments: vec![crate::network::JoinDept {
+                        id: "1".repeat(32),
+                        name: "Keuangan".into(),
+                    }],
+                },
+            },
+            Msg::JoinRequest {
+                request: JoinRequestWire {
+                    payload: "{\"v\":1}".into(),
+                    sig: "0".repeat(128),
+                },
+            },
+            Msg::JoinRequestOk {
+                request_id: "b".repeat(64),
+                code: "ABCD EFGH".into(),
+            },
+            Msg::JoinStatusGet {
+                request_id: "b".repeat(64),
+            },
+            Msg::JoinStatusPending,
+            Msg::JoinStatusApproved {
+                accepted: JoinAccepted {
+                    org: sample_org(),
+                    ops: vec![op.clone()],
+                },
+            },
+            Msg::JoinStatusRejected {
+                by_name: "Sari".into(),
+                at: "2026-11-23T08:00:00Z".into(),
+                op,
+            },
+            Msg::JoinStatusUnknown,
         ]
+    }
+
+    const JOIN_REQUEST_TAGS: [&str; 9] = [
+        "join_info_get",
+        "join_info",
+        "join_request",
+        "join_request_ok",
+        "join_status_get",
+        "join_status_pending",
+        "join_status_approved",
+        "join_status_rejected",
+        "join_status_unknown",
+    ];
+
+    #[test]
+    fn join_request_messages_round_trip_with_snake_case_tags() {
+        for (m, tag) in join_request_messages().iter().zip(JOIN_REQUEST_TAGS) {
+            let frame = encode(m).unwrap();
+            assert_eq!(decode(&frame[4..]).unwrap(), *m, "{tag}");
+            let json = String::from_utf8(frame[4..].to_vec()).unwrap();
+            assert!(json.starts_with(&format!("{{\"t\":\"{tag}\"")), "{json}");
+        }
+        // Messages without fields are only the tag; extra fields are ignored.
+        let json = serde_json::to_string(&Msg::JoinInfoGet).unwrap();
+        assert_eq!(json, r#"{"t":"join_info_get"}"#);
+        assert_eq!(
+            decode(br#"{"t":"join_status_pending","x":1}"#).unwrap(),
+            Msg::JoinStatusPending
+        );
+        let missing_fields: [&[u8]; 4] = [
+            br#"{"t":"join_status_get"}"#,
+            br#"{"t":"join_request_ok","request_id":"x"}"#,
+            br#"{"t":"join_status_rejected","by_name":"a","at":"b"}"#,
+            br#"{"t":"join_info","info":{"fingerprint":"x","departments":[]}}"#,
+        ];
+        for body in missing_fields {
+            assert!(
+                matches!(decode(body), Err(WireError::Malformed(_))),
+                "{}",
+                String::from_utf8_lossy(body)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn approved_status_needs_the_full_frame_limit() {
+        let ops: Vec<WireOp> = (0..100)
+            .map(|i| WireOp {
+                payload: format!("{{\"n\":{i},\"pad\":\"{}\"}}", "x".repeat(1024)),
+                sig: "0".repeat(128),
+            })
+            .collect();
+        let m = Msg::JoinStatusApproved {
+            accepted: JoinAccepted {
+                org: sample_org(),
+                ops,
+            },
+        };
+        assert!(encoded_len(&m) > MAX_JOIN_FRAME);
+        let (mut a, mut b) = tokio::io::duplex(1 << 20);
+        write_msg(&mut a, &m).await.unwrap();
+        assert_eq!(read_msg(&mut b, MAX_FRAME).await.unwrap().unwrap(), m);
+        let (mut a, mut b) = tokio::io::duplex(1 << 20);
+        write_msg(&mut a, &m).await.unwrap();
+        assert!(matches!(
+            read_msg(&mut b, MAX_JOIN_FRAME).await,
+            Err(WireError::TooLarge(_))
+        ));
     }
 
     #[test]
@@ -612,7 +831,7 @@ mod tests {
                 v["t"].as_str().unwrap().to_owned()
             })
             .collect();
-        assert_eq!(tags.len(), 16, "one sample per variant");
+        assert_eq!(tags.len(), 25, "one sample per variant");
         for m in all {
             let frame = encode(&m).unwrap();
             assert_eq!(decode(&frame[4..]).unwrap(), m);

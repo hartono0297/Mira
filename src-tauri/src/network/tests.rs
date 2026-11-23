@@ -758,6 +758,305 @@ async fn a_refusal_is_reported_when_no_candidate_accepts() {
     assert_eq!(err.code, "invite_used");
 }
 
+// ----- Join requests (v0.3) ------------------------------------------------
+
+fn org_record() -> OrgRecord {
+    OrgRecord {
+        id: ORG.into(),
+        name: "Kantor".into(),
+        founder_public_key: "f".repeat(64),
+        created_at: "2026-11-22T08:00:00Z".into(),
+        genesis_signature: "0".repeat(128),
+    }
+}
+
+fn join_info_sample() -> JoinInfoWire {
+    JoinInfoWire {
+        org: org_record(),
+        fingerprint: "ABCD-EF12".into(),
+        departments: vec![
+            JoinDept {
+                id: "1".repeat(32),
+                name: "Keuangan".into(),
+            },
+            JoinDept {
+                id: "2".repeat(32),
+                name: "Gudang".into(),
+            },
+        ],
+    }
+}
+
+fn join_request_sample() -> JoinRequestWire {
+    JoinRequestWire {
+        payload: "{\"v\":1,\"kind\":\"join_request\"}".into(),
+        sig: "0".repeat(128),
+    }
+}
+
+/// A member that takes join requests.
+async fn join_member(seed: u8) -> Node {
+    let a = node(seed, Some(ORG)).await;
+    a.backend.with(|s| {
+        s.join_info = Some(join_info_sample());
+        s.join_request_answer = Some(Ok(JoinRequestOk {
+            request_id: "a".repeat(64),
+            code: "ABCD EFGH".into(),
+        }));
+    });
+    a
+}
+
+/// One raw message on the join ALPN from a throwaway client; the answer, or
+/// `None` when the server closes without one.
+async fn raw_join(addr: SocketAddr, seed: u8, msg: &super::wire::Msg) -> Option<super::wire::Msg> {
+    let id = super::tls::TlsIdentity::new(&[seed; 32]).unwrap();
+    let cfg = super::tls::client_config(&id, super::tls::ALPN_JOIN).unwrap();
+    let ep = quinn::Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let conn = ep
+        .connect_with(cfg, addr, super::tls::SERVER_NAME)
+        .unwrap()
+        .await
+        .unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    super::wire::write_msg(&mut send, msg).await.unwrap();
+    let _ = send.finish();
+    let got =
+        super::wire::read_msg_timeout(&mut recv, super::wire::MAX_FRAME, Duration::from_secs(5))
+            .await
+            .ok()
+            .flatten();
+    conn.close(0u32.into(), b"done");
+    got
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn join_info_and_request_reach_a_member() {
+    let a = join_member(140).await;
+    let j = node(141, None).await;
+
+    let (pk, info) = j.net.join_info_at(a.addr).await.expect("join info");
+    assert_eq!(pk, a.pk);
+    assert_eq!(info, join_info_sample());
+
+    let (pk, ok) = j
+        .net
+        .join_request_at(a.addr, join_request_sample())
+        .await
+        .expect("request accepted");
+    assert_eq!(pk, a.pk);
+    assert_eq!(ok.request_id, "a".repeat(64));
+    assert_eq!(ok.code, "ABCD EFGH");
+    // The key comes from the handshake and the address from the connection.
+    let got = a.backend.with(|s| s.join_requests.clone());
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].0, j.pk);
+    assert_eq!(got[0].1, std::net::IpAddr::from(Ipv4Addr::LOCALHOST));
+    assert_eq!(got[0].2, join_request_sample());
+    wait_for("JoinRequestsChanged", || {
+        a.count(NetEvent::JoinRequestsChanged) == 1
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn join_status_answers_every_variant() {
+    let a = join_member(142).await;
+    let j = node(143, None).await;
+    let pending = "1".repeat(64);
+    let approved = "2".repeat(64);
+    let rejected = "3".repeat(64);
+    let unknown = "4".repeat(64);
+    // Bigger than MAX_JOIN_FRAME: the org log rides on this answer.
+    let ops: Vec<WireOp> = (0..100)
+        .map(|i| op(&format!("{{\"n\":{i},\"pad\":\"{}\"}}", "x".repeat(1024))))
+        .collect();
+    let accepted = JoinAccepted {
+        org: org_record(),
+        ops,
+    };
+    assert!(serde_json::to_vec(&accepted).unwrap().len() > super::wire::MAX_JOIN_FRAME);
+    let reject_op = op("{\"kind\":\"join_reject\"}");
+    a.backend.with(|s| {
+        s.join_statuses
+            .insert(pending.clone(), JoinStatusWire::Pending);
+        s.join_statuses
+            .insert(approved.clone(), JoinStatusWire::Approved(accepted.clone()));
+        s.join_statuses.insert(
+            rejected.clone(),
+            JoinStatusWire::Rejected {
+                by_name: "Sari".into(),
+                at: "2026-11-23T08:00:00Z".into(),
+                op: reject_op.clone(),
+            },
+        );
+    });
+
+    let (pk, st) = j.net.join_status_at(a.addr, &pending).await.unwrap();
+    assert_eq!(pk, a.pk);
+    assert_eq!(st, JoinStatusWire::Pending);
+    let (_, st) = j.net.join_status_at(a.addr, &approved).await.unwrap();
+    assert_eq!(st, JoinStatusWire::Approved(accepted));
+    let (_, st) = j.net.join_status_at(a.addr, &rejected).await.unwrap();
+    assert_eq!(
+        st,
+        JoinStatusWire::Rejected {
+            by_name: "Sari".into(),
+            at: "2026-11-23T08:00:00Z".into(),
+            op: reject_op,
+        }
+    );
+    let (_, st) = j.net.join_status_at(a.addr, &unknown).await.unwrap();
+    assert_eq!(st, JoinStatusWire::Unknown);
+    assert!(
+        a.backend
+            .with(|s| s.status_asks.iter().all(|(k, _)| *k == j.pk) && s.status_asks.len() == 4)
+    );
+
+    // A malformed id is refused before anything is sent.
+    let err = j.net.join_status_at(a.addr, "XYZ").await.unwrap_err();
+    assert_eq!(err.code, "invalid_request");
+    assert_eq!(a.backend.with(|s| s.status_asks.len()), 4);
+}
+
+/// The server checks the id itself, and ends sessions that start with
+/// anything other than a join message.
+#[tokio::test(flavor = "multi_thread")]
+async fn join_server_checks_ids_and_first_messages() {
+    use super::wire::Msg;
+    let a = join_member(144).await;
+    let got = raw_join(
+        a.addr,
+        97,
+        &Msg::JoinStatusGet {
+            request_id: "A".repeat(64),
+        },
+    )
+    .await;
+    assert_eq!(got, Some(Msg::JoinStatusUnknown));
+    assert!(a.backend.with(|s| s.status_asks.is_empty()));
+
+    let got = raw_join(a.addr, 97, &Msg::SyncWant { ids: vec![] }).await;
+    assert_eq!(got, None);
+    let got = raw_join(a.addr, 97, &Msg::JoinStatusPending).await;
+    assert_eq!(got, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn join_refusals_keep_known_codes_only() {
+    let a = node(145, Some(ORG)).await; // takes no join requests
+    let j = node(146, None).await;
+    let err = j.net.join_info_at(a.addr).await.unwrap_err();
+    assert_eq!(err.code, "not_member");
+    assert!(!err.message.is_empty());
+
+    a.backend
+        .with(|s| s.join_request_answer = Some(Err(JoinReject::new("wrong_key", "Kunci beda."))));
+    let err = j
+        .net
+        .join_request_at(a.addr, join_request_sample())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "wrong_key");
+    assert_eq!(err.message, "Kunci beda.");
+
+    a.backend
+        .with(|s| s.join_request_answer = Some(Err(JoinReject::new("<b>aneh</b>", "x"))));
+    let err = j
+        .net
+        .join_request_at(a.addr, join_request_sample())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "invalid_request");
+    // Refused requests are not announced.
+    assert_eq!(a.count(NetEvent::JoinRequestsChanged), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn twenty_first_status_get_in_a_minute_is_rate_limited() {
+    let a = join_member(147).await;
+    let j = node(148, None).await;
+    let id = "5".repeat(64);
+    for i in 0..super::join::JOIN_STATUS_PER_MINUTE {
+        let (_, st) = j
+            .net
+            .join_status_at(a.addr, &id)
+            .await
+            .unwrap_or_else(|e| panic!("status {i}: {e}"));
+        assert_eq!(st, JoinStatusWire::Unknown);
+    }
+    let err = j.net.join_status_at(a.addr, &id).await.unwrap_err();
+    assert_eq!(err.code, "rate_limited");
+    assert!(!err.message.is_empty());
+    assert!(a.backend.with(|s| {
+        s.rejections
+            .iter()
+            .any(|(pk, _, c)| pk.as_deref() == Some(j.pk.as_str()) && c == "rate_limited")
+    }));
+    // The other join messages have their own budget.
+    j.net
+        .join_info_at(a.addr)
+        .await
+        .expect("info still allowed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn eleventh_join_info_in_a_minute_is_rate_limited() {
+    let a = join_member(149).await;
+    let j = node(150, None).await;
+    for i in 0..super::join::JOIN_ATTEMPTS_PER_MINUTE {
+        j.net
+            .join_info_at(a.addr)
+            .await
+            .unwrap_or_else(|e| panic!("info {i}: {e}"));
+    }
+    let err = j
+        .net
+        .join_request_at(a.addr, join_request_sample())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "rate_limited");
+    assert!(a.backend.with(|s| s.join_requests.is_empty()));
+    // Status questions are counted separately.
+    j.net
+        .join_status_at(a.addr, &"6".repeat(64))
+        .await
+        .expect("status still allowed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn join_requests_skip_self_unreachable_and_no_org_laptops() {
+    let j = node(151, None).await;
+    // Own address.
+    let err = j.net.join_info_at(j.addr).await.unwrap_err();
+    assert_eq!(err.code, "peer_unreachable");
+    // Not dialable.
+    let err = j
+        .net
+        .join_info_at("[::1]:47800".parse().unwrap())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "peer_unreachable");
+    // Another instance with this laptop's own key.
+    let twin = join_member(151).await;
+    let err = j.net.join_info_at(twin.addr).await.unwrap_err();
+    assert_eq!(err.code, "peer_unreachable");
+    assert!(twin.backend.with(|s| s.join_requests.is_empty()));
+    // A laptop without an organization serves nothing.
+    let lonely = node(152, None).await;
+    lonely
+        .backend
+        .with(|s| s.join_info = Some(join_info_sample()));
+    let err = j.net.join_info_at(lonely.addr).await.unwrap_err();
+    assert_eq!(err.code, "peer_unreachable");
+    let err = j
+        .net
+        .join_status_at(lonely.addr, &"7".repeat(64))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "peer_unreachable");
+}
+
 /// A member may list a loopback address in `Hello` only when it is itself
 /// on this machine; otherwise colleagues would dial their own local ports.
 #[test]
@@ -885,4 +1184,44 @@ async fn mdns_discovery_connects_members() {
     assert!(via_mdns(&a, &b) || via_mdns(&b, &a));
     a.net.shutdown().await;
     b.net.shutdown().await;
+}
+
+// ----- Version gate (v0.3) -----------------------------------------------------
+
+/// A v0.2 laptop sends `Hello` without `features`: it decodes as 1, which
+/// is not feature-capable, while `proto` stays 1 so the connection (and
+/// membership-log sync) is kept.
+#[test]
+fn v02_hello_without_features_decodes_as_one() {
+    let v02 = format!(
+        r#"{{"t":"hello","proto":1,"org":"{ORG}","pk":"{}","listen_port":47800,"addrs":["192.168.1.10:47800"]}}"#,
+        "b".repeat(64)
+    );
+    let Ok(wire::Msg::Hello {
+        proto, features, ..
+    }) = wire::decode(v02.as_bytes())
+    else {
+        panic!("a v0.2 hello must decode");
+    };
+    assert_eq!(proto, wire::PROTO_VERSION);
+    assert_eq!(features, 1);
+    assert!(!node::feature_capable(features));
+
+    // What v0.3 sends round-trips with its feature version.
+    let ours = wire::Msg::Hello {
+        proto: wire::PROTO_VERSION,
+        org: ORG.into(),
+        pk: "b".repeat(64),
+        listen_port: 47800,
+        addrs: vec![],
+        features: wire::FEATURE_PROTO_VERSION,
+    };
+    let frame = wire::encode(&ours).expect("encodes");
+    let Ok(wire::Msg::Hello { features, .. }) = wire::decode(&frame[4..]) else {
+        panic!("our hello must decode");
+    };
+    assert_eq!(features, wire::FEATURE_PROTO_VERSION);
+    assert!(node::feature_capable(features));
+    // A later version stays capable.
+    assert!(node::feature_capable(wire::FEATURE_PROTO_VERSION + 1));
 }

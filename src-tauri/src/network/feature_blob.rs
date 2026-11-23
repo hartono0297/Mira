@@ -1086,7 +1086,8 @@ impl Inner {
                 return Err("Terlalu banyak unduhan berjalan. Coba lagi sebentar lagi.".to_owned());
             }
         };
-        let candidates = order_candidates(&self.me, prefer, &self.connected_peers());
+        // Only feature-capable peers: a v0.2 laptop serves no blobs to v0.3.
+        let candidates = order_candidates(&self.me, prefer, &self.feature_peers());
         if candidates.is_empty() {
             return Err("Tidak ada laptop rekan yang tersambung.".to_owned());
         }
@@ -1111,7 +1112,10 @@ impl Inner {
                 queue.retry_at(attempt, now + LOCAL_BUSY_RETRY);
                 continue;
             };
-            let Some(conn) = self.peer_conn(&attempt.pk) else {
+            let conn = self
+                .peer_conn(&attempt.pk)
+                .filter(|_| self.feature_capable(&attempt.pk));
+            let Some(conn) = conn else {
                 last = "Laptop rekan sudah tidak tersambung.".to_owned();
                 continue;
             };

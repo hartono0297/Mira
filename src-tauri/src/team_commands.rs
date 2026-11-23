@@ -281,6 +281,8 @@ pub async fn join_with_code(
         {
             eprintln!("Mira: alamat bergabung tidak tersimpan [{}]: {e}", e.code());
         }
+        // v0.3: name, OS and version for the superadmin's user list now.
+        crate::join_commands::publish_device(c);
         Ok(info)
     })?;
     net_backend::after_change(&net, &app).await;
