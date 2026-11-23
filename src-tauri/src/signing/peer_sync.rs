@@ -413,8 +413,12 @@ pub fn check_version(
     new: &[u8],
     completing: bool,
 ) -> Result<(), increment::IncrementError> {
-    let _ = completing;
-    increment::check_increment(old, new).map(|_| ())
+    // Halaman tambahan (halaman catatan) hanya boleh dari penanda tangan
+    // terakhir, yang menyelesaikan permintaan.
+    let rules = increment::IncrementRules {
+        allow_new_pages: completing,
+    };
+    increment::check_increment_with(old, new, &rules).map(|_| ())
 }
 
 /// Isi kolom `reason` di `sign_proof_checks`: aturan yang dipakai dan, kalau
