@@ -9,8 +9,11 @@ use crate::board::doc::{Stamp, TaskChanges, TaskData, TaskInit};
 use crate::board::model::{ColumnId, Priority};
 use crate::board::policy::LocalRolePolicy;
 use crate::board::sign::sign_change;
-use crate::board::store::{actor_of, commit_local, create_project, stored_changes};
-use crate::board::testutil::{Laptop, add_member, org_ops};
+use crate::board::store::{Committed, ProjectRow, actor_of, commit_local, stored_changes};
+use crate::board::testutil::{
+    Laptop, add_member, add_project_member, copy_registration, org_ops, register_project,
+    register_v02,
+};
 use crate::board::view::Ctx;
 use crate::identity::Identity;
 use crate::permissions::{self as p, InviteRole};
@@ -19,6 +22,21 @@ fn pair() -> (Laptop, Laptop) {
     let a = Laptop::founder("Sari");
     let b = Laptop::joined(&a, "Budi");
     (a, b)
+}
+
+/// Creates a project registered with its v0.2 readers on this laptop's
+/// membership tables (written directly by the fixtures, so no op is
+/// authored). `send` copies the registration, as syncing the log would.
+fn create_project(
+    conn: &mut Connection,
+    id: &Identity,
+    name: &str,
+    code: &str,
+    team: Option<&str>,
+) -> AppResult<Committed<ProjectRow>> {
+    let c = store::create_project_local(conn, id, name, code, team)?;
+    register_v02(conn, &c.value.id);
+    Ok(c)
 }
 
 fn now_stamp(me: &str) -> (String, String) {
@@ -62,6 +80,7 @@ fn send(from: &Laptop, to: &mut Laptop, project: &str) -> ApplyReport {
     };
     let changes = changes_since(&from.conn, project, &have).unwrap();
     let from_pk = from.pk();
+    copy_registration(&from.conn, &to.conn, project);
     import_project(
         &mut to.conn,
         &LocalRolePolicy,
@@ -405,8 +424,10 @@ fn bad_signature_and_non_member_are_rejected_and_logged() {
     )
     .unwrap();
     assert_eq!(r.held, 1);
-    // Once a member, the same change is accepted.
+    // Once a member of the organization and of the project, the same
+    // change is accepted.
     add_member(&a.conn, &me, "Orang Luar", "member");
+    add_project_member(&a.conn, &p.id, &me);
     let r = apply_remote_changes(&mut a.conn, &LocalRolePolicy, &p.id, Some(&me), signed).unwrap();
     assert_eq!(r.applied, 1);
     let _ = &mut outsider;
@@ -430,6 +451,7 @@ fn import_requires_a_creator_allowed_to_create_projects() {
         .unwrap()
         .value;
     add_member(&a.conn, &b_admin.pk(), "Budi", "member");
+    copy_registration(&b_admin.conn, &a.conn, &p.id);
     let changes = stored_changes(&b_admin.conn, &p.id).unwrap();
     let root = changes[0].hash.clone();
     let r = import_project(&mut a.conn, &LocalRolePolicy, &p.id, None, changes).unwrap();
@@ -1030,11 +1052,6 @@ impl Office {
         org_ops::sync(&self.ani.conn, &mut l.conn, &to, &self.ani.pk());
     }
 
-    fn in_team(&mut self, team: &str, who: &Laptop) {
-        p::add_team_member(&mut self.ani.conn, &self.ani.id, team, &who.pk(), org_ops::now())
-            .unwrap();
-    }
-
     fn out_of_team(&mut self, team: &str, who: &Laptop) {
         p::remove_team_member(&mut self.ani.conn, &self.ani.id, team, &who.pk(), org_ops::now())
             .unwrap();
@@ -1042,6 +1059,47 @@ impl Office {
 
     fn team_admin(&mut self, team: &str, who: &Laptop, admin: bool) {
         p::set_team_admin(&mut self.ani.conn, &self.ani.id, team, &who.pk(), admin, org_ops::now())
+            .unwrap();
+    }
+
+    /// Ani registers her project of `root` (`project_create` with `members`).
+    fn register_ani(&mut self, root: &(SignedChange, String), team: Option<&str>, members: &[String]) {
+        p::register_own_project_in(
+            &self.ani.conn,
+            &self.ani.id,
+            &root.0.project_id,
+            team,
+            &root.1,
+            members,
+            org_ops::now(),
+        )
+        .unwrap();
+    }
+
+    /// Another `creator` registers the project of `root` on its own laptop;
+    /// the op reaches Ani's laptop.
+    fn register_by(&mut self, creator: &Laptop, root: &(SignedChange, String), team: Option<&str>, members: &[String]) {
+        p::register_own_project_in(
+            &creator.conn,
+            &creator.id,
+            &root.0.project_id,
+            team,
+            &root.1,
+            members,
+            org_ops::now(),
+        )
+        .unwrap();
+        let (to, from) = (self.ani.pk(), creator.pk());
+        org_ops::sync(&creator.conn, &mut self.ani.conn, &to, &from);
+    }
+
+    fn out_of_project(&mut self, project: &str, who: &Laptop) {
+        p::remove_project_member(&mut self.ani.conn, &self.ani.id, project, &who.pk(), org_ops::now())
+            .unwrap();
+    }
+
+    fn in_project(&mut self, project: &str, who: &Laptop) {
+        p::add_project_member(&mut self.ani.conn, &self.ani.id, project, &who.pk(), org_ops::now())
             .unwrap();
     }
 }
@@ -1053,6 +1111,17 @@ fn unix(offset: i64) -> i64 {
 
 /// The first change of a new project by `l`, dated `at`.
 fn root_at(l: &Laptop, name: &str, code: &str, team: Option<&str>, at: i64) -> SignedChange {
+    root_with_nonce(l, name, code, team, at).0
+}
+
+/// `root_at` plus the project nonce, to register the project in the log.
+fn root_with_nonce(
+    l: &Laptop,
+    name: &str,
+    code: &str,
+    team: Option<&str>,
+    at: i64,
+) -> (SignedChange, String) {
     let nonce = crate::board::doc::random_id();
     let id = store::derive_project_id(&l.pk(), team, &nonce);
     let meta = ProjectMeta {
@@ -1064,7 +1133,7 @@ fn root_at(l: &Laptop, name: &str, code: &str, team: Option<&str>, at: i64) -> S
     let mut doc = BoardDoc::create(&actor_of(&l.id), &meta).unwrap();
     doc.set_project_nonce(&nonce).unwrap();
     doc.commit(at).unwrap();
-    sign_change(&l.id, &id, &doc.changes_after(&[])[0])
+    (sign_change(&l.id, &id, &doc.changes_after(&[])[0]), nonce)
 }
 
 /// The document made of `changes`, with `who`'s actor.
@@ -1110,23 +1179,25 @@ fn is_held(r: &ApplyReport, sc: &SignedChange) -> bool {
 }
 
 #[test]
-fn history_of_a_member_who_moved_teams_is_accepted_once_a_colleague_built_on_it() {
+fn history_of_a_member_who_left_the_project_is_accepted_once_a_colleague_built_on_it() {
     let mut o = office();
     let (desain, lain) = (o.desain.clone(), o.lain.clone());
     let budi = o.hire("Budi", &desain);
     let mut sari = o.hire("Sari", &lain);
-    let root = root_at(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    let rooted = root_with_nonce(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    o.register_ani(&rooted, Some(&desain), &[budi.pk()]);
+    let root = rooted.0.clone();
     let pid = root.project_id.clone();
 
-    // Monday: Budi writes in Desain.
+    // Monday: Budi writes in the project.
     let mut bd = doc_of(&budi.id, &[&root]);
     let logo = write_at(&budi.id, &pid, &mut bd, unix(-300), |d, s| {
         d.create_task(s, new_task("Logo")).unwrap();
     });
-    // Tuesday: Budi moves to team Lain. Wednesday: Sari joins Desain.
-    o.out_of_team(&desain, &budi);
-    o.in_team(&lain, &budi);
-    o.in_team(&desain, &sari);
+    // Tuesday: Budi leaves the project. Wednesday: Sari, from another
+    // department, joins it.
+    o.out_of_project(&pid, &budi);
+    o.in_project(&pid, &sari);
     o.tell(&mut sari);
 
     // Nobody who still writes there has built on Budi's change yet: held,
@@ -1170,15 +1241,17 @@ fn a_backdated_change_without_a_colleague_stays_held() {
     let mut o = office();
     let desain = o.desain.clone();
     let budi = o.hire("Budi", &desain);
-    let root = root_at(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    let rooted = root_with_nonce(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    o.register_ani(&rooted, Some(&desain), &[budi.pk()]);
+    let root = rooted.0.clone();
     let pid = root.project_id.clone();
     let r = import_project(&mut o.ani.conn, &LocalRolePolicy, &pid, None, vec![root.clone()])
         .unwrap();
     assert_eq!(r.applied, 1);
 
-    // Budi leaves Desain, then writes and dates the change before that.
-    // Building on it himself does not count as support.
-    o.out_of_team(&desain, &budi);
+    // Budi leaves the project, then writes and dates the change before
+    // that. Building on it himself does not count as support.
+    o.out_of_project(&pid, &budi);
     let mut bd = doc_of(&budi.id, &[&root]);
     let back = write_at(&budi.id, &pid, &mut bd, unix(-300), |d, s| {
         d.create_task(s, new_task("Mundur")).unwrap();
@@ -1207,7 +1280,9 @@ fn a_delete_by_a_demoted_admin_needs_a_colleague_too() {
     let dewi = o.hire("Dewi", &desain);
     o.team_admin(&desain, &dewi, true);
     let mut sari = o.hire("Sari", &desain);
-    let root = root_at(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    let rooted = root_with_nonce(&o.ani, "Situs Web", "WEB", Some(&desain), unix(-600));
+    o.register_ani(&rooted, Some(&desain), &[dewi.pk(), sari.pk()]);
+    let root = rooted.0.clone();
     let pid = root.project_id.clone();
     let mut ad = doc_of(&o.ani.id, &[&root]);
     let poster = write_at(&o.ani.id, &pid, &mut ad, unix(-500), |d, s| {
@@ -1215,7 +1290,7 @@ fn a_delete_by_a_demoted_admin_needs_a_colleague_too() {
     });
     let task = ad.tasks().unwrap()[0].id.clone();
 
-    // Dewi stops being team admin (she still writes in Desain), deletes
+    // Dewi stops being department admin (she still writes in the project), deletes
     // Ani's task dated before that, and builds on it herself.
     o.team_admin(&desain, &dewi, false);
     o.tell(&mut sari);
@@ -1264,7 +1339,10 @@ fn a_project_by_an_admin_who_left_the_team_imports_once_a_colleague_built_on_it(
     let dewi = o.hire("Dewi", &desain);
     o.team_admin(&desain, &dewi, true);
     let mut sari = o.hire("Sari", &desain);
-    let root = root_at(&dewi, "Pameran", "PM", Some(&desain), unix(-600));
+    let rooted = root_with_nonce(&dewi, "Pameran", "PM", Some(&desain), unix(-600));
+    let members = [o.ani.pk(), sari.pk()];
+    o.register_by(&dewi, &rooted, Some(&desain), &members);
+    let root = rooted.0.clone();
     let pid = root.project_id.clone();
     o.out_of_team(&desain, &dewi);
     o.tell(&mut sari);
@@ -1324,6 +1402,7 @@ fn only_the_chosen_first_change_skips_the_rules() {
         add_member(&c.conn, &b.pk(), "Budi", "member");
         let root = root_at(&a, "Alfa", "PA", None, unix(-60));
         let pid = root.project_id.clone();
+        register_project(&c.conn, &pid, None, &a.pk(), &[&a.pk(), &b.pk(), &c.pk()]);
         let id = if same_id { pid.as_str() } else { "" };
         let fake = second_root(&b, &pid, id, &root.hash);
         let mut ad = doc_of(&a.id, &[&root]);
@@ -1391,6 +1470,7 @@ fn a_first_change_for_another_project_id_is_refused_after_applying() {
         params![pid, row.created_by],
     )
     .unwrap();
+    register_project(&tx, &pid, None, &row.created_by, &[&row.created_by]);
     let mut doc = BoardDoc::empty(&MERGE_ACTOR);
     let mut report = ApplyReport::default();
     ingest(

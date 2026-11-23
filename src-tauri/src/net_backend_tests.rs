@@ -194,9 +194,11 @@ impl Node {
         team.id
     }
 
-    fn add_to_team(&self, team: &str, member: &Node) {
+    /// Superadmin moves `member` into department `team` (v0.3: one
+    /// department per person, `team_move`).
+    fn move_to_team(&self, team: &str, member: &Node) {
         self.core(|c| {
-            permissions::add_team_member(&mut c.db, &c.identity, team, &member.pk, clock::now())
+            permissions::move_member(&mut c.db, &c.identity, &member.pk, team, clock::now())
         });
         self.net.refresh();
     }
@@ -499,7 +501,7 @@ async fn laptop_back_online_catches_up() {
     .await;
 
     let pemasaran = a.create_team("Tim Pemasaran");
-    a.add_to_team(&pemasaran, &b);
+    a.move_to_team(&pemasaran, &b);
     wait_until("B receives Tim Pemasaran", || {
         b.team_id("Tim Pemasaran").is_some()
     })
@@ -537,7 +539,7 @@ async fn team_channel_reaches_only_team_members() {
     } = office().await;
 
     let pemasaran = a.create_team("Tim Pemasaran");
-    a.add_to_team(&pemasaran, &b);
+    a.move_to_team(&pemasaran, &b);
     let in_pemasaran = |ch: &ChannelView| ch.team_id.as_deref() == Some(pemasaran.as_str());
     wait_until("B receives the Tim Pemasaran channel", || {
         b.channels().iter().any(in_pemasaran)

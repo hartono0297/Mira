@@ -761,15 +761,15 @@ fn late_arrival_in_the_database_flips_status() {
     }
     .unwrap();
     let t2 = f.create_team("Tim B");
-    p::add_team_member(&mut f.conn, &f.id, &t2, &a.pk(), now()).unwrap();
+    p::move_member(&mut f.conn, &f.id, &a.pk(), &t2, now()).unwrap();
     let s = f.state();
     let ids = p::op_ids_for(&f.conn, &s, &a.pk()).unwrap();
     let missing = p::missing_op_ids(&a.conn, &ids).unwrap();
     let ops = p::ops_for(&f.conn, &s, &a.pk(), &missing).unwrap();
-    // team_create, channel_create (A not in team B yet, but now a member), team_member_add.
+    // team_create, channel_create (A not in team B yet, but now a member), team_move.
     let add = ops
         .iter()
-        .find(|o| o.payload.contains("team_member_add"))
+        .find(|o| o.payload.contains("team_move"))
         .unwrap()
         .clone();
     let rest: Vec<SignedOp> = ops.iter().filter(|o| **o != add).cloned().collect();
@@ -818,7 +818,7 @@ fn three_laptops_converge_and_an_offline_one_catches_up() {
     let t2 = f.create_team("Tim B");
     sync(&a, &mut f);
     sync(&f, &mut a);
-    p::add_team_member(&mut f.conn, &f.id, &t2, &a.pk(), now()).unwrap();
+    p::move_member(&mut f.conn, &f.id, &a.pk(), &t2, now()).unwrap();
     sync_both(&mut f, &mut a);
     sync_both(&mut a, &mut c);
     assert_eq!(f.state(), a.state());
@@ -1185,11 +1185,24 @@ fn redeem_as_member_for_another_team() {
         join(&mut f, &mut a, &code, now())
     }
     .unwrap();
-    let code =
+    // v0.3: a code for another department is refused (one department per
+    // person; a superadmin moves people), before spending it.
+    let other =
         p::normalize_code(&f.invite(&team_b, InviteRole::TeamAdmin, Validity::Once)).unwrap();
     sync(&f, &mut a);
+    assert_eq!(
+        p::redeem_as_member(&mut a.conn, &a.id, &other, now())
+            .unwrap_err()
+            .code(),
+        "forbidden"
+    );
+    assert_eq!(a.state().team_role(&team_b, &a.pk()), None);
+    // A higher role in the own department still works.
+    let code =
+        p::normalize_code(&f.invite(&team_a, InviteRole::TeamAdmin, Validity::Once)).unwrap();
+    sync(&f, &mut a);
     p::redeem_as_member(&mut a.conn, &a.id, &code, now()).unwrap();
-    assert_eq!(a.state().team_role(&team_b, &a.pk()), Some(TeamRole::Admin));
+    assert_eq!(a.state().team_role(&team_a, &a.pk()), Some(TeamRole::Admin));
     assert_eq!(
         p::redeem_as_member(&mut a.conn, &a.id, &code, now())
             .unwrap_err()
@@ -1197,7 +1210,7 @@ fn redeem_as_member_for_another_team() {
         "invite_used"
     );
     sync(&a, &mut f);
-    assert_eq!(f.state().team_role(&team_b, &a.pk()), Some(TeamRole::Admin));
+    assert_eq!(f.state().team_role(&team_a, &a.pk()), Some(TeamRole::Admin));
 
     // Nothing to gain: refused before spending the code.
     let again = p::normalize_code(&f.invite(&team_a, InviteRole::Member, Validity::Once)).unwrap();

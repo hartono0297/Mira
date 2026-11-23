@@ -16,6 +16,8 @@ pub const MIGRATIONS: &[&str] = &[
     crate::chat::schema::CHAT_SCHEMA,
     // Sinkron dokumen dan tanda tangan, v8.
     crate::documents::sync_schema::SYNC_SCHEMA,
+    // v0.3: departemen, anggota proyek, label, profil laptop, permintaan bergabung, v9.
+    V9_ORG_V03,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.
@@ -160,4 +162,106 @@ CREATE TABLE rejected_changes (
 ) STRICT;
 
 UPDATE members SET is_superadmin = 1 WHERE role = 'superadmin';
+"#;
+
+/// v0.3 (docs/plans/v0.3-kontrak.md): tables derived from the new ops
+/// (archived departments, device profile columns, registered projects and
+/// their members, labels, join decisions), plus the local join request
+/// stores: `join_requests` on member laptops (requests received or
+/// forwarded, waiting for an approver) and `join_outbox` on the laptop that
+/// asks to join (its own request, kept across restarts).
+///
+/// Nothing is migrated row by row: the derived tables are rewritten by the
+/// next fold, which applies the v0.3 rules to the existing log (one
+/// department per person, the earliest wins; projects stay closed until
+/// they are registered with `project_create`).
+const V9_ORG_V03: &str = r#"
+ALTER TABLE teams ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE teams ADD COLUMN archived_at TEXT;
+
+ALTER TABLE members ADD COLUMN laptop TEXT;
+ALTER TABLE members ADD COLUMN os TEXT;
+ALTER TABLE members ADD COLUMN app_version TEXT;
+ALTER TABLE members ADD COLUMN device_at TEXT;
+
+CREATE TABLE projects (
+    id            TEXT PRIMARY KEY CHECK (length(id) = 32),
+    team_id       TEXT,
+    creator       TEXT NOT NULL CHECK (length(creator) = 64),
+    registered_by TEXT NOT NULL CHECK (length(registered_by) = 64),
+    created_at    TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE project_members (
+    project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    public_key TEXT NOT NULL CHECK (length(public_key) = 64),
+    added_at   TEXT NOT NULL,
+    added_by   TEXT NOT NULL,
+    PRIMARY KEY (project_id, public_key)
+) STRICT;
+
+CREATE TABLE labels (
+    id         TEXT PRIMARY KEY CHECK (length(id) = 32),
+    name       TEXT NOT NULL,
+    archived   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE label_members (
+    label_id   TEXT NOT NULL REFERENCES labels (id) ON DELETE CASCADE,
+    public_key TEXT NOT NULL CHECK (length(public_key) = 64),
+    PRIMARY KEY (label_id, public_key)
+) STRICT;
+
+CREATE TABLE join_decisions (
+    request_id TEXT PRIMARY KEY CHECK (length(request_id) = 64),
+    member     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    team_id    TEXT NOT NULL,
+    approved   INTEGER NOT NULL,
+    decided_by TEXT NOT NULL,
+    decided_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE join_requests (
+    id            TEXT PRIMARY KEY CHECK (length(id) = 64),
+    member        TEXT NOT NULL CHECK (length(member) = 64),
+    team_id       TEXT NOT NULL,
+    requested_at  TEXT NOT NULL,
+    payload       TEXT NOT NULL,
+    sig           TEXT NOT NULL CHECK (length(sig) = 128),
+    record_id     TEXT NOT NULL UNIQUE CHECK (length(record_id) = 64),
+    record        TEXT NOT NULL,
+    code          TEXT NOT NULL,
+    seen_ip       TEXT,
+    ip_group      TEXT,
+    seen_by       TEXT,
+    received_at   TEXT NOT NULL,
+    received_from TEXT
+) STRICT;
+CREATE INDEX join_requests_member ON join_requests (member);
+
+CREATE TABLE join_request_aliases (
+    record_id  TEXT PRIMARY KEY CHECK (length(record_id) = 64),
+    request_id TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE join_outbox (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    request_id      TEXT NOT NULL CHECK (length(request_id) = 64),
+    org_id          TEXT NOT NULL CHECK (length(org_id) = 32),
+    org_name        TEXT NOT NULL,
+    org_record      TEXT NOT NULL,
+    code            TEXT NOT NULL,
+    team_id         TEXT NOT NULL,
+    team_name       TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    sig             TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('pending', 'rejected')),
+    decided_by_name TEXT,
+    decided_at      TEXT,
+    last_sent_at    TEXT,
+    last_error      TEXT
+) STRICT;
 "#;

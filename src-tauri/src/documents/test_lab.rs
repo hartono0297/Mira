@@ -8,7 +8,9 @@
 //! sees team data as a team member); the others join it through an invite
 //! code as team members. `add_guest`, `add_member_elsewhere`, `leave_team`
 //! and `remove` change the membership and sync it to every laptop still
-//! active. `add_project` puts a board project on every laptop.
+//! active. `register_project` registers a project with its members in the
+//! log (v0.3: only members read it) and `add_project` puts its board row on
+//! every laptop.
 
 use std::path::Path;
 
@@ -181,10 +183,63 @@ impl Lab {
         self.sync_membership();
     }
 
-    /// Board project `id` of `team` (none: a project without team), made by
-    /// laptop 0, on every laptop, as board sync would leave it.
+    /// Registers a project in the membership log (`project_create`, v0.3)
+    /// made by laptop `creator`, with laptops `members` as members (the
+    /// creator is always one), and syncs it. Returns the project id, bound
+    /// to creator, team and a fresh nonce. Call `add_project` afterwards to
+    /// put its board row on every laptop.
+    pub fn register_project(&self, creator: usize, team: Option<&str>, members: &[usize]) -> String {
+        let creator_pk = self.pk(creator);
+        let nonce = crate::board::doc::random_id();
+        let id = p::project_id_for(&creator_pk, team, &nonce);
+        let mut members: Vec<String> = members
+            .iter()
+            .map(|&i| self.pk(i))
+            .filter(|pk| *pk != creator_pk)
+            .collect();
+        members.sort();
+        members.dedup();
+        let body = p::Body::ProjectCreate {
+            project: id.clone(),
+            team: team.map(str::to_owned),
+            creator: creator_pk,
+            nonce,
+            members,
+        };
+        self.laptops[creator]
+            .with(|c| p::author_op(&mut c.db, &c.identity, p::Scope::Org, body, now()).unwrap());
+        self.sync_membership();
+        id
+    }
+
+    /// Laptop `by` adds laptop `who` to project `id` (`who == by`: a
+    /// superadmin adding themselves), then syncs.
+    pub fn add_to_project(&self, by: usize, id: &str, who: usize) {
+        let pk = self.pk(who);
+        self.laptops[by]
+            .with(|c| p::add_project_member(&mut c.db, &c.identity, id, &pk, now()).unwrap());
+        self.sync_membership();
+    }
+
+    /// Laptop `by` takes laptop `who` out of project `id`, then syncs.
+    pub fn remove_from_project(&self, by: usize, id: &str, who: usize) {
+        let pk = self.pk(who);
+        self.laptops[by]
+            .with(|c| p::remove_project_member(&mut c.db, &c.identity, id, &pk, now()).unwrap());
+        self.sync_membership();
+    }
+
+    /// Board project `id` of `team` (none: a project without team) on every
+    /// laptop, as board sync would leave it. The board row names the
+    /// creator from the log when the project is registered (laptop 0
+    /// otherwise); an unregistered project is readable by nobody.
     pub fn add_project(&self, id: &str, team: Option<&str>) {
-        let creator = self.pk(0);
+        let creator = self.laptops[0]
+            .org_state()
+            .projects
+            .get(id)
+            .map(|p| p.creator.clone())
+            .unwrap_or_else(|| self.pk(0));
         for l in &self.laptops {
             l.with(|c| crate::documents::scope::insert_test_project(&c.db, id, team, &creator));
         }
@@ -237,12 +292,14 @@ mod tests {
 
     #[test]
     fn lab_builds_one_org_with_guest_and_removal() {
-        let project = "ab".repeat(16);
         let mut lab = Lab::new(&["Sari", "Budi", "Citra"]);
+        let team = lab.team.clone();
+        let project = lab.register_project(0, Some(&team), &[1, 2]);
+        let other = lab.register_project(0, Some(&team), &[1, 2]);
         let guest = lab.add_guest("Tamu", &[&project]);
         let outsider = lab.add_member_elsewhere("Dewi");
-        lab.add_project(&project, Some(&lab.team));
-        lab.add_project(&"cd".repeat(16), Some(&lab.team));
+        lab.add_project(&project, Some(&team));
+        lab.add_project(&other, Some(&team));
         for l in &lab.laptops {
             let s = l.org_state();
             assert_eq!(s.members.len(), 5, "{} sees everyone", l.name);
@@ -258,7 +315,7 @@ mod tests {
         };
         let other_project = DocScope {
             team_id: Some(lab.team.clone()),
-            project_id: Some("cd".repeat(16)),
+            project_id: Some(other.clone()),
         };
         let general = DocScope::default();
         lab.laptops[1].with(|c| {
@@ -277,6 +334,10 @@ mod tests {
             assert!(!may_view(db, &s, &g, &lab.pk(guest), &other_project).unwrap());
             assert!(!may_write(db, &s, &g, &lab.pk(guest), &project_scope).unwrap());
             assert!(may_write(db, &s, &g, &lab.pk(2), &project_scope).unwrap());
+            assert!(
+                !may_view(db, &s, &g, &lab.pk(outsider), &project_scope).unwrap(),
+                "not a project member"
+            );
         });
 
         lab.remove(2);

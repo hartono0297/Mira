@@ -373,20 +373,17 @@ fn team_admin_set_row() {
         w.sim.push(&w.f, b.admin_set(&w.team_a, &w.member_a)),
         Ok(())
     );
-    // Not yet in team B: added as admin.
+    // v0.3: one department per person, so not admin of team B too.
     assert_eq!(
         w.sim.push(&w.f, b.admin_set(&w.team_b, &w.member_a)),
-        Ok(())
+        Err(R::AlreadyInDepartment)
     );
     let s = w.sim.state();
     assert_eq!(
         s.team_role(&w.team_a, &w.member_a.pk),
         Some(TeamRole::Admin)
     );
-    assert_eq!(
-        s.team_role(&w.team_b, &w.member_a.pk),
-        Some(TeamRole::Admin)
-    );
+    assert_eq!(s.team_role(&w.team_b, &w.member_a.pk), None);
     assert_eq!(s.org_role(&w.member_a.pk), Role::TeamAdmin);
 }
 
@@ -427,6 +424,16 @@ fn team_member_add_row() {
     let mut w = world();
     let b = bodies();
     let c = w.sim.join(&w.team_b.clone(), InviteRole::Member, "Citra");
+    // v0.3: only people without a department can be added.
+    assert_eq!(
+        w.sim.push(&w.admin_a, b.tm_add(&w.team_a, &c)),
+        Err(R::AlreadyInDepartment)
+    );
+    assert_eq!(
+        w.sim.push(&w.f, b.tm_add(&w.team_b, &w.member_a)),
+        Err(R::AlreadyInDepartment)
+    );
+    assert_eq!(w.sim.push(&w.f, b.tm_remove(&w.team_b, &c)), Ok(()));
     assert_eq!(
         w.sim.push(&w.member_a, b.tm_add(&w.team_a, &c)),
         Err(R::NotAuthorized)
@@ -461,17 +468,13 @@ fn team_member_add_row() {
         Ok(()),
         "team admin"
     );
-    assert_eq!(
-        w.sim.push(&w.f, b.tm_add(&w.team_b, &w.member_a)),
-        Ok(()),
-        "superadmin"
-    );
+    let d = w.sim.join(&w.team_b.clone(), InviteRole::Member, "Dedi");
+    assert_eq!(w.sim.push(&d, b.tm_remove(&w.team_b, &d)), Ok(()), "left");
+    assert_eq!(w.sim.push(&w.f, b.tm_add(&w.team_b, &d)), Ok(()), "superadmin");
     let s = w.sim.state();
     assert_eq!(s.team_role(&w.team_a, &c.pk), Some(TeamRole::Member));
-    assert_eq!(
-        s.team_role(&w.team_b, &w.member_a.pk),
-        Some(TeamRole::Member)
-    );
+    assert_eq!(s.team_role(&w.team_b, &c.pk), None);
+    assert_eq!(s.team_role(&w.team_b, &d.pk), Some(TeamRole::Member));
 }
 
 #[test]
@@ -1013,13 +1016,14 @@ fn existing_members_redeem_for_other_teams_and_higher_roles() {
         sk: w.member_a.sk.clone(),
         pk: w.member_a.pk.clone(),
     };
+    // v0.3: an invite to another department does not add a second one.
     let inv_b = w.sim.invite(&f, &w.team_b, InviteRole::Member, true);
     assert_eq!(
         w.sim.accept(&member_a, &inv_b, &member_a, "Anggota A"),
-        Ok(())
+        Err(R::AlreadyInDepartment)
     );
     let s = w.sim.state();
-    assert_eq!(s.team_role(&w.team_b, &member_a.pk), Some(TeamRole::Member));
+    assert_eq!(s.team_role(&w.team_b, &member_a.pk), None);
     assert_eq!(s.team_role(&w.team_a, &member_a.pk), Some(TeamRole::Member));
     assert_eq!(
         s.member(&member_a.pk).unwrap().display_name.as_deref(),

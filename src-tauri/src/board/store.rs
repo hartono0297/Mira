@@ -309,6 +309,49 @@ pub fn create_project(
     code: &str,
     team_id: Option<&str>,
 ) -> AppResult<Committed<ProjectRow>> {
+    create_project_with_members(conn, identity, name, code, team_id, &[])
+}
+
+/// Creates a project and its document, and registers it in the membership
+/// log (`project_create`, v0.3) with the creator and `members` (public
+/// keys) as its members, in the same transaction. Without an organization
+/// the project stays on this laptop and nothing is registered. Permission
+/// is checked by the caller.
+pub fn create_project_with_members(
+    conn: &mut Connection,
+    identity: &Identity,
+    name: &str,
+    code: &str,
+    team_id: Option<&str>,
+    members: &[String],
+) -> AppResult<Committed<ProjectRow>> {
+    create_project_inner(conn, identity, name, code, team_id, Some(members))
+}
+
+/// Tests whose membership tables are written directly (not by the fold):
+/// creates the project without authoring `project_create`, so the fold does
+/// not rewrite those tables. Register it with `testutil::register_project`.
+#[cfg(test)]
+pub fn create_project_local(
+    conn: &mut Connection,
+    identity: &Identity,
+    name: &str,
+    code: &str,
+    team_id: Option<&str>,
+) -> AppResult<Committed<ProjectRow>> {
+    create_project_inner(conn, identity, name, code, team_id, None)
+}
+
+/// `register`: the initial members to register in the log with, `None` to
+/// skip registration (tests only).
+fn create_project_inner(
+    conn: &mut Connection,
+    identity: &Identity,
+    name: &str,
+    code: &str,
+    team_id: Option<&str>,
+    register: Option<&[String]>,
+) -> AppResult<Committed<ProjectRow>> {
     let name = validate_project_name(name)?;
     let code = validate_project_code(code)?;
     let team_id = normalize_team_id(team_id);
@@ -357,6 +400,17 @@ pub fn create_project(
         ],
     )?;
     let changes = commit_and_sign(&tx, identity, &row, &mut doc, &[], now)?;
+    if let Some(members) = register {
+        crate::permissions::register_own_project_in(
+            &tx,
+            identity,
+            &row.id,
+            team_id,
+            &nonce,
+            members,
+            now,
+        )?;
+    }
     tx.commit()?;
     Ok(Committed {
         value: row,
@@ -621,7 +675,7 @@ mod tests {
     use super::*;
     use crate::board::doc::{Stamp, TaskInit};
     use crate::board::sign::verify_change;
-    use crate::board::testutil::{Laptop, add_member, add_team};
+    use crate::board::testutil::{Laptop, add_member};
     use crate::db;
     use crate::identity::{MemoryKeyStore, ensure_identity};
     use automerge::Change;
@@ -666,7 +720,7 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(err.code(), "invalid_input");
-        let team = add_team(&l.conn, "Desain", &[]);
+        let team = crate::board::testutil::org_ops::create_team(&mut l.conn, &l.id, "Desain");
         let p = create_project(&mut l.conn, &l.id, "Lain", "PB", Some(&team)).unwrap();
         assert_eq!(p.value.team_id, Some(team));
         assert_eq!(projects(&l.conn).unwrap().len(), 2);
@@ -805,6 +859,7 @@ mod tests {
             Vec::new()
         };
         let changes = sync::changes_since(&from.conn, project, &have).unwrap();
+        crate::board::testutil::copy_registration(&from.conn, &to.conn, project);
         let r = sync::import_project(
             &mut to.conn,
             &crate::board::policy::LocalRolePolicy,
@@ -881,12 +936,18 @@ mod tests {
             add_member(conn, &b.pk(), "Budi", "superadmin");
         }
         add_member(&b.conn, &c.pk(), "Cici", "member");
-        let pa = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+        // Fixture tables are written directly, so no `project_create` op:
+        // each project is registered with every member.
+        let pa = create_project_local(&mut a.conn, &a.id, "Alfa", "PA", None)
             .unwrap()
             .value;
-        let pb = create_project(&mut b.conn, &b.id, "Beta", "PA", None)
+        let pb = create_project_local(&mut b.conn, &b.id, "Beta", "PA", None)
             .unwrap()
             .value;
+        let everyone = [a.pk(), b.pk(), c.pk()];
+        let everyone: Vec<&str> = everyone.iter().map(String::as_str).collect();
+        crate::board::testutil::register_project(&a.conn, &pa.id, None, &a.pk(), &everyone);
+        crate::board::testutil::register_project(&b.conn, &pb.id, None, &b.pk(), &everyone);
         add(&mut a, &pa.id, "a");
         add(&mut b, &pb.id, "b");
 
@@ -919,9 +980,10 @@ mod tests {
     fn rename_from_another_laptop_shows() {
         let mut a = Laptop::founder("Sari");
         let mut b = Laptop::joined(&a, "Budi");
-        let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+        let p = create_project_local(&mut a.conn, &a.id, "Alfa", "PA", None)
             .unwrap()
             .value;
+        crate::board::testutil::register_project(&a.conn, &p.id, None, &a.pk(), &[&a.pk(), &b.pk()]);
         add(&mut a, &p.id, "a");
         send(&a, &mut b, &p.id);
         let c = commit_local(&mut a.conn, &a.id, &p.id, |d| d.rename_project("Alfa Baru")).unwrap();

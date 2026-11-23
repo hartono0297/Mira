@@ -285,7 +285,9 @@ pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()
     let me_ref = me.as_ref().map(|(pk, n)| (pk.as_str(), n.as_deref()));
     conn.execute_batch(
         "DELETE FROM team_members; DELETE FROM teams; DELETE FROM invites;
-         DELETE FROM guest_access; DELETE FROM channels;",
+         DELETE FROM guest_access; DELETE FROM channels;
+         DELETE FROM project_members; DELETE FROM projects;
+         DELETE FROM label_members; DELETE FROM labels; DELETE FROM join_decisions;",
     )?;
     conn.execute(
         "DELETE FROM members WHERE organization_id = ?1",
@@ -294,10 +296,12 @@ pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()
 
     let mut stmt = conn.prepare(
         "INSERT INTO members
-           (organization_id, public_key, display_name, role, added_at, status, is_superadmin, kind, removed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+           (organization_id, public_key, display_name, role, added_at, status, is_superadmin, kind, removed_at,
+            laptop, os, app_version, device_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
     )?;
     for m in state.members.values() {
+        let d = m.device.as_ref();
         stmt.execute(params![
             state.org.id,
             m.public_key,
@@ -308,17 +312,30 @@ pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()
             m.is_superadmin,
             m.kind.as_str(),
             m.removed_at,
+            d.map(|d| d.laptop.as_str()),
+            d.map(|d| d.os.as_str()),
+            d.map(|d| d.app_version.as_str()),
+            d.map(|d| d.at.as_str()),
         ])?;
     }
 
     let mut team_stmt = conn.prepare(
-        "INSERT INTO teams (id, name, created_at, created_by, deleted) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO teams (id, name, created_at, created_by, deleted, archived, archived_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     let mut tm_stmt = conn.prepare(
         "INSERT INTO team_members (team_id, public_key, role, added_at) VALUES (?1, ?2, ?3, ?4)",
     )?;
     for t in state.teams.values() {
-        team_stmt.execute(params![t.id, t.name, t.created_at, t.created_by, t.deleted])?;
+        team_stmt.execute(params![
+            t.id,
+            t.name,
+            t.created_at,
+            t.created_by,
+            t.deleted,
+            t.archived,
+            t.archived_at
+        ])?;
         for (pk, tm) in &t.members {
             tm_stmt.execute(params![t.id, pk, tm.role.as_str(), tm.added_at])?;
         }
@@ -357,6 +374,48 @@ pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()
         .prepare("INSERT INTO channels (id, team_id, name, created_at) VALUES (?1, ?2, ?3, ?4)")?;
     for c in state.channels.values() {
         ch_stmt.execute(params![c.id, c.team, c.name, c.created_at])?;
+    }
+
+    let mut p_stmt = conn.prepare(
+        "INSERT INTO projects (id, team_id, creator, registered_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    let mut pm_stmt = conn.prepare(
+        "INSERT INTO project_members (project_id, public_key, added_at, added_by)
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+    for p in state.projects.values() {
+        p_stmt.execute(params![
+            p.id,
+            p.team,
+            p.creator,
+            p.registered_by,
+            p.created_at
+        ])?;
+        for (pk, m) in &p.members {
+            pm_stmt.execute(params![p.id, pk, m.added_at, m.added_by])?;
+        }
+    }
+
+    let mut l_stmt = conn
+        .prepare("INSERT INTO labels (id, name, archived, created_at) VALUES (?1, ?2, ?3, ?4)")?;
+    let mut lm_stmt =
+        conn.prepare("INSERT INTO label_members (label_id, public_key) VALUES (?1, ?2)")?;
+    for l in state.labels.values() {
+        l_stmt.execute(params![l.id, l.name, l.archived, l.created_at])?;
+        for pk in &l.members {
+            lm_stmt.execute(params![l.id, pk])?;
+        }
+    }
+
+    let mut jd_stmt = conn.prepare(
+        "INSERT INTO join_decisions (request_id, member, name, team_id, approved, decided_by, decided_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    for d in state.join_decisions.values() {
+        jd_stmt.execute(params![
+            d.request, d.member, d.name, d.team, d.approved, d.by, d.at
+        ])?;
     }
     Ok(())
 }

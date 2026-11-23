@@ -767,9 +767,10 @@ fn cancel_reaches_signers_and_is_ignored_after_completion() {
 
 #[test]
 fn guest_signs_only_in_allowed_project_and_never_requests() {
-    let project = "ab".repeat(16);
-    let other = "cd".repeat(16);
     let mut w = World::new(&["Sari", "Budi"]);
+    let team_id = w.lab.team.clone();
+    let project = w.lab.register_project(0, Some(&team_id), &[1]);
+    let other = w.lab.register_project(0, Some(&team_id), &[1]);
     let g = w.add_guest("Tamu", &[&project]);
     w.lab.add_project(&project, Some(&w.lab.team));
     w.lab.add_project(&other, Some(&w.lab.team));
@@ -1461,10 +1462,12 @@ fn reused_original_needs_a_sender_who_may_hold_it() {
 }
 
 #[test]
-fn superadmin_outside_the_team_cannot_request_there() {
-    let project = "ab".repeat(16);
+fn superadmin_outside_the_project_cannot_request_there() {
     let mut w = World::new(&["Sari", "Budi"]);
-    w.lab.add_project(&project, Some(&w.lab.team));
+    let team_id = w.lab.team.clone();
+    // Budi's project with Sari (superadmin) as a member.
+    let project = w.lab.register_project(1, Some(&team_id), &[0]);
+    w.lab.add_project(&project, Some(&team_id));
     let scope = RequestScope {
         team_id: Some(w.lab.team.clone()),
         project_id: Some(project.clone()),
@@ -1481,7 +1484,11 @@ fn superadmin_outside_the_team_cannot_request_there() {
     let e = w.create(0, &sample, "parallel", &[1], &no_team).unwrap_err();
     assert_eq!(e.code(), "request_invalid");
 
+    // v0.3: leaving the department keeps project rights; leaving the
+    // project ends them.
     w.lab.leave_team(0);
+    w.create(0, &sample, "parallel", &[1], &scope).unwrap();
+    w.lab.remove_from_project(1, &project, 0);
     let e = w.create(0, &sample, "parallel", &[1], &scope).unwrap_err();
     assert_eq!(e.code(), "request_invalid");
     w.create(0, &sample, "parallel", &[1], &no_scope()).unwrap();

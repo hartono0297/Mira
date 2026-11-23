@@ -194,7 +194,7 @@ impl ReminderSource for SqlReminderSource {
                 r.get::<_, String>(5)?,
             ))
         })?;
-        // Only projects this laptop may still see (not after leaving the team).
+        // Only projects this laptop may still see (not after leaving the project).
         let visible: std::collections::HashSet<String> =
             crate::board::access::projects_accessible_by(conn, me)?
                 .into_iter()
@@ -543,7 +543,7 @@ mod tests {
             params![PROJECT, ME],
         )
         .unwrap();
-        // The project has no team, so ME as an active member may see it.
+        // ME is an active member and a member of the project, so may see it.
         let org = "0f".repeat(16);
         conn.execute(
             "INSERT INTO organizations (id, name, founder_public_key, created_at, genesis_signature)
@@ -557,6 +557,7 @@ mod tests {
             params![org, ME],
         )
         .unwrap();
+        crate::board::testutil::register_project(&conn, PROJECT, None, ME, &[ME]);
         Db { _tmp: tmp, conn }
     }
 

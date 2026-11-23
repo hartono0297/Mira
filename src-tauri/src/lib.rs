@@ -9,6 +9,7 @@ pub mod chat;
 pub mod clock;
 pub mod commands;
 pub mod db;
+pub mod device;
 pub mod documents;
 pub mod error;
 pub mod firewall;
@@ -17,6 +18,7 @@ pub mod net_backend;
 pub mod network;
 pub mod network_commands;
 pub mod org;
+pub mod org_commands;
 pub mod paths;
 pub mod peers;
 pub mod permissions;
@@ -65,6 +67,29 @@ pub fn run() {
             }) {
                 eprintln!(
                     "Mira: profil belum bisa diterbitkan [{}]: {err}",
+                    err.code()
+                );
+            }
+            // v0.3: fold the log with the new rules once (the derived tables
+            // may still hold the v0.2 fold), publish this laptop's name, OS
+            // and version, and register projects made before v0.3.
+            if let Err(err) = state.with_core(|core| {
+                permissions::recompute(&mut core.db)?;
+                permissions::ensure_device_op(
+                    &mut core.db,
+                    &core.identity,
+                    &device::current(),
+                    clock::now(),
+                )?;
+                board::membership::register_legacy_projects(
+                    &mut core.db,
+                    &core.identity,
+                    clock::now(),
+                )
+                .map(|_| ())
+            }) {
+                eprintln!(
+                    "Mira: data organisasi v0.3 belum siap [{}]: {err}",
                     err.code()
                 );
             }
@@ -150,6 +175,26 @@ pub fn run() {
             team_commands::redeem_invite,
             team_commands::join_with_code,
             team_commands::get_rejected_changes,
+            org_commands::org_overview,
+            org_commands::org_departments,
+            org_commands::org_people,
+            org_commands::org_users,
+            org_commands::org_labels,
+            org_commands::org_project_members,
+            org_commands::org_join_requests,
+            org_commands::org_create_department,
+            org_commands::org_rename_department,
+            org_commands::org_set_department_archived,
+            org_commands::org_set_department_admin,
+            org_commands::org_move_member,
+            org_commands::org_approve_join,
+            org_commands::org_reject_join,
+            org_commands::org_add_project_member,
+            org_commands::org_remove_project_member,
+            org_commands::org_create_label,
+            org_commands::org_rename_label,
+            org_commands::org_set_label_archived,
+            org_commands::org_set_label_assigned,
             network_commands::get_network_status,
             network_commands::add_manual_address,
             network_commands::remove_manual_address,

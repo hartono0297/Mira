@@ -50,6 +50,10 @@ pub trait ProjectAudience: Send + Sync {
     /// once and keeps the answer, so judging many records reads the
     /// membership tables once.
     fn members_by_project(&self, conn: &Connection) -> AppResult<HashMap<String, Vec<String>>>;
+    /// May administer the project's channel: the board's project manager
+    /// (v0.3: the creator while a member, an admin of the project's
+    /// department, or a superadmin who is a member).
+    fn is_manager(&self, conn: &Connection, project_id: &str, pk: &str) -> AppResult<bool>;
 }
 
 /// [`ProjectAudience`] on the board's own rules (`board::access`): a project
@@ -113,6 +117,30 @@ impl ProjectAudience for BoardAudience {
         // `is_syncable` only sees projects that exist.
         Ok(board::access::may_access_project(conn, pk, project_id)?
             && board::store::is_syncable(conn, project_id)?)
+    }
+
+    fn is_manager(&self, conn: &Connection, project_id: &str, pk: &str) -> AppResult<bool> {
+        let row: Option<(Option<String>, String)> = conn
+            .query_row(
+                "SELECT team_id, created_by FROM board_projects WHERE id = ?1",
+                [project_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((team, creator)) = row else {
+            return Ok(false);
+        };
+        if !board::store::is_syncable(conn, project_id)? {
+            return Ok(false);
+        }
+        Ok(Rights::load(conn)?.is_project_manager(
+            pk,
+            ProjectRef {
+                id: project_id,
+                team_id: team.as_deref(),
+                created_by: &creator,
+            },
+        ))
     }
 
     fn members_by_project(&self, conn: &Connection) -> AppResult<HashMap<String, Vec<String>>> {
@@ -503,13 +531,6 @@ impl<'a> Ctx<'a> {
             .map_or_else(|| "Proyek".to_owned(), |p| p.name))
     }
 
-    fn project_team(&self, project: &str) -> AppResult<Option<String>> {
-        Ok(self
-            .projects
-            .project(self.conn, project)?
-            .and_then(|p| p.team_id))
-    }
-
     /// Runs `f` on the active members of `project` (`None` when it has no
     /// channel). Every project's members are loaded once per context.
     fn with_project_members<T>(
@@ -597,15 +618,9 @@ impl<'a> Ctx<'a> {
                 (self.dir.is_superadmin(pk) && self.dir.in_team(t, pk))
                     || self.dir.is_team_admin(t, pk)
             }
-            // Same as the board's project admin: a superadmin only
-            // administers a team's project after joining the team (F-ROLE-11).
-            Scope::Project(p) => match self.project_team(p)? {
-                Some(t) => {
-                    (self.dir.is_superadmin(pk) && self.dir.in_team(&t, pk))
-                        || self.dir.is_team_admin(&t, pk)
-                }
-                None => self.dir.is_superadmin(pk),
-            },
+            // Same as the board's project manager (v0.3): a superadmin only
+            // administers a project as one of its members (F-ROLE-11).
+            Scope::Project(p) => self.projects.is_manager(self.conn, p, pk)?,
             Scope::Direct(..) => false,
         })
     }

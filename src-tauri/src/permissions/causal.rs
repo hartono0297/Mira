@@ -26,7 +26,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::fold::{FoldResult, OrgState, Outcome, Reason, TeamRole};
+use super::fold::{FoldResult, ManagerPath, OrgState, Outcome, Reason, TeamRole};
 use super::op::{Body, InviteRole, MAX_DEPS, Scope, VerifiedOp};
 use crate::org::Organization;
 
@@ -41,6 +41,9 @@ enum Right {
     /// Taken away by `team_delete`: every admin right in that team.
     AllTeamAdmins(String),
     Invite(String),
+    /// `(project, member)`: being an explicit member of a project, which the
+    /// project's creator and superadmins need to manage its members.
+    ProjectMember(String, String),
 }
 
 impl Right {
@@ -49,19 +52,43 @@ impl Right {
         match (self, used) {
             (
                 Right::Member(x),
-                Right::Member(y) | Right::Superadmin(y) | Right::TeamAdmin(_, y),
+                Right::Member(y)
+                | Right::Superadmin(y)
+                | Right::TeamAdmin(_, y)
+                | Right::ProjectMember(_, y),
             ) => x == y,
             (Right::Superadmin(x), Right::Superadmin(y)) => x == y,
             (Right::TeamAdmin(t, x), Right::TeamAdmin(u, y)) => t == u && x == y,
             (Right::AllTeamAdmins(t), Right::TeamAdmin(u, _)) => t == u,
             (Right::Invite(i), Right::Invite(j)) => i == j,
+            (Right::ProjectMember(p, x), Right::ProjectMember(q, y)) => p == q && x == y,
             _ => false,
         }
     }
 }
 
-fn takes_any(taken: &[Right], used: &[Right]) -> bool {
-    taken.iter().any(|t| used.iter().any(|u| t.covers(u)))
+/// The rights an op relies on: every right in `all`, and at least one of
+/// the alternatives in `any` when there are some (an op allowed to a
+/// superadmin or to a department admin, made by someone who is both, needs
+/// only one of the two).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct Used {
+    all: Vec<Right>,
+    any: Vec<Vec<Right>>,
+}
+
+impl Used {
+    /// Whether losing the rights `taken` makes the op invalid: a right in
+    /// `all` is taken, or every alternative loses at least one right.
+    fn lost(&self, taken: &[&Right]) -> bool {
+        let hit = |u: &Right| taken.iter().any(|t| t.covers(u));
+        self.all.iter().any(hit)
+            || (!self.any.is_empty() && self.any.iter().all(|alt| alt.iter().any(hit)))
+    }
+
+    fn lost_to(&self, taken: &[Right]) -> bool {
+        self.lost(&taken.iter().collect::<Vec<_>>())
+    }
 }
 
 /// Ops that take a right away.
@@ -74,45 +101,99 @@ pub(crate) fn is_revocation(body: &Body) -> bool {
             | Body::TeamMemberRemove { .. }
             | Body::TeamDelete { .. }
             | Body::InviteRevoke { .. }
+            | Body::TeamMove { .. }
+            | Body::ProjectMemberRemove { .. }
     )
 }
 
-/// The right needed when an op is allowed to a superadmin or to an admin of
-/// `team`: none of the two when the author has both.
-fn one_of(author: &str, superadmin: bool, admin: bool, team: &str) -> Option<Right> {
-    match (superadmin, admin) {
-        (true, false) => Some(Right::Superadmin(author.to_owned())),
-        (false, true) => Some(Right::TeamAdmin(team.to_owned(), author.to_owned())),
-        _ => None,
+/// The alternatives when an op is allowed to a superadmin or to an admin
+/// of `team`: each path the author has.
+fn one_of(author: &str, superadmin: bool, admin: bool, team: &str) -> Vec<Vec<Right>> {
+    let mut alts = Vec::new();
+    if superadmin {
+        alts.push(vec![Right::Superadmin(author.to_owned())]);
     }
+    if admin {
+        alts.push(vec![Right::TeamAdmin(team.to_owned(), author.to_owned())]);
+    }
+    alts
 }
 
 impl OrgState {
     /// Rights `op` relies on at this state: the author's membership, plus
-    /// the superadmin or team admin right it needs (only when the other
-    /// path would not allow it). An accept also relies on the invite and on
-    /// its creator's right to invite.
-    fn rights_used(&self, op: &VerifiedOp) -> Vec<Right> {
+    /// the superadmin, department admin or project rights it needs (as
+    /// alternatives when several paths allow it). An accept also relies on
+    /// the invite and on its creator's right to invite.
+    fn rights_used(&self, op: &VerifiedOp) -> Used {
         let author = op.author();
         let mut used = vec![Right::Member(author.to_owned())];
         let sa = self.is_superadmin(author);
         let admin = |team: &str, pk: &str| self.team_role(team, pk) == Some(TeamRole::Admin);
-        let extra = match &op.payload.body {
-            Body::ProfileSet { .. } | Body::ChannelCreate { .. } => None,
+        let sa_only = || vec![vec![Right::Superadmin(author.to_owned())]];
+        let any = match &op.payload.body {
+            Body::ProfileSet { .. } | Body::ChannelCreate { .. } | Body::DeviceSet { .. } => {
+                Vec::new()
+            }
             Body::TeamCreate { .. }
             | Body::TeamDelete { .. }
             | Body::SuperadminAdd { .. }
             | Body::SuperadminRemove { .. }
             | Body::TeamAdminSet { .. }
             | Body::TeamAdminUnset { .. }
-            | Body::MemberRemove { .. } => Some(Right::Superadmin(author.to_owned())),
+            | Body::MemberRemove { .. }
+            | Body::TeamRename { .. }
+            | Body::TeamArchive { .. }
+            | Body::TeamMove { .. }
+            | Body::LabelCreate { .. }
+            | Body::LabelRename { .. }
+            | Body::LabelArchive { .. }
+            | Body::LabelAssign { .. }
+            | Body::LabelUnassign { .. } => sa_only(),
             Body::TeamMemberAdd { team, .. } => one_of(author, sa, admin(team, author), team),
             Body::TeamMemberRemove { team, member } => {
                 if member == author {
-                    None
+                    Vec::new()
                 } else {
                     let by_admin = admin(team, author) && !admin(team, member);
                     one_of(author, sa, by_admin, team)
+                }
+            }
+            Body::JoinApprove {
+                request,
+                request_sig,
+            }
+            | Body::JoinReject {
+                request,
+                request_sig,
+            } => match self.join_request(request, request_sig) {
+                Ok(req) => {
+                    let team = &req.payload.team;
+                    one_of(author, sa, admin(team, author), team)
+                }
+                Err(_) => Vec::new(),
+            },
+            Body::ProjectCreate { team, creator, .. } => {
+                if creator == author {
+                    Vec::new()
+                } else {
+                    match team {
+                        Some(t) => one_of(author, sa, admin(t, author), t),
+                        None => sa_only(),
+                    }
+                }
+            }
+            Body::ProjectMemberAdd { project, member } => {
+                let mut alts = self.project_rights(project, author);
+                if member == author && sa {
+                    alts.push(vec![Right::Superadmin(author.to_owned())]);
+                }
+                alts
+            }
+            Body::ProjectMemberRemove { project, member } => {
+                if member == author {
+                    Vec::new()
+                } else {
+                    self.project_rights(project, author)
                 }
             }
             Body::InviteCreate { team, role, .. } => {
@@ -123,7 +204,7 @@ impl OrgState {
                 Some(inv) if inv.created_by != author => {
                     one_of(author, sa, admin(&inv.team, author), &inv.team)
                 }
-                _ => None,
+                _ => Vec::new(),
             },
             Body::InviteAccept { invite, .. } => {
                 used.push(Right::Invite(invite.clone()));
@@ -135,12 +216,11 @@ impl OrgState {
                             admin(&inv.team, creator) && inv.role != InviteRole::TeamAdmin;
                         one_of(creator, self.is_superadmin(creator), by_admin, &inv.team)
                     }
-                    None => None,
+                    None => Vec::new(),
                 }
             }
         };
-        used.extend(extra);
-        used
+        Used { all: used, any }
     }
 
     /// Rights a revocation takes away at this state (empty for other ops).
@@ -158,8 +238,35 @@ impl OrgState {
             }
             Body::TeamDelete { team } => vec![Right::AllTeamAdmins(team.clone())],
             Body::InviteRevoke { invite } => vec![Right::Invite(invite.clone())],
+            // Moving a department admin out of the department ends that
+            // admin right.
+            Body::TeamMove { team, member } => self
+                .teams_of(member)
+                .into_iter()
+                .filter(|(t, role)| &t.id != team && *role == TeamRole::Admin)
+                .map(|(t, _)| Right::TeamAdmin(t.id.clone(), member.clone()))
+                .collect(),
+            Body::ProjectMemberRemove { project, member } => {
+                vec![Right::ProjectMember(project.clone(), member.clone())]
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// One alternative per way `author` manages the project. A creator or
+    /// superadmin manages only while a project member.
+    fn project_rights(&self, project: &str, author: &str) -> Vec<Vec<Right>> {
+        let member = || Right::ProjectMember(project.to_owned(), author.to_owned());
+        self.project_manager_paths(project, author)
+            .into_iter()
+            .map(|path| match path {
+                ManagerPath::Creator => vec![member()],
+                ManagerPath::DepartmentAdmin(team) => {
+                    vec![Right::TeamAdmin(team, author.to_owned())]
+                }
+                ManagerPath::Superadmin => vec![Right::Superadmin(author.to_owned()), member()],
+            })
+            .collect()
     }
 }
 
@@ -254,7 +361,7 @@ fn closure(parents: &[Vec<usize>], from: usize, n: usize) -> Bits {
 struct Revocation {
     /// Position in fold order.
     pos: usize,
-    used: Vec<Right>,
+    used: Used,
     taken: Vec<Right>,
     /// Seniority of the author in the revocation's past: 0 for the founder,
     /// else 1 + position of the op that made them superadmin; `u64::MAX`
@@ -384,12 +491,19 @@ impl<'a> Pass<'a> {
             // causal order to a revocation is unknown.
             None if op.payload.scope == Scope::Org && winners.iter().any(|r| r.pos > i) => {
                 let used = self.state.rights_used(op);
-                let revoked = winners.iter().any(|r| {
-                    r.pos > i
-                        && log.ops[r.pos].author() != op.author()
-                        && !log.past(r.pos).contains(i)
-                        && takes_any(&r.taken, &used)
-                });
+                // Everything the revocations concurrent with this op take
+                // away, together: an op allowed through two rights is
+                // rejected when both are revoked, even by two separate ops.
+                let taken: Vec<&Right> = winners
+                    .iter()
+                    .filter(|r| {
+                        r.pos > i
+                            && log.ops[r.pos].author() != op.author()
+                            && !log.past(r.pos).contains(i)
+                    })
+                    .flat_map(|r| r.taken.iter())
+                    .collect();
+                let revoked = used.lost(&taken);
                 if revoked {
                     return Err(Reason::ConcurrentWithRevocation);
                 }
@@ -539,8 +653,8 @@ pub(crate) fn fold_ops(org: &Organization, ops: &[VerifiedOp]) -> FoldResult {
             if past.contains(other.pos) || log.ops[other.pos].author() == op.author() {
                 continue;
             }
-            let beats_other = takes_any(&rev.taken, &other.used);
-            let beaten = takes_any(&other.taken, &rev.used);
+            let beats_other = other.used.lost_to(&rev.taken);
+            let beaten = rev.used.lost_to(&other.taken);
             match (beats_other, beaten) {
                 (true, true) if rev.rank < other.rank => other.beaten_by.push(me),
                 (true, true) if other.rank < rev.rank => rev.beaten_by.push(k),
@@ -594,13 +708,13 @@ fn check_against_full(
     revs: &[Revocation],
     i: usize,
     state: &OrgState,
-    used: &[Right],
+    used: &Used,
     taken: &[Right],
     rank: u64,
 ) {
     let op = log.ops[i];
     let mut full = log.resolve(org, revs, Some(log.past(i)));
-    assert_eq!(full.state.rights_used(op), used);
+    assert_eq!(&full.state.rights_used(op), used);
     assert_eq!(full.state.rights_taken(op), taken);
     assert_eq!(full.state.is_superadmin(op.author()), rank != u64::MAX);
     let valid = state.clone().apply(op).is_ok();

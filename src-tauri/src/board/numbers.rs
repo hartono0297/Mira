@@ -118,9 +118,9 @@ mod tests {
     use super::*;
     use crate::board::doc::{TaskData, TaskInit, kind};
     use crate::board::policy::LocalRolePolicy;
-    use crate::board::store::{actor_of, commit_local, create_project};
+    use crate::board::store::{actor_of, commit_local, create_project_local};
     use crate::board::sync::{self, ApplyReport};
-    use crate::board::testutil::{Laptop, add_member};
+    use crate::board::testutil::{Laptop, add_member, register_project};
 
     fn at(minute: u32) -> String {
         format!("2026-11-22T01:{minute:02}:00Z")
@@ -259,12 +259,21 @@ mod tests {
         ls
     }
 
+    /// A project made by the founder with every laptop as a member,
+    /// registered on every laptop (the fixtures write the membership tables
+    /// directly, so no op is authored).
     fn project(ls: &mut [Laptop]) -> String {
         let a = &mut ls[0];
-        let p = create_project(&mut a.conn, &a.id, "Alfa", "PA", None)
+        let p = create_project_local(&mut a.conn, &a.id, "Alfa", "PA", None)
             .unwrap()
             .value
             .id;
+        let creator = ls[0].pk();
+        let everyone: Vec<String> = ls.iter().map(Laptop::pk).collect();
+        let everyone: Vec<&str> = everyone.iter().map(String::as_str).collect();
+        for l in ls.iter() {
+            register_project(&l.conn, &p, None, &creator, &everyone);
+        }
         exchange(ls, &p);
         p
     }

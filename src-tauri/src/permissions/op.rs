@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 
 use super::format::{
-    is_canonical_display_name, is_canonical_team_name, is_lower_hex, is_tag, is_valid_channel_name,
+    is_canonical_display_name, is_canonical_label_name, is_canonical_team_name, is_lower_hex,
+    is_tag, is_valid_app_version, is_valid_channel_name, is_valid_laptop_name, is_valid_os_name,
     parse_time,
 };
 
@@ -30,6 +31,8 @@ pub const MAX_CLOCK_AHEAD: Duration = Duration::minutes(10);
 pub const MAX_INVITE_VALIDITY: Duration = Duration::days(7);
 pub const CLOCK_SLACK: Duration = Duration::minutes(5);
 pub const MAX_GUEST_PROJECTS: usize = 50;
+/// Most people listed in `project_create.members`.
+pub const MAX_PROJECT_INITIAL_MEMBERS: usize = 200;
 /// Most ops listed in `deps`. With more heads, the author keeps the latest
 /// ones in fold order; the others stay implied only through lamport.
 pub const MAX_DEPS: usize = 32;
@@ -210,6 +213,86 @@ pub enum Body {
         team: String,
         name: String,
     },
+    // ----- v0.3: departments (internally still `team`) -----
+    /// Superadmin renames a department; its department channel follows.
+    TeamRename {
+        team: String,
+        name: String,
+    },
+    /// Superadmin archives (only when nobody is in it) or restores a
+    /// department.
+    TeamArchive {
+        team: String,
+        archived: bool,
+    },
+    /// Superadmin moves a non-guest member into `team`, out of whatever
+    /// department they were in (one department per person).
+    TeamMove {
+        team: String,
+        member: String,
+    },
+    // ----- v0.3: join requests -----
+    /// Approver admits the laptop that signed `request` (a
+    /// `JoinRequestPayload` JSON string, signed with `request_sig`).
+    JoinApprove {
+        request: String,
+        request_sig: String,
+    },
+    /// Approver turns the request down; it can never be approved after.
+    JoinReject {
+        request: String,
+        request_sig: String,
+    },
+    // ----- v0.3: projects with explicit members -----
+    /// Registers a board project: `project` must equal
+    /// `project_id_for(creator, team, nonce)`, the id the board derives.
+    ///
+    /// `members` (sorted, unique) join with the creator: the people picked
+    /// in the "Proyek baru" dialog, or the v0.2 readers when a project made
+    /// before v0.3 is registered.
+    ProjectCreate {
+        project: String,
+        team: Option<String>,
+        creator: String,
+        nonce: String,
+        members: Vec<String>,
+    },
+    ProjectMemberAdd {
+        project: String,
+        member: String,
+    },
+    ProjectMemberRemove {
+        project: String,
+        member: String,
+    },
+    // ----- v0.3: profile labels -----
+    LabelCreate {
+        label: String,
+        name: String,
+    },
+    LabelRename {
+        label: String,
+        name: String,
+    },
+    LabelArchive {
+        label: String,
+        archived: bool,
+    },
+    LabelAssign {
+        label: String,
+        member: String,
+    },
+    LabelUnassign {
+        label: String,
+        member: String,
+    },
+    // ----- v0.3: device profile -----
+    /// The author's own laptop name, operating system and Mira version.
+    DeviceSet {
+        laptop: String,
+        os: String,
+        app_version: String,
+    },
 }
 
 impl Body {
@@ -230,6 +313,20 @@ impl Body {
             Body::InviteRevoke { .. } => "invite_revoke",
             Body::InviteAccept { .. } => "invite_accept",
             Body::ChannelCreate { .. } => "channel_create",
+            Body::TeamRename { .. } => "team_rename",
+            Body::TeamArchive { .. } => "team_archive",
+            Body::TeamMove { .. } => "team_move",
+            Body::JoinApprove { .. } => "join_approve",
+            Body::JoinReject { .. } => "join_reject",
+            Body::ProjectCreate { .. } => "project_create",
+            Body::ProjectMemberAdd { .. } => "project_member_add",
+            Body::ProjectMemberRemove { .. } => "project_member_remove",
+            Body::LabelCreate { .. } => "label_create",
+            Body::LabelRename { .. } => "label_rename",
+            Body::LabelArchive { .. } => "label_archive",
+            Body::LabelAssign { .. } => "label_assign",
+            Body::LabelUnassign { .. } => "label_unassign",
+            Body::DeviceSet { .. } => "device_set",
         }
     }
 }
@@ -388,7 +485,7 @@ fn verify_signature(author: &str, payload: &str, sig: &str) -> bool {
         .is_ok()
 }
 
-fn is_point(hex_key: &str) -> bool {
+pub(crate) fn is_point(hex_key: &str) -> bool {
     <[u8; 32]>::from_hex(hex_key)
         .ok()
         .is_some_and(|b| VerifyingKey::from_bytes(&b).is_ok())
@@ -544,6 +641,95 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
                 "channel_create harus ber-scope tim yang sama",
             )?;
             need(is_valid_channel_name(name), "nama channel tidak valid")?;
+        }
+        Body::TeamRename { team, name } => {
+            org_scope(p)?;
+            id32(team, "team")?;
+            need(is_canonical_team_name(name), "nama departemen tidak valid")?;
+        }
+        Body::TeamArchive { team, archived: _ } => {
+            org_scope(p)?;
+            id32(team, "team")?;
+        }
+        Body::TeamMove { team, member } => {
+            org_scope(p)?;
+            id32(team, "team")?;
+            key64(member, "member")?;
+        }
+        Body::JoinApprove {
+            request,
+            request_sig,
+        }
+        | Body::JoinReject {
+            request,
+            request_sig,
+        } => {
+            org_scope(p)?;
+            need(
+                is_lower_hex(request_sig, 128),
+                "request_sig harus 128 karakter hex",
+            )?;
+            let req = super::join::parse_request_payload(request)?;
+            need(
+                req.org == p.org,
+                "permintaan bergabung untuk organisasi lain",
+            )?;
+        }
+        Body::ProjectCreate {
+            project,
+            team,
+            creator,
+            nonce,
+            members,
+        } => {
+            org_scope(p)?;
+            id32(project, "project")?;
+            if let Some(team) = team {
+                id32(team, "team")?;
+            }
+            key64(creator, "creator")?;
+            id32(nonce, "nonce proyek")?;
+            need(
+                members.len() <= MAX_PROJECT_INITIAL_MEMBERS,
+                "anggota awal proyek paling banyak 200 orang",
+            )?;
+            for m in members {
+                key64(m, "members")?;
+            }
+            need(
+                members.windows(2).all(|w| w[0] < w[1]),
+                "anggota awal proyek harus urut dan tanpa ganda",
+            )?;
+        }
+        Body::ProjectMemberAdd { project, member }
+        | Body::ProjectMemberRemove { project, member } => {
+            org_scope(p)?;
+            id32(project, "project")?;
+            key64(member, "member")?;
+        }
+        Body::LabelCreate { label, name } | Body::LabelRename { label, name } => {
+            org_scope(p)?;
+            id32(label, "label")?;
+            need(is_canonical_label_name(name), "nama label tidak valid")?;
+        }
+        Body::LabelArchive { label, archived: _ } => {
+            org_scope(p)?;
+            id32(label, "label")?;
+        }
+        Body::LabelAssign { label, member } | Body::LabelUnassign { label, member } => {
+            org_scope(p)?;
+            id32(label, "label")?;
+            key64(member, "member")?;
+        }
+        Body::DeviceSet {
+            laptop,
+            os,
+            app_version,
+        } => {
+            org_scope(p)?;
+            need(is_valid_laptop_name(laptop), "nama laptop tidak valid")?;
+            need(is_valid_os_name(os), "nama sistem operasi tidak valid")?;
+            need(is_valid_app_version(app_version), "versi Mira tidak valid")?;
         }
     }
     Ok(at)

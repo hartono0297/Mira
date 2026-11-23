@@ -276,12 +276,15 @@ mod tests {
 
     #[test]
     fn scope_follows_teams_and_guest_projects() {
-        let project = "ab".repeat(16);
         let mut lab = Lab::new(&["Sari", "Budi"]);
+        let team_id = lab.team.clone();
+        // Budi's projects; Sari (superadmin, same department) is not in them.
+        let project = lab.register_project(1, Some(&team_id), &[]);
+        let other = lab.register_project(1, Some(&team_id), &[]);
         let guest = lab.add_guest("Tamu", &[&project]);
         let outsider = lab.add_member_elsewhere("Dewi");
-        lab.add_project(&project, Some(&lab.team));
-        lab.add_project(&"cd".repeat(16), Some(&lab.team));
+        lab.add_project(&project, Some(&team_id));
+        lab.add_project(&other, Some(&team_id));
         let team = DocScope {
             team_id: Some(lab.team.clone()),
             project_id: None,
@@ -292,7 +295,7 @@ mod tests {
         };
         let other_project = DocScope {
             team_id: Some(lab.team.clone()),
-            project_id: Some("cd".repeat(16)),
+            project_id: Some(other.clone()),
         };
         let general = DocScope::default();
         let allows = |who: usize, scope: &DocScope, action: DocAction| {
@@ -301,6 +304,12 @@ mod tests {
         for action in ALL {
             assert!(allows(0, &team, action), "superadmin {action:?}");
             assert!(allows(1, &team, action), "team member {action:?}");
+            assert!(allows(1, &allowed_project, action), "project member {action:?}");
+            assert!(
+                !allows(0, &allowed_project, action),
+                "superadmin outside the project {action:?}"
+            );
+            assert!(!allows(outsider, &allowed_project, action), "not a member {action:?}");
             assert!(allows(1, &general, action), "general {action:?}");
             assert!(!allows(outsider, &team, action), "other team {action:?}");
             assert!(allows(outsider, &general, action), "other team, general {action:?}");
@@ -331,7 +340,7 @@ mod tests {
         }
 
         // A superadmin outside the team sees the general library only
-        // (F-ROLE-11).
+        // (F-ROLE-11); project data only once she adds herself.
         lab.leave_team(0);
         let allows = |who: usize, scope: &DocScope, action: DocAction| {
             lab.laptops[who].with(|c| RoleAccess.allows(&c.db, &c.identity, scope, action).unwrap())
@@ -340,6 +349,14 @@ mod tests {
             assert!(!allows(0, &team, action), "superadmin outside {action:?}");
             assert!(!allows(0, &allowed_project, action), "superadmin outside {action:?}");
             assert!(allows(0, &general, action), "superadmin, general {action:?}");
+        }
+        lab.add_to_project(0, &project, 0);
+        let allows = |who: usize, scope: &DocScope, action: DocAction| {
+            lab.laptops[who].with(|c| RoleAccess.allows(&c.db, &c.identity, scope, action).unwrap())
+        };
+        for action in ALL {
+            assert!(allows(0, &allowed_project, action), "superadmin as a member {action:?}");
+            assert!(!allows(0, &team, action), "still outside the team {action:?}");
         }
     }
 }

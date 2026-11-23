@@ -179,10 +179,25 @@ fn office() -> Office {
     }
 }
 
-fn project(l: &Lap, team: &str, code: &str) -> String {
-    commands::create_project(&l.state, &NoopSync, "Peluncuran produk", code, Some(team))
-        .unwrap()
-        .id
+impl Office {
+    /// Budi's project of the department, with Sari and Citra as project
+    /// members (everyone who saw a department project before v0.3). The
+    /// membership ops reach all three laptops.
+    fn project(&self, code: &str) -> String {
+        let pid = commands::create_project(&self.budi.state, &NoopSync, "Peluncuran produk", code, Some(&self.team))
+            .unwrap()
+            .id;
+        for who in [&self.sari.pk, &self.citra.pk] {
+            add_to_project(&self.budi, &pid, who);
+        }
+        sync_ops(&[&self.sari, &self.budi, &self.citra]);
+        pid
+    }
+}
+
+/// `by` (a manager of the project) adds `who` to it.
+fn add_to_project(by: &Lap, pid: &str, who: &str) {
+    by.core(|c| p::add_project_member(&mut c.db, &c.identity, pid, who, org_ops::now()));
 }
 
 fn new_task(l: &Lap, pid: &str, title: &str, assignee: Option<&str>) -> String {
@@ -285,7 +300,7 @@ fn fill_pending(l: &Lap, n: i64, from: &str, reason: &str, at: &str) {
 #[test]
 fn three_laptops_editing_offline_converge() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     let task = new_task(&o.budi, &pid, "Desain logo", Some(&o.citra.pk));
     sync_all(&o.all()).unwrap();
     assert_eq!(o.citra.tasks(&pid).len(), 1);
@@ -334,7 +349,7 @@ fn three_laptops_editing_offline_converge() {
 #[test]
 fn records_arrive_in_reverse_and_in_small_pulls() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     let a = new_task(&o.budi, &pid, "Satu", None);
     new_task(&o.budi, &pid, "Dua", None);
     patch(&o.budi, &pid, &a, TaskPatch {
@@ -369,7 +384,7 @@ fn records_arrive_in_reverse_and_in_small_pulls() {
 #[test]
 fn child_waits_for_its_parent_in_a_known_project() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     sync_all(&o.all()).unwrap();
     let a = new_task(&o.budi, &pid, "Satu", None);
     patch(&o.budi, &pid, &a, TaskPatch {
@@ -395,7 +410,7 @@ fn child_waits_for_its_parent_in_a_known_project() {
 #[test]
 fn new_project_imported_even_when_its_first_change_comes_last() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     new_task(&o.budi, &pid, "Dua", None);
     let records = records_from(&o.budi, &o.sari);
@@ -413,7 +428,7 @@ fn new_project_imported_even_when_its_first_change_comes_last() {
     assert_eq!(o.sari.count("SELECT count(*) FROM board_pending"), 0);
 
     // A plain pull of a fresh project works too.
-    let other = project(&o.budi, &o.team, "PX");
+    let other = o.project("PX");
     let (got, _) = pull(o.budi.me(), o.citra.me()).unwrap();
     assert!(got.changed);
     assert!(o.citra.has_project(&pid) && o.citra.has_project(&other));
@@ -422,8 +437,8 @@ fn new_project_imported_even_when_its_first_change_comes_last() {
 #[test]
 fn records_stay_with_people_who_may_read_the_project() {
     let o = office();
-    let pa = project(&o.budi, &o.team, "PA");
-    let pb = project(&o.budi, &o.team, "PB");
+    let pa = o.project("PA");
+    let pb = o.project("PB");
     new_task(&o.budi, &pa, "Untuk klien", None);
     new_task(&o.budi, &pb, "Internal", None);
 
@@ -463,10 +478,10 @@ fn records_stay_with_people_who_may_read_the_project() {
     assert_eq!(o.budi.f.unknown_ids(std::slice::from_ref(&by_guest.id)).unwrap(), vec![by_guest.id]);
     assert_eq!(o.budi.tasks(&pa).len(), 1);
 
-    // Citra leaves the team: new changes are no longer offered to her.
+    // Citra leaves the project (she stays in the department): new changes
+    // are no longer offered to her.
     let citra_pk = o.citra.pk.clone();
-    let team = o.team.clone();
-    o.sari.core(|c| p::remove_team_member(&mut c.db, &c.identity, &team, &citra_pk, org_ops::now()));
+    o.budi.core(|c| p::remove_project_member(&mut c.db, &c.identity, &pa, &citra_pk, org_ops::now()));
     sync_ops(&[&o.sari, &o.budi]);
     new_task(&o.budi, &pa, "Sesudah Citra keluar", None);
     let latest = o.budi.core(|c| store::stored_changes(&c.db, &pa)).pop().unwrap();
@@ -478,7 +493,7 @@ fn records_stay_with_people_who_may_read_the_project() {
 #[test]
 fn forged_changes_are_refused_and_not_asked_again() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     let task = new_task(&o.budi, &pid, "Logo", None);
     sync_all(&o.all()).unwrap();
     // Budi edits offline; that change is forged below.
@@ -539,22 +554,22 @@ fn forged_changes_are_refused_and_not_asked_again() {
 #[test]
 fn change_from_new_member_waits_for_the_membership_op() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     sync_all(&o.all()).unwrap();
-    // Eko is a member (team Keuangan) everyone knows about.
+    // Eko is a member (department Keuangan) everyone knows about.
     let eko = Lap::new("Eko");
     let keuangan = o.sari.core(|c| Ok(org_ops::create_team(&mut c.db, &c.identity, "Keuangan")));
     join(&o.sari, &eko, &keuangan, InviteRole::Member, vec![]);
     sync_ops(&[&o.sari, &o.budi, &o.citra, &eko]);
-    // Sari adds him to Desain; only Sari and Eko know so far.
-    let (team, eko_pk) = (o.team.clone(), eko.pk.clone());
-    o.sari.core(|c| p::add_team_member(&mut c.db, &c.identity, &team, &eko_pk, org_ops::now()));
+    // Sari (superadmin and project member) adds him to the project; only
+    // Sari and Eko know so far.
+    add_to_project(&o.sari, &pid, &eko.pk);
     sync_ops(&[&o.sari, &eko]);
     pull(o.sari.me(), eko.me()).unwrap();
     assert!(eko.has_project(&pid));
     new_task(&eko, &pid, "Spanduk", None);
 
-    // Budi has not heard that Eko joined Desain.
+    // Budi has not heard that Eko joined the project.
     let got = pull(eko.me(), o.budi.me()).unwrap().0;
     assert_eq!(got.rejected, 1);
     assert!(!got.changed);
@@ -573,7 +588,7 @@ fn change_from_new_member_waits_for_the_membership_op() {
 #[test]
 fn change_from_promoted_guest_waits_for_the_promotion_op() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     let tamu = Lap::new("Klien");
     join(&o.sari, &tamu, &o.team, InviteRole::Guest, vec![pid.clone()]);
     sync_ops(&[&o.sari, &o.budi, &o.citra, &tamu]);
@@ -609,7 +624,7 @@ fn change_from_promoted_guest_waits_for_the_promotion_op() {
 #[test]
 fn change_made_before_removal_is_accepted_after_it() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     let task = new_task(&o.budi, &pid, "Logo", None);
     sync_all(&o.all()).unwrap();
     patch(&o.citra, &pid, &task, TaskPatch {
@@ -658,7 +673,7 @@ fn change_made_before_removal_is_accepted_after_it() {
 #[test]
 fn pending_table_is_bounded() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     // Spread over several senders so the per-sender quota is not what stops it.
     let fresh = clock::now_rfc3339();
@@ -677,7 +692,7 @@ fn pending_table_is_bounded() {
 #[test]
 fn pending_quota_per_sender() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     fill_pending(&o.sari, MAX_PENDING_PER_SENDER, &o.budi.pk, "deps", &clock::now_rfc3339());
     let records = records_from(&o.budi, &o.sari);
@@ -710,7 +725,7 @@ fn old_waiting_rows_are_dropped() {
 #[test]
 fn pending_bytes_quota_per_sender() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     // One huge row from Budi: few rows, but his byte quota is used up.
     let big = "x".repeat(usize::try_from(MAX_PENDING_BYTES_PER_SENDER).unwrap() - 100);
@@ -735,7 +750,7 @@ fn pending_bytes_quota_per_sender() {
 #[test]
 fn waiting_changes_of_unknown_authors_are_not_kept() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     // Eko is not in the organization; Sari does not know the project yet.
     let eko = Lap::new("Eko");
@@ -769,7 +784,7 @@ fn waiting_changes_of_unknown_authors_are_not_kept() {
 #[test]
 fn one_reply_holds_at_most_the_byte_budget() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     // Rows shaped like large stored changes (about 200 KiB of body each).
     let author = o.budi.pk.clone();
     o.budi.core(|c| {
@@ -817,7 +832,7 @@ fn bound(l: &Lap, pid: &str) -> Option<i64> {
 #[test]
 fn bound_ids_are_checked_once_then_read_from_the_table() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     assert_eq!(bound(&o.budi, &pid), None);
     assert_eq!(o.budi.f.record_ids_for(&o.citra.pk).unwrap().len(), 2);
@@ -860,7 +875,7 @@ fn bound_ids_are_checked_once_then_read_from_the_table() {
 #[test]
 fn waiting_change_is_refused_once_the_project_arrives() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     pull(o.budi.me(), o.citra.me()).unwrap();
     // Citra (a member) sends Sari a change that rewrites the project's
@@ -894,7 +909,7 @@ fn waiting_change_is_refused_once_the_project_arrives() {
 #[test]
 fn old_rows_get_their_record_id_before_offering() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "PL");
+    let pid = o.project("PL");
     new_task(&o.budi, &pid, "Satu", None);
     let before = o.budi.f.record_ids_for(&o.citra.pk).unwrap();
     o.budi.core(|c| Ok(c.db.execute("UPDATE board_changes SET record_id = NULL", [])?));
@@ -937,9 +952,13 @@ fn local_and_received_changes_notify_the_hub_and_reminders() {
     let notifier = BoardSyncNotifier::new(reminders.clone(), hub.clone());
 
     let o = office();
-    commands::create_project(&o.budi.state, &notifier, "Peluncuran", "PL", Some(&o.team)).unwrap();
+    let pid = commands::create_project(&o.budi.state, &notifier, "Peluncuran", "PL", Some(&o.team))
+        .unwrap()
+        .id;
     assert_eq!(link.0.load(Ordering::SeqCst), 1);
     assert_eq!(reminders.0.load(Ordering::SeqCst), 1);
+    add_to_project(&o.budi, &pid, &o.citra.pk);
+    sync_ops(&[&o.budi, &o.citra]);
 
     // Received changes are announced too (reminders and forwarding).
     let citra_reminders = Arc::new(CountHook::default());

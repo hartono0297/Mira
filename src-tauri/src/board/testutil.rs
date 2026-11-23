@@ -115,6 +115,105 @@ pub fn add_team(conn: &Connection, name: &str, members: &[(&str, &str)]) -> Stri
     id
 }
 
+/// Registers project `id` in the derived tables (`projects`,
+/// `project_members`) as the v0.3 fold would after `project_create`, for
+/// fixtures that write the membership tables directly. The creator is not
+/// added on its own: list everyone who should be a member in `members`.
+pub fn register_project(
+    conn: &Connection,
+    id: &str,
+    team: Option<&str>,
+    creator: &str,
+    members: &[&str],
+) {
+    conn.execute(
+        "INSERT OR REPLACE INTO projects (id, team_id, creator, registered_by, created_at)
+         VALUES (?1, ?2, ?3, ?3, 't')",
+        params![id, team, creator],
+    )
+    .unwrap();
+    for pk in members {
+        add_project_member(conn, id, pk);
+    }
+}
+
+/// Adds `pk` to the registered project `id` (derived table only).
+pub fn add_project_member(conn: &Connection, id: &str, pk: &str) {
+    conn.execute(
+        "INSERT OR IGNORE INTO project_members (project_id, public_key, added_at, added_by)
+         VALUES (?1, ?2, 't', ?2)",
+        params![id, pk],
+    )
+    .unwrap();
+}
+
+/// Registers board project `id` (already in `board_projects`) with the
+/// people who could read it under the v0.2 rules, read from this laptop's
+/// membership tables: the active non-guest members of its team (every
+/// active non-guest member for a project without team). For tests written
+/// for those rules.
+pub fn register_v02(conn: &Connection, id: &str) {
+    let (team, creator): (Option<String>, String) = conn
+        .query_row(
+            "SELECT team_id, created_by FROM board_projects WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let readers: Vec<String> = match &team {
+        Some(t) => conn
+            .prepare(
+                "SELECT m.public_key FROM members m JOIN team_members tm ON tm.public_key = m.public_key
+                 WHERE tm.team_id = ?1 AND m.status = 'active' AND m.kind = 'member'",
+            )
+            .unwrap()
+            .query_map([t], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap(),
+        None => conn
+            .prepare("SELECT public_key FROM members WHERE status = 'active' AND kind = 'member'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap(),
+    };
+    let refs: Vec<&str> = readers.iter().map(String::as_str).collect();
+    register_project(conn, id, team.as_deref(), &creator, &refs);
+}
+
+/// Copies the registration of project `id` from one laptop's derived
+/// tables to another's when the other lacks it, as syncing the membership
+/// log would.
+pub fn copy_registration(from: &Connection, to: &Connection, id: &str) {
+    let known: Option<i64> = to
+        .query_row("SELECT 1 FROM projects WHERE id = ?1", [id], |r| r.get(0))
+        .ok();
+    if known.is_some() {
+        return;
+    }
+    let row: Option<(Option<String>, String)> = from
+        .query_row(
+            "SELECT team_id, creator FROM projects WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok();
+    let Some((team, creator)) = row else {
+        return;
+    };
+    let members: Vec<String> = from
+        .prepare("SELECT public_key FROM project_members WHERE project_id = ?1")
+        .unwrap()
+        .query_map([id], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let refs: Vec<&str> = members.iter().map(String::as_str).collect();
+    register_project(to, id, team.as_deref(), &creator, &refs);
+}
+
 /// Real membership log helpers (signed ops, folded by Tahap 1), generic over
 /// the connection and identity so tests can use `Laptop` or a `MiraState`.
 #[allow(dead_code)]
