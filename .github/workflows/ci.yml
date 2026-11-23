@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # package-lock: vite 8 dan vitest 5 butuh Node ^20.19 || ^22.12 || >=24.
+          node-version: 22
+          cache: npm
+
+      - name: Pasang dependensi npm
+        run: npm ci
+
+      - name: Cek tipe TypeScript
+        run: npx tsc --noEmit
+
+      - name: Tes frontend (vitest)
+        run: npx vitest run --pool=threads
+
+      # tauri::generate_context! mewajibkan folder frontendDist (../dist) ada saat kompilasi.
+      - name: Build frontend untuk konteks Tauri
+        run: npx vite build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings

@@ -44,6 +44,25 @@
     "category": "Productivity",
     "shortDescription": "Chat, board, dan dokumen tim di jaringan kantor",
     "longDescription": "Mira adalah aplikasi kerja tim untuk jaringan kantor (LAN) tanpa server dan tanpa internet. Anggota tim bisa mengobrol, mengatur board tugas per proyek, serta berbagi dan menandatangani dokumen PDF langsung antar komputer.",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": true,
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
+      }
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
