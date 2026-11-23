@@ -6,12 +6,14 @@
 //
 // Baris yang bisa diubah punya menu klik kanan (juga Shift+F10 dan tombol Menu)
 // berisi aksi yang sama dengan kontrol di baris. Klik kanan di kolom judul tetap
-// memberi menu teks global.
+// memberi menu teks global. Menu baris tidak dibuka selama baris diseret atau
+// dari dalam menu penanggung jawab.
 //
 // Escape di bagian ini tidak menutup dialog selama ada yang bisa dibatalkan:
-// judul dengan ketikan (data-escape-local, ditangani TaskDetail), isian subtask
-// baru, dan menu penanggung jawab (useLocalEscape). Isian dengan ketikan yang
-// belum terkirim ditandai data-unsaved supaya dialog memperingatkan sebelum tutup.
+// judul dengan ketikan atau judul yang dibuka lewat Ganti nama (data-escape-local,
+// ditangani TaskDetail), isian subtask baru, dan menu penanggung jawab
+// (useLocalEscape). Isian dengan ketikan yang belum terkirim ditandai
+// data-unsaved supaya dialog memperingatkan sebelum tutup.
 import {
   IconArrowDown,
   IconArrowUp,
@@ -85,6 +87,9 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
   const [newError, setNewError] = useState<string | null>(null);
   const [addBusy, setAddBusy] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  // Subtask yang kolom judulnya dibuka lewat Ganti nama di menu, sampai kolom itu
+  // kehilangan fokus. Escape di sana hanya keluar dari kolom, tidak menutup dialog.
+  const [renaming, setRenaming] = useState<string | null>(null);
   // Subtask yang judulnya baru saja dikosongkan: pesan tampil di bawah barisnya sampai diketik lagi.
   const [emptiedId, setEmptiedId] = useState<string | null>(null);
   const [live, setLive] = useState("");
@@ -310,8 +315,16 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
   function rename(id: string) {
     const input = findRow(sectionRef.current, id)?.querySelector<HTMLInputElement>('[data-part="title"]');
     if (!input) return;
+    setRenaming(id);
     input.focus();
     input.select();
+  }
+
+  // Escape tanpa ketikan setelah Ganti nama: keluar dari kolom judul, fokus
+  // kembali ke kotak centang baris itu. Blur kolom mengakhiri mode ganti nama.
+  function endRename(id: string) {
+    findRow(sectionRef.current, id)?.querySelector<HTMLElement>('[data-part="check"]')?.focus();
+    setRenaming((r) => (r === id ? null : r));
   }
 
   // Pindah naik atau turun dari menu. Seperti Alt + panah, fokus tetap di
@@ -396,6 +409,14 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
     () => say(T.saidDragCancelled),
   );
 
+  // Menu baris tidak dibuka selama baris diseret. Seret yang masih tertunda
+  // (tombol kiri ditahan, belum lewat ambang) dibatalkan dan menu dibuka.
+  function menuBlocked(): boolean {
+    if (drag.isDragging()) return true;
+    drag.cancelPending();
+    return false;
+  }
+
   function onRowKeyDown(e: ReactKeyboardEvent<HTMLLIElement>, s: Subtask) {
     if (!canEdit || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
     const target = e.target as HTMLElement;
@@ -419,7 +440,8 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
   }
 
   // Ketikan yang berbeda dari judul tersimpan. Hanya saat ini Escape membatalkan
-  // ketikan; tanpa ketikan, Escape menutup dialog seperti biasa.
+  // ketikan; tanpa ketikan, Escape menutup dialog seperti biasa, kecuali kolom
+  // dibuka lewat Ganti nama.
   function titleDirty(s: Subtask): boolean {
     const draft = drafts[s.id];
     return draft !== undefined && draft !== s.title;
@@ -434,6 +456,10 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
       e.preventDefault();
       e.stopPropagation();
       revertTitle(s.id);
+    } else if (e.key === "Escape" && renaming === s.id) {
+      e.preventDefault();
+      e.stopPropagation();
+      endRename(s.id);
     }
   }
 
@@ -505,6 +531,7 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
     const done = isDone(s);
     const value = drafts[s.id] ?? s.title;
     const dirty = titleDirty(s);
+    const escapeLocal = dirty || renaming === s.id;
     const emptied = emptiedId === s.id;
     const cls = [
       "td-sub",
@@ -525,6 +552,7 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
         waiting={waiting}
         menuLabel={TEKS_MENU.subtask.menu(s.title)}
         menuItems={rowMenu(s, i, waiting, done)}
+        menuBlocked={menuBlocked}
         onKeyDown={(e) => onRowKeyDown(e, s)}
       >
         <span
@@ -552,7 +580,7 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
           value={value}
           aria-label={T.titleLabel(i + 1, total)}
           aria-describedby={emptied ? `${titleErrId} ${hintId}` : hintId}
-          data-escape-local={dirty || undefined}
+          data-escape-local={escapeLocal || undefined}
           data-unsaved={dirty ? "true" : undefined}
           onChange={(e) => {
             const v = e.target.value;
@@ -560,7 +588,10 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
             if (emptied) setEmptiedId(null);
           }}
           onKeyDown={(e) => onTitleKeyDown(e, s)}
-          onBlur={() => commitTitle(s.id)}
+          onBlur={() => {
+            commitTitle(s.id);
+            setRenaming((r) => (r === s.id ? null : r));
+          }}
         />
         <WhoMenu
           subtask={s}
@@ -723,23 +754,47 @@ type SubtaskRowProps = {
   waiting: boolean;
   menuLabel: string;
   menuItems: BoardMenuEntry[];
+  // true: klik kanan atau Shift+F10 ini tidak membuka menu baris (baris sedang diseret).
+  menuBlocked: () => boolean;
   onKeyDown: (e: ReactKeyboardEvent<HTMLLIElement>) => void;
   children: ReactNode;
 };
 
+function isMenuKey(e: ReactKeyboardEvent): boolean {
+  return e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey);
+}
+
+// Klik kanan atau Shift+F10 dari menu lain di dalam baris (menu penanggung
+// jawab) milik menu itu, bukan menu baris.
+function inNestedMenu(e: { target: EventTarget | null; currentTarget: HTMLElement }): boolean {
+  const nested = e.target instanceof Element ? e.target.closest("[role=menu]") : null;
+  return !!nested && e.currentTarget.contains(nested);
+}
+
 // Satu baris subtask yang bisa diubah, dengan menu klik kanannya sendiri (satu
 // hook per baris). Pembungkus menu tidak punya kotak (display: contents), jadi
-// grid baris tidak berubah.
-function SubtaskRow({ className, rowId, waiting, menuLabel, menuItems: items, onKeyDown, children }: SubtaskRowProps) {
+// grid baris tidak berubah. Klik kanan yang tidak membuka menu baris tetap
+// dicegah, supaya menu bawaan webview tidak muncul.
+function SubtaskRow({ className, rowId, waiting, menuLabel, menuItems: items, menuBlocked, onKeyDown, children }: SubtaskRowProps) {
   const menu = useBoardMenu({ label: menuLabel, items });
   return (
     <li
       className={className}
       data-row-id={rowId}
       aria-busy={waiting || undefined}
-      onContextMenu={menu.triggerProps.onContextMenu}
+      onContextMenu={(e) => {
+        if (inNestedMenu(e) || menuBlocked()) {
+          e.preventDefault();
+          return;
+        }
+        menu.triggerProps.onContextMenu(e);
+      }}
       onKeyDown={(e) => {
         onKeyDown(e);
+        if (isMenuKey(e) && (inNestedMenu(e) || menuBlocked())) {
+          e.preventDefault();
+          return;
+        }
         menu.triggerProps.onKeyDown(e);
       }}
     >

@@ -65,7 +65,13 @@ function ProjectLink({ project: p, current, due, onSelect, onRequest }: LinkProp
   const menu = useBoardMenu({
     label: t.menu(p.code, p.name),
     items: boardMenuItems(
-      { id: "open", label: t.buka, icon: <IconLayoutKanban size={16} />, onSelect: () => onSelect(p.id) },
+      {
+        id: "open",
+        label: t.buka,
+        icon: <IconLayoutKanban size={16} />,
+        disabled: current && t.sedangTerbuka,
+        onSelect: () => onSelect(p.id),
+      },
       { id: "members", label: t.anggota, icon: <IconUsers size={16} />, onSelect: () => onRequest(p.id, "members") },
       p.canManage && {
         id: "rename",
@@ -249,6 +255,10 @@ export function BoardScreen() {
 
   const currentProject = projects?.find((p) => p.id === current) ?? null;
   const currentId = currentProject?.id ?? null;
+  // Permintaan menu hanya berlaku selama board proyeknya tetap terpasang. Begitu
+  // board itu tidak tampil (misalnya proyeknya hilang dari daftar), permintaan
+  // dibuang, supaya board yang dipasang lagi nanti tidak membuka panelnya sendiri.
+  if (request && request.projectId !== currentId) setRequest(null);
   const boardRequest = useMemo(
     () => (request && request.projectId === currentId ? { kind: request.kind, n: request.n } : undefined),
     [request, currentId],

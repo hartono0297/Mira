@@ -126,6 +126,8 @@ export function ProjectBoard({
   const [announce, setAnnounce] = useState({ text: "", n: 0 });
   const [failure, setFailure] = useState<Failure | null>(null);
   const moveSeq = useRef(0);
+  // Task yang dihapus dari board ini (menu kartu atau detail task).
+  const deletedIds = useRef(new Set<string>());
   const mounted = useRef(true);
   const focusAfter = useRef<string | null>(null);
   const afterDialog = useRef<FocusTarget | null>(null);
@@ -230,6 +232,10 @@ export function ProjectBoard({
   // Fokus dipasang lewat afterDialog, setelah dialog (detail task atau konfirmasi hapus) tertutup.
   function removed(taskId: string, code: string) {
     afterDialog.current = focusAfterRemoval(taskId);
+    // Pindahan kartu ini yang masih berjalan tidak diterapkan lagi, dan
+    // jawabannya (berhasil atau gagal) diabaikan di move().
+    deletedIds.current.add(taskId);
+    setPendingMoves((list) => list.filter((m) => m.taskId !== taskId));
     const latest = dataRef.current;
     if (latest) setData(withoutTask(latest, taskId));
     say(TEKS_MENU.kartu.dihapus(code));
@@ -255,9 +261,16 @@ export function ProjectBoard({
     setFailure(null);
     if (keepFocus) focusAfter.current = taskId;
     const settle = () => setPendingMoves((list) => list.filter((m) => m.seq !== seq));
+    // Kartu dihapus selagi pindahan ini menunggu jawaban: hasilnya (yang masih
+    // memuat kartu itu) dan galatnya tidak dipakai.
+    const gone = () => deletedIds.current.has(taskId);
     try {
       const result = await boardApi.moveTask(projectId, taskId, target.columnId, target.index);
       if (!mounted.current) return;
+      if (gone()) {
+        settle();
+        return;
+      }
       say(`${code} dipindah ke ${colName}, posisi ${placed.index + 1} dari ${placed.size}.`);
       // Data akhir bisa memasang ulang kartu; fokus dikembalikan kalau belum pindah ke tempat lain.
       const active = document.activeElement;
@@ -271,8 +284,9 @@ export function ProjectBoard({
       onProjectsChanged();
     } catch (err) {
       if (!mounted.current) return;
-      if (keepFocus) focusAfter.current = taskId;
       settle();
+      if (gone()) return;
+      if (keepFocus) focusAfter.current = taskId;
       const error = toAppError(err);
       setFailure({ title: moveErrorTitle(error, code), message: error.message, note: "Kartu dikembalikan ke tempat semula." });
       say(`${code} belum dipindah.`);
@@ -344,12 +358,19 @@ export function ProjectBoard({
       open: () => onOpenTask(id),
       move: (to) => void move(id, to, true),
       edit: (patch: TaskPatch, done: string) => void changeTask(code, () => boardApi.updateTask(projectId, id, patch), done),
-      timer: (start) =>
-        void changeTask(
-          code,
-          () => (start ? boardApi.startTimer(projectId, id) : boardApi.stopTimer(projectId, id, null)),
-          start ? TEKS_MENU.kartu.timerMulai(code) : TEKS_MENU.kartu.timerBerhenti(code),
-        ),
+      timer: (start) => {
+        // Inti Rust menghentikan timer saya di task lain proyek ini saat timer
+        // baru mulai; pengumumannya menyebut task itu.
+        const stopped = start
+          ? (viewRef.current?.columns.flatMap((c) => c.tasks) ?? []).filter((t) => t.id !== id && t.myTimerRunning).map((t) => t.code)
+          : [];
+        const done = !start
+          ? TEKS_MENU.kartu.timerBerhenti(code)
+          : stopped.length > 0
+            ? TEKS_MENU.kartu.timerMulaiGanti(code, stopped)
+            : TEKS_MENU.kartu.timerMulai(code);
+        void changeTask(code, () => (start ? boardApi.startTimer(projectId, id) : boardApi.stopTimer(projectId, id, null)), done);
+      },
       copy: () => void copyCode(code),
       // Galat dilempar ke dialog konfirmasi menu, yang menampilkannya.
       remove: async () => {

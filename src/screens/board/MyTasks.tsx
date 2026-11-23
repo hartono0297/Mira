@@ -75,18 +75,21 @@ function MyTaskRow({ item, group, now, onOpen, onMove, onCopy }: RowProps) {
     label: txt.menu(t.code),
     items: boardMenuItems(
       { id: "open", label: txt.buka, icon: <IconFileText size={16} />, onSelect: () => onOpen(item) },
-      submenu({
-        id: "move",
-        label: txt.pindahkan,
-        menuLabel: txt.pindahkanMenu(t.code),
-        icon: <IconArrowsMove size={16} />,
-        items: COLUMN_ORDER.map((col) => ({
-          id: col,
-          label: COLUMN_NAMES[col],
-          disabled: col === t.columnId && TEKS_MENU.kartu.sudahDiKolom,
-          onSelect: () => onMove(item, col),
-        })),
-      }),
+      // Tanpa hak tulis (tamu, atau sudah dikeluarkan dari proyek) pemindahan pasti ditolak inti.
+      // undefined berarti data lama: tetap tampil.
+      t.canEdit !== false &&
+        submenu({
+          id: "move",
+          label: txt.pindahkan,
+          menuLabel: txt.pindahkanMenu(t.code),
+          icon: <IconArrowsMove size={16} />,
+          items: COLUMN_ORDER.map((col) => ({
+            id: col,
+            label: COLUMN_NAMES[col],
+            disabled: col === t.columnId && TEKS_MENU.kartu.sudahDiKolom,
+            onSelect: () => onMove(item, col),
+          })),
+        }),
       { id: "copy", label: txt.salinKode(t.code), icon: <IconCopy size={16} />, onSelect: () => onCopy(t.code) },
     ),
   });

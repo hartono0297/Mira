@@ -580,92 +580,162 @@ fn cards_carry_the_viewers_delete_right_and_running_timer() {
     use crate::board::testutil::{Laptop, add_member, add_team, register_project};
 
     let mut l = Laptop::founder("Sari");
+    let sari = l.pk();
     let pk = |n: u8| format!("{n:02x}").repeat(32);
-    let (admin, budi, citra, guest) = (pk(1), pk(2), pk(3), pk(4));
+    let (admin, budi, citra, guest, dedi, eko) = (pk(1), pk(2), pk(3), pk(4), pk(5), pk(6));
     add_member(&l.conn, &admin, "Admin", "member");
     add_member(&l.conn, &budi, "Budi", "member");
     add_member(&l.conn, &citra, "Citra", "member");
     add_member(&l.conn, &guest, "Tamu", "guest");
+    add_member(&l.conn, &dedi, "Dedi", "member");
+    add_member(&l.conn, &eko, "Eko", "superadmin");
     let team = add_team(
         &l.conn,
         "Desain",
-        &[(&admin, "admin"), (&budi, "member"), (&citra, "member")],
+        &[
+            (&admin, "admin"),
+            (&budi, "member"),
+            (&citra, "member"),
+            (&dedi, "member"),
+        ],
     );
-    let project = store::create_project_local(&mut l.conn, &l.id, "Situs Web", "WEB", Some(&team))
+    // The founder (a superadmin) creates both projects; the registration
+    // must name the same creator. Eko is a superadmin who did not create
+    // them: a member of WEB, not of INT.
+    let web = store::create_project_local(&mut l.conn, &l.id, "Situs Web", "WEB", Some(&team))
         .unwrap()
         .value;
     register_project(
         &l.conn,
-        &project.id,
+        &web.id,
         Some(&team),
-        &l.pk(),
-        &[&admin, &budi, &citra, &guest],
+        &sari,
+        &[&sari, &admin, &budi, &citra, &guest, &dedi, &eko],
     );
-    // Budi creates the task (assigned to Citra) and starts a timer on it.
+    // A project without department.
+    let int = store::create_project_local(&mut l.conn, &l.id, "Internal", "INT", None)
+        .unwrap()
+        .value;
+    register_project(
+        &l.conn,
+        &int.id,
+        None,
+        &sari,
+        &[&sari, &budi, &citra, &guest],
+    );
+
     let at = clock::now_rfc3339();
-    let stamp = Stamp {
-        actor: &budi,
-        at: &at,
+    let init = |title: &str, assignee: Option<&String>| TaskInit {
+        title: title.into(),
+        description: String::new(),
+        column: None,
+        assignee: assignee.cloned(),
+        due: None,
+        priority: model::Priority::None,
+        labels: Vec::new(),
     };
-    let task_id = store::commit_local(&mut l.conn, &l.id, &project.id, |d| {
-        let id = d.create_task(
-            stamp,
-            TaskInit {
-                title: "Spanduk".into(),
-                description: String::new(),
-                column: None,
-                assignee: Some(citra.clone()),
-                due: None,
-                priority: model::Priority::None,
-                labels: Vec::new(),
-            },
-        )?;
-        d.start_timer(stamp, &id)?;
-        Ok(id)
-    })
-    .unwrap()
-    .value;
+    let create = |conn: &mut rusqlite::Connection, project: &str, by: &str, task: TaskInit| {
+        let stamp = Stamp { actor: by, at: &at };
+        store::commit_local(conn, &l.id, project, |d| {
+            let id = d.create_task(stamp, task)?;
+            if by == budi {
+                d.start_timer(stamp, &id)?;
+            }
+            Ok(id)
+        })
+        .unwrap()
+        .value
+    };
+    // Budi creates Spanduk (assigned to Citra) and starts a timer on it.
+    let spanduk = create(&mut l.conn, &web.id, &budi, init("Spanduk", Some(&citra)));
+    // Dedi creates Brosur, then leaves the project (still in the department).
+    let brosur = create(&mut l.conn, &web.id, &dedi, init("Brosur", None));
+    l.conn
+        .execute(
+            "DELETE FROM project_members WHERE project_id = ?1 AND public_key = ?2",
+            [&web.id, &dedi],
+        )
+        .unwrap();
+    // Citra creates Rapat in the project without department.
+    let rapat = create(&mut l.conn, &int.id, &citra, init("Rapat", None));
 
     let dir = LocalMembers::new(&l.id);
     let actor = store::actor_of(&l.id);
-    let doc = store::load_doc(&l.conn, &project.id, &actor).unwrap();
-    let task = doc
-        .tasks()
-        .unwrap()
-        .into_iter()
-        .find(|t| t.id == task_id)
-        .unwrap();
-    let view_as = |me: &str| -> (model::TaskCard, TaskDetail) {
+    let view_as = |project: &ProjectRow, task_id: &str, me: &str| {
         let ctx = Ctx {
             conn: &l.conn,
             me,
             policy: &LocalRolePolicy,
             dir: &dir,
         };
-        let board = ctx.board(&project, &doc).unwrap();
-        (board.columns[0].tasks[0].clone(), ctx.detail(&project, &task))
+        let doc = store::load_doc(&l.conn, &project.id, &actor).unwrap();
+        let task = doc
+            .tasks()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == task_id)
+            .unwrap();
+        let card = ctx
+            .board(project, &doc)
+            .unwrap()
+            .columns
+            .into_iter()
+            .flat_map(|c| c.tasks)
+            .find(|t| t.id == task_id)
+            .unwrap();
+        let may = |action: BoardAction| LocalRolePolicy.allows(&l.conn, me, &action);
+        let edit = may(BoardAction::EditTask {
+            project_id: project.id.clone(),
+            task_id: task.id.clone(),
+        });
+        let delete = may(BoardAction::DeleteTask {
+            project_id: project.id.clone(),
+            task_id: task.id.clone(),
+            created_by: task.created_by.clone(),
+        });
+        (card, ctx.detail(project, &task), edit, delete)
     };
 
-    // (viewer, may delete, timer running)
-    for (who, delete, running) in [
-        (&budi, true, true),   // creator
-        (&admin, true, false), // department admin manages the project
-        (&citra, false, false),
-        (&guest, false, false),
-    ] {
-        let (card, detail) = view_as(who);
-        assert_eq!(card.can_delete, delete, "{who}");
-        assert_eq!(card.my_timer_running, running, "{who}");
-        assert_eq!(detail.card, card, "detail and board agree for {who}");
-        assert_eq!(detail.my_running_entry.is_some(), running, "{who}");
+    // (project, task, viewer, may edit, may delete, timer running)
+    let cases = [
+        (&web, &spanduk, &budi, true, true, true), // task creator
+        (&web, &spanduk, &admin, true, true, false), // department admin
+        (&web, &spanduk, &sari, true, true, false), // founder, project creator
+        (&web, &spanduk, &eko, true, true, false),  // superadmin and member
+        (&web, &spanduk, &citra, true, false, false),
+        (&web, &spanduk, &guest, false, false, false),
+        (&web, &spanduk, &dedi, false, false, false), // left the project
+        (&web, &brosur, &dedi, false, false, false),  // creator who left
+        (&web, &brosur, &budi, true, false, false),
+        (&web, &brosur, &admin, true, true, false),
+        (&web, &brosur, &eko, true, true, false),
+        (&int, &rapat, &citra, true, true, false), // task creator
+        (&int, &rapat, &budi, true, false, false),
+        (&int, &rapat, &sari, true, true, false), // founder, project creator
+        (&int, &rapat, &eko, false, false, false), // superadmin, not a member
+        (&int, &rapat, &guest, false, false, false),
+        (&int, &rapat, &admin, false, false, false), // not a member
+    ];
+    for (project, task, who, edit, delete, running) in cases {
+        let (card, detail, may_edit, may_delete) = view_as(project, task, who);
+        let at = format!("{} {who}", project.code);
+        assert_eq!(card.can_edit, may_edit, "card agrees with EditTask: {at}");
+        assert_eq!(card.can_delete, may_delete, "card agrees with DeleteTask: {at}");
+        assert_eq!(card.can_edit, edit, "{at}");
+        assert_eq!(card.can_delete, delete, "{at}");
+        assert_eq!(card.my_timer_running, running, "{at}");
+        assert_eq!(detail.card, card, "detail and board agree: {at}");
+        assert_eq!(detail.my_running_entry.is_some(), running, "{at}");
     }
 
     // JSON: one camelCase key each, in the card and the flattened detail.
-    let (card, detail) = view_as(&budi);
+    let (card, detail, _, _) = view_as(&web, &spanduk, &budi);
     let json = serde_json::to_value(&card).unwrap();
+    assert_eq!(json["canEdit"], true);
     assert_eq!(json["canDelete"], true);
     assert_eq!(json["myTimerRunning"], true);
     let text = serde_json::to_string(&detail).unwrap();
+    assert_eq!(text.matches("\"canEdit\"").count(), 1);
     assert_eq!(text.matches("\"canDelete\"").count(), 1);
     assert_eq!(text.matches("\"myTimerRunning\"").count(), 1);
 
@@ -678,5 +748,6 @@ fn cards_carry_the_viewers_delete_right_and_running_timer() {
     };
     let mine = ctx.my_tasks(&actor).unwrap();
     assert_eq!(mine.len(), 1);
-    assert!(!mine[0].task.can_delete && !mine[0].task.my_timer_running);
+    let t = &mine[0].task;
+    assert!(t.can_edit && !t.can_delete && !t.my_timer_running);
 }

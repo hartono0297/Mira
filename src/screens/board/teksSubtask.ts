@@ -12,7 +12,7 @@ export const teksSubtask = {
 
   emptyEditable: "Belum ada subtask. Pecah task ini jadi langkah kecil yang bisa dicentang.",
   emptyReadOnly: "Belum ada subtask.",
-  hint: "Enter menyimpan judul, Escape membatalkan. Alt + panah atas atau bawah memindah subtask.",
+  hint: "Enter menyimpan judul, Escape membatalkan. Alt + panah atas atau bawah memindah subtask. Shift + F10 di kotak centang membuka menu aksi subtask.",
 
   addButton: "Tambah subtask",
   newLabel: "Judul subtask baru",

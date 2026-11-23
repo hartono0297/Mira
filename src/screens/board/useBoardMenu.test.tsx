@@ -536,6 +536,73 @@ describe("MenuButton dengan handle ini", () => {
   });
 });
 
+describe("aksi sub-menu", () => {
+  const CONFIRM = { title: "Hapus dari kolom?", body: "Tidak bisa dibatalkan.", confirmLabel: "Hapus", busyLabel: "Menghapus" };
+
+  function itemsWith(entry: MenuEntry) {
+    return boardMenuItems(
+      { id: "open", label: "Buka task", onSelect: vi.fn() },
+      submenu({ id: "move", label: "Pindahkan ke", menuLabel: SUB, items: [entry] }),
+    );
+  }
+
+  it("aksi yang gagal (Promise ditolak) dilaporkan ke console.error, tidak hilang diam-diam", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onSelect = vi.fn(() => Promise.reject(new Error("rusak")));
+    const { user, card } = setup(itemsWith({ id: "doing", label: "Dikerjakan", onSelect }));
+    await openSubByKeyboard(user, card);
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(err).toHaveBeenCalledWith('Aksi menu "Dikerjakan" gagal', expect.any(Error)));
+    expect(menus()).toHaveLength(0);
+    err.mockRestore();
+  });
+
+  it("aksi yang melempar galat langsung juga dilaporkan, menu tetap tertutup", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onSelect = vi.fn(() => {
+      throw new Error("rusak");
+    });
+    const { user, card } = setup(itemsWith({ id: "doing", label: "Dikerjakan", onSelect }));
+    await openSubByKeyboard(user, card);
+    await user.keyboard("{Enter}");
+    expect(err).toHaveBeenCalledWith('Aksi menu "Dikerjakan" gagal', expect.any(Error));
+    expect(menus()).toHaveLength(0);
+    expect(card).toHaveFocus();
+    err.mockRestore();
+  });
+
+  it("item ber-confirm meminta konfirmasi dulu; Batal tidak menjalankan aksi", async () => {
+    const onSelect = vi.fn();
+    const { user, card } = setup(itemsWith({ id: "drop", label: "Hapus dari kolom", danger: true, confirm: CONFIRM, onSelect }));
+    await openSubByKeyboard(user, card);
+    await user.keyboard("{Enter}");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(menus()).toHaveLength(0);
+    const dialog = screen.getByRole("dialog", { name: "Hapus dari kolom?" });
+    expect(dialog).toHaveTextContent("Tidak bisa dibatalkan.");
+    await user.click(screen.getByRole("button", { name: "Batal" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("item ber-confirm: tombol konfirmasi menjalankan aksi; galatnya tampil di dialog", async () => {
+    const onSelect = vi.fn().mockRejectedValueOnce({ code: "x", message: "Kolom terkunci." }).mockResolvedValueOnce(undefined);
+    const { user, card } = setup(itemsWith({ id: "drop", label: "Hapus dari kolom", danger: true, confirm: CONFIRM, onSelect }));
+    await openSubByKeyboard(user, card);
+    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: "Hapus" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Kolom terkunci.")).toBeInTheDocument();
+    expect(screen.getByText("Hapus dari kolom gagal")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Hapus dari kolom?" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Hapus" }));
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+});
+
 describe("boardMenuItems", () => {
   const a: MenuEntry = { id: "a", label: "A", onSelect: () => {} };
   const b: MenuEntry = { id: "b", label: "B", onSelect: () => {} };

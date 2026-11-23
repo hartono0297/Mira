@@ -38,6 +38,12 @@ export function MoveMenu({ code, options }: Props) {
   }
 
   function onMenuKey(e: KeyboardEvent<HTMLUListElement>) {
+    // Shift+F10 dan tombol Menu di menu ini tidak membuka menu kartu di atasnya.
+    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const list = items();
     const at = list.indexOf(document.activeElement as HTMLButtonElement);
     let next: number | null = null;
@@ -62,7 +68,17 @@ export function MoveMenu({ code, options }: Props) {
   }
 
   return (
-    <div className="mv" data-no-drag>
+    <div
+      className="mv"
+      data-no-drag
+      onBlur={(e) => {
+        const next = e.relatedTarget as Node | null;
+        // Fokus pindah ke luar (misalnya menu kartu dari klik kanan): menu ditutup.
+        // Tanpa relatedTarget (klik di bagian yang tidak bisa difokus) diputuskan oleh mousedown.
+        if (!open || !next || e.currentTarget.contains(next)) return;
+        setOpen(false);
+      }}
+    >
       <button
         ref={buttonRef}
         type="button"

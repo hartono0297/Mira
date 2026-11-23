@@ -89,6 +89,9 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
   // Saya paling atas, lalu yang lain urut seperti datanya.
   const me = view.assignees.find((p) => p.publicKey === view.me);
   const people = me ? [me, ...view.assignees.filter((p) => p !== me)] : view.assignees;
+  // Penanggung jawab sekarang yang sudah bukan anggota proyek tampil nonaktif
+  // di bawah anggota, sama seperti menu subtask.
+  const former = task.assignee && !view.assignees.some((p) => p.publicKey === task.assignee?.publicKey) ? task.assignee : null;
   const assignItems: MenuEntry[] = [
     ...people.map((p) => ({
       id: `assign-${p.publicKey}`,
@@ -96,6 +99,16 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
       disabled: task.assignee?.publicKey === p.publicKey && T.penanggungJawabSekarang,
       onSelect: () => actions.edit({ assignee: p.publicKey }, T.ditugaskan(code, p.name)),
     })),
+    ...(former
+      ? [
+          {
+            id: `assign-${former.publicKey}`,
+            label: T.bukanAnggota(former.name, former.publicKey === view.me),
+            disabled: T.penanggungJawabSekarang,
+            onSelect: () => {},
+          },
+        ]
+      : []),
     SEPARATOR,
     {
       id: "assign-none",
@@ -121,7 +134,12 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
     { id: "due-today", label: T.hariIni, disabled: task.due === isoFromToday(0) && T.tenggatSekarang, onSelect: () => setDue(0, T.hariIni) },
     { id: "due-tomorrow", label: T.besok, disabled: task.due === isoFromToday(1) && T.tenggatSekarang, onSelect: () => setDue(1, T.besok) },
     SEPARATOR,
-    !!task.due && { id: "due-clear", label: T.hapusTenggat, onSelect: () => actions.edit({ due: null }, T.tenggatDihapus(code)) },
+    {
+      id: "due-clear",
+      label: T.hapusTenggat,
+      disabled: !task.due && T.belumAdaTenggat,
+      onSelect: () => actions.edit({ due: null }, T.tenggatDihapus(code)),
+    },
     { id: "due-other", label: T.tanggalLain, onSelect: actions.open },
   );
 
@@ -131,10 +149,12 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
 
   return boardMenuItems(
     { id: "open", label: T.buka, icon: <IconFileText size={16} />, onSelect: actions.open },
+    SEPARATOR,
     canEdit && submenu({ id: "move", label: T.pindahkan, menuLabel: T.pindahkanMenu(code), icon: <IconArrowsMove size={16} />, items: moveItems }),
     canEdit && submenu({ id: "assign", label: T.tugaskan, menuLabel: T.tugaskanMenu(code), icon: <IconUserPlus size={16} />, items: assignItems }),
     canEdit && submenu({ id: "priority", label: T.prioritas, menuLabel: T.prioritasMenu(code), icon: <IconFlag size={16} />, items: priorityItems }),
     canEdit && submenu({ id: "due", label: T.tenggat, menuLabel: T.tenggatMenu(code), icon: <IconCalendarDue size={16} />, items: dueItems }),
+    SEPARATOR,
     canEdit && {
       id: running ? "timer-stop" : "timer-start",
       label: running ? T.hentikanTimer : T.mulaiTimer,
@@ -150,12 +170,7 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
       danger: true,
       confirm: {
         title: teksDialog.hapusJudul(code),
-        body: (
-          <>
-            <p>{teksDialog.hapusIsi(task.title, task.subtaskTotal, task.commentCount, 0)}</p>
-            {hasTime && <p>{T.hapusWaktu}</p>}
-          </>
-        ),
+        body: <p>{T.hapusIsi(task.title, task.subtaskTotal, task.commentCount, hasTime)}</p>,
         confirmLabel: teksDialog.hapusTombol(code),
         busyLabel: TEKS_DIALOG.menghapus,
       },

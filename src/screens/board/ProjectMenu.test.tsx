@@ -1,6 +1,6 @@
 // Menu klik kanan proyek di daftar kiri Board (v0.4): Buka board, Anggota
 // proyek, Ubah nama proyek (pengelola). Rancangan: docs/plans/v04-ctx-board.md.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardView, ColumnId, ProjectSummary } from "../../api/board";
@@ -18,11 +18,24 @@ const board = vi.hoisted(() => ({
   outsideProjects: vi.fn(),
 }));
 
+// Event mira://board tiruan: boardEvent() membuat daftar proyek dimuat ulang.
+const listeners = vi.hoisted(() => new Set<() => void>());
+
 vi.mock("../../api/board", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/board")>()),
   boardApi: board,
-  subscribeBoard: () => () => {},
+  subscribeBoard: (handler: () => void) => {
+    listeners.add(handler);
+    return () => listeners.delete(handler);
+  },
 }));
+
+async function boardEvent() {
+  await act(async () => {
+    listeners.forEach((h) => h());
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
 
 const org = vi.hoisted(() => ({
   overview: vi.fn(),
@@ -117,6 +130,7 @@ function membersOf(projectId: string): ProjectMembersView {
 
 beforeEach(() => {
   window.localStorage.clear();
+  listeners.clear();
   projects = [project(P1, "PA", "Proyek Alfa"), project(P2, "KB", "Kantor Baru", { canManage: false })];
   board.listProjects.mockReset().mockImplementation(async () => projects);
   board.getBoard.mockReset().mockImplementation(async (id: string) => boardOf(projects.find((p) => p.id === id)!));
@@ -182,6 +196,20 @@ describe("Menu klik kanan proyek", () => {
     expect(link(/Kantor Baru/)).toHaveAttribute("aria-current", "page");
   });
 
+  it("Buka board untuk proyek yang sedang terbuka nonaktif dengan alasannya", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const alfa = await rightClick(user, /Proyek Alfa/, "Aksi untuk proyek PA Proyek Alfa");
+    expect(item(alfa, "open")).toHaveAttribute("aria-disabled", "true");
+    expect(item(alfa, "open")).toHaveAccessibleDescription("Board ini sedang terbuka");
+    // Item lain tetap bisa dipakai.
+    expect(item(alfa, "members")).not.toHaveAttribute("aria-disabled");
+    await user.keyboard("{Escape}");
+
+    const kb = await rightClick(user, /Kantor Baru/, "Aksi untuk proyek KB Kantor Baru");
+    expect(item(kb, "open")).not.toHaveAttribute("aria-disabled");
+  });
+
   it("Buka board memilih proyek itu", async () => {
     const user = userEvent.setup();
     await renderBoard();
@@ -230,6 +258,33 @@ describe("Menu klik kanan proyek", () => {
     await screen.findByRole("heading", { level: 2, name: /Kantor Baru/ });
     await user.click(link(/Proyek Alfa/));
     await screen.findByRole("heading", { level: 2, name: /Proyek Alfa/ });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("panel tidak terbuka lagi sendiri saat proyek hilang dari daftar lalu muncul lagi", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const menu = await rightClick(user, /Proyek Alfa/, "Aksi untuk proyek PA Proyek Alfa");
+    await user.click(item(menu, "members"));
+    await screen.findByRole("dialog", { name: "Anggota proyek" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // Saya dikeluarkan dari PA: board-nya diganti penjelasan.
+    const all = projects;
+    projects = [all[1]];
+    await boardEvent();
+    expect(await screen.findByRole("heading", { name: "Proyek PA Proyek Alfa tidak tersedia lagi" })).toBeInTheDocument();
+
+    // Saya ditambahkan lagi: board PA tampil lagi tanpa panel Anggota.
+    const loads = board.getBoard.mock.calls.length;
+    projects = all;
+    await boardEvent();
+    expect(await screen.findByRole("heading", { level: 2, name: /Proyek Alfa/ })).toBeInTheDocument();
+    await waitFor(() => expect(board.getBoard.mock.calls.length).toBeGreaterThan(loads));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

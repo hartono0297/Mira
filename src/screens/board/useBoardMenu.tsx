@@ -8,6 +8,9 @@
 // sub-menu biasa. Esc menutup semuanya dan fokus kembali ke elemen asal.
 import { IconChevronLeft } from "@tabler/icons-react";
 import { useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { toAppError, type AppError } from "../../api";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { ErrorAlert } from "../../components/ErrorAlert";
 import { isTextField, SEPARATOR, useContextMenu, type ContextMenuHandle, type MenuAction, type MenuEntry } from "../../components/ContextMenu";
 import { isDisabled, isSeparator } from "../../components/ContextMenu/items";
 import { MenuPopup, type MenuAnchor } from "../../components/ContextMenu/MenuPopup";
@@ -23,7 +26,8 @@ export type SubMenu = {
   menuLabel: string;
   icon?: ReactNode;
   disabled?: boolean | string;
-  // Isi sub-menu. Item dengan `confirm` tidak didukung di sini.
+  // Isi sub-menu. Item dengan `confirm` meminta konfirmasi dulu lewat
+  // ConfirmDialog, sama dengan item menu utama.
   items: MenuEntry[];
 };
 
@@ -239,6 +243,12 @@ export function useBoardMenu({ label, items }: { label: string; items: BoardMenu
     ? [{ id: BACK_ID, label: TEKS_MENU.kembali, icon: <IconChevronLeft size={16} />, onSelect: back }, SEPARATOR, ...openDef.items]
     : [];
 
+  // Item sub-menu dengan `confirm` yang sedang menunggu jawaban, seperti
+  // konfirmasi di menu bersama.
+  const [confirming, setConfirming] = useState<MenuAction | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState<AppError | null>(null);
+
   const selectSub = useCallback(
     (item: MenuAction) => {
       if (isDisabled(item)) return;
@@ -248,10 +258,36 @@ export function useBoardMenu({ label, items }: { label: string; items: BoardMenu
       }
       // Fokus kembali dulu, baru aksi berjalan (sama dengan menu bersama).
       closeSub(true);
-      void item.onSelect();
+      if (item.confirm) {
+        setConfirmError(null);
+        setConfirming(item);
+        return;
+      }
+      // Aksi tanpa konfirmasi tidak punya tempat menampilkan galat; layar
+      // pemilik aksi yang memberi tahu pengguna. Di sini cukup tidak hilang diam-diam.
+      try {
+        Promise.resolve(item.onSelect()).catch((err: unknown) => console.error(`Aksi menu "${item.label}" gagal`, err));
+      } catch (err) {
+        console.error(`Aksi menu "${item.label}" gagal`, err);
+      }
     },
     [closeSub],
   );
+
+  async function runConfirmed() {
+    const item = confirming;
+    if (!item || confirmBusy) return;
+    setConfirmBusy(true);
+    setConfirmError(null);
+    try {
+      await item.onSelect();
+      setConfirming(null);
+    } catch (err) {
+      setConfirmError(toAppError(err));
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
 
   // Panah kanan di item sub-menu membukanya; panah kiri di sub-menu kembali.
   function onRootKeys(e: KeyboardEvent<HTMLElement>) {
@@ -319,6 +355,23 @@ export function useBoardMenu({ label, items }: { label: string; items: BoardMenu
             onSelect={selectSub}
           />
         </span>
+      )}
+      {confirming?.confirm && (
+        <ConfirmDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setConfirming(null);
+          }}
+          title={confirming.confirm.title}
+          confirmLabel={confirming.confirm.confirmLabel}
+          busyLabel={confirming.confirm.busyLabel}
+          busy={confirmBusy}
+          danger={confirming.danger ?? true}
+          onConfirm={() => void runConfirmed()}
+          error={confirmError && <ErrorAlert title={`${confirming.label} gagal`}>{confirmError.message}</ErrorAlert>}
+        >
+          {confirming.confirm.body}
+        </ConfirmDialog>
       )}
     </>
   );

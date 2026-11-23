@@ -220,6 +220,26 @@ describe("Menu klik kanan kartu: isi menurut hak", () => {
     expect(within(menu).queryByRole("menuitem", { name: "Hapus task" })).not.toBeInTheDocument();
   });
 
+  it("pemisah sesudah Buka task dan sebelum kelompok timer dan salin", async () => {
+    current = withCard(2, { canDelete: true });
+    await renderBoard();
+    const menu = openCardMenu(2);
+    const rows = Array.from(menu.querySelectorAll("[role=menuitem], [role=separator]")).map((el) =>
+      el.getAttribute("role") === "separator" ? "|" : el.getAttribute("data-menu-item"),
+    );
+    expect(rows).toEqual(["open", "|", "move", "assign", "priority", "due", "|", "timer-start", "copy", "|", "delete"]);
+  });
+
+  it("tamu: pemisah yang berdampingan dirapikan jadi satu", async () => {
+    current = view({ canCreate: false });
+    await renderBoard();
+    const menu = openCardMenu(1);
+    const rows = Array.from(menu.querySelectorAll("[role=menuitem], [role=separator]")).map((el) =>
+      el.getAttribute("role") === "separator" ? "|" : el.getAttribute("data-menu-item"),
+    );
+    expect(rows).toEqual(["open", "|", "copy"]);
+  });
+
   it("pembuat task (canDelete) mendapat Hapus task di paling bawah", async () => {
     current = withCard(2, { canDelete: true });
     await renderBoard();
@@ -325,6 +345,27 @@ describe("Menu klik kanan kartu: aksi", () => {
     expect(onProjectsChanged).toHaveBeenCalled();
   });
 
+  it("Tugaskan ke: penanggung jawab lama yang bukan anggota lagi tampil nonaktif di bawah anggota", async () => {
+    const PK_C = "c".repeat(64);
+    current = withCard(2, { assignee: { publicKey: PK_C, name: "Citra Lama" } });
+    await renderBoard();
+    const sub = await openSub(2, "Tugaskan ke", "Tugaskan PA-2 ke");
+    expect(within(sub).getAllByRole("menuitem").map((el) => el.getAttribute("data-menu-item"))).toEqual([
+      "__back",
+      `assign-${ME}`,
+      `assign-${PK_B}`,
+      `assign-${PK_C}`,
+      "assign-none",
+    ]);
+    const former = item(sub, "Citra Lama (bukan anggota proyek lagi)");
+    expect(former).toHaveAttribute("aria-disabled", "true");
+    expect(former).toHaveAccessibleDescription("Penanggung jawab sekarang");
+    fireEvent.click(former);
+    expect(board.updateTask).not.toHaveBeenCalled();
+    // Mengosongkan tetap bisa.
+    expect(item(sub, "Tanpa penanggung jawab")).not.toHaveAttribute("aria-disabled");
+  });
+
   it("Tanpa penanggung jawab: mengosongkan, dan nonaktif kalau memang belum ada", async () => {
     await renderBoard();
     let sub = await openSub(2, "Tugaskan ke", "Tugaskan PA-2 ke");
@@ -355,13 +396,18 @@ describe("Menu klik kanan kartu: aksi", () => {
   it("Atur tenggat: Hari ini dan Besok memakai tanggal lokal", async () => {
     await renderBoard();
     let sub = await openSub(2, "Atur tenggat", "Tenggat PA-2");
-    // Kartu tanpa tenggat: tidak ada Hapus tenggat.
+    // Kartu tanpa tenggat: Hapus tenggat tetap tampil, nonaktif dengan alasan.
     expect(within(sub).getAllByRole("menuitem").map((el) => el.getAttribute("data-menu-item"))).toEqual([
       "__back",
       "due-today",
       "due-tomorrow",
+      "due-clear",
       "due-other",
     ]);
+    expect(item(sub, "Hapus tenggat")).toHaveAttribute("aria-disabled", "true");
+    expect(item(sub, "Hapus tenggat")).toHaveAccessibleDescription("Belum ada tenggat");
+    fireEvent.click(item(sub, "Hapus tenggat"));
+    expect(board.updateTask).not.toHaveBeenCalled();
     fireEvent.click(item(sub, "Hari ini"));
     await waitFor(() => expect(board.updateTask).toHaveBeenCalledWith(P1, taskId(2), { due: "2026-11-24" }));
     expect(await screen.findByText("Tenggat PA-2: Hari ini, 24 Nov.")).toBeInTheDocument();
@@ -387,13 +433,23 @@ describe("Menu klik kanan kartu: aksi", () => {
   it("Mulai timer saya dan Hentikan timer saya menurut myTimerRunning", async () => {
     current = withCard(2, { myTimerRunning: true, timersRunningSince: ["2026-11-24T02:00:00Z"] });
     await renderBoard();
-    fireEvent.click(item(openCardMenu(1), "Mulai timer saya"));
-    await waitFor(() => expect(board.startTimer).toHaveBeenCalledWith(P1, taskId(1)));
-    expect(await screen.findByText("Timer Anda di PA-1 berjalan.")).toBeInTheDocument();
+    fireEvent.click(item(openCardMenu(3), "Mulai timer saya"));
+    await waitFor(() => expect(board.startTimer).toHaveBeenCalledWith(P1, taskId(3)));
+    // Inti Rust menghentikan timer saya di PA-2; pengumumannya menyebut itu.
+    expect(await screen.findByText("Timer Anda di PA-3 berjalan. Timer di PA-2 dihentikan.")).toBeInTheDocument();
 
     fireEvent.click(item(openCardMenu(2), "Hentikan timer saya"));
     await waitFor(() => expect(board.stopTimer).toHaveBeenCalledWith(P1, taskId(2), null));
     expect(await screen.findByText("Timer Anda di PA-2 berhenti.")).toBeInTheDocument();
+  });
+
+  it("Mulai timer saya tanpa timer lain yang berjalan: pengumuman tanpa catatan", async () => {
+    // Timer rekan (bukan milik saya) di PA-2 tidak disebut.
+    current = withCard(2, { timersRunningSince: ["2026-11-24T02:00:00Z"] });
+    await renderBoard();
+    fireEvent.click(item(openCardMenu(1), "Mulai timer saya"));
+    await waitFor(() => expect(board.startTimer).toHaveBeenCalledWith(P1, taskId(1)));
+    expect(await screen.findByText("Timer Anda di PA-1 berjalan.")).toBeInTheDocument();
   });
 
   it("galat ubah tampil di area pemberitahuan board dengan pesan inti", async () => {
@@ -416,6 +472,10 @@ describe("Menu klik kanan kartu: aksi", () => {
     writeText.mockRejectedValueOnce(new Error("ditolak"));
     fireEvent.click(item(openCardMenu(2), "Salin kode PA-2"));
     expect(await screen.findByText("Kode PA-2 belum tersalin")).toBeInTheDocument();
+    // Arahannya bisa diikuti: memilih teks di kartu memulai seret, dan Ctrl+C beda di macOS.
+    const hint = screen.getByText(/Papan klip tidak bisa dipakai saat ini/);
+    expect(hint).toHaveTextContent("buka task-nya untuk melihat kodenya");
+    expect(hint).not.toHaveTextContent("Ctrl");
   });
 
   it("Hapus task minta konfirmasi, memanggil deleteTask, lalu fokus ke kartu berikutnya", async () => {
@@ -423,8 +483,10 @@ describe("Menu klik kanan kartu: aksi", () => {
     await renderBoard();
     fireEvent.click(item(openCardMenu(1), "Hapus task"));
     const dialog = await screen.findByRole("dialog", { name: "Hapus task PA-1?" });
-    expect(dialog).toHaveTextContent('"Task nomor 1" beserta 2 subtask dan 1 komentar terhapus');
-    expect(dialog).toHaveTextContent("Waktu yang sudah tercatat di task ini juga ikut terhapus.");
+    // Catatan waktu masuk daftar "beserta" tanpa angka; kalimat tidak bisa dibatalkan tetap paling akhir.
+    expect(within(dialog).getByText(/^"Task nomor 1" beserta/)).toHaveTextContent(
+      /^"Task nomor 1" beserta 2 subtask, 1 komentar, dan catatan waktunya terhapus dari board semua anggota proyek dan dari Task saya\. Mira belum punya cara mengembalikannya\.$/,
+    );
     expect(board.deleteTask).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Hapus PA-1" }));
     await waitFor(() => expect(board.deleteTask).toHaveBeenCalledWith(P1, taskId(1)));
@@ -451,6 +513,62 @@ describe("Menu klik kanan kartu: aksi", () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(add).toHaveFocus();
+  });
+
+  describe("hapus selagi pindahan kartu yang sama masih berjalan", () => {
+    function deferMove() {
+      let settle!: { resolve: (v: BoardView) => void; reject: (e: unknown) => void };
+      board.moveTask.mockImplementationOnce(
+        () =>
+          new Promise<BoardView>((resolve, reject) => {
+            settle = { resolve, reject };
+          }),
+      );
+      return () => settle;
+    }
+
+    async function moveThenDelete() {
+      current = withCard(1, { canDelete: true });
+      const stale = current;
+      const pending = deferMove();
+      await renderBoard();
+      const sub = await openSub(1, "Pindahkan ke", "Pindahkan PA-1 ke");
+      fireEvent.click(item(sub, "Dikerjakan"));
+      await waitFor(() => expect(board.moveTask).toHaveBeenCalledWith(P1, taskId(1), "doing", 0));
+      // Kartu sudah tampil di Dikerjakan (optimis).
+      expect(within(column("Dikerjakan")).getByRole("button", { name: "Task nomor 1" })).toBeInTheDocument();
+      fireEvent.click(item(openCardMenu(1), "Hapus task"));
+      const dialog = await screen.findByRole("dialog", { name: "Hapus task PA-1?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Hapus PA-1" }));
+      await waitFor(() => expect(board.deleteTask).toHaveBeenCalledWith(P1, taskId(1)));
+      expect(await screen.findByText("PA-1 dihapus.")).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Task nomor 1" })).not.toBeInTheDocument());
+      return { settle: pending(), stale };
+    }
+
+    it("galat pindah sesudahnya diabaikan: tanpa pesan dikembalikan, kartu tetap hilang", async () => {
+      const { settle } = await moveThenDelete();
+      await act(async () => {
+        settle.reject({ code: "not_found", message: "Task tidak ditemukan." });
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(screen.queryByText("PA-1 sudah tidak ada di board ini")).not.toBeInTheDocument();
+      expect(screen.queryByText("Kartu dikembalikan ke tempat semula.")).not.toBeInTheDocument();
+      expect(screen.queryByText("PA-1 belum dipindah.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Task nomor 1" })).not.toBeInTheDocument();
+      expect(screen.getByText("PA-1 dihapus.")).toBeInTheDocument();
+    });
+
+    it("jawaban berhasil yang datang terlambat tidak memunculkan kartunya lagi", async () => {
+      const { settle, stale } = await moveThenDelete();
+      await act(async () => {
+        settle.resolve(applyMove(stale, taskId(1), { columnId: "doing", index: 0 }));
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(screen.queryByRole("button", { name: "Task nomor 1" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/PA-1 dipindah ke/)).not.toBeInTheDocument();
+      expect(screen.getByText("PA-1 dihapus.")).toBeInTheDocument();
+    });
   });
 
   it("galat hapus tampil di dialog konfirmasi dan kartu tetap ada", async () => {
@@ -518,12 +636,56 @@ describe("Menu klik kanan dan seret kartu", () => {
     expect(board.moveTask).not.toHaveBeenCalled();
   });
 
-  it("Ctrl + tombol utama (klik kanan di macOS) tidak memulai seret", async () => {
+  it("macOS: Ctrl + tombol utama (klik kanan di macOS) tidak memulai seret", async () => {
+    const ua = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15");
+    try {
+      await renderBoard();
+      fireEvent.pointerDown(title(1), { ...MOUSE, button: 0, buttons: 1, ctrlKey: true, pointerId: 1, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(window, { ...MOUSE, button: -1, buttons: 1, ctrlKey: true, pointerId: 1, clientX: 200, clientY: 200 });
+      expect(document.documentElement).not.toHaveClass("card-dragging");
+      fireEvent.pointerUp(window, { ...MOUSE, button: 0, buttons: 0, pointerId: 1, clientX: 200, clientY: 200 });
+    } finally {
+      ua.mockRestore();
+    }
+  });
+
+  it("Windows: Ctrl + seret tetap memulai seret seperti sebelumnya", async () => {
+    const ua = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/120.0");
+    try {
+      await renderBoard();
+      fireEvent.pointerDown(title(1), { ...MOUSE, button: 0, buttons: 1, ctrlKey: true, pointerId: 1, clientX: 20, clientY: 20 });
+      fireEvent.pointerMove(window, { ...MOUSE, button: -1, buttons: 1, ctrlKey: true, pointerId: 1, clientX: 60, clientY: 60 });
+      expect(document.documentElement).toHaveClass("card-dragging");
+      fireEvent.pointerCancel(window, { ...MOUSE, pointerId: 1 });
+    } finally {
+      ua.mockRestore();
+    }
+  });
+
+  it("klik kanan selagi tombol kiri ditahan (belum seret) membuka menu dan membatalkan seret", async () => {
     await renderBoard();
-    fireEvent.pointerDown(title(1), { ...MOUSE, button: 0, buttons: 1, ctrlKey: true, pointerId: 1, clientX: 20, clientY: 20 });
-    fireEvent.pointerMove(window, { ...MOUSE, button: -1, buttons: 1, ctrlKey: true, pointerId: 1, clientX: 200, clientY: 200 });
+    fireEvent.pointerDown(title(2), { ...MOUSE, button: 0, buttons: 1, pointerId: 1, clientX: 20, clientY: 20 });
+    // Belum lewat ambang 5 px.
+    fireEvent.pointerMove(window, { ...MOUSE, button: -1, buttons: 1, pointerId: 1, clientX: 22, clientY: 21 });
+    expect(document.documentElement).not.toHaveClass("card-dragging");
+    const menu = openCardMenu(2);
+    fireEvent.pointerMove(window, { ...MOUSE, button: -1, buttons: 1, pointerId: 1, clientX: 200, clientY: 200 });
+    expect(document.documentElement).not.toHaveClass("card-dragging");
+    expect(cardEl(2)).not.toHaveClass("tc-dragging");
+    expect(menu).toBeInTheDocument();
+    fireEvent.pointerUp(window, { ...MOUSE, button: 0, buttons: 0, pointerId: 1, clientX: 200, clientY: 200 });
+    expect(board.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("Shift+F10 selagi tombol kiri ditahan juga membatalkan seret yang tertunda", async () => {
+    await renderBoard();
+    fireEvent.pointerDown(title(2), { ...MOUSE, button: 0, buttons: 1, pointerId: 1, clientX: 20, clientY: 20 });
+    fireEvent.keyDown(title(2), { key: "F10", shiftKey: true });
+    expect(screen.getByRole("menu", { name: "Aksi untuk PA-2" })).toBeInTheDocument();
+    fireEvent.pointerMove(window, { ...MOUSE, button: -1, buttons: 1, pointerId: 1, clientX: 200, clientY: 200 });
     expect(document.documentElement).not.toHaveClass("card-dragging");
     fireEvent.pointerUp(window, { ...MOUSE, button: 0, buttons: 0, pointerId: 1, clientX: 200, clientY: 200 });
+    expect(board.moveTask).not.toHaveBeenCalled();
   });
 
   it("menu tidak terbuka selama kartu diseret", async () => {
@@ -548,6 +710,53 @@ describe("Menu klik kanan dan seret kartu", () => {
     fireEvent.pointerMove(window, { ...MOUSE, button: -1, buttons: 1, pointerId: 1, clientX: 80, clientY: 80 });
     expect(document.documentElement).not.toHaveClass("card-dragging");
     fireEvent.pointerUp(window, { ...MOUSE, button: 0, buttons: 0, pointerId: 1, clientX: 80, clientY: 80 });
+  });
+});
+
+describe("Menu kartu dan dropdown Pindahkan: tidak ada dua menu sekaligus", () => {
+  async function openMoveMenu(n: number) {
+    fireEvent.click(screen.getByRole("button", { name: `Pindahkan PA-${n}` }));
+    const mv = screen.getByRole("menu", { name: `Pindahkan PA-${n}` });
+    expect(within(mv).getAllByRole("menuitem")[0]).toHaveFocus();
+    return mv;
+  }
+
+  it("Shift+F10 dan tombol Menu di dropdown Pindahkan tidak membuka menu kartu atau kolom", async () => {
+    await renderBoard();
+    const mv = await openMoveMenu(1);
+    const first = within(mv).getAllByRole("menuitem")[0];
+    fireEvent.keyDown(first, { key: "F10", shiftKey: true });
+    fireEvent.keyDown(first, { key: "ContextMenu" });
+    expect(screen.getAllByRole("menu")).toEqual([mv]);
+    expect(first).toHaveFocus();
+  });
+
+  it("klik kanan di dropdown Pindahkan tidak membuka menu kartu, kolom, atau menu bawaan", async () => {
+    await renderBoard();
+    const mv = await openMoveMenu(1);
+    const first = within(mv).getAllByRole("menuitem")[0];
+    const ev = fireEvent.contextMenu(first, { button: 2, clientX: 0, clientY: 0 });
+    expect(ev).toBe(false);
+    expect(screen.getAllByRole("menu")).toEqual([mv]);
+  });
+
+  it("menu kartu yang terbuka dari bagian lain kartu menutup dropdown Pindahkan", async () => {
+    await renderBoard();
+    await openMoveMenu(1);
+    const menu = openCardMenu(1);
+    expect(screen.queryByRole("menu", { name: "Pindahkan PA-1" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("menu")).toEqual([menu]);
+    // Esc mengembalikan fokus ke kartu, bukan ke item dropdown yang sudah hilang.
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(cardEl(1)).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it("fokus pindah ke luar dropdown Pindahkan menutupnya", async () => {
+    await renderBoard();
+    await openMoveMenu(1);
+    act(() => title(2).focus());
+    expect(screen.queryByRole("menu", { name: "Pindahkan PA-1" })).not.toBeInTheDocument();
   });
 });
 

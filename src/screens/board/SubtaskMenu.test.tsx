@@ -1,8 +1,9 @@
 // Menu klik kanan baris subtask di dialog detail task (docs/plans/v04-ctx-board.md).
+import * as RadixDialog from "@radix-ui/react-dialog";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Person, Subtask, TaskDetail } from "../../api/board";
 import { TextFieldMenu } from "../../components/ContextMenu";
 import { Dialog } from "../../components/Dialog";
@@ -159,7 +160,14 @@ describe("Menu subtask: membuka", () => {
     const user = setup();
     await rightClick(user, part("s1", "check"));
     const menu = menuOf("Ukur dinding");
-    expect(labels(menu)).toEqual(["Tandai selesai", "Ganti nama", "Tugaskan ke", "Pindah naik", "Pindah turun", "Hapus subtask"]);
+    expect(labels(menu)).toEqual([
+      "Tandai selesai",
+      "Ganti nama",
+      "Tugaskan ke",
+      "Naik satu posisi",
+      "Turun satu posisi",
+      "Hapus subtask",
+    ]);
     expect(item("toggle")).toHaveFocus();
     expect(item("assign")).toHaveAttribute("aria-haspopup", "menu");
     expect(item("delete")).toHaveClass("cmenu-danger");
@@ -314,7 +322,7 @@ describe("Menu subtask: aksi", () => {
     expect(part("s1", "check")).toHaveFocus();
   });
 
-  it("Pindah naik dan turun memanggil moveSubtask dengan indeks tujuan; fokus tetap di baris", async () => {
+  it("Naik dan Turun satu posisi memanggil moveSubtask dengan indeks tujuan; fokus tetap di baris", async () => {
     const user = setup();
     await rightClick(user, part("s2", "check"));
     await user.click(item("up"));
@@ -329,7 +337,7 @@ describe("Menu subtask: aksi", () => {
     await waitFor(() => expect(part("s2", "del")).toHaveFocus());
   });
 
-  it("baris terakhir: Pindah turun nonaktif dengan alasan dan tidak memindah", async () => {
+  it("baris terakhir: Turun satu posisi nonaktif dengan alasan dan tidak memindah", async () => {
     const user = setup();
     await rightClick(user, part("s3", "check"));
     expect(item("down")).toHaveAttribute("aria-disabled", "true");
@@ -435,5 +443,183 @@ describe("Menu subtask: di dalam dialog modal", () => {
     await user.click(item(`who-${ME}`));
     await waitFor(() => expect(board.updateSubtask).toHaveBeenCalledWith(P, T, "s3", { assignee: ME }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("Menu subtask: bersama seret pegangan", () => {
+  const MOUSE = { pointerType: "mouse", button: 0, buttons: 1, isPrimary: true };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("selama baris diseret, klik kanan dan Shift+F10 tidak membuka menu, menu bawaan tetap dicegah", () => {
+    setup();
+    fireEvent.pointerDown(handle("s1"), { ...MOUSE, pointerId: 1, clientX: 10, clientY: 15 });
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 1, clientX: 10, clientY: 60 });
+    expect(row("s1")).toHaveClass("is-dragging");
+
+    expect(fireEvent.contextMenu(part("s2", "check"), { button: 2, clientX: 10, clientY: 50 })).toBe(false);
+    expect(fireEvent.contextMenu(handle("s1"), { button: 2, clientX: 10, clientY: 15 })).toBe(false);
+    expect(fireEvent.keyDown(part("s1", "check"), { key: "F10", shiftKey: true })).toBe(false);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    // Seret tetap berjalan.
+    expect(row("s1")).toHaveClass("is-dragging");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(row("s1")).not.toHaveClass("is-dragging");
+    fireEvent.contextMenu(part("s2", "check"), { button: 2, clientX: 10, clientY: 50 });
+    expect(menuOf("Gambar ulang tangga")).toBeInTheDocument();
+  });
+
+  it("seret yang masih tertunda dibatalkan saat menu dibuka dengan klik kanan", () => {
+    setup();
+    fireEvent.pointerDown(handle("s1"), { ...MOUSE, pointerId: 2, clientX: 10, clientY: 15 });
+    fireEvent.contextMenu(handle("s1"), { button: 2, clientX: 10, clientY: 15 });
+    expect(menuOf("Ukur dinding")).toBeInTheDocument();
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 2, clientX: 10, clientY: 110 });
+    expect(row("s1")).not.toHaveClass("is-dragging");
+    fireEvent.pointerUp(window, { ...MOUSE, pointerId: 2, buttons: 0, clientX: 10, clientY: 110 });
+    expect(board.moveSubtask).not.toHaveBeenCalled();
+    expect(menuOf("Ukur dinding")).toBeInTheDocument();
+  });
+
+  it("Shift+F10 selagi seret tertunda juga membatalkan seretnya", () => {
+    setup();
+    fireEvent.pointerDown(handle("s2"), { ...MOUSE, pointerId: 3, clientX: 10, clientY: 50 });
+    fireEvent.keyDown(part("s2", "del"), { key: "F10", shiftKey: true });
+    expect(menuOf("Gambar ulang tangga")).toBeInTheDocument();
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 3, clientX: 10, clientY: 110 });
+    expect(row("s2")).not.toHaveClass("is-dragging");
+  });
+
+  it("macOS: Ctrl + klik di pegangan membuka menu tanpa memulai seret", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15");
+    setup();
+    fireEvent.pointerDown(handle("s1"), { ...MOUSE, pointerId: 4, ctrlKey: true, clientX: 10, clientY: 15 });
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 4, ctrlKey: true, clientX: 10, clientY: 110 });
+    expect(row("s1")).not.toHaveClass("is-dragging");
+    fireEvent.contextMenu(handle("s1"), { button: 0, ctrlKey: true, clientX: 10, clientY: 15 });
+    expect(menuOf("Ukur dinding")).toBeInTheDocument();
+    fireEvent.pointerUp(window, { ...MOUSE, pointerId: 4, buttons: 0, clientX: 10, clientY: 110 });
+    expect(board.moveSubtask).not.toHaveBeenCalled();
+  });
+
+  it("Windows: Ctrl + seret di pegangan tetap menyeret", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+    setup();
+    fireEvent.pointerDown(handle("s1"), { ...MOUSE, pointerId: 5, ctrlKey: true, clientX: 10, clientY: 15 });
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 5, ctrlKey: true, clientX: 10, clientY: 110 });
+    expect(row("s1")).toHaveClass("is-dragging");
+    fireEvent.keyDown(window, { key: "Escape" });
+  });
+});
+
+describe("Menu subtask: menu penanggung jawab di dalam baris", () => {
+  it("Shift+F10 dan klik kanan di menu penanggung jawab tidak membuka menu baris", async () => {
+    const user = setup();
+    await user.click(part("s1", "who"));
+    const whoName = "Penanggung jawab subtask Ukur dinding";
+    const whoMenu = screen.getByRole("menu", { name: whoName });
+    expect(whoMenu.contains(document.activeElement)).toBe(true);
+    const first = whoMenu.querySelector<HTMLElement>('[role^="menuitem"]')!;
+
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(screen.queryByRole("menu", { name: /Aksi untuk subtask/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("menu", { name: whoName })).toBeInTheDocument();
+
+    expect(fireEvent.contextMenu(first, { button: 2, clientX: 10, clientY: 10 })).toBe(false);
+    await rightClick(user, first);
+    expect(screen.queryByRole("menu", { name: /Aksi untuk subtask/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("menu", { name: whoName })).toBeInTheDocument();
+  });
+});
+
+describe("Menu subtask: Ganti nama lalu Escape", () => {
+  // Sama dengan TaskDetail: Escape dari elemen di dalam [data-escape-local]
+  // tidak menutup dialog.
+  function InTaskDialog({ onClose }: { onClose: () => void }) {
+    return (
+      <RadixDialog.Root
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      >
+        <RadixDialog.Portal>
+          <RadixDialog.Content
+            aria-describedby={undefined}
+            onEscapeKeyDown={(e) => {
+              if ((document.activeElement as HTMLElement | null)?.closest("[data-escape-local]")) e.preventDefault();
+            }}
+          >
+            <RadixDialog.Title>Revisi denah</RadixDialog.Title>
+            <Harness initial={makeTask(THREE())} />
+          </RadixDialog.Content>
+        </RadixDialog.Portal>
+      </RadixDialog.Root>
+    );
+  }
+
+  it("Escape tanpa ketikan keluar dari kolom judul ke kotak centang, dialog tetap terbuka", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<InTaskDialog onClose={onClose} />);
+    await rightClick(user, part("s3", "check"));
+    await user.click(item("rename"));
+    const title = part("s3", "title");
+    expect(title).toHaveFocus();
+    expect(title).toHaveAttribute("data-escape-local");
+
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(part("s3", "check")).toHaveFocus();
+    expect(title).not.toHaveAttribute("data-escape-local");
+    expect(board.updateSubtask).not.toHaveBeenCalled();
+
+    // Escape berikutnya menutup dialog seperti biasa.
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape pertama membatalkan ketikan, Escape kedua keluar dari kolom judul", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<InTaskDialog onClose={onClose} />);
+    await rightClick(user, part("s1", "del"));
+    await user.click(item("rename"));
+    await user.keyboard("Ukur jendela");
+    const title = part("s1", "title");
+    expect(title).toHaveValue("Ukur jendela");
+
+    await user.keyboard("{Escape}");
+    expect(title).toHaveValue("Ukur dinding");
+    expect(title).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+    expect(part("s1", "check")).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(board.updateSubtask).not.toHaveBeenCalled();
+  });
+
+  it("kolom judul yang difokus biasa (bukan lewat menu): Escape tanpa ketikan menutup dialog", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<InTaskDialog onClose={onClose} />);
+    await user.click(part("s2", "title"));
+    expect(part("s2", "title")).not.toHaveAttribute("data-escape-local");
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("mode ganti nama berakhir saat kolom judul kehilangan fokus", async () => {
+    const user = setup();
+    await rightClick(user, part("s2", "check"));
+    await user.click(item("rename"));
+    expect(part("s2", "title")).toHaveAttribute("data-escape-local");
+    await user.tab();
+    expect(part("s2", "title")).not.toHaveFocus();
+    expect(part("s2", "title")).not.toHaveAttribute("data-escape-local");
   });
 });

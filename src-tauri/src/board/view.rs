@@ -16,7 +16,8 @@ use crate::error::AppResult;
 
 /// The viewer's project rights a card needs.
 ///
-/// `can_write` is the `CreateTask` right and `can_manage` the
+/// `can_write` is the `CreateTask` right (the same check as `EditTask`, so
+/// it is also the card's `can_edit`) and `can_manage` the
 /// `ManageProject` right. Both deny guests and require `Rights::can_write`,
 /// and `ManageProject` adds `is_project_manager`, so `can_delete` gives the
 /// same answer as `Rights::can_delete_task` (the `DeleteTask` right):
@@ -82,8 +83,15 @@ impl Ctx<'_> {
         }
     }
 
-    /// `can_delete` is the viewer's `DeleteTask` right on `t`.
-    pub fn card(&self, project: &ProjectRow, t: &TaskData, can_delete: bool) -> TaskCard {
+    /// `can_edit` is the viewer's `EditTask` right on `t` and `can_delete`
+    /// the `DeleteTask` right.
+    pub fn card(
+        &self,
+        project: &ProjectRow,
+        t: &TaskData,
+        can_edit: bool,
+        can_delete: bool,
+    ) -> TaskCard {
         let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         let live = t.subtasks.iter().filter(|s| !s.deleted);
         TaskCard {
@@ -104,6 +112,7 @@ impl Ctx<'_> {
             subtask_total: count(live.count()),
             tracked_secs: timing::tracked_secs(&t.time),
             timers_running_since: timing::running_since(&t.time),
+            can_edit,
             can_delete,
             my_timer_running: t.time.iter().any(|e| e.by == self.me && e.is_running()),
         }
@@ -127,7 +136,7 @@ impl Ctx<'_> {
                 tasks: tasks
                     .iter()
                     .filter(|t| !t.deleted && t.column == c)
-                    .map(|t| self.card(project, t, rights.can_delete(self.me, t)))
+                    .map(|t| self.card(project, t, rights.can_write, rights.can_delete(self.me, t)))
                     .collect(),
             })
             .collect();
@@ -176,8 +185,12 @@ impl Ctx<'_> {
             task_id: t.id.clone(),
             created_by: t.created_by.clone(),
         });
+        let can_edit = self.allows(BoardAction::EditTask {
+            project_id: project.id.clone(),
+            task_id: t.id.clone(),
+        });
         TaskDetail {
-            card: self.card(project, t, can_delete),
+            card: self.card(project, t, can_edit, can_delete),
             project_id: project.id.clone(),
             description: t.description.clone(),
             created_by: self.dir.person(self.conn, &t.created_by),
@@ -203,10 +216,6 @@ impl Ctx<'_> {
                     detail: a.detail.clone(),
                 })
                 .collect(),
-            can_edit: self.allows(BoardAction::EditTask {
-                project_id: project.id.clone(),
-                task_id: t.id.clone(),
-            }),
             can_comment: self.allows(BoardAction::Comment {
                 project_id: project.id.clone(),
                 task_id: t.id.clone(),
@@ -272,7 +281,12 @@ impl Ctx<'_> {
                         project_id: project.id.clone(),
                         project_code: project.code.clone(),
                         project_name: project.name.clone(),
-                        task: self.card(&project, &t, rights.can_delete(self.me, &t)),
+                        task: self.card(
+                            &project,
+                            &t,
+                            rights.can_write,
+                            rights.can_delete(self.me, &t),
+                        ),
                     },
                     t.number,
                 ));

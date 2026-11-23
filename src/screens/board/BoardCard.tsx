@@ -2,6 +2,7 @@ import { IconCalendarDue, IconClock, IconGitMerge, IconMessage, IconSquareCheck 
 import { useId, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import type { TaskCard } from "../../api/board";
 import { initials } from "../../components/initials";
+import { isMac } from "../../platform";
 import type { Direction } from "./boardMoves";
 import { cardDragActive } from "./cardMenu";
 import { daysUntil, dueLabel, formatDue, PRIORITY_LABELS } from "./format";
@@ -39,6 +40,16 @@ function fromCard(e: { target: EventTarget | null; currentTarget: HTMLElement })
   return e.target instanceof Node && e.currentTarget.contains(e.target);
 }
 
+// Event dari menu yang ada di dalam kartu (dropdown Pindahkan). Menu kartu
+// tidak dibuka di atasnya, supaya tidak ada dua menu sekaligus.
+function fromMenuInCard(e: { target: EventTarget | null; currentTarget: HTMLElement }): boolean {
+  return fromCard(e) && !!(e.target as Element).closest("[role=menu]");
+}
+
+function isMenuKey(e: KeyboardEvent<HTMLElement>): boolean {
+  return e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey);
+}
+
 export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: menuEntries, onOpen, onKeyMove, onPointerDown }: Props) {
   const metaId = useId();
   const menu = useBoardMenu({ label: TEKS_MENU.kartu.menu(task.code), items: menuEntries });
@@ -51,12 +62,19 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
   const allSubtasksDone = task.subtaskTotal > 0 && task.subtaskDone >= task.subtaskTotal;
 
   function onKey(e: KeyboardEvent<HTMLElement>) {
+    if (fromMenuInCard(e)) {
+      // Tombol menu di dalam dropdown Pindahkan juga tidak membuka menu kolom.
+      if (isMenuKey(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
     // Shift+F10 dan tombol Menu membuka menu klik kanan.
     if (!cardDragActive()) menu.triggerProps.onKeyDown(e);
     if (!canMove || !e.altKey || !fromCard(e)) return;
     const dir = ARROWS[e.key];
     if (!dir) return;
-    if ((e.target as HTMLElement).closest("[role=menu]")) return;
     e.preventDefault();
     onKeyMove(dir);
   }
@@ -71,7 +89,8 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
           ? (e: PointerEvent<HTMLElement>) => {
               // Ctrl+klik di macOS adalah klik kanan (tombol utama + Ctrl); menu yang
               // terbuka karenanya tidak boleh berubah jadi seret saat mouse bergeser.
-              if (fromCard(e) && !e.ctrlKey) onPointerDown(e);
+              // Di Windows Ctrl+seret tetap seret biasa.
+              if (fromCard(e) && !(e.ctrlKey && isMac())) onPointerDown(e);
             }
           : undefined
       }
@@ -80,7 +99,9 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
         if (fromCard(e)) e.preventDefault();
       }}
       onContextMenu={(e: MouseEvent<HTMLElement>) => {
-        if (cardDragActive()) {
+        // Selama seret, dan di dalam dropdown Pindahkan: tanpa menu kartu, tanpa
+        // menu bawaan WebView, dan menu kolom ikut diam (defaultPrevented).
+        if (cardDragActive() || fromMenuInCard(e)) {
           e.preventDefault();
           return;
         }

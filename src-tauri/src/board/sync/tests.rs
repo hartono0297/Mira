@@ -128,6 +128,7 @@ fn view_json(l: &Laptop, project: &str) -> serde_json::Value {
     for c in columns.as_array_mut().unwrap() {
         for t in c["tasks"].as_array_mut().unwrap() {
             let o = t.as_object_mut().unwrap();
+            o.remove("canEdit");
             o.remove("canDelete");
             o.remove("myTimerRunning");
         }

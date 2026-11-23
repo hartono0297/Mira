@@ -111,6 +111,20 @@ describe("Menu klik kanan Task saya", () => {
     expect(menuItem(menu, "copy")).toHaveAccessibleName("Salin kode PA-4");
   });
 
+  it("tanpa hak ubah (canEdit false) Pindahkan ke disembunyikan; canEdit true tetap menampilkannya", async () => {
+    const user = userEvent.setup();
+    tasks = [item(4, "2026-11-20", { canEdit: false }), item(6, "2026-11-27", { canEdit: true })];
+    render(<MyTasks onOpenTask={vi.fn()} />);
+    await screen.findByText("Task nomor 4");
+    let menu = await rightClick(user, "PA-4");
+    expect(within(menu).getAllByRole("menuitem").map((el) => el.dataset.menuItem)).toEqual(["open", "copy"]);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+
+    menu = await rightClick(user, "PA-6");
+    expect(within(menu).getAllByRole("menuitem").map((el) => el.dataset.menuItem)).toEqual(["open", "move", "copy"]);
+  });
+
   it("klik kiri dan Buka task membuka task di proyeknya", async () => {
     const user = userEvent.setup();
     const onOpenTask = vi.fn();
