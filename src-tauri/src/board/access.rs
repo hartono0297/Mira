@@ -539,7 +539,7 @@ pub fn check_guest_projects(
             Some(Some(t)) if t == team_id => {}
             Some(_) => {
                 return Err(AppError::InvalidInput(
-                    "Tamu hanya bisa diundang ke proyek milik tim yang dipilih. Pilih proyek dari tim itu.".into(),
+                    "Tamu hanya bisa diundang ke proyek milik departemen yang dipilih. Pilih proyek dari departemen itu.".into(),
                 ));
             }
             None => {

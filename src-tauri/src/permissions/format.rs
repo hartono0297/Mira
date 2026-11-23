@@ -51,17 +51,17 @@ pub fn validate_team_name(name: &str) -> AppResult<String> {
     let len = name.chars().count();
     if len < TEAM_NAME_MIN_CHARS {
         return Err(AppError::InvalidName(format!(
-            "Nama tim minimal {TEAM_NAME_MIN_CHARS} karakter."
+            "Nama departemen minimal {TEAM_NAME_MIN_CHARS} karakter."
         )));
     }
     if len > TEAM_NAME_MAX_CHARS {
         return Err(AppError::InvalidName(format!(
-            "Nama tim paling banyak {TEAM_NAME_MAX_CHARS} karakter."
+            "Nama departemen paling banyak {TEAM_NAME_MAX_CHARS} karakter."
         )));
     }
     if identity::has_forbidden_chars(name) {
         return Err(AppError::InvalidName(
-            "Nama tim berisi karakter yang tidak diizinkan, misalnya baris baru atau tab.".into(),
+            "Nama departemen berisi karakter yang tidak diizinkan, misalnya baris baru atau tab.".into(),
         ));
     }
     Ok(name.to_owned())

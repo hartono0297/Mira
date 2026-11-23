@@ -20,7 +20,7 @@ export function channelNameFor(name: string): string {
   return name.trim().toLowerCase().split(" ").join("-");
 }
 
-// Pesan nama dari validateTeamName dan dari Rust (invalid_name) masih menyebut "tim";
+// Pesan lama yang masih menyebut "tim" (misalnya dari laptop rekan yang belum diperbarui);
 // di halaman ini istilahnya departemen.
 function deptWording(message: string): string {
   return message.replace(/\bTim\b/g, "Departemen").replace(/\btim\b/g, "departemen");

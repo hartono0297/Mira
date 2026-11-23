@@ -721,7 +721,7 @@ impl<'a> Ctx<'a> {
         self.dir
             .teams
             .get(team)
-            .map_or_else(|| "Tim".to_owned(), |t| t.name.clone())
+            .map_or_else(|| "Departemen".to_owned(), |t| t.name.clone())
     }
 
     fn project_name(&self, project: &str) -> AppResult<String> {

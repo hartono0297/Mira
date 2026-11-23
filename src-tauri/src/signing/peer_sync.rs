@@ -680,7 +680,7 @@ pub fn check_scope_rules(
         if !is_lower_hex(id, 32) {
             return Err(err(
                 "request_invalid",
-                "Tim atau proyek permintaan tidak valid. Pilih ulang proyeknya.",
+                "Departemen atau proyek permintaan tidak valid. Pilih ulang proyeknya.",
             ));
         }
     }

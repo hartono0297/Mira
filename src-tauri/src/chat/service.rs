@@ -794,10 +794,10 @@ fn channel_scope(ctx: &Ctx, me: &str, scope: NewChannelScope) -> AppResult<Chann
         }
         (ScopeKind::Team, Some(id)) => {
             if ctx.dir.team(&id).is_none() {
-                return Err(AppError::NotFound("Tim tidak ditemukan.".into()));
+                return Err(AppError::NotFound("Departemen tidak ditemukan.".into()));
             }
             if !ctx.dir.in_team(&id, me) {
-                return Err(forbidden("Kamu bukan anggota tim ini."));
+                return Err(forbidden("Kamu bukan anggota departemen ini."));
             }
             Ok(ChannelScope::Team { id })
         }
@@ -813,7 +813,7 @@ fn channel_scope(ctx: &Ctx, me: &str, scope: NewChannelScope) -> AppResult<Chann
         (ScopeKind::Group, _) => Err(invalid(
             "Grup dibuat lewat Grup baru, bukan sebagai channel.",
         )),
-        (_, None) => Err(invalid("Pilih tim atau proyek untuk channel ini.")),
+        (_, None) => Err(invalid("Pilih departemen atau proyek untuk channel ini.")),
     }
 }
 

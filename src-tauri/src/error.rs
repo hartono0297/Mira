@@ -35,14 +35,14 @@ pub enum AppError {
     )]
     InviteInvalid,
     #[error(
-        "Kode undangan tidak dikenal oleh laptop rekan yang ditemukan. Periksa kodenya, atau minta kode baru ke admin tim."
+        "Kode undangan tidak dikenal oleh laptop rekan yang ditemukan. Periksa kodenya, atau minta kode baru ke admin departemen."
     )]
     InviteNotFound,
-    #[error("Kode undangan ini sudah kedaluwarsa. Minta kode baru ke admin tim.")]
+    #[error("Kode undangan ini sudah kedaluwarsa. Minta kode baru ke admin departemen.")]
     InviteExpired,
-    #[error("Kode undangan sekali pakai ini sudah dipakai. Minta kode baru ke admin tim.")]
+    #[error("Kode undangan sekali pakai ini sudah dipakai. Minta kode baru ke admin departemen.")]
     InviteUsed,
-    #[error("Kode undangan ini sudah dicabut. Minta kode baru ke admin tim.")]
+    #[error("Kode undangan ini sudah dicabut. Minta kode baru ke admin departemen.")]
     InviteRevoked,
     #[error(
         "Tidak ada laptop rekan yang ditemukan di jaringan. Pastikan laptop rekan menyala dan membuka Mira, atau isi alamat laptop rekan."

@@ -252,7 +252,7 @@ pub fn create_team(
     state
         .live_team(&team)
         .map(team_view)
-        .ok_or_else(|| AppError::Internal("Tim baru tidak ditemukan setelah dibuat.".into()))
+        .ok_or_else(|| AppError::Internal("Departemen baru tidak ditemukan setelah dibuat.".into()))
 }
 
 pub fn delete_team(
@@ -707,7 +707,7 @@ pub fn redeem_as_member(
         Some(m) if m.kind == MemberKind::Member => {}
         Some(_) => {
             return Err(AppError::Forbidden(
-                "Tamu tidak bisa memakai kode undangan sendiri. Minta admin tim memasukkan Anda."
+                "Tamu tidak bisa memakai kode undangan sendiri. Minta admin departemen memasukkan Anda."
                     .into(),
             ));
         }
@@ -739,7 +739,7 @@ pub fn redeem_as_member(
     }
     if !state.accept_changes_anything(inv, me) {
         return Err(AppError::Forbidden(
-            "Anda sudah tergabung di tim itu dengan peran yang sama atau lebih tinggi.".into(),
+            "Anda sudah tergabung di departemen itu dengan peran yang sama atau lebih tinggi.".into(),
         ));
     }
     let proof = build_join_proof(code, &org.id, &inv.id, identity)?;

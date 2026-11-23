@@ -455,7 +455,7 @@ fn check_known_document(conn: &Connection, d: &RemoteDocument) -> Result<(), Fai
         || stored.created_at != d.created_at
     {
         return Err(bad_id(
-            "Id dokumen ini sudah tercatat dengan pembuat, tim, proyek, atau waktu lain.",
+            "Id dokumen ini sudah tercatat dengan pembuat, departemen, proyek, atau waktu lain.",
         ));
     }
     Ok(())
@@ -931,7 +931,7 @@ impl DocsPeerSync {
         } else {
             Err(reject(
                 "docs_forbidden",
-                "Penulis tidak berhak menulis di tim atau proyek dokumen ini.",
+                "Penulis tidak berhak menulis di departemen atau proyek dokumen ini.",
             ))
         }
     }
@@ -960,7 +960,7 @@ impl DocsPeerSync {
         } else {
             Err(reject(
                 "docs_blob_reuse",
-                "Versi ini memakai file milik tim, proyek, atau tanda tangan yang tidak bisa dibuka penulisnya.",
+                "Versi ini memakai file milik departemen, proyek, atau tanda tangan yang tidak bisa dibuka penulisnya.",
             ))
         }
     }
