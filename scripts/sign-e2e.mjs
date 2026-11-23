@@ -13,7 +13,7 @@
 // kalau semua lulus. PDF uji dibuat sendiri. Build dulu: npx tauri build --debug --no-bundle
 
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
@@ -125,6 +125,7 @@ function flipOneChar(path) {
   const at = buf.indexOf(marker);
   if (at < 0) throw new Error(`Tidak menemukan teks untuk diubah di ${path}`);
   buf[at + 9] = "E".charCodeAt(0);
+  chmodSync(path, 0o666); // file blob store dibuat read-only
   writeFileSync(path, buf);
 }
 
@@ -277,7 +278,8 @@ try {
   check("Periksa file: salinan yang diubah ditandai berubah", true);
 
   // Ubah satu karakter di penyimpanan Mira.
-  const stored = filesIn(join(dataDir, "ttd-berkas")).find((f) => readFileSync(f).equals(exportedBytes));
+  // Sejak sinkron, file PDF ada di blob store Tahap 4: <data>/blobs/<2 hex>/<hash>.
+  const stored = filesIn(join(dataDir, "blobs")).find((f) => readFileSync(f).equals(exportedBytes));
   check("File final ada di penyimpanan Mira", Boolean(stored), stored ?? "");
   flipOneChar(stored);
   await refocus(page);
