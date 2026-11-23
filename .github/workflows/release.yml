@@ -87,6 +87,20 @@ jobs:
       - name: Build installer
         run: npx tauri build ${{ matrix.args }}
 
+      - name: Periksa bundle macOS (arsitektur, tanda tangan, Info.plist)
+        if: runner.os == 'macOS'
+        run: |
+          APP=src-tauri/target/universal-apple-darwin/release/bundle/macos/Mira.app
+          ARCHS=$(lipo -archs "$APP/Contents/MacOS/mira")
+          echo "Arsitektur: $ARCHS"
+          echo "$ARCHS" | grep -q arm64 && echo "$ARCHS" | grep -q x86_64
+          codesign --verify --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E "Signature=adhoc|flags="
+          PLIST="$APP/Contents/Info.plist"
+          plutil -extract NSLocalNetworkUsageDescription raw "$PLIST"
+          plutil -extract NSBonjourServices xml1 -o - "$PLIST" | grep -q "_mira._udp"
+          plutil -extract LSMinimumSystemVersion raw "$PLIST"
+
       - name: Kumpulkan installer dengan nama tetap
         id: stage
         shell: bash
