@@ -83,8 +83,9 @@ Izin lokal: `access::scope_allows` disambung ke `scope::may_view` / `may_write` 
   1. `old` adalah awalan byte yang persis dari `new`;
   2. setelah kedua versi diurai (lopdf), objek yang berubah hanya: kamus halaman (hanya `/Contents` dengan isi lama utuh di tengah dan `/Resources` yang hanya bertambah), simpul `/Pages` (hanya menambah halaman di akhir), dan kamus Info;
   3. stream baru di halaman lama hanya berisi operator gambar dan teks (tanpa menggambar bidang yang bisa menutupi isi), gambar yang dipakai adalah gambar baru dan luasnya dibatasi;
-  4. paling banyak satu halaman baru di akhir (halaman catatan);
+  4. halaman baru hanya di akhir dan hanya dari penanda tangan terakhir (halaman catatan, isinya teks dan garis tipis);
   5. tidak ada aksi aktif (`/JS`, `/JavaScript`, `/AA`, `/OpenAction`, `/Launch`).
+- Diperketat setelah review keamanan (lihat laporan `docs/progress/sinkron-dokumen-ttd.md`): gambar stempel harus sebagian besar transparan tanpa piksel putih buram, semua tanda satu versi di satu halaman masuk satu kotak paling luas 15% halaman, keterangan paling banyak 120 huruf dan 12 pt, batas total dekompresi dan jumlah objek.
 - Dipakai di `service::complete` (laptop sendiri) dan saat menerima `signed` (laptop rekan). Hasil disimpan di `sign_proof_checks`.
 
 ## 6. Kontrak perintah dan tampilan (untuk UI)
