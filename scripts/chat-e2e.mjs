@@ -16,6 +16,7 @@ import { createWriteStream, mkdtempSync, mkdirSync, readFileSync, rmSync, writeF
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { newOffice } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -94,6 +95,7 @@ async function launch() {
       MIRA_DATA_DIR: dataDir,
       MIRA_PORT: String(MIRA_PORT),
       MIRA_DISABLE_MDNS: "1",
+      MIRA_UPDATER_ENDPOINT: "http://127.0.0.1:9/latest.json",
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
     },
     stdio: ["ignore", "ignore", "pipe"],
@@ -189,14 +191,7 @@ try {
   let { page } = app;
 
   // 1. Onboarding, tema Terang, buka Chat.
-  await page.getByLabel("Nama tampilan").waitFor({ timeout: 20000 });
-  await page.getByLabel("Nama tampilan").fill("Rina Uji");
-  await page.getByRole("button", { name: "Simpan nama" }).click();
-  await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
-  await page.getByLabel("Nama organisasi").fill("Kantor Uji");
-  await page.getByRole("button", { name: "Buat organisasi" }).click();
-  // Panduan firewall: dilewati tanpa mengubah pengaturan Windows.
-  await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
+  await newOffice(page, { name: "Rina Uji", org: "Kantor Uji", dept: "Desain" });
   await sel.nav(page, "Chat").waitFor({ timeout: 10000 });
   await setTheme(page, "Terang");
 

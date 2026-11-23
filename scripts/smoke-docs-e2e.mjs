@@ -17,6 +17,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -24,9 +25,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { mainNav, newOffice } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -34,6 +36,15 @@ const filesDir = resolve(process.argv[4] ?? "test-files");
 const excelSave = join(dirname(fileURLToPath(import.meta.url)), "excel-save.ps1");
 mkdirSync(shots, { recursive: true });
 const dataDir = mkdtempSync(join(tmpdir(), "mira-docs-"));
+
+// Salinan kerja di <data>/working/<id dokumen>/. Mira memendekkan nama file kalau
+// path lengkapnya lebih dari 200 karakter (batas Office), jadi nama aslinya dibaca
+// dari folder, bukan diandaikan sama dengan nama dokumen.
+function workingFile(docId) {
+  const dir = join(dataDir, "working", docId);
+  const files = existsSync(dir) ? readdirSync(dir).filter((f) => !f.startsWith("~")) : [];
+  return join(dir, files.length === 1 ? files[0] : "(salinan kerja tidak ada)");
+}
 // Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
 const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
 const PORT = 9341 + PORT_OFFSET;
@@ -82,6 +93,8 @@ async function launch() {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      MIRA_DISABLE_MDNS: "1",
+      MIRA_UPDATER_ENDPOINT: "http://127.0.0.1:9/latest.json",
       ...(PORT_OFFSET ? { MIRA_PORT: String(47800 + PORT_OFFSET) } : {}),
       MIRA_TEST_NO_LAUNCH: "1",
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
@@ -145,22 +158,10 @@ try {
   // Jalankan 1
   app = await launch();
   page = app.page;
-  await page.getByLabel("Nama tampilan").waitFor({ timeout: 20000 });
-  await page.getByLabel("Nama tampilan").fill("Rina Uji");
-  await page.getByRole("button", { name: "Simpan nama" }).click();
-  await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
-  await page.getByLabel("Nama organisasi").fill("Kantor Uji");
-  await page.getByRole("button", { name: "Buat organisasi" }).click();
-  // Langkah firewall dari Tahap 1 (kalau ada) dilewati.
-  const skipFirewall = page.getByRole("button", { name: /Lewati, atur nanti/ });
-  await Promise.race([
-    skipFirewall.waitFor({ timeout: 10000 }).then(() => skipFirewall.click()),
-    page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 }),
-  ]).catch(() => {});
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 });
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
+  await newOffice(page, { name: "Rina Uji", org: "Kantor Uji", dept: "Desain" });
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Terang").check();
-  await page.getByRole("button", { name: /^Dokumen\s*(,|$)/ }).click();
+  await mainNav(page, "Dokumen").click();
   await page.getByText(/masih kosong/).waitFor({ timeout: 10000 });
   check("Layar Dokumen kosong tampil", true);
   await page.screenshot({ path: join(shots, "12-dokumen-kosong-terang.png") });
@@ -182,7 +183,7 @@ try {
   check("Tanda Sedang diedit tampil", true);
   await page.screenshot({ path: join(shots, "13-dokumen-sedang-diedit-terang.png") });
   const xlsxDoc = await docByName(page, XLSX);
-  const working = join(dataDir, "working", xlsxDoc.id, XLSX);
+  const working = workingFile(xlsxDoc.id);
   check("Salinan kerja disiapkan", existsSync(working), working);
 
   if (process.env.MIRA_E2E_REAL_EXCEL === "1") {
@@ -213,7 +214,7 @@ try {
     // Pola simpan Excel ditiru urutannya: kunci ~$, file sementara 8 karakter
     // tanpa ekstensi, file asli diganti nama, file sementara jadi nama asli.
     const xdir = dirname(working);
-    const xlock = join(xdir, "~$" + XLSX);
+    const xlock = join(xdir, "~$" + basename(working));
     writeFileSync(xlock, "Rina Uji");
     await sleep(1000);
     writeFileSync(join(xdir, "A1B2C3D4"), Buffer.concat([readFileSync(working), Buffer.from("baris baru")]));
@@ -263,8 +264,8 @@ try {
   await page.getByText(/Sedang Anda edit di Word/).waitFor({ timeout: 10000 });
   const docxDoc = await docByName(page, DOCX);
   const wdir = join(dataDir, "working", docxDoc.id);
-  const wfile = join(wdir, DOCX);
-  const lock = join(wdir, "~$poran-bulanan.docx");
+  const wfile = workingFile(docxDoc.id);
+  const lock = join(wdir, "~$" + basename(wfile).slice(2));
   writeFileSync(lock, "Rina Uji");
   await sleep(1000);
   writeFileSync(join(wdir, "~WRL0001.tmp"), Buffer.concat([readFileSync(wfile), Buffer.from("revisi bab 3")]));
@@ -302,10 +303,10 @@ try {
   check("Sesi Word selesai setelah kunci ~$ hilang", wordDone.versionCount === 2);
 
   // Mode gelap
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(300);
-  await page.getByRole("button", { name: /^Dokumen\s*(,|$)/ }).click();
+  await mainNav(page, "Dokumen").click();
   await page.locator("li", { hasText: XLSX }).first().click();
   await page.getByText(/Dipulihkan dari versi 1/).first().waitFor({ timeout: 10000 });
   await page.screenshot({ path: join(shots, "17-dokumen-riwayat-gelap.png") });
@@ -317,11 +318,11 @@ try {
   // Jalankan 2: riwayat tetap ada setelah restart, dan sesi edit yang masih
   // terbuka saat Mira ditutup dipulihkan (tanpa kunci: file dianggap sudah
   // ditutup, simpanan terakhir menjadi versi baru).
-  const xlsxWorking = join(dataDir, "working", xlsxDoc.id, XLSX);
+  const xlsxWorking = workingFile(xlsxDoc.id);
   writeFileSync(xlsxWorking, Buffer.concat([readFileSync(xlsxWorking), Buffer.from("simpan saat Mira tertutup")]));
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
+  await mainNav(page, "Pengaturan").waitFor({ timeout: 20000 });
   const recovered = await waitFor(
     async () => {
       const d = await docByName(page, XLSX);
@@ -331,7 +332,7 @@ try {
     "pemulihan sesi saat start",
   );
   check("Simpanan saat Mira tertutup menjadi versi 4 setelah start", recovered.current.number === 4);
-  await page.getByRole("button", { name: /^Dokumen\s*(,|$)/ }).click();
+  await mainNav(page, "Dokumen").click();
   await page.locator("li", { hasText: XLSX }).first().click();
   await page.getByText(/Versi 4/).first().waitFor({ timeout: 10000 });
   check("Riwayat versi tetap ada setelah restart", true);

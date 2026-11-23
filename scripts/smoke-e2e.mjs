@@ -2,7 +2,8 @@
 //
 // Menjalankan mira.exe dengan folder data sementara (MIRA_DATA_DIR), lalu
 // mengendalikan WebView2 lewat Chrome DevTools Protocol (port debug lokal).
-// Alur: isi nama, lihat "Gabung dengan kode", buat organisasi, restart,
+// Alur: firewall, kantor belum ditemukan, lihat "Pakai kode undangan", buat
+// kantor baru (organisasi, nama, departemen), restart,
 // pastikan langsung masuk kerangka utama, ganti mode tema, restart lagi dan
 // pastikan pilihan tema tersimpan.
 //
@@ -14,6 +15,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { mainNav, reachNotFound } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -44,6 +46,8 @@ async function launch() {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      MIRA_DISABLE_MDNS: "1",
+      MIRA_UPDATER_ENDPOINT: "http://127.0.0.1:9/latest.json",
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
     },
     stdio: "ignore",
@@ -93,64 +97,54 @@ function windowTitle(pid) {
 const theme = (page) => page.evaluate(() => document.documentElement.dataset.theme);
 
 try {
-  // Jalankan 1: pertama kali buka.
+  // Jalankan 1: pertama kali buka (onboarding v0.3).
   let app = await launch();
   let { page } = app;
-  await page.getByLabel("Nama tampilan").waitFor({ timeout: 20000 });
-  check("Layar pertama menampilkan isian nama", true);
+  await page.getByRole("heading", { name: "Izinkan Mira di jaringan kantor" }).waitFor({ timeout: 20000 });
+  check("Layar pertama: langkah firewall", (await page.locator("body").innerText()).includes("Langkah 1 dari 3"));
   const title = windowTitle(app.child.pid);
   check("Judul jendela memuat nama folder data", title.startsWith("Mira ("), title);
-  await page.screenshot({ path: join(shots, "01-isi-nama.png") });
+  await page.screenshot({ path: join(shots, "01-firewall.png") });
 
-  await page.getByRole("button", { name: "Simpan nama" }).click();
-  const nameInput = page.getByLabel("Nama tampilan");
-  const invalid = await nameInput.getAttribute("aria-invalid");
+  await reachNotFound(page);
+  check("Tanpa kantor di jaringan: layar Kantor belum ditemukan", true);
+  await page.screenshot({ path: join(shots, "02-kantor-belum-ditemukan.png") });
+
+  await page.getByRole("button", { name: /Pakai kode undangan/ }).click();
+  await page.getByRole("heading", { name: "Gabung dengan kode undangan" }).waitFor();
+  await page.screenshot({ path: join(shots, "03-gabung-dengan-kode.png") });
+  check("Pakai kode undangan menampilkan isian kode undangan", true);
+  await page.getByRole("button", { name: /Kembali/ }).first().click();
+
+  await page.getByRole("heading", { name: /Kantor belum ditemukan|Cari kantor dengan cara lain/ }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "Siapkan Mira untuk kantor baru (khusus superadmin)" }).click();
+  await page.getByRole("heading", { name: "Siapkan Mira untuk kantor baru" }).waitFor();
+  await page.getByRole("button", { name: "Buat organisasi" }).click();
+  const invalid = await page.getByLabel("Nama organisasi").getAttribute("aria-invalid");
   const describedText = await page.evaluate(() => {
-    const el = document.querySelector('input[name="displayName"]');
+    const el = document.querySelector('input[name="orgName"]');
     const ids = (el?.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
     return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
   });
-  check(
-    "Nama kosong ditolak dengan pesan",
-    invalid === "true" && describedText.length > 0,
-    describedText.slice(0, 80),
-  );
-
-  await page.getByLabel("Nama tampilan").fill("Rina Uji");
-  await page.getByRole("button", { name: "Simpan nama" }).click();
-  await page.getByRole("button", { name: /Buat organisasi baru/ }).waitFor();
-  check("Nama tersimpan, lanjut ke pilihan organisasi", true);
-  await page.screenshot({ path: join(shots, "02-pilih-organisasi.png") });
-
-  await page.getByRole("button", { name: /Gabung dengan kode/ }).click();
-  // Sejak Tahap 1: panduan firewall dulu (dilewati tanpa mengubah pengaturan
-  // Windows), lalu isian kode undangan sungguhan.
-  await page.getByRole("heading", { name: "Izinkan Mira di jaringan kantor" }).waitFor();
-  await page.getByRole("button", { name: /^(Lewati, atur nanti|Lanjut ke kode undangan)$/ }).click();
-  await page.getByRole("heading", { name: "Gabung dengan kode undangan" }).waitFor();
-  await page.screenshot({ path: join(shots, "03-gabung-dengan-kode.png") });
-  check("Gabung dengan kode menampilkan isian kode undangan", true);
-  await page.getByRole("button", { name: /Kembali/ }).click();
-
-  await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
+  check("Isian kosong ditolak dengan pesan", invalid === "true" && describedText.length > 0, describedText.slice(0, 80));
   await page.getByLabel("Nama organisasi").fill("Kantor Uji");
+  await page.getByLabel("Nama Anda").fill("Rina Uji");
+  await page.getByLabel("Departemen Anda").fill("Desain");
   await page.screenshot({ path: join(shots, "04-buat-organisasi.png") });
   await page.getByRole("button", { name: "Buat organisasi" }).click();
-  // Panduan firewall (Tahap 1): dilewati tanpa mengubah pengaturan Windows.
-  await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 });
+  await mainNav(page, "Pengaturan").waitFor({ timeout: 20000 });
   const body1 = await page.locator("body").innerText();
   check(
     "Organisasi dibuat, masuk kerangka utama sebagai Superadmin",
     body1.includes("Kantor Uji") && body1.includes("Superadmin"),
   );
-  await page.screenshot({ path: join(shots, "05-kerangka-chat.png") });
+  await page.screenshot({ path: join(shots, "05-kerangka-utama.png") });
   await stop(app);
 
   // Jalankan 2: setelah restart langsung masuk kerangka utama.
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
+  await mainNav(page, "Pengaturan").waitFor({ timeout: 20000 });
   const body2 = await page.locator("body").innerText();
   check(
     "Setelah restart langsung ke kerangka utama, nama dan organisasi tetap",
@@ -160,10 +154,10 @@ try {
     ["Board", "06-board-kosong.png"],
     ["Dokumen", "07-dokumen-kosong.png"],
   ]) {
-    await page.getByRole("button", { name: menu, exact: true }).click();
+    await mainNav(page, menu).click();
     await page.screenshot({ path: join(shots, file) });
   }
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(300);
   check("Mode Gelap diterapkan", (await theme(page)) === "dark");
@@ -195,7 +189,7 @@ try {
   // Jalankan 3: pilihan Gelap tersimpan setelah restart.
   app = await launch();
   page = app.page;
-  await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
+  await mainNav(page, "Pengaturan").waitFor({ timeout: 20000 });
   check("Mode Gelap tetap setelah restart", (await theme(page)) === "dark");
   await page.screenshot({ path: join(shots, "11-chat-gelap-setelah-restart.png") });
   await stop(app);

@@ -17,6 +17,7 @@ import { createWriteStream, mkdtempSync, mkdirSync, rmSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { mainNav, newOffice } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -60,6 +61,8 @@ async function launch({ emulateViewport = true } = {}) {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      MIRA_DISABLE_MDNS: "1",
+      MIRA_UPDATER_ENDPOINT: "http://127.0.0.1:9/latest.json",
       ...(PORT_OFFSET ? { MIRA_PORT: String(47800 + PORT_OFFSET) } : {}),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
     },
@@ -96,12 +99,6 @@ async function stop({ child, browser }) {
   await new Promise((r) => setTimeout(r, 1500));
 }
 
-// Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi",
-// jadi tombol menu dicari di dalam nav "Menu utama". Nama tombol bisa membawa
-// angka ("Chat, 3 belum dibaca"), jadi dicocokkan sebagai awalan.
-const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(,|$)");
-const mainNav = (page, name) =>
-  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const column = (page, name) => page.locator("section.pb-col").filter({ has: page.getByRole("heading", { name }) });
 const cardTitles = async (page, name) =>
   (await column(page, name).locator("[data-open-task]").allInnerTexts()).map((s) => s.trim());
@@ -222,14 +219,7 @@ try {
   let { page } = app;
 
   // Onboarding.
-  await page.getByLabel("Nama tampilan").waitFor({ timeout: 20000 });
-  await page.getByLabel("Nama tampilan").fill("Rina Uji");
-  await page.getByRole("button", { name: "Simpan nama" }).click();
-  await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
-  await page.getByLabel("Nama organisasi").fill("Kantor Uji");
-  await page.getByRole("button", { name: "Buat organisasi" }).click();
-  // Panduan firewall: dilewati tanpa mengubah pengaturan Windows.
-  await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
+  await newOffice(page, { name: "Rina Uji", org: "Kantor Uji", dept: "Desain" });
   await mainNav(page, "Board").waitFor({ timeout: 10000 });
   await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Terang", { exact: true }).check();
@@ -243,17 +233,17 @@ try {
   await page.getByLabel("Nama proyek").fill("Proyek A");
   const code = await page.getByLabel("Kode proyek").inputValue();
   check("Kode proyek diusulkan dari nama", code === "PA", code);
-  // Organisasi baru belum punya departemen: satu-satunya pilihan Departemen adalah
-  // proyek tanpa departemen. Label baru terhubung ke select setelah data organisasi terbaca.
+  // Kantor baru (v0.3) selalu punya departemen pendiri: superadmin bisa memilih
+  // Desain atau tanpa departemen. Label baru terhubung ke select setelah data organisasi terbaca.
   const teamSelect = page.getByRole("dialog").getByLabel("Departemen", { exact: true });
   await teamSelect.waitFor({ timeout: 10000 });
   const teamOptions = (await teamSelect.locator("option").allInnerTexts()).map((s) => s.trim());
-  await teamSelect.selectOption({ label: "Tanpa departemen" });
   check(
-    "Pilihan Departemen untuk pendiri tanpa departemen hanya Tanpa departemen",
-    teamOptions.length === 1 && teamOptions[0] === "Tanpa departemen",
+    "Pilihan Departemen untuk superadmin: Desain dan Tanpa departemen",
+    teamOptions.length === 2 && teamOptions.includes("Desain") && teamOptions.includes("Tanpa departemen"),
     teamOptions.join(" | "),
   );
+  await teamSelect.selectOption({ label: "Tanpa departemen" });
   await page.screenshot({ path: join(shots, "t3-02-proyek-baru-terang.png") });
   await page.getByRole("dialog").getByRole("button", { name: "Buat proyek", exact: true }).click();
   await page.getByRole("button", { name: "Task baru" }).waitFor({ timeout: 10000 });

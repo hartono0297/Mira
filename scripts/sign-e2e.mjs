@@ -17,6 +17,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, st
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { mainNav, newOffice } from "./e2e-onboarding.mjs";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
@@ -74,6 +75,8 @@ async function launch() {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      MIRA_DISABLE_MDNS: "1",
+      MIRA_UPDATER_ENDPOINT: "http://127.0.0.1:9/latest.json",
       MIRA_EXPORT_DIR: exportDir,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
     },
@@ -167,15 +170,8 @@ try {
   const { page } = app;
 
   // Organisasi baru di laptop uji.
-  await page.getByLabel("Nama tampilan").waitFor({ timeout: 30000 });
-  await page.getByLabel("Nama tampilan").fill("Rina Uji");
-  await page.getByRole("button", { name: "Simpan nama" }).click();
-  await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
-  await page.getByLabel("Nama organisasi").fill("Kantor Uji");
-  await page.getByRole("button", { name: "Buat organisasi" }).click();
-  const skip = page.getByRole("button", { name: /Lewati/ });
-  await skip.waitFor({ timeout: 15000 }).then(() => skip.click()).catch(() => {});
-  await page.getByRole("button", { name: /^Tanda tangan\s*(,|$)/ }).click();
+  await newOffice(page, { name: "Rina Uji", org: "Kantor Uji", dept: "Desain" });
+  await mainNav(page, "Tanda tangan").click();
   await page.getByRole("button", { name: "Buat tanda tangan" }).first().waitFor({ timeout: 15000 });
   check("Layar Tanda tangan terbuka", true);
   await shot(page, "t5-01-tanda-tangan-kosong-terang.png");
@@ -288,10 +284,10 @@ try {
   await shot(page, "t5-09-peringatan-terang.png");
 
   // Mode gelap.
-  await page.getByRole("button", { name: "Pengaturan" }).click();
+  await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(400);
-  await page.getByRole("button", { name: /^Tanda tangan\s*(,|$)/ }).click();
+  await mainNav(page, "Tanda tangan").click();
   await page.getByText("Isi file tidak cocok dengan catatan Mira").first().waitFor({ timeout: 15000 });
   await shot(page, "t5-10-daftar-gelap.png");
   await page.getByText("kontrak-uji", { exact: false }).first().click();

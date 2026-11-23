@@ -1,9 +1,9 @@
 // Uji ujung ke ujung fondasi sinkron board di satu laptop.
 //
 // Menjalankan mira.exe dengan folder data baru, lalu lewat DevTools Protocol:
-// isi nama, buat organisasi, buat departemen "Desain" dan pindahkan superadmin
-// ke sana (lewat IPC, bukan halaman Organisasi), buat proyek departemen "Proyek
-// Klien" (kode PK) lewat dialog, buka panel Anggota proyek, tambah dua task,
+// onboarding kantor baru dengan departemen "Desain" (superadmin langsung di
+// sana), buat proyek departemen "Proyek Klien" (kode PK) lewat dialog, buka
+// panel Anggota proyek, tambah dua task,
 // ubah judul task di inti Rust sementara deskripsinya sedang diketik (draf dan
 // fokus harus tetap), pancarkan event mira://feature topik "board" dan "chat",
 // ubah nama proyek, buat kode undangan Tamu untuk proyek itu (IPC), ambil
@@ -18,6 +18,7 @@ import { createWriteStream, mkdtempSync, mkdirSync, readFileSync, rmSync } from 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { mainNav, newOffice } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -82,6 +83,8 @@ async function launch() {
     env: {
       ...process.env,
       MIRA_DATA_DIR: dataDir,
+      MIRA_DISABLE_MDNS: "1",
+      MIRA_UPDATER_ENDPOINT: "http://127.0.0.1:9/latest.json",
       ...(PORT_OFFSET ? { MIRA_PORT: String(47800 + PORT_OFFSET) } : {}),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
     },
@@ -147,12 +150,6 @@ async function must(page, cmd, args) {
 const emitFeature = (page, topic) =>
   call(page, "plugin:event|emit", { event: "mira://feature", payload: { topic } });
 
-// Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi"
-// (tautan undangan saat belum ada rekan), jadi pencarian dibatasi ke nav ini.
-// Nama tombol bisa membawa angka ("Board, 2 ..."), jadi dicocokkan sebagai awalan.
-const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(,|$)");
-const mainNav = (page, name) =>
-  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const projectNav = (page) => page.getByRole("navigation", { name: "Task saya dan proyek" });
 const card = (page, title) => page.locator("[data-open-task]", { hasText: title });
 
@@ -197,18 +194,11 @@ try {
   let { page } = app;
 
   // 1. Onboarding.
-  await page.getByLabel("Nama tampilan").waitFor({ timeout: 20000 });
-  await page.getByLabel("Nama tampilan").fill("Rina Uji");
-  await page.getByRole("button", { name: "Simpan nama" }).click();
-  await page.getByRole("button", { name: /Buat organisasi baru/ }).click();
-  await page.getByLabel("Nama organisasi").fill("Kantor Uji");
-  await page.getByRole("button", { name: "Buat organisasi" }).click();
-  // Panduan firewall: dilewati tanpa mengubah pengaturan Windows.
-  await page.getByRole("button", { name: /^(Lewati, atur nanti|Buka Mira)$/ }).click({ timeout: 15000 });
+  await newOffice(page, { name: "Rina Uji", org: "Kantor Uji", dept: TEAM });
   await mainNav(page, "Board").waitFor({ timeout: 10000 });
   await mainNav(page, "Pengaturan").click();
   await page.getByLabel("Terang", { exact: true }).check();
-  check("Onboarding selesai: nama, organisasi, firewall dilewati", true);
+  check("Onboarding selesai: kantor baru dengan departemen Desain, firewall dilewati", true);
 
   // Pemeriksaan awal: request IPC terlihat lewat CDP (dipakai pemeriksaan event di langkah 4).
   const probeAt = Date.now();
@@ -219,12 +209,9 @@ try {
     console.log("Catatan: request IPC tidak terlihat lewat CDP; pemeriksaan muat ulang karena event hanya lewat tampilan.");
   }
 
-  // 2. Organisasi lewat IPC (halaman Organisasi sedang ditulis ulang): departemen
-  // Desain, superadmin memindahkan dirinya sendiri ke sana.
+  // 2. Departemen Desain dibuat di onboarding (kantor baru v0.3) dan superadmin sudah di sana.
   const me = (await must(page, "org_overview")).publicKey;
-  const dept = await must(page, "org_create_department", { name: TEAM });
-  desainId = dept.id;
-  await must(page, "org_move_member", { publicKey: me, teamId: desainId });
+  desainId = (await must(page, "org_departments", { includeArchived: false })).find((d) => d.name === TEAM)?.id;
   const people = await must(page, "org_people");
   const mine = people.find((p) => p.publicKey === me);
   const overview = await must(page, "org_overview");
