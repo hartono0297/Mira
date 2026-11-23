@@ -28,7 +28,7 @@ Session utama memakai template ini setiap kali memulai sesi baru untuk satu task
 - Jangan tanya user. Ambil keputusan yang wajar dan catat di laporan.
 
 **Hemat disk**
-- Build dan tes hanya di dalam worktree sesi ini, yang ada di D:. Jangan pernah membangun Rust, membuat folder `target`, atau menyalin `node_modules` di folder sementara atau scratchpad, karena letaknya di C:.
+- Build dan tes hanya di dalam worktree sesi ini, yang ada di D:. Jangan pernah membangun Rust, membuat folder `target`, atau menyalin `node_modules` di folder sementara atau scratchpad, karena letaknya di C:. Aturan yang sama berlaku untuk `CARGO_TARGET_DIR`: jangan diarahkan ke scratchpad. Dulu satu sesi membuat folder build 20 GB di scratchpad, dan sisa ruang C: tinggal kurang dari 1 GB.
 - Subagent yang butuh worktree sendiri boleh memakainya. Kalau tugasnya hanya membaca atau mengedit file yang terpisah, pakai worktree sesi saja supaya tidak ada folder build tambahan.
 - Data uji (`MIRA_DATA_DIR`) dan screenshot sementara boleh di scratchpad, karena ukurannya kecil. Hapus setelah selesai.
 - Jangan menjalankan build release kalau build debug sudah cukup untuk uji.
