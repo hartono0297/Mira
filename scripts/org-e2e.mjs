@@ -341,6 +341,9 @@ try {
   // B bukan superadmin: tab Anggota saja, tanpa halaman admin (v0.4).
   await reload("B");
   await openOrg("B");
+  // Tab baru muncul setelah org_overview terbaca; daftar Anggota setelah org_people.
+  await pg("B").locator("nav.org-tabs-wrap").getByRole("button", { name: "Anggota", exact: true }).waitFor({ timeout: 15000 });
+  await pg("B").getByText("Drafter", { exact: true }).first().waitFor({ timeout: 15000 }).catch(() => {});
   const bTabs = await pg("B").locator("nav.org-tabs-wrap button").allInnerTexts();
   check(
     "B (Anggota) melihat tab Anggota, tidak melihat Pengguna, Departemen, Label, dan Permintaan bergabung",
