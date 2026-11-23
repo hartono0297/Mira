@@ -51,14 +51,15 @@ async fn settle(nodes: &[&Node]) {
 }
 
 async fn start_net(state: &MiraState, org_changed: &Arc<AtomicUsize>) -> Network {
-    start_net_with_extras(state, org_changed, crate::network::JOIN_INFO_EXTRAS).await
+    start_net_with_extras(state, org_changed, None).await
 }
 
-/// Same, answering `join_info` with `extras` (0: like Mira v0.3).
+/// Same, answering `join_info` with `extras` when given (0: like Mira
+/// v0.3) instead of from the members' versions.
 async fn start_net_with_extras(
     state: &MiraState,
     org_changed: &Arc<AtomicUsize>,
-    extras: u32,
+    extras: Option<u32>,
 ) -> Network {
     let (identity_secret, public_key) = state
         .with_core(|c| {
@@ -79,7 +80,10 @@ async fn start_net_with_extras(
             port: Some(0),
             mdns_enabled: false,
         },
-        Arc::new(MiraBackend::new(state.clone()).with_join_extras(extras)),
+        Arc::new(match extras {
+            Some(n) => MiraBackend::new(state.clone()).with_join_extras(n),
+            None => MiraBackend::new(state.clone()),
+        }),
         Arc::new(move |ev| {
             if ev == NetEvent::OrgChanged {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -167,7 +171,23 @@ impl Node {
     /// `extras`).
     async fn restart_as_v03(&mut self) {
         self.net.shutdown().await;
-        self.net = start_net_with_extras(&self.state, &self.org_changed, 0).await;
+        self.net = start_net_with_extras(&self.state, &self.org_changed, Some(0)).await;
+    }
+
+    /// Publishes this laptop's device profile (`device_set`), as Mira does
+    /// on start.
+    fn publish_device(&self) {
+        self.core(|c| {
+            join::publish_device(c);
+            Ok(())
+        });
+        self.net.refresh();
+    }
+
+    /// This laptop takes join requests with `note` and `account`.
+    fn takes_extras(&self) -> bool {
+        self.core(|c| permissions::join_info(&c.db))
+            .is_some_and(|i| i.extras)
     }
 
     /// The payloads of the join requests stored here.
@@ -691,6 +711,16 @@ async fn new_laptop_joins_by_request_through_a_member() {
         b.team_id("Tim Keuangan").is_some()
     })
     .await;
+    // Until every member reported its Mira version, nobody takes the v0.4
+    // fields.
+    assert!(!b.takes_extras());
+    for x in [&a, &b, &c] {
+        x.publish_device();
+    }
+    wait_until("A and B have every device profile", || {
+        a.takes_extras() && b.takes_extras()
+    })
+    .await;
 
     let n = Node::new("Nina").await;
     // What the mDNS advertisement carries (TXT `on`, `j`).
@@ -879,11 +909,77 @@ async fn office_with_a_v03_member_gets_the_v03_request_shape() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn rejected_request_can_be_sent_again() {
-    let (a, b, desain) = pair().await;
+async fn resend_drops_the_note_when_the_office_no_longer_takes_it() {
+    let (a, mut b, desain) = pair().await;
+    a.publish_device();
+    b.publish_device();
+    wait_until("A and B have both device profiles", || {
+        a.takes_extras() && b.takes_extras()
+    })
+    .await;
     let n = Node::new("Nina").await;
     let client = JoinClient::default();
     let offices = n.connect_office(&client, &b).await.expect("office");
+    assert!(offices[0].accepts_note);
+    let first = join::send_request(
+        &n.state,
+        &n.net,
+        &client,
+        &offices[0].key,
+        &desain,
+        None,
+        Some("Staf gudang"),
+    )
+    .await
+    .expect("request sent");
+    assert_eq!(first.note.as_deref(), Some("Staf gudang"));
+    wait_until("A has the request", || {
+        a.pending_joins().iter().any(|r| r.id == first.request_id)
+    })
+    .await;
+    a.core(|c| permissions::reject_join(&mut c.db, &c.identity, &first.request_id, clock::now()));
+    a.net.refresh();
+    n.poll_until(&client, "N sees the rejection", |p| {
+        matches!(p, JoinPoll::Rejected { .. })
+    })
+    .await;
+
+    // B now answers like Mira v0.3: the office no longer takes the note.
+    b.restart_as_v03().await;
+    b.know(&a);
+    a.net.refresh();
+    wait_until("A and B connected again", || {
+        a.connected(&b) && b.connected(&a)
+    })
+    .await;
+    let offices = n.connect_office(&client, &b).await.expect("office");
+    assert!(!offices[0].accepts_note);
+    let again = join::resend(&n.state, &n.net, &client)
+        .await
+        .expect("resend");
+    assert_eq!(again.note, None, "v0.3 shape");
+    assert!(!again.request.payload.contains("\"account\""));
+    assert_eq!(again.last_error, None, "delivered to B");
+    wait_until("A has the new request", || {
+        a.pending_joins().iter().any(|r| r.id == again.request_id)
+    })
+    .await;
+    shutdown(&[&a, &b, &n]).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejected_request_can_be_sent_again() {
+    let (a, b, desain) = pair().await;
+    a.publish_device();
+    b.publish_device();
+    wait_until("A and B have both device profiles", || {
+        a.takes_extras() && b.takes_extras()
+    })
+    .await;
+    let n = Node::new("Nina").await;
+    let client = JoinClient::default();
+    let offices = n.connect_office(&client, &b).await.expect("office");
+    assert!(offices[0].accepts_note);
     let first = join::send_request(
         &n.state,
         &n.net,

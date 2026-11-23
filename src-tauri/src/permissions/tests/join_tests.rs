@@ -55,6 +55,15 @@ impl Node {
         self.id.public_key_hex().to_owned()
     }
 
+    /// Publishes this laptop's device profile with Mira `version`.
+    fn report_version(&mut self, version: &str) {
+        let profile = DeviceProfile {
+            app_version: version.into(),
+            ..device()
+        };
+        p::ensure_device_op(&mut self.conn, &self.id, &profile, now()).unwrap();
+    }
+
     fn state(&self) -> p::OrgState {
         p::load_state(&self.conn).unwrap().unwrap()
     }
@@ -286,6 +295,7 @@ fn request_reaches_an_approver_through_a_member_and_the_requester_joins() {
 #[test]
 fn note_and_account_reach_the_approver_card() {
     let mut o = office();
+    all_on(&mut o, "0.4.0");
     let mut sari = Node::new("Sari");
     let extras = p::join::JoinExtras {
         note: Some("  Staf gudang, NIK 1234 ".into()),
@@ -365,6 +375,170 @@ fn note_is_cleaned_and_checked_before_signing() {
     assert!(!odd.request.payload.contains("account"));
     let odd = make(&mut sari, "Staf", Some(" \t ")).unwrap();
     assert!(!odd.request.payload.contains("account"));
+    // Blank-looking and stacked characters are refused like control ones.
+    for bad in ["Staf\u{3164}", "Staf\u{FE0F}x", "a\u{0301}\u{0301}\u{0301}"] {
+        let err = make(&mut sari, bad, None).unwrap_err();
+        assert_eq!(err.code(), "invalid_input", "{bad:?}");
+    }
+    let odd = make(&mut sari, "Staf", Some("ri\u{E0041}na")).unwrap();
+    assert!(!odd.request.payload.contains("account"));
+}
+
+/// Every member of the office reports Mira `version`, and Andi has all
+/// the device profiles.
+fn all_on(o: &mut Office, version: &str) {
+    o.andi.report_version(version);
+    o.rina.report_version(version);
+    o.dimas.report_version(version);
+    o.rina.sync_to(&mut o.andi);
+    o.dimas.sync_to(&mut o.andi);
+    o.andi.sync_to(&mut o.rina);
+    o.andi.sync_to(&mut o.dimas);
+}
+
+#[test]
+fn extras_gate_needs_every_member_on_a_recent_version() {
+    let mut o = office();
+    let gate = |n: &Node| p::join::join_extras_allowed_since(&n.state(), (0, 4, 0));
+    // Members that never reported a device profile count as too old.
+    assert!(!gate(&o.andi));
+    assert!(!p::join::join_extras_allowed(&o.andi.state()));
+    assert!(!p::join_info(&o.andi.conn).unwrap().unwrap().extras);
+    all_on(&mut o, "0.4.0");
+    assert!(gate(&o.andi));
+    assert!(p::join::join_extras_allowed(&o.andi.state()));
+    assert!(p::join_info(&o.andi.conn).unwrap().unwrap().extras);
+    // One laptop on an older Mira closes the gate again.
+    o.dimas.report_version("0.3.0");
+    o.dimas.sync_to(&mut o.andi);
+    assert!(!gate(&o.andi));
+    o.dimas.report_version("0.2.9");
+    o.dimas.sync_to(&mut o.andi);
+    assert!(!p::join::join_extras_allowed(&o.andi.state()));
+    assert!(!p::join_info(&o.andi.conn).unwrap().unwrap().extras);
+    o.dimas.report_version("0.4.1");
+    o.dimas.sync_to(&mut o.andi);
+    assert!(gate(&o.andi));
+    // A removed member does not count.
+    let rina = o.rina.pk();
+    o.rina.report_version("0.3.0");
+    o.rina.sync_to(&mut o.andi);
+    assert!(!gate(&o.andi));
+    p::remove_member(&mut o.andi.conn, &o.andi.id, &rina, now()).unwrap();
+    assert!(gate(&o.andi));
+}
+
+#[test]
+fn requests_with_extras_are_refused_while_the_gate_is_closed() {
+    let mut o = office();
+    let mut sari = Node::new("Sari");
+    let extras = p::join::JoinExtras {
+        note: Some("Staf gudang".into()),
+        account: Some("sari".into()),
+    };
+    let with = p::create_join_request(
+        &mut sari.conn,
+        &sari.id,
+        &target(&o.andi, &o.desain),
+        &device(),
+        Some(&extras),
+        now(),
+    )
+    .unwrap();
+    // No member reported a version yet: closed.
+    let refused = p::receive_join_request(
+        &mut o.andi.conn,
+        &o.andi.id,
+        &with.request,
+        &sari.pk(),
+        ip("192.168.1.23"),
+        now(),
+    );
+    assert_eq!(refused, Err(JoinRequestRefusal::ExtrasNotAccepted));
+    let r = JoinRequestRefusal::ExtrasNotAccepted;
+    assert_eq!(r.code(), "invalid_request");
+    assert_eq!(
+        r.message(),
+        "Kantor ini masih punya laptop Mira versi lama. Kirim ulang permintaan tanpa keterangan."
+    );
+    let andi_state = o.andi.state();
+    assert!(
+        p::pending_join_requests(&o.andi.conn, &andi_state, &o.andi.pk(), now())
+            .unwrap()
+            .is_empty()
+    );
+    // The v0.3 shape is taken.
+    let plain = p::create_join_request(
+        &mut sari.conn,
+        &sari.id,
+        &target(&o.andi, &o.desain),
+        &device(),
+        None,
+        now(),
+    )
+    .unwrap();
+    assert!(
+        p::receive_join_request(
+            &mut o.andi.conn,
+            &o.andi.id,
+            &plain.request,
+            &sari.pk(),
+            ip("192.168.1.23"),
+            now(),
+        )
+        .is_ok()
+    );
+
+    // Forwarding: Dimas (gate open on his laptop) took a request with
+    // extras; Rina's laptop has not seen every profile, so it does not
+    // store the forwarded copy.
+    let mut tia = Node::new("Tia");
+    let tia_req = p::create_join_request(
+        &mut tia.conn,
+        &tia.id,
+        &target(&o.andi, &o.desain),
+        &device(),
+        Some(&extras),
+        now(),
+    )
+    .unwrap();
+    o.andi.report_version("0.4.0");
+    o.rina.report_version("0.4.0");
+    o.dimas.report_version("0.4.0");
+    o.andi.sync_to(&mut o.dimas);
+    o.rina.sync_to(&mut o.dimas);
+    p::receive_join_request(
+        &mut o.dimas.conn,
+        &o.dimas.id,
+        &tia_req.request,
+        &tia.pk(),
+        ip("192.168.1.24"),
+        now(),
+    )
+    .unwrap();
+    let dimas_state = o.dimas.state();
+    let ids = p::join_record_ids_for(&o.dimas.conn, &dimas_state, &o.rina.pk()).unwrap();
+    let bodies: Vec<String> = p::join_records_for(&o.dimas.conn, &dimas_state, &o.rina.pk(), &ids)
+        .unwrap()
+        .into_iter()
+        .map(|(_, b)| b)
+        .collect();
+    assert_eq!(bodies.len(), 1);
+    // Rina's own laptop knows only her own profile.
+    let r = p::ingest_join_records(&mut o.rina.conn, &o.dimas.pk(), &bodies, now()).unwrap();
+    assert_eq!(r.accepted, 0);
+    assert!(
+        p::unknown_join_record_ids(&o.rina.conn, &ids)
+            .unwrap()
+            .len()
+            == 1,
+        "not stored"
+    );
+    // Once Rina's laptop has every profile, the copy is stored.
+    o.dimas.sync_to(&mut o.rina);
+    o.andi.sync_to(&mut o.rina);
+    let r = p::ingest_join_records(&mut o.rina.conn, &o.dimas.pk(), &bodies, now()).unwrap();
+    assert_eq!(r.accepted, 1);
 }
 
 #[test]

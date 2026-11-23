@@ -402,13 +402,11 @@ fn raw_account() -> Option<String> {
     std::env::var("USER").ok()
 }
 
-/// Login account name as a request may carry it: printable characters
-/// only, trimmed, at most 64 characters; `None` when nothing is left.
+/// Login account name as a request may carry it: without the characters
+/// `permissions::join::strip_join_text` drops (control, invisible, stacked
+/// marks), trimmed, at most 64 characters; `None` when nothing is left.
 fn clean_account(raw: &str) -> Option<String> {
-    let kept: String = raw
-        .chars()
-        .filter(|c| !crate::identity::has_forbidden_chars(&c.to_string()))
-        .collect();
+    let kept = permissions::join::strip_join_text(raw);
     let cut: String = kept.trim().chars().take(JOIN_ACCOUNT_MAX_CHARS).collect();
     let cut = cut.trim();
     (!cut.is_empty()).then(|| cut.to_owned())
@@ -712,21 +710,7 @@ async fn send_targets(
     // A request with `note` or `account` goes only to members that said
     // they take it; v0.3 members refuse it as invalid.
     let needs_extras = has_extras(out);
-    let cached = !client.lock().members_of(&key, needs_extras).is_empty();
-    if !cached {
-        let saved = state.with_core(|c| load_saved(&c.db))?;
-        let addrs: Vec<(SocketAddr, Option<String>)> = status_candidates(net, client, out, &saved)
-            .into_iter()
-            .take(MAX_QUERIES_PER_ORG)
-            .map(|a| (a, Some(out.org_id.clone())))
-            .collect();
-        for (addr, expected, answer) in ask_info(net, addrs).await {
-            let Ok((pk, info)) = answer else { continue };
-            if let Some(info) = verify_info(info, expected.as_deref()) {
-                client.lock().record(&pk, addr, info, Instant::now());
-            }
-        }
-    }
+    ask_office_if_unknown(state, net, client, out, needs_extras).await?;
     // No conflict check here: the request is pinned to one genesis record
     // (chosen in `send_request`), and only laptops that answered with that
     // exact record are sent to.
@@ -738,6 +722,45 @@ async fn send_targets(
         .take(MAX_SEND)
         .map(|(_, addr)| addr)
         .collect())
+}
+
+/// After a restart nothing is cached: asks the candidate addresses of
+/// `out`'s office for `join_info` when no member (taking the v0.4 fields,
+/// with `needs_extras`) is known.
+async fn ask_office_if_unknown(
+    state: &MiraState,
+    net: &Network,
+    client: &JoinClient,
+    out: &OutgoingJoinRequest,
+    needs_extras: bool,
+) -> AppResult<()> {
+    let key = office_key(&out.org);
+    if !client.lock().members_of(&key, needs_extras).is_empty() {
+        return Ok(());
+    }
+    let saved = state.with_core(|c| load_saved(&c.db))?;
+    let addrs: Vec<(SocketAddr, Option<String>)> = status_candidates(net, client, out, &saved)
+        .into_iter()
+        .take(MAX_QUERIES_PER_ORG)
+        .map(|a| (a, Some(out.org_id.clone())))
+        .collect();
+    for (addr, expected, answer) in ask_info(net, addrs).await {
+        let Ok((pk, info)) = answer else { continue };
+        if let Some(info) = verify_info(info, expected.as_deref()) {
+            client.lock().record(&pk, addr, info, Instant::now());
+        }
+    }
+    Ok(())
+}
+
+/// What a resent request carries: the previous note and the current login
+/// name, only when the previous request had v0.4 fields and the office
+/// still takes them; otherwise the v0.3 shape.
+fn resend_extras(old: &OutgoingJoinRequest, office_accepts: bool) -> Option<JoinExtras> {
+    (office_accepts && has_extras(old)).then(|| JoinExtras {
+        note: old.note.clone(),
+        account: login_account(),
+    })
 }
 
 /// The request carries a v0.4 field (`note` or `account`).
@@ -857,9 +880,10 @@ pub async fn send_request(
 }
 
 /// `join_resend`: a new request (new id and code) to the same office and
-/// department, sent right away. Same shape as the previous one: with its
-/// note and the current login account name if it carried v0.4 fields,
-/// the v0.3 shape otherwise.
+/// department, sent right away. With the previous note and the current
+/// login account name if the previous request carried v0.4 fields and the
+/// office still takes them (a member may have been replaced by a v0.3
+/// laptop meanwhile); the v0.3 shape otherwise.
 pub async fn resend(
     state: &MiraState,
     net: &Network,
@@ -876,10 +900,13 @@ pub async fn resend(
         team_id: old.team_id.clone(),
         team_name: old.team_name.clone(),
     };
-    let extras = has_extras(&old).then(|| JoinExtras {
-        note: old.note.clone(),
-        account: login_account(),
-    });
+    ask_office_if_unknown(state, net, client, &old, false).await?;
+    let accepts = client
+        .lock()
+        .offices
+        .get(&office_key(&old.org))
+        .is_some_and(Office::accepts_extras);
+    let extras = resend_extras(&old, accepts);
     let out = state.with_core(|c| {
         permissions::create_join_request(
             &mut c.db,
@@ -1461,10 +1488,27 @@ mod tests {
         );
         assert_eq!(clean_account(" \t\u{200B} "), None);
         assert_eq!(clean_account(""), None);
+        // Blank-looking characters and stacked marks go too.
+        assert_eq!(
+            clean_account("ri\u{3164}na\u{FE0F}\u{E0041}").as_deref(),
+            Some("rina")
+        );
+        assert_eq!(
+            clean_account("a\u{0301}\u{0301}\u{0301}").as_deref(),
+            Some("a\u{0301}\u{0301}")
+        );
+        assert_eq!(clean_account("\u{3164}\u{2800}"), None);
         let long = clean_account(&"é".repeat(100)).unwrap();
         assert_eq!(long.chars().count(), JOIN_ACCOUNT_MAX_CHARS);
         // Whatever the system says passes the request check.
-        for raw in ["rina.w", " a b ", "x\u{0007}y", &"z".repeat(70)] {
+        for raw in [
+            "rina.w",
+            " a b ",
+            "x\u{0007}y",
+            &"z".repeat(70),
+            "\u{115F}x\u{034F}",
+            "e\u{0302}\u{0323}\u{0301}\u{0300}",
+        ] {
             if let Some(a) = clean_account(raw) {
                 assert!(permissions::join::is_valid_join_account(&a), "{raw:?}");
             }
@@ -1472,6 +1516,59 @@ mod tests {
         if let Some(a) = login_account() {
             assert!(permissions::join::is_valid_join_account(&a));
         }
+    }
+
+    #[test]
+    fn resend_keeps_the_note_only_while_the_office_takes_it() {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let request = |note: Option<&str>| {
+            let p = permissions::join::JoinRequestPayload {
+                v: 1,
+                org: "01".repeat(16),
+                org_fp: "ab".repeat(32),
+                member: hex::encode(sk.verifying_key().as_bytes()),
+                name: "Rina".into(),
+                team: "22".repeat(16),
+                laptop: "L".into(),
+                os: "Windows 11".into(),
+                app_version: "0.4.0".into(),
+                note: note.map(str::to_owned),
+                account: None,
+                at: "2026-11-23T08:00:00Z".into(),
+                nonce: "cd".repeat(16),
+            };
+            use ed25519_dalek::Signer;
+            let signed = permissions::join::sign_join_request(&p, |m| sk.sign(m));
+            OutgoingJoinRequest {
+                request_id: signed.id(),
+                request: signed,
+                org: genesis(1),
+                code: "ABCD EFGH".into(),
+                org_fingerprint: "ABCD-EFGH".into(),
+                org_id: "01".repeat(16),
+                org_name: "Kantor".into(),
+                team_id: "22".repeat(16),
+                team_name: "Desain".into(),
+                display_name: "Rina".into(),
+                note: note.map(str::to_owned),
+                created_at: "2026-11-23T08:00:00Z".into(),
+                status: OutgoingStatus::Rejected,
+                decided_by_name: None,
+                decided_at: None,
+                last_sent_at: None,
+                last_error: None,
+            }
+        };
+        let with = request(Some("Staf gudang"));
+        let extras = resend_extras(&with, true).unwrap();
+        assert_eq!(extras.note.as_deref(), Some("Staf gudang"));
+        assert_eq!(extras.account, login_account());
+        assert_eq!(
+            resend_extras(&with, false),
+            None,
+            "office went back to v0.3"
+        );
+        assert_eq!(resend_extras(&request(None), true), None, "was v0.3 shape");
     }
 
     #[test]
