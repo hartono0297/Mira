@@ -26,6 +26,7 @@ pub mod settings;
 pub mod signing;
 pub mod state;
 pub mod team_commands;
+pub mod updater;
 pub mod window_theme;
 
 use tauri::{App, Manager, RunEvent, WebviewWindowBuilder};
@@ -41,7 +42,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            app.manage(updater::UpdaterState::default());
             let data_dir = paths::resolve_data_dir(app.handle());
             let state = MiraState::new(
                 data_dir
@@ -203,6 +206,10 @@ pub fn run() {
             chat::commands::chat_file_download,
             chat::commands::chat_set_notify,
             chat::commands::chat_set_muted,
+            updater::update_info,
+            updater::update_check,
+            updater::update_download,
+            updater::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

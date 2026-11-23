@@ -80,5 +80,17 @@
         }
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU3MUI1MDY3Q0U5M0NGODkKUldTSno1UE9aMUFiVjhZOW53cW9RU1p5L2lzYk9DelhPTkw1SGJmZ1RrU1dmZHV0NUFmaFpvMWUK",
+      "endpoints": [
+        "https://github.com/hartono0297/Mira/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
   }
 }
