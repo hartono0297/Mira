@@ -167,7 +167,7 @@ const onlineNames = async (id) =>
 
 // ---- Selektor layar (sama dengan chat-e2e.mjs dan board-e2e.mjs) ----
 // Nama tombol menu bisa membawa angka ("Chat, 3 belum dibaca"), jadi dicocokkan sebagai awalan.
-const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(,|$)");
+const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(,|$)");
 const mainNav = (p, name) =>
   p.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const sel = {

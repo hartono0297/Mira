@@ -99,7 +99,7 @@ async function stop({ child, browser }) {
 // Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi",
 // jadi tombol menu dicari di dalam nav "Menu utama". Nama tombol bisa membawa
 // angka ("Chat, 3 belum dibaca"), jadi dicocokkan sebagai awalan.
-const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(,|$)");
+const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(,|$)");
 const mainNav = (page, name) =>
   page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const column = (page, name) => page.locator("section.pb-col").filter({ has: page.getByRole("heading", { name }) });

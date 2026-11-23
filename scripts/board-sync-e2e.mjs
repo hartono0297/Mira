@@ -150,7 +150,7 @@ const emitFeature = (page, topic) =>
 // Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi"
 // (tautan undangan saat belum ada rekan), jadi pencarian dibatasi ke nav ini.
 // Nama tombol bisa membawa angka ("Board, 2 ..."), jadi dicocokkan sebagai awalan.
-const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(,|$)");
+const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(,|$)");
 const mainNav = (page, name) =>
   page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const projectNav = (page) => page.getByRole("navigation", { name: "Task saya dan proyek" });

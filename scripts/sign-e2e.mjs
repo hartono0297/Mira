@@ -175,7 +175,7 @@ try {
   await page.getByRole("button", { name: "Buat organisasi" }).click();
   const skip = page.getByRole("button", { name: /Lewati/ });
   await skip.waitFor({ timeout: 15000 }).then(() => skip.click()).catch(() => {});
-  await page.getByRole("button", { name: /^Tanda tangan(,|$)/ }).click();
+  await page.getByRole("button", { name: /^Tanda tangan\s*(,|$)/ }).click();
   await page.getByRole("button", { name: "Buat tanda tangan" }).first().waitFor({ timeout: 15000 });
   check("Layar Tanda tangan terbuka", true);
   await shot(page, "t5-01-tanda-tangan-kosong-terang.png");
@@ -291,7 +291,7 @@ try {
   await page.getByRole("button", { name: "Pengaturan" }).click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(400);
-  await page.getByRole("button", { name: /^Tanda tangan(,|$)/ }).click();
+  await page.getByRole("button", { name: /^Tanda tangan\s*(,|$)/ }).click();
   await page.getByText("Isi file tidak cocok dengan catatan Mira").first().waitFor({ timeout: 15000 });
   await shot(page, "t5-10-daftar-gelap.png");
   await page.getByText("kontrak-uji", { exact: false }).first().click();
