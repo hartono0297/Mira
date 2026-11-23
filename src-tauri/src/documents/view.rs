@@ -9,9 +9,10 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
-use crate::blobs::BlobStore;
+use crate::blobs::{self, BlobStore};
 use crate::documents::access::{DocAction, DocumentAccess};
 use crate::documents::kinds::DocumentKind;
+use crate::documents::peer_sync;
 use crate::documents::store::{self, DocumentRecord, VersionOrigin, VersionRecord};
 use crate::documents::sync::is_fresh;
 use crate::error::{AppError, AppResult};
@@ -46,6 +47,11 @@ pub struct DocumentVersion {
     pub received: bool,
     /// The content is in this laptop's blob store.
     pub available: bool,
+    /// The content is being copied from a rekan right now.
+    pub downloading: bool,
+    /// Small enough (up to 20 MB) to be copied as soon as it arrives; larger
+    /// files are copied with `download_version`.
+    pub auto_download: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -178,6 +184,8 @@ fn view_version(
         is_head: head_ids.contains(v.id.as_str()),
         received: v.received_at.is_some(),
         available: blobs.contains(&v.blob.hash),
+        downloading: peer_sync::is_downloading(blobs, &v.blob.hash),
+        auto_download: blobs::should_auto_replicate(v.blob.size),
     })
 }
 
@@ -421,8 +429,12 @@ mod tests {
                 "isHead",
                 "received",
                 "available",
+                "downloading",
+                "autoDownload",
             ])
         );
+        assert_eq!(json["current"]["downloading"], false);
+        assert_eq!(json["current"]["autoDownload"], true);
         assert_eq!(json["current"]["number"], 1);
         assert_eq!(json["current"]["size"], 3);
         assert_eq!(json["current"]["origin"], "added");
@@ -508,19 +520,18 @@ mod tests {
         assert!(!s.can.edit, "PDF is not editable");
         assert!(s.can.restore);
 
-        // Tamu: view and export only.
+        // Tamu: nothing in the general library (plan, "Batas tim dan
+        // proyek"). In an allowed project a guest may view and export only
+        // (`access::tests::scope_follows_teams_and_guest_projects`).
         f.conn
             .execute("UPDATE members SET role = 'guest'", [])
             .unwrap();
-        let s = summary(&f.conn, &f.blobs, &f.me, &RoleAccess, &word.id, T0).unwrap();
-        assert_eq!(
-            s.can,
-            DocumentCan {
-                edit: false,
-                restore: false,
-                resolve: false,
-                export: true
-            }
+        let err = summary(&f.conn, &f.blobs, &f.me, &RoleAccess, &word.id, T0).unwrap_err();
+        assert_eq!(err.code(), "forbidden");
+        assert!(
+            summaries(&f.conn, &f.blobs, &f.me, &RoleAccess, None, T0)
+                .unwrap()
+                .is_empty()
         );
 
         // Removed laptop: nothing, not even the list.

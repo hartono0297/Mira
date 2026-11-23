@@ -90,6 +90,10 @@ pub struct RemoteDocument {
     pub kind: DocumentKind,
     pub created_by: String,
     pub created_at: String,
+    /// Salt of the id (`store::derive_id` with `created_by`). Missing in
+    /// records made before ids were bound to their author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub salt: Option<String>,
 }
 
 impl RemoteDocument {
@@ -103,6 +107,7 @@ impl RemoteDocument {
             kind: doc.kind,
             created_by: doc.created_by.clone(),
             created_at: doc.created_at.clone(),
+            salt: doc.salt.0.clone(),
         }
     }
 }
@@ -120,6 +125,10 @@ pub struct RemoteVersion {
     pub created_at: String,
     pub origin: VersionOrigin,
     pub restored_from: Option<String>,
+    /// Salt of the id (`store::derive_id` with `author`). Missing in records
+    /// made before ids were bound to their author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub salt: Option<String>,
 }
 
 impl RemoteVersion {
@@ -135,6 +144,7 @@ impl RemoteVersion {
             created_at: v.created_at.clone(),
             origin: v.origin,
             restored_from: v.restored_from.clone(),
+            salt: v.salt.0.clone(),
         }
     }
 }
@@ -185,6 +195,7 @@ pub fn apply_remote_document(
         kind: DocumentKind::from_file_name(&name),
         created_by: d.created_by.clone(),
         created_at: d.created_at.clone(),
+        salt: store::IdSalt::default(),
     };
     store::insert_document_row(&tx, &doc)?;
     tx.commit()?;
@@ -375,6 +386,7 @@ mod tests {
             created_at: T1.into(),
             origin: VersionOrigin::Edited,
             restored_from: None,
+            salt: None,
         }
     }
 
@@ -387,6 +399,7 @@ mod tests {
             kind: DocumentKind::from_file_name(name),
             created_by: REKAN.into(),
             created_at: T0.into(),
+            salt: None,
         }
     }
 

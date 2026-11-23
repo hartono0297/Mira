@@ -44,7 +44,36 @@ export function versionList(versions: DocumentVersion[]): string {
   return `versi ${nums.slice(0, -1).join(", ")}, dan ${nums[nums.length - 1]}`;
 }
 
-export type StatusKind = "normal" | "mine" | "rekan" | "conflict";
+// Isi versi yang belum ada di laptop ini:
+// - copying: sedang disalin dari laptop rekan;
+// - waiting: sampai 20 MB, disalin otomatis begitu rekan yang menyimpannya tersambung;
+// - manual: lebih dari 20 MB, diunduh lewat tombol.
+export type FetchState = "copying" | "waiting" | "manual";
+
+export function fetchState(v: DocumentVersion): FetchState | null {
+  if (v.available) return null;
+  if (v.downloading) return "copying";
+  if (v.autoDownload) return "waiting";
+  return "manual";
+}
+
+// Penjelasan untuk riwayat versi dan kartu bentrok.
+export function fetchText(state: FetchState): string {
+  switch (state) {
+    case "copying":
+      return "Isinya sedang disalin dari laptop rekan.";
+    case "waiting":
+      return "Isinya disalin otomatis begitu laptop rekan yang menyimpannya tersambung.";
+    case "manual":
+      return "File di atas 20 MB tidak disalin otomatis. Unduh kalau Anda perlu membukanya.";
+  }
+}
+
+export function downloadLabel(v: DocumentVersion): string {
+  return `Unduh dari rekan (${formatSize(v.size)})`;
+}
+
+export type StatusKind = "normal" | "mine" | "rekan" | "conflict" | "fetch";
 export type StatusLine = { kind: StatusKind; text: string };
 
 // Baris status di daftar file. Bentrok dan tanda edit bisa muncul bersamaan
@@ -74,6 +103,18 @@ export function statusLines(doc: DocumentSummary, now: Date = new Date()): Statu
       text: `Versi ${v.number} · ${verb} ${person(v.author)} ${relativeTime(v.createdAt, now)}`,
     });
   }
+  // Kepala bentrok punya keterangan sendiri di kotak bentrok.
+  const fetch = doc.conflict ? null : fetchState(doc.current);
+  if (fetch) {
+    const n = doc.current.number;
+    const text =
+      fetch === "copying"
+        ? `Versi ${n} sedang disalin dari laptop rekan`
+        : fetch === "waiting"
+          ? `Versi ${n} menunggu laptop rekan tersambung`
+          : `Versi ${n} belum diunduh (${formatSize(doc.current.size)})`;
+    lines.push({ kind: "fetch", text });
+  }
   return lines;
 }
 
@@ -101,12 +142,22 @@ export function formatSize(bytes: number): string {
 }
 
 // Saran tambahan untuk error dari inti Rust, sesuai aksi yang gagal.
-export type ActionKind = "add" | "edit" | "finish" | "open" | "restore" | "resolve" | "export";
+export type ActionKind = "add" | "edit" | "finish" | "open" | "restore" | "resolve" | "export" | "download";
+
+// Pesan Indonesia dari inti Rust dipakai apa adanya, kecuali kode yang perlu
+// kalimat lebih jelas untuk orang awam.
+export const NOT_AVAILABLE_TEXT = "Belum ada laptop rekan yang tersambung dan menyimpan file ini.";
+
+export function errorMessage(error: AppError): string {
+  return error.code === "not_available" ? NOT_AVAILABLE_TEXT : error.message;
+}
 
 export function errorTitle(error: AppError, action: ActionKind): string {
   if (error.code === "forbidden") return "Anda tidak punya izin untuk ini";
   if (error.code === "not_found") return "File atau versi ini sudah tidak ada";
   switch (action) {
+    case "download":
+      return "File belum bisa diunduh";
     case "add":
       return "File belum bisa ditambahkan";
     case "edit":
@@ -129,6 +180,9 @@ export function errorHint(error: AppError, action: ActionKind): string | null {
     if (action === "finish") return "Tutup file di Word atau Excel dulu, lalu tekan Selesai mengedit lagi.";
     if (action === "restore" || action === "resolve") return "File ini sedang diedit. Selesaikan edit dulu, lalu coba lagi.";
     return "File ini sedang diedit. Tunggu sampai editnya selesai.";
+  }
+  if (error.code === "not_available") {
+    return "Coba lagi saat laptop rekan yang menyimpan versi ini menyala dan tersambung ke Mira.";
   }
   if (error.code === "not_found") return "Daftar file sudah dimuat ulang. Periksa lagi sebelum mencoba.";
   if (error.code === "open_failed") return "Pastikan Microsoft Office atau aplikasi untuk jenis file ini terpasang di laptop ini.";

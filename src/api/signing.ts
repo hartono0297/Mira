@@ -38,7 +38,25 @@ export type RequestSummary = {
   completedAt: string | null;
   integrity: Integrity;
   exportWarnings: number;
+  fromPeer: boolean; // dibuat di laptop rekan
+  requestedByName: string;
+  fileAvailable: boolean; // file versi terkini ada di laptop ini
+  fileSize: number; // 0 kalau tidak diketahui
+  pending: boolean; // ada tanda tangan dari rekan yang filenya belum sampai
+  // Byte yang diunduh "Unduh file" (versi terkini dan tanda tangan terbaru
+  // yang belum ada). 0 kalau tidak ada, null kalau ukurannya tidak diketahui.
+  downloadSize: number | null;
+  downloading: boolean; // laptop ini sedang menyalin file permintaan ini dari rekan
 };
+
+// File sampai 20 MB disalin otomatis dari laptop rekan; yang lebih besar
+// diunduh lewat tombol (sign_download_file). Sama dengan batas di dokumen.
+export const AUTO_COPY_MAX_BYTES = 20 * 1024 * 1024;
+
+// Kode error tanda tangan yang perlu penjelasan khusus di layar.
+// version_not_prefix dan version_changes_content datang dari bukti stempel:
+// versi baru harus berisi versi lama utuh ditambah stempel saja.
+export type SignErrorCode = "version_not_prefix" | "version_changes_content" | "not_available";
 
 export type SignOverview = {
   saved: SavedSignatureInfo | null;
@@ -94,7 +112,46 @@ export type RequestDetail = RequestSummary & {
   docTag: string;
   // null kalau belum selesai; true kalau catatan "completed" sah dan hash cocok.
   sealValid: boolean | null;
+  scope: { teamId: string | null; projectId: string | null };
+  // Versi bertanda tangan dari rekan yang ditolak Mira (mis. mengubah isi
+  // selain stempel, atau kalah saat ditandatangani bersamaan).
+  rejected: RejectedVersion[];
 };
+
+// code menentukan kalimat di layar (lihat labels.ts rejectedText). reason
+// adalah teks teknis dari inti Rust dan tidak ditampilkan.
+export type RejectedCode =
+  | "version_not_prefix"
+  | "version_changes_content"
+  | "pdf_invalid"
+  | "tag_missing"
+  | "skipped_concurrent"
+  | "on_rejected"
+  | "outdated_version"
+  | "not_allowed"
+  | "not_your_turn"
+  | "already_signed"
+  | "request_closed"
+  | "invalid_record";
+
+export type RejectedVersion = {
+  signerName: string;
+  at: string;
+  code: RejectedCode | string;
+  otherName: string | null; // versi siapa yang dipakai (skipped_concurrent)
+  reason: string;
+};
+
+export type NewRequestInput = {
+  title: string;
+  fileHash: string;
+  mode: SignMode;
+  signers: string[];
+  teamId?: string | null;
+  projectId?: string | null;
+};
+
+export type CandidateScope = { projectId?: string | null; teamId?: string | null };
 
 export type Unlocked = { token: string; png: Uint8Array; signedAt: string; width: number; height: number };
 
@@ -160,11 +217,15 @@ export const signingApi = {
     );
     return { token: r.token, png: base64ToBytes(r.pngBase64), signedAt: r.signedAt, width: r.width, height: r.height };
   },
-  listCandidates: () => call<Candidate[]>("sign_list_candidates"),
+  // Tanpa proyek: semua anggota bukan Tamu. Dengan proyek: Tamu ikut hanya
+  // kalau proyek itu boleh ia buka.
+  listCandidates: (scope: CandidateScope = {}) =>
+    call<Candidate[]>("sign_list_candidates", { projectId: scope.projectId ?? null, teamId: scope.teamId ?? null }),
   importPdf: (bytes: Uint8Array, fileName: string) =>
     call<ImportedPdf>("sign_import_pdf", bytes, { "x-mira-file-name": encodeURIComponent(fileName) }),
-  createRequest: (input: { title: string; fileHash: string; mode: SignMode; signers: string[] }) =>
-    call<RequestDetail>("sign_create_request", input),
+  createRequest: (input: NewRequestInput) => call<RequestDetail>("sign_create_request", input),
+  // Mengunduh file permintaan dari laptop rekan yang tersambung (file di atas 20 MB).
+  downloadFile: (requestId: string) => call<RequestDetail>("sign_download_file", { requestId }),
   getRequest: (id: string) => call<RequestDetail>("sign_get_request", { id }),
   readFile: async (id: string, hash: string) => toBytes(await call<unknown>("sign_read_file", { id, hash })),
   complete: (requestId: string, token: string, baseHash: string, signedPdf: Uint8Array) =>

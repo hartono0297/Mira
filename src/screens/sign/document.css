@@ -144,6 +144,94 @@
   max-width: 52ch;
 }
 
+/* File dari rekan yang belum tersalin: keadaan biasa yang akan berubah
+   sendiri, jadi teks biasa dengan ikon. Tombol unduh hanya untuk file di
+   atas 20 MB. */
+.sdoc-arrival {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 52ch;
+}
+
+.sdoc-arrival-text {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.sdoc-arrival-text svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-sec);
+}
+
+.sdoc-arrival .alert {
+  text-align: left;
+}
+
+/* Di atas layar (tanda tangan terbaru belum sampai): kotak seperti kartu. */
+.sdoc-banner .sdoc-arrival {
+  max-width: none;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.sdoc-arrival .btn[aria-disabled="true"]:not([aria-busy="true"]) {
+  opacity: 0.75;
+}
+
+.sdoc-arrival .btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* Versi bertanda tangan yang ditolak: ikon merah dan satu kalimat (siapa dan
+   kenapa), waktu tanda tangan di bawahnya. */
+.sdoc-rejected {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Garis kartu memakai border-strong (3,19:1 terang, 4,18:1 gelap), bukan
+   danger-border (2,83:1 di latar putih). Arti "ditolak" dibawa judul dan ikon. */
+.sdoc-reject {
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.sdoc-reject-head {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.sdoc-reject-head svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger);
+}
+
+.sdoc-reject .sdoc-small {
+  margin-top: 2px;
+  padding-left: 22px;
+}
+
 .sdoc-panel {
   min-height: 0;
   overflow: auto;

@@ -14,6 +14,8 @@ pub const MIGRATIONS: &[&str] = &[
     crate::board::schema::BOARD_SYNC_SCHEMA,
     // Tahap 2 (chat), v7.
     crate::chat::schema::CHAT_SCHEMA,
+    // Sinkron dokumen dan tanda tangan, v8.
+    crate::documents::sync_schema::SYNC_SCHEMA,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.

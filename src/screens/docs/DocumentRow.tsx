@@ -1,8 +1,8 @@
-import { IconAlertTriangle, IconLock } from "@tabler/icons-react";
+import { IconAlertTriangle, IconDownload, IconLock } from "@tabler/icons-react";
 import type { DocumentSummary } from "../../api/documents";
-import { keys, type DocActions } from "./actions";
+import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
-import { appName, editable, statusLines, type StatusKind } from "./text";
+import { appName, downloadLabel, editable, fetchState, statusLines, type StatusKind } from "./text";
 
 type Props = {
   doc: DocumentSummary;
@@ -15,6 +15,7 @@ type Props = {
 function StatusIcon({ kind }: { kind: StatusKind }) {
   if (kind === "conflict") return <IconAlertTriangle size={14} aria-hidden="true" />;
   if (kind === "mine" || kind === "rekan") return <IconLock size={14} aria-hidden="true" />;
+  if (kind === "fetch") return <IconDownload size={14} aria-hidden="true" />;
   return null;
 }
 
@@ -43,6 +44,20 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
     const label = canAct ? "Selesaikan bentrok" : "Lihat bentrok";
     return [{ key: `conflict:${doc.id}`, label, busyLabel: label, run: () => actions.showConflict(doc) }];
   }
+  // Isi versi sekarang belum ada di laptop ini: Edit dan Buka tidak ditawarkan.
+  // File di atas 20 MB punya tombol unduh; yang lain cukup baris status.
+  const fetch = fetchState(doc.current);
+  if (fetch === "manual") {
+    return [
+      {
+        key: keys.download(doc.id, doc.current.id),
+        label: downloadLabel(doc.current),
+        busyLabel: "Mengunduh...",
+        run: () => actions.download(doc, doc.current),
+      },
+    ];
+  }
+  if (fetch) return [];
   if (rekan || !editable(doc.kind) || !doc.can.edit) {
     const label = rekan || editable(doc.kind) ? "Buka hanya baca" : "Buka";
     return [{ key: keys.open(doc.id, null), label, busyLabel: "Membuka...", run: () => actions.open(doc, null) }];
@@ -53,7 +68,6 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
 export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
   const lines = statusLines(doc, now);
   const buttons = rowButtons(doc, actions);
-  const blocked = actions.pending !== null;
   return (
     <li className={`doc-row${selected ? " is-selected" : ""}`} data-testid={`doc-${doc.id}`}>
       <button
@@ -76,7 +90,8 @@ export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
       </button>
       <div className="doc-actions">
         {buttons.map((b, i) => {
-          const busy = actions.pending === b.key;
+          const busy = isBusy(actions, b.key);
+          const blocked = isBlocked(actions, b.key);
           const text = busy ? b.busyLabel : b.label;
           return (
             // Kunci per posisi: tombol yang sama dipakai ulang saat labelnya

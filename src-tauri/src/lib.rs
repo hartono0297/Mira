@@ -110,6 +110,7 @@ pub fn run() {
             app.manage(documents.clone());
             documents.spawn_recovery();
             app.manage(signing::session::SignSessions::default());
+            signing::peer_sync::register(app.handle());
             // Chat (Tahap 2): registers with the FeatureHub and starts the
             // attachment downloader.
             let chat = chat::runtime::ChatRuntime::install(app.handle());
@@ -170,6 +171,7 @@ pub fn run() {
             documents::commands::restore_version,
             documents::commands::resolve_conflict,
             documents::commands::export_version,
+            documents::commands::download_version,
             signing::commands::sign_overview,
             signing::commands::sign_save_signature,
             signing::commands::sign_delete_signature,
@@ -183,6 +185,7 @@ pub fn run() {
             signing::commands::sign_cancel,
             signing::commands::sign_export,
             signing::commands::sign_verify_file,
+            signing::commands::sign_download_file,
             chat::commands::chat_overview,
             chat::commands::chat_messages,
             chat::commands::chat_send,

@@ -17,15 +17,27 @@
 //!   read-only copies, recovery at start (no Tauri types).
 //! - `runtime` Tauri managed state: launcher, event emitter, watcher.
 //! - `commands` Tauri commands for the Dokumen screen.
+//! - `peer_sync` sync with rekan (FeatureSync, BlobSource, DocumentSync).
+//! - `envelope` signed record bodies sent to rekan (documents and signing).
+//! - `scope`   who may see a team or project scope (any key); guest projects
+//!   behind the `GuestProjects` merge point.
+//! - `sync_schema` migration for document and signing sync.
+//! - `test_lab` (tests only) three laptops in one organization.
 
 pub mod access;
 pub mod commands;
+pub mod envelope;
 pub mod kinds;
 pub mod office;
+pub mod peer_sync;
 pub mod runtime;
 pub mod schema;
+pub mod scope;
 pub mod session;
 pub mod store;
 pub mod sync;
+pub mod sync_schema;
+#[cfg(test)]
+pub mod test_lab;
 pub mod view;
 pub mod watch;

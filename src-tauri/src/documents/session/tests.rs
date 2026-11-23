@@ -250,7 +250,10 @@ fn start_edit_again_reopens_the_same_working_copy() {
     let again = h.env.start_edit(&doc.id, None).unwrap();
     assert_eq!(h.opened(), vec![working.clone(), working.clone()]);
     assert_eq!(again.editing.len(), 1);
-    assert_eq!(h.env.core(|db, _| store::edit_sessions(db)).unwrap().len(), 1);
+    assert_eq!(
+        h.env.core(|db, _| store::edit_sessions(db)).unwrap().len(),
+        1
+    );
     // The working copy was not replaced.
     assert_eq!(
         fs::read_to_string(&working).unwrap(),
@@ -362,6 +365,7 @@ fn conflict_from_a_rekan_and_manual_merge() {
         created_at: T1.into(),
         origin: VersionOrigin::Edited,
         restored_from: None,
+        salt: None,
     };
     h.env
         .core(|db, _| sync::apply_remote_version(db, &remote, T2))
@@ -390,7 +394,10 @@ fn conflict_from_a_rekan_and_manual_merge() {
     let mut parents = h.session(&doc.id).unwrap().parent_ids;
     parents.sort();
     assert_eq!(parents, heads);
-    assert_eq!(fs::read_to_string(h.working(&doc.id)).unwrap(), "dari rekan");
+    assert_eq!(
+        fs::read_to_string(h.working(&doc.id)).unwrap(),
+        "dari rekan"
+    );
 
     fs::write(h.working(&doc.id), "gabungan").unwrap();
     h.env.on_file_settled(&doc.id);
@@ -467,12 +474,7 @@ fn open_read_only_and_export_write_copies() {
     let v1 = h.versions(&doc.id).remove(0);
 
     h.env.open_read_only(&doc.id, None).unwrap();
-    let view = h
-        .tmp
-        .path()
-        .join(VIEW_DIR)
-        .join(&v1.id)
-        .join("Kontrak.pdf");
+    let view = h.tmp.path().join(VIEW_DIR).join(&v1.id).join("Kontrak.pdf");
     assert_eq!(fs::read_to_string(&view).unwrap(), "isi pdf");
     assert!(fs::metadata(&view).unwrap().permissions().readonly());
     assert_eq!(h.opened(), vec![view.clone()]);
@@ -607,7 +609,12 @@ fn command_results_use_the_contract_field_names() {
     h.env.start_edit(&doc.id, None).unwrap();
 
     let json = serde_json::to_value(h.env.summary(&doc.id).unwrap()).unwrap();
-    let mut keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+    let mut keys: Vec<&str> = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
     keys.sort();
     assert_eq!(
         keys,

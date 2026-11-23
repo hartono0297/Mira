@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { clockTime, errorHint, originText, statusLines, versionList } from "./text";
+import {
+  clockTime,
+  errorHint,
+  errorMessage,
+  fetchState,
+  fetchText,
+  NOT_AVAILABLE_TEXT,
+  originText,
+  statusLines,
+  versionList,
+} from "./text";
 import { meRef, rekanC, summary, version } from "./testData";
 
 describe("teks layar Dokumen", () => {
@@ -43,12 +53,39 @@ describe("teks layar Dokumen", () => {
     expect(lines[0].text).toBe("Bentrok: versi 4 dan 5 tersimpan berdampingan");
   });
 
+  it("isi versi yang belum ada: disalin, menunggu rekan, atau diunduh manual", () => {
+    expect(fetchState(version("x", 1))).toBeNull();
+    expect(fetchState(version("x", 1, { available: false, downloading: true, autoDownload: true }))).toBe("copying");
+    expect(fetchState(version("x", 1, { available: false, autoDownload: true }))).toBe("waiting");
+    expect(fetchState(version("x", 1, { available: false }))).toBe("manual");
+
+    const now = new Date();
+    const line = (extra: Parameters<typeof version>[2]) =>
+      statusLines(summary("x", "x.docx", { current: version("x", 3, { isHead: true, author: rekanC, ...extra }) }), now);
+    expect(line({ available: false, autoDownload: true }).map((l) => l.text)).toContain(
+      "Versi 3 menunggu laptop rekan tersambung",
+    );
+    expect(line({ available: false, size: 21 * 1024 * 1024 })[1]).toEqual({
+      kind: "fetch",
+      text: "Versi 3 belum diunduh (21 MB)",
+    });
+    // Baris biasa tetap menyebut siapa yang mengubah.
+    expect(line({ available: false, downloading: true })[0].text).toMatch(/^Versi 3 · Diubah Rekan C/);
+    expect(errorMessage({ code: "not_available", message: "x" })).toBe(NOT_AVAILABLE_TEXT);
+    expect(errorMessage({ code: "storage", message: "Disk penuh." })).toBe("Disk penuh.");
+  });
+
   it("tidak ada em dash di teks yang dibuat", () => {
     const now = new Date();
     const text = [
       ...statusLines(summary("x", "x.docx"), now).map((l) => l.text),
       errorHint({ code: "document_editing", message: "" }, "finish"),
       errorHint({ code: "open_failed", message: "" }, "open"),
+      errorHint({ code: "not_available", message: "" }, "download"),
+      fetchText("copying"),
+      fetchText("waiting"),
+      fetchText("manual"),
+      NOT_AVAILABLE_TEXT,
     ].join(" ");
     expect(text).not.toContain(String.fromCharCode(0x2014));
   });

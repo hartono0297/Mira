@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   PDFArray,
   PDFDict,
@@ -20,8 +20,10 @@ import {
   checkSignablePdf,
   formatSignedAt,
   normalizeAngle,
+  signatureImageProblem,
   stampSignature,
   toWinAnsiSafe,
+  type AuditInfo,
   type PdfRect,
 } from "./stamp";
 
@@ -277,7 +279,8 @@ describe("stampSignature", () => {
     expect(doc.getProducer()).toBe("Mira");
     expect(rawIncludes(out, DOC_TAG)).toBe(true);
     expect(rawIncludes(out, `/Keywords (kontrak 2026 ${DOC_TAG})`)).toBe(true);
-    expect(rawIncludes(out, "/ObjStm")).toBe(false);
+    // Bagian tambahan tanpa object stream, supaya terbaca dengan memindai byte.
+    expect(rawIncludes(out.subarray(pdf.length), "/ObjStm")).toBe(false);
 
     const { images, texts, balanced } = stampDraws(doc, 0);
     expect(balanced).toBe(true);
@@ -539,8 +542,8 @@ describe("appendAuditPage", () => {
     expect(last.getHeight()).toBeCloseTo(841.89, 1);
     expect(doc.getKeywords()).toContain(DOC_TAG);
     expect(doc.getProducer()).toBe("Mira");
-    expect(rawIncludes(out, DOC_TAG)).toBe(true);
-    expect(rawIncludes(out, "/ObjStm")).toBe(false);
+    expect(rawIncludes(out.subarray(stamped.length), DOC_TAG)).toBe(true);
+    expect(rawIncludes(out.subarray(stamped.length), "/ObjStm")).toBe(false);
 
     // Semua teks berada di dalam halaman.
     const { texts } = interpret(pageContentBytes(doc, 6));
@@ -575,5 +578,332 @@ describe("appendAuditPage", () => {
     await expect(appendAuditPage(new Uint8Array([1, 2, 3]), info)).rejects.toThrow(
       "File ini bukan PDF atau rusak",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Incremental update: versi baru = byte versi lama + tambahan
+
+const latin1 = (bytes: Uint8Array) => new TextDecoder("latin1").decode(bytes);
+
+function isPrefix(prefix: Uint8Array, whole: Uint8Array): boolean {
+  if (prefix.length >= whole.length) return false;
+  for (let i = 0; i < prefix.length; i++) if (prefix[i] !== whole[i]) return false;
+  return true;
+}
+
+function lastStartxref(bytes: Uint8Array): number {
+  const text = latin1(bytes);
+  return Number(/^startxref\s*(\d+)/.exec(text.slice(text.lastIndexOf("startxref")))?.[1]);
+}
+
+type XrefEntry = { num: number; gen: number; offset: number };
+
+/** Entri tabel xref bagian tambahan terakhir. */
+function lastXrefEntries(bytes: Uint8Array): XrefEntry[] {
+  const text = latin1(bytes);
+  const at = lastStartxref(bytes);
+  expect(text.slice(at, at + 5)).toBe("xref\n");
+  const lines = text
+    .slice(at + 5, text.indexOf("trailer", at))
+    .split(/\r?\n/)
+    .filter((l) => l.trim());
+  const entries: XrefEntry[] = [];
+  for (let i = 0; i < lines.length; ) {
+    const [start, count] = lines[i].trim().split(/\s+/).map(Number);
+    for (let k = 0; k < count; k++) {
+      const [off, gen, kind] = lines[i + 1 + k].trim().split(/\s+/);
+      expect(kind).toBe("n");
+      entries.push({ num: start + k, gen: Number(gen), offset: Number(off) });
+    }
+    i += 1 + count;
+  }
+  return entries;
+}
+
+/** Bukti dasar satu langkah: awalan, /Prev, xref klasik yang menunjuk objeknya. */
+function expectIncrement(prev: Uint8Array, next: Uint8Array): XrefEntry[] {
+  expect(isPrefix(prev, next)).toBe(true);
+  const tail = latin1(next.subarray(prev.length));
+  expect(tail).toContain(`/Prev ${lastStartxref(prev)}`);
+  expect(tail).not.toContain("/ObjStm");
+  expect(tail).not.toContain("/XRefStm");
+  expect(tail.trimEnd().endsWith("%%EOF")).toBe(true);
+  const text = latin1(next);
+  const entries = lastXrefEntries(next);
+  expect(entries.length).toBeGreaterThan(0);
+  for (const e of entries) {
+    expect(e.offset).toBeGreaterThanOrEqual(prev.length);
+    expect(text.slice(e.offset, e.offset + 24)).toMatch(new RegExp(`^${e.num} ${e.gen} obj\\b`));
+  }
+  return entries;
+}
+
+async function originals(): Promise<{ name: string; bytes: Uint8Array }[]> {
+  const src = await PDFDocument.load(await makePdf());
+  const classic = await src.save({ useObjectStreams: false });
+  const objstm = await src.save({ useObjectStreams: true });
+  const trimmed = classic.subarray(0, latin1(classic).trimEnd().length);
+  const junk = new Uint8Array([...classic, ...new TextEncoder().encode("\r\n\0sampah setelah EOF")]);
+  return [
+    { name: "xref klasik", bytes: classic },
+    { name: "object stream", bytes: objstm },
+    { name: "tanpa baris baru di akhir", bytes: trimmed },
+    { name: "sampah setelah %%EOF", bytes: junk },
+  ];
+}
+
+const FIRST: PdfRect = { pageIndex: 0, x: 350, y: 120, width: 160, height: 60 };
+const SECOND: PdfRect = { pageIndex: 2, x: 120, y: 200, width: 160, height: 60 };
+
+const AUDIT: AuditInfo = {
+  title: "Kontrak kerja sama",
+  docTag: DOC_TAG,
+  originalHash: "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+  mode: "sequential",
+  signers: [
+    { name: "Rina Wulandari", kind: "member", signedAt: SIGNED_AT, fingerprint: "ab12 cd34 ef56 7890" },
+    { name: "Agus Prasetyo", kind: "guest", signedAt: SIGNED_AT, fingerprint: "1122 3344 5566 7788" },
+  ],
+  generatedAt: "2026-11-22T09:00:00Z",
+  timeZone: "Asia/Jakarta",
+};
+
+describe("incremental update", () => {
+  it("berantai: setiap versi awalan persis versi berikutnya", async () => {
+    for (const { name, bytes: v0 } of await originals()) {
+      const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+      const v2 = await stampSignature(v1, { ...baseOpts, signerName: "Agus Prasetyo", placement: SECOND });
+      const v3 = await appendAuditPage(v2, AUDIT);
+      expectIncrement(v0, v1);
+      expectIncrement(v1, v2);
+      expectIncrement(v2, v3);
+
+      // pdf-lib memuat ulang dan melihat stempel serta halaman catatan.
+      const doc1 = await PDFDocument.load(v1, { updateMetadata: false });
+      expect(doc1.getPageCount(), name).toBe(6);
+      expect(stampDraws(doc1, 0).images, name).toHaveLength(1);
+      const doc3 = await PDFDocument.load(v3, { updateMetadata: false });
+      expect(doc3.getPageCount(), name).toBe(7);
+      expect(stampDraws(doc3, 0).images, name).toHaveLength(1);
+      expect(stampDraws(doc3, 2).images, name).toHaveLength(1);
+      expect(stampDraws(doc3, 0).balanced, name).toBe(true);
+      expect(doc3.getKeywords(), name).toContain(DOC_TAG);
+    }
+  });
+
+  it("hanya halaman yang distempel dan kamus Info yang ditulis ulang", async () => {
+    const [classic, objstm] = await originals();
+    for (const { name, bytes: v0 } of [classic, objstm]) {
+      const src = await PDFDocument.load(v0, { updateMetadata: false });
+      const page0 = src.getPage(0).ref.objectNumber;
+      const info = (src.context.trailerInfo.Info as PDFRef).objectNumber;
+      const old = new Set(src.context.enumerateIndirectObjects().map(([r]) => r.objectNumber));
+      const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+      const rewritten = expectIncrement(v0, v1)
+        .map((e) => e.num)
+        .filter((n) => old.has(n))
+        .sort((a, b) => a - b);
+      expect(rewritten, name).toEqual([page0, info].sort((a, b) => a - b));
+    }
+  });
+
+  it("nomor objek baru tidak memakai ulang nomor object stream atau xref stream lama", async () => {
+    const [, { bytes: v0 }] = await originals();
+    const text = latin1(v0);
+    const containers = [...text.matchAll(/(\d+) 0 obj\s*<<[^]*?\/Type\s*\/(ObjStm|XRef)/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(containers.length).toBeGreaterThan(0);
+    const size = Math.max(...[...text.matchAll(/\/Size (\d+)/g)].map((m) => Number(m[1])));
+    const src = await PDFDocument.load(v0, { updateMetadata: false });
+    const old = new Set(src.context.enumerateIndirectObjects().map(([r]) => r.objectNumber));
+    const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+    for (const e of expectIncrement(v0, v1)) {
+      expect(containers).not.toContain(e.num);
+      if (!old.has(e.num)) expect(e.num).toBeGreaterThanOrEqual(size);
+    }
+  });
+
+  it("kode dokumen terbaca sebagai literal di byte tambahan", async () => {
+    const [{ bytes: v0 }] = await originals();
+    const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+    const tail = latin1(v1.subarray(v0.length));
+    expect(tail).toContain(`/MiraDocTag (${DOC_TAG})`);
+    expect(tail).toContain(`/Keywords (kontrak 2026 ${DOC_TAG})`);
+  });
+
+  it("halaman tanpa /Annots tidak mendapat /Annots kosong", async () => {
+    const src = await PDFDocument.load(await makePdf());
+    src.getPage(0).node.delete(PDFName.of("Annots"));
+    const v0 = await src.save();
+    const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+    const doc = await PDFDocument.load(v1, { updateMetadata: false });
+    expect(doc.getPage(0).node.get(PDFName.of("Annots"))).toBeUndefined();
+    expect(stampDraws(doc, 0).images).toHaveLength(1);
+  });
+
+  it("checkSignablePdf menolak PDF yang startxref-nya tidak menunjuk tabel xref", async () => {
+    const [{ bytes: v0 }] = await originals();
+    const text = latin1(v0);
+    // makePdf hanya berisi ASCII, jadi latin1 lalu UTF-8 tidak mengubah byte.
+    const broken = new TextEncoder().encode(`${text.slice(0, text.lastIndexOf("startxref"))}startxref\n12\n%%EOF\n`);
+    await expect(checkSignablePdf(broken)).rejects.toMatchObject({ code: "pdf_invalid" });
+    await expect(checkSignablePdf(v0)).resolves.toBeUndefined();
+  });
+
+  describe("dibaca pdf.js", () => {
+    let pdfjs: typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+    beforeAll(async () => {
+      pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    }, 120_000);
+
+    it("halaman bertanda tangan dan halaman catatan dirender", async () => {
+      const [, { bytes: v0 }] = await originals();
+      const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+      const v2 = await appendAuditPage(v1, AUDIT);
+      const task = pdfjs.getDocument({ data: v2.slice(), verbosity: 0 });
+      try {
+        const pdf = await task.promise;
+        expect(pdf.numPages).toBe(7);
+        const first = await pdf.getPage(1);
+        const ops = (await first.getOperatorList()).fnArray;
+        expect(ops).toContain(pdfjs.OPS.paintImageXObject);
+        expect(ops).toContain(pdfjs.OPS.showText);
+        const last = await pdf.getPage(7);
+        const lastOps = (await last.getOperatorList()).fnArray;
+        expect(lastOps.filter((op) => op === pdfjs.OPS.showText).length).toBeGreaterThan(10);
+        const text = await last.getTextContent();
+        expect(text.items.map((i) => ("str" in i ? i.str : "")).join(" ")).toContain("Halaman catatan");
+      } finally {
+        await task.destroy();
+      }
+    }, 120_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batas bukti stempel (sama dengan signing::increment di inti Rust)
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const b of bytes) {
+    c ^= b;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(12 + data.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, data.length);
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(data, 8);
+  view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+
+async function zlibDeflate(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/** PNG RGBA 8 bit dari fungsi piksel (x, y) -> [r, g, b, a]. */
+async function makePng(w: number, h: number, pixel: (x: number, y: number) => number[]): Promise<Uint8Array> {
+  const raw = new Uint8Array(h * (1 + w * 4));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) raw.set(pixel(x, y), y * (1 + w * 4) + 1 + x * 4);
+  }
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, w);
+  view.setUint32(4, h);
+  ihdr[8] = 8; // kedalaman bit
+  ihdr[9] = 6; // RGBA
+  const parts = [
+    Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", await zlibDeflate(raw)),
+    pngChunk("IEND", new Uint8Array(0)),
+  ];
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+describe("batas bukti stempel", () => {
+  it("signatureImageProblem: tanpa SMask, terlalu padat, dan bidang putih legap ditolak", () => {
+    const dark = new Uint8Array([30, 30, 30, 30, 30, 30]);
+    expect(signatureImageProblem(dark, new Uint8Array([255, 0]), 2)).toBeNull();
+    expect(signatureImageProblem(dark, null, 2)).toMatch(/tidak berlatar transparan/);
+    expect(signatureImageProblem(dark, new Uint8Array([255, 200]), 2)).toMatch(/separuh/);
+    const white = new Uint8Array([255, 255, 255, 30, 30, 30]);
+    expect(signatureImageProblem(white, new Uint8Array([255, 0]), 2)).toMatch(/bagian putih/);
+    // Putih yang hampir transparan (tepi tinta hasil impor) bukan penutup.
+    expect(signatureImageProblem(white, new Uint8Array([127, 0]), 2)).toBeNull();
+  });
+
+  it("menolak PNG legap, padat, atau berbidang putih sebelum menstempel", async () => {
+    const pdf = await makePdf();
+    const placement: PdfRect = { pageIndex: 0, x: 72, y: 740, width: 160, height: 40 };
+    const opaque = await makePng(8, 2, () => [255, 255, 255, 255]);
+    await expect(stampSignature(pdf, { ...baseOpts, png: opaque, placement })).rejects.toThrow(
+      "tidak berlatar transparan",
+    );
+    const dense = await makePng(8, 2,(x) => (x < 7 ? [20, 20, 20, 255] : [0, 0, 0, 0]));
+    await expect(stampSignature(pdf, { ...baseOpts, png: dense, placement })).rejects.toThrow("separuh");
+    const patch = await makePng(8, 2,(_x, y) => (y === 0 ? [255, 255, 255, 255] : [0, 0, 0, 0]));
+    await expect(stampSignature(pdf, { ...baseOpts, png: patch, placement })).rejects.toThrow("bagian putih");
+  });
+
+  it("kotak sangat besar diperkecil dengan titik tengah tetap", async () => {
+    const pdf = await makePdf();
+    // Selebar halaman A4: tanpa batas, gambar 2:1 akan seluas 35% halaman.
+    const placement: PdfRect = { pageIndex: 0, x: 0, y: 200, width: 595.28, height: 420 };
+    const doc = await PDFDocument.load(await stampSignature(pdf, { ...baseOpts, placement }), {
+      updateMetadata: false,
+    });
+    const { images, texts } = stampDraws(doc, 0);
+    expect(images).toHaveLength(1);
+    const b = unitSquareBounds(images[0].ctm);
+    expectInside(b, placement);
+    const page = 595.28 * 841.89;
+    const area = (b.x1 - b.x0) * (b.y1 - b.y0);
+    expect(area).toBeLessThan(0.12 * page);
+    expect(area).toBeGreaterThan(0.05 * page);
+    expect((b.x0 + b.x1) / 2).toBeCloseTo(placement.x + placement.width / 2, 3);
+    expect((b.y0 + b.y1) / 2).toBeCloseTo(placement.y + placement.height / 2, 3);
+    // Keterangan ikut kotak yang diperkecil: di bawah gambar, tetapi masih
+    // di dalam kotak asli, bukan di bawah tepinya.
+    const captions = texts.filter((t) => t.origin.y < b.y0 && t.origin.x < 590);
+    expect(captions.length).toBeGreaterThan(0);
+    for (const t of captions) {
+      expect(t.origin.y).toBeGreaterThan(placement.y);
+      expect(b.y0 - t.origin.y).toBeLessThan(60);
+    }
+  });
+
+  it("keterangan paling banyak 100 huruf dan tidak lebih lebar dari kotak", async () => {
+    const pdf = await makePdf();
+    const placement: PdfRect = { pageIndex: 0, x: 200, y: 300, width: 160, height: 60 };
+    const out = await stampSignature(pdf, {
+      ...baseOpts,
+      signerName: "Nama Sangat Panjang ".repeat(12),
+      placement,
+    });
+    const doc = await PDFDocument.load(out, { updateMetadata: false });
+    // Dua Tj terakhir di halaman 1 adalah keterangan.
+    const lines = [...pageContentBytes(doc, 0).matchAll(/<([0-9A-Fa-f]*)> Tj/g)]
+      .slice(-2)
+      .map((m) => String.fromCharCode(...(m[1].match(/../g) ?? []).map((h) => parseInt(h, 16))));
+    expect(lines).toHaveLength(2);
+    expect(lines.join("").length).toBeLessThanOrEqual(104);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    for (const l of lines) expect(font.widthOfTextAtSize(l, 10)).toBeLessThanOrEqual(placement.width + EPS);
   });
 });

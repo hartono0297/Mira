@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import {
   addDocuments,
+  downloadVersion,
   exportVersion,
   finishEdit,
   getDocument,
@@ -21,7 +22,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { keys, type DocActions } from "./actions";
 import { DocumentDetail } from "./DocumentDetail";
 import { DocumentRow } from "./DocumentRow";
-import { appName, errorHint, errorTitle, LIBRARY_LABEL, type ActionKind } from "./text";
+import { appName, errorHint, errorMessage, errorTitle, LIBRARY_LABEL, type ActionKind } from "./text";
 import { useReload } from "./useReload";
 import "./docs.css";
 
@@ -67,9 +68,13 @@ export function DocsScreen() {
     await Promise.all([reloadList(), reloadDetail()]);
   }, [reloadList, reloadDetail]);
 
-  // Satu aksi pada satu waktu. Ref dipakai (bukan hanya state) supaya klik
-  // kedua sebelum render berikutnya tetap ditolak.
+  // Satu aksi yang mengubah data pada satu waktu. Ref dipakai (bukan hanya
+  // state) supaya klik kedua sebelum render berikutnya tetap ditolak.
   const busyRef = useRef(false);
+  // Unduhan dari rekan dicatat sendiri: bisa lama (file besar), jadi tidak
+  // menahan aksi lain. Satu unduhan per versi.
+  const downloadsRef = useRef<Set<string>>(new Set());
+  const [downloads, setDownloads] = useState<ReadonlySet<string>>(() => new Set());
 
   // Tombol yang baru ditekan bisa hilang setelah aksi (Selesai mengedit, Pakai
   // versi ini). Kalau fokus jatuh ke body, fokus dipindah ke baris file itu.
@@ -109,7 +114,13 @@ export function DocsScreen() {
       } catch (err) {
         const error = toAppError(err);
         setFeedback({ kind: "error", title: errorTitle(error, action), error, hint: errorHint(error, action) });
-        if (error.code === "not_found" || error.code === "forbidden" || error.code === "document_editing") {
+        // not_available: keadaan unduhan mungkin sudah berubah (rekan baru saja putus).
+        if (
+          error.code === "not_found" ||
+          error.code === "forbidden" ||
+          error.code === "document_editing" ||
+          error.code === "not_available"
+        ) {
           void reloadAll();
         }
         return false;
@@ -144,9 +155,41 @@ export function DocsScreen() {
     );
   }, [run, focusDoc]);
 
+  const download = useCallback(
+    async (doc: DocumentSummary, version: DocumentVersion) => {
+      const key = keys.download(doc.id, version.id);
+      if (downloadsRef.current.has(key)) return;
+      downloadsRef.current.add(key);
+      setDownloads(new Set(downloadsRef.current));
+      setFeedback(null);
+      try {
+        const result = await downloadVersion(doc.id, version.id);
+        await reloadAll();
+        // Versi yang sedang disalin otomatis tidak diunduh dua kali; inti
+        // mengembalikan ringkasan dengan versi itu masih `downloading`.
+        const same = [result?.current, ...(result?.conflictVersions ?? [])].find((v) => v?.id === version.id);
+        const text = same?.downloading
+          ? `Versi ${version.number} sedang disalin. Daftar diperbarui begitu selesai.`
+          : `Isi versi ${version.number} dari ${doc.name} sudah ada di laptop ini.`;
+        setFeedback({ kind: "ok", text });
+      } catch (err) {
+        const error = toAppError(err);
+        setFeedback({ kind: "error", title: errorTitle(error, "download"), error, hint: errorHint(error, "download") });
+        // Keadaan unduhan mungkin sudah berubah (rekan baru saja putus).
+        void reloadAll();
+      } finally {
+        downloadsRef.current.delete(key);
+        setDownloads(new Set(downloadsRef.current));
+        focusDoc(doc.id);
+      }
+    },
+    [reloadAll, focusDoc],
+  );
+
   const actions: DocActions = useMemo(
     () => ({
       pending,
+      downloads,
       edit: (doc, from) => {
         const app = appName(doc.kind) ?? "aplikasi bawaan";
         void run(
@@ -212,8 +255,11 @@ export function DocsScreen() {
         setSelectedId(doc.id);
         setFocusConflict((n) => n + 1);
       },
+      download: (doc, version) => {
+        void download(doc, version);
+      },
     }),
-    [pending, run],
+    [pending, downloads, run, download],
   );
 
   const confirmRestore = useCallback(async () => {
@@ -272,7 +318,7 @@ export function DocsScreen() {
         {feedback?.kind === "ok" && <p className="docs-ok">{feedback.text}</p>}
         {feedback?.kind === "error" && (
           <ErrorAlert title={feedback.title}>
-            <p>{feedback.error.message}</p>
+            <p>{errorMessage(feedback.error)}</p>
             {feedback.hint && <p>{feedback.hint}</p>}
           </ErrorAlert>
         )}

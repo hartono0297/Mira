@@ -93,6 +93,8 @@ pub struct DocumentRecord {
     pub kind: DocumentKind,
     pub created_by: String,
     pub created_at: String,
+    #[serde(skip)]
+    pub salt: IdSalt,
 }
 
 impl DocumentRecord {
@@ -119,6 +121,8 @@ pub struct VersionRecord {
     pub received_at: Option<String>,
     /// Sorted. May name versions this laptop has not received yet.
     pub parent_ids: Vec<String>,
+    #[serde(skip)]
+    pub salt: IdSalt,
 }
 
 /// This laptop's open edit of a document in Office (at most one per document).
@@ -145,13 +149,73 @@ pub fn new_id() -> String {
     hex::encode(bytes)
 }
 
+/// Domain of [`derive_id`].
+pub const ID_DOMAIN: &str = "mira-docs-id";
+
+/// The id of a document or version made by `author` with `salt`: the first
+/// 32 hex characters of BLAKE3(`mira-docs-id\n<author>\n<salt>`). Binds the
+/// id to its author, so a rekan cannot sign a record that reuses someone
+/// else's id with other content (`peer_sync` checks it).
+pub fn derive_id(author: &str, salt: &str) -> String {
+    let hash = blake3::hash(format!("{ID_DOMAIN}\n{author}\n{salt}").as_bytes());
+    hash.to_hex()[..ID_HEX_LEN].to_owned()
+}
+
+/// A fresh id for something `author` makes on this laptop, with its salt.
+fn owned_id(author: &str) -> (String, IdSalt) {
+    let salt = new_id();
+    (derive_id(author, &salt), IdSalt(Some(salt)))
+}
+
+/// The random salt of an id from [`derive_id`]. Known only right after the
+/// document or version was made on this laptop (it travels in the first
+/// sync record, which is stored with its body), so it is not a database
+/// column and records compare equal whatever their salt.
+#[derive(Clone, Debug, Default)]
+pub struct IdSalt(pub Option<String>);
+
+impl PartialEq for IdSalt {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for IdSalt {}
+
 // ---------------------------------------------------------------------------
 // Names
 
 const RESERVED_NAMES: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "CONIN$",
-    "CONOUT$", "COM\u{b9}", "COM\u{b2}", "COM\u{b3}", "LPT\u{b9}", "LPT\u{b2}", "LPT\u{b3}",
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    "CONIN$",
+    "CONOUT$",
+    "COM\u{b9}",
+    "COM\u{b2}",
+    "COM\u{b3}",
+    "LPT\u{b9}",
+    "LPT\u{b2}",
+    "LPT\u{b3}",
 ];
 
 /// Invisible formatting characters (Unicode category Cf) that can hide a
@@ -306,6 +370,7 @@ fn doc_from_row(r: &Row<'_>) -> rusqlite::Result<(DocumentRecord, String)> {
             kind: DocumentKind::Other,
             created_by: r.get(5)?,
             created_at: r.get(6)?,
+            salt: IdSalt::default(),
         },
         kind,
     ))
@@ -349,20 +414,23 @@ pub fn create_document(
     let name = sanitize_file_name(name)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let name = unique_name(&tx, scope, &name)?;
+    let (doc_id, doc_salt) = owned_id(author);
     let doc = DocumentRecord {
-        id: new_id(),
+        id: doc_id,
         team_id: scope.team_id.clone(),
         project_id: scope.project_id.clone(),
         kind: DocumentKind::from_file_name(&name),
         name,
         created_by: author.to_owned(),
         created_at: now.to_owned(),
+        salt: doc_salt,
     };
     insert_document_row(&tx, &doc)?;
-    let version = insert_version(
+    let (version_id, version_salt) = owned_id(author);
+    let mut version = insert_version(
         &tx,
         &NewVersion {
-            id: new_id(),
+            id: version_id,
             document_id: &doc.id,
             parent_ids: &[],
             blob_hash: blob.hash.as_str(),
@@ -374,6 +442,7 @@ pub fn create_document(
             received_at: None,
         },
     )?;
+    version.salt = version_salt;
     tx.commit()?;
     Ok((doc, version))
 }
@@ -465,6 +534,7 @@ fn finish_version(row: VersionRow, parent_ids: Vec<String>) -> AppResult<Version
         restored_from: row.restored_from,
         received_at: row.received_at,
         parent_ids,
+        salt: IdSalt::default(),
     })
 }
 
@@ -658,10 +728,11 @@ fn add_version_in(
     if let Some(from) = restored_from {
         check_id(from, "versi asal")?;
     }
-    insert_version(
+    let (id, salt) = owned_id(author);
+    let mut version = insert_version(
         conn,
         &NewVersion {
-            id: new_id(),
+            id,
             document_id,
             parent_ids,
             blob_hash: blob.hash.as_str(),
@@ -672,7 +743,9 @@ fn add_version_in(
             restored_from,
             received_at: None,
         },
-    )
+    )?;
+    version.salt = salt;
+    Ok(version)
 }
 
 /// Adds a version made on this laptop. Parents must be versions of the same
@@ -1066,6 +1139,36 @@ pub(crate) mod tests {
         let a = new_id();
         assert!(is_lower_hex(&a, 32), "{a}");
         assert_ne!(a, new_id());
+    }
+
+    #[test]
+    fn local_ids_are_derived_from_author_and_salt() {
+        let mut f = Fixture::new();
+        let pk = f.pk();
+        let (doc, v1) = f.add("a.docx", "a");
+        for (id, salt) in [(&doc.id, &doc.salt), (&v1.id, &v1.salt)] {
+            let salt = salt.0.as_deref().expect("salt of a new record");
+            assert!(is_lower_hex(salt, 32));
+            assert_eq!(*id, derive_id(&pk, salt));
+        }
+        assert_ne!(derive_id(&pk, "00"), derive_id(&"ab".repeat(32), "00"));
+        let blob = f.blob("b");
+        let v2 = add_version(
+            &mut f.conn,
+            &doc.id,
+            std::slice::from_ref(&v1.id),
+            &blob,
+            &pk,
+            VersionOrigin::Edited,
+            None,
+            "2026-11-22T08:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(v2.id, derive_id(&pk, v2.salt.0.as_deref().unwrap()));
+        // Read back from the database: no salt, still equal.
+        let stored = get_version(&f.conn, &v2.id).unwrap();
+        assert!(stored.salt.0.is_none());
+        assert_eq!(stored, v2);
     }
 
     #[test]

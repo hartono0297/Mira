@@ -1,13 +1,23 @@
-import { IconAlertTriangle } from "@tabler/icons-react";
+import { IconAlertTriangle, IconClockHour4, IconDownload } from "@tabler/icons-react";
 import { useEffect, useRef } from "react";
 import { relativeTime } from "../../api/format";
 import type { AppError } from "../../api";
 import type { DocumentDetail as Detail, DocumentSummary, DocumentVersion } from "../../api/documents";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
-import { keys, type DocActions } from "./actions";
+import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
-import { appName, editable, formatSize, originText, person, versionList } from "./text";
+import {
+  appName,
+  downloadLabel,
+  editable,
+  fetchState,
+  fetchText,
+  formatSize,
+  originText,
+  person,
+  versionList,
+} from "./text";
 
 type Props = {
   summary: DocumentSummary;
@@ -48,10 +58,11 @@ function ActionButton({
   primary?: boolean;
   onClick: () => void;
 }) {
-  const busy = actions.pending === pendingKey;
-  // Selama aksi lain berjalan, tombol ini menunggu. aria-disabled menjaga fokus
-  // keyboard tetap di tombol (disabled membuang fokus di WebView2).
-  const blocked = actions.pending !== null;
+  const busy = isBusy(actions, pendingKey);
+  // Selama aksi lain yang mengubah data berjalan, tombol ini menunggu.
+  // aria-disabled menjaga fokus keyboard tetap di tombol (disabled membuang
+  // fokus di WebView2).
+  const blocked = isBlocked(actions, pendingKey);
   return (
     <button
       type="button"
@@ -103,44 +114,21 @@ function ConflictBox({
       <ul className="conflict-heads">
         {heads.map((v) => (
           <li key={v.id} className="head-card">
-            <p className="head-num">Versi {v.number}</p>
-            <p className="head-meta">{originText(v, doc.kind)}</p>
-            <p className="head-meta">
-              {person(v.author)} · {relativeTime(v.createdAt, now)}
+            {/* Nama pembuat di judul kartu: bentrok dengan rekan langsung terbaca siapa membuat apa. */}
+            <p className="head-num">
+              Versi {v.number} dari {person(v.author)}
             </p>
-            <div className="head-actions">
-              {doc.can.resolve && (
-                <ActionButton
-                  pendingKey={keys.resolve(doc.id, v.id)}
-                  actions={actions}
-                  label="Pakai versi ini"
-                  ariaLabel={`Pakai versi ini (versi ${v.number})`}
-                  busyLabel="Menyimpan pilihan..."
-                  primary
-                  onClick={() => actions.resolve(doc, v)}
-                />
-              )}
-              {canMerge && (
-                <ActionButton
-                  pendingKey={keys.edit(doc.id, v.id)}
-                  actions={actions}
-                  label="Gabung manual"
-                  ariaLabel={`Gabung manual dari versi ${v.number}`}
-                  busyLabel="Membuka..."
-                  onClick={() => actions.edit(doc, v)}
-                />
-              )}
-              {v.available && (
-                <ActionButton
-                  pendingKey={keys.open(doc.id, v.id)}
-                  actions={actions}
-                  label="Buka"
-                  ariaLabel={`Buka versi ${v.number}`}
-                  busyLabel="Membuka..."
-                  onClick={() => actions.open(doc, v)}
-                />
-              )}
-            </div>
+            <p className="head-meta">
+              {originText(v, doc.kind)} · {relativeTime(v.createdAt, now)}
+            </p>
+            {v.available ? (
+              <HeadActions doc={doc} v={v} actions={actions} canMerge={canMerge} />
+            ) : (
+              <div className="head-actions">
+                <FetchStatus doc={doc} v={v} actions={actions} />
+                {doc.can.resolve && <p className="head-meta">Versi ini bisa dipilih setelah isinya ada di laptop ini.</p>}
+              </div>
+            )}
           </li>
         ))}
       </ul>
@@ -153,6 +141,82 @@ function ConflictBox({
       {!doc.can.resolve && (
         <p className="conflict-note">Anda tidak punya izin memilih versi. Minta salah satu rekan anggota tim memilihnya.</p>
       )}
+    </div>
+  );
+}
+
+// Isi versi belum ada di laptop ini: keterangan, dan tombol unduh untuk file di atas 20 MB.
+function FetchStatus({ doc, v, actions }: { doc: DocumentSummary; v: DocumentVersion; actions: DocActions }) {
+  const state = fetchState(v);
+  if (!state) return null;
+  return (
+    <>
+      <p className="ver-fetch">
+        {state === "manual" ? (
+          <IconDownload size={14} aria-hidden="true" />
+        ) : (
+          <IconClockHour4 size={14} aria-hidden="true" />
+        )}
+        {fetchText(state)}
+      </p>
+      {state === "manual" && (
+        <div>
+          <ActionButton
+            pendingKey={keys.download(doc.id, v.id)}
+            actions={actions}
+            label={downloadLabel(v)}
+            ariaLabel={`Unduh versi ${v.number} dari rekan, ${formatSize(v.size)}`}
+            busyLabel="Mengunduh..."
+            onClick={() => actions.download(doc, v)}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function HeadActions({
+  doc,
+  v,
+  actions,
+  canMerge,
+}: {
+  doc: DocumentSummary;
+  v: DocumentVersion;
+  actions: DocActions;
+  canMerge: boolean;
+}) {
+  return (
+    <div className="head-actions">
+      {doc.can.resolve && (
+        <ActionButton
+          pendingKey={keys.resolve(doc.id, v.id)}
+          actions={actions}
+          label="Pakai versi ini"
+          ariaLabel={`Pakai versi ini (versi ${v.number})`}
+          busyLabel="Menyimpan pilihan..."
+          primary
+          onClick={() => actions.resolve(doc, v)}
+        />
+      )}
+      {canMerge && (
+        <ActionButton
+          pendingKey={keys.edit(doc.id, v.id)}
+          actions={actions}
+          label="Gabung manual"
+          ariaLabel={`Gabung manual dari versi ${v.number}`}
+          busyLabel="Membuka..."
+          onClick={() => actions.edit(doc, v)}
+        />
+      )}
+      <ActionButton
+        pendingKey={keys.open(doc.id, v.id)}
+        actions={actions}
+        label="Buka"
+        ariaLabel={`Buka versi ${v.number}`}
+        busyLabel="Membuka..."
+        onClick={() => actions.open(doc, v)}
+      />
     </div>
   );
 }
@@ -217,7 +281,7 @@ function VersionRow({
             )}
           </div>
         ) : (
-          <p className="ver-meta">Isi versi ini belum ada di laptop ini.</p>
+          <FetchStatus doc={doc} v={v} actions={actions} />
         )}
       </div>
     </li>

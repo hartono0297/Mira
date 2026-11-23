@@ -1,22 +1,26 @@
 //! Who may do what with a document: the connection point for role-based
 //! permissions (plan, bagian 3.3).
 //!
-//! Today the check is the role of this laptop in the organization:
-//! - Tamu (guest): view and export ("Simpan salinan") only.
-//! - Anggota, Admin tim, Superadmin: everything.
-//! - No organization, or a laptop that was removed: nothing.
-//!
-//! Team and guest-project scoping (a member only sees the documents of their
-//! teams, a guest only the projects in `guest_access`) needs projects from
-//! Tahap 3. The hook for it is [`scope_allows`]; it allows everything until
-//! documents carry a `team_id` / `project_id`.
+//! Two rules, both must allow the action:
+//! - The role of this laptop in the organization ([`role_allows`]): Tamu
+//!   (guest) may view and export ("Simpan salinan") only; Anggota, Admin tim
+//!   and Superadmin may do everything; no organization, or a laptop that was
+//!   removed: nothing.
+//! - The document's team and project ([`scope_allows`]), the same rules the
+//!   sync applies to rekan (`documents::scope`): the general library for every
+//!   non-guest member, a team scope for that team's members and superadmins,
+//!   guests only in the projects [`GuestProjects`] allows.
+
+use std::sync::Arc;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::documents::scope::{self, GuestProjects, InviteGuestProjects};
 use crate::documents::store::DocScope;
 use crate::error::{AppError, AppResult};
 use crate::identity::Identity;
 use crate::org::{self, Role};
+use crate::permissions;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DocAction {
@@ -34,6 +38,14 @@ pub fn role_allows(role: Role, action: DocAction) -> bool {
         Role::Guest => matches!(action, DocAction::View | DocAction::Export),
         Role::Member | Role::TeamAdmin | Role::Superadmin => true,
     }
+}
+
+/// True for the actions that add a document or a version.
+pub fn is_write(action: DocAction) -> bool {
+    matches!(
+        action,
+        DocAction::Add | DocAction::Edit | DocAction::Restore | DocAction::Resolve
+    )
 }
 
 /// Permission check used by the document commands and views. `check` returns
@@ -65,8 +77,10 @@ pub trait DocumentAccess: Send + Sync {
     }
 }
 
-/// The real check: this laptop's role from `org::get_organization`, plus its
-/// membership status from `members` (kept up to date by the membership fold).
+/// The real check: this laptop's role from `org::get_organization`, its
+/// membership status from `members` (kept up to date by the membership fold),
+/// and [`scope_allows`] with the guest projects named in the invites
+/// ([`InviteGuestProjects`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RoleAccess;
 
@@ -78,74 +92,110 @@ impl DocumentAccess for RoleAccess {
         scope: &DocScope,
         action: DocAction,
     ) -> AppResult<()> {
-        let Some(info) = org::get_organization(conn, me)? else {
-            return Err(AppError::Forbidden(
-                "Laptop ini belum tergabung dalam organisasi, jadi belum bisa memakai dokumen."
-                    .into(),
-            ));
-        };
-        let status: Option<String> = conn
-            .query_row(
-                "SELECT status FROM members WHERE organization_id = ?1 AND public_key = ?2",
-                params![info.id, me.public_key_hex()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        match status.as_deref() {
-            Some("active") => {}
-            Some(_) => {
-                return Err(AppError::Forbidden(
-                    "Laptop ini sudah dikeluarkan dari organisasi, jadi tidak bisa memakai dokumen lagi."
-                        .into(),
-                ));
-            }
-            None => {
-                return Err(AppError::Forbidden(
-                    "Laptop ini belum menjadi anggota aktif organisasi, jadi belum bisa memakai dokumen."
-                        .into(),
-                ));
-            }
-        }
-        if !role_allows(info.role, action) {
-            return Err(AppError::Forbidden(
-                "Tamu hanya bisa membuka dan menyimpan salinan dokumen.".into(),
-            ));
-        }
-        if !scope_allows(conn, me, info.role, scope, action)? {
-            return Err(AppError::Forbidden(
-                "Dokumen ini ada di tim atau proyek yang tidak bisa Anda buka.".into(),
-            ));
-        }
-        Ok(())
+        check_role_and_scope(conn, me, scope, action, &InviteGuestProjects)
     }
 }
 
-/// TODO(Tahap 3 projects): team and guest-project scoping hook.
+/// [`RoleAccess`] with another source of guest projects. The runtime gives
+/// the same [`GuestProjects`] to this check and to the document sync, so this
+/// laptop and what it sends to rekan follow one rule.
+#[derive(Clone)]
+pub struct RoleAccessWith(pub Arc<dyn GuestProjects>);
+
+impl DocumentAccess for RoleAccessWith {
+    fn check(
+        &self,
+        conn: &Connection,
+        me: &Identity,
+        scope: &DocScope,
+        action: DocAction,
+    ) -> AppResult<()> {
+        check_role_and_scope(conn, me, scope, action, self.0.as_ref())
+    }
+}
+
+fn check_role_and_scope(
+    conn: &Connection,
+    me: &Identity,
+    scope: &DocScope,
+    action: DocAction,
+    guests: &dyn GuestProjects,
+) -> AppResult<()> {
+    let Some(info) = org::get_organization(conn, me)? else {
+        return Err(AppError::Forbidden(
+            "Laptop ini belum tergabung dalam organisasi, jadi belum bisa memakai dokumen.".into(),
+        ));
+    };
+    let status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM members WHERE organization_id = ?1 AND public_key = ?2",
+            params![info.id, me.public_key_hex()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match status.as_deref() {
+        Some("active") => {}
+        Some(_) => {
+            return Err(AppError::Forbidden(
+                "Laptop ini sudah dikeluarkan dari organisasi, jadi tidak bisa memakai dokumen lagi."
+                    .into(),
+            ));
+        }
+        None => {
+            return Err(AppError::Forbidden(
+                "Laptop ini belum menjadi anggota aktif organisasi, jadi belum bisa memakai dokumen."
+                    .into(),
+            ));
+        }
+    }
+    if !role_allows(info.role, action) {
+        return Err(AppError::Forbidden(
+            "Tamu hanya bisa membuka dan menyimpan salinan dokumen.".into(),
+        ));
+    }
+    if !scope_allows(conn, me, info.role, scope, action, guests)? {
+        return Err(AppError::Forbidden(
+            "Dokumen ini ada di tim atau proyek yang tidak bisa Anda buka.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Team and project scoping for this laptop: [`scope::may_write`] for the
+/// write actions ([`is_write`]), [`scope::may_view`] for View and Export,
+/// with the organization state from `permissions::load_state`.
 ///
-/// When documents get a `team_id` / `project_id`, this should load
-/// `permissions::load_state` (an `OrgState`) and allow:
-/// - superadmin: every scope;
-/// - team admin and member: documents whose `team_id` is one of their teams
-///   (`OrgState::teams[..].members`), plus the general library (`team_id` NULL);
-/// - guest: only documents whose (`team_id`, `project_id`) is in
-///   `OrgState::guest_access` for their key, and never the general library.
-///
-/// Until then every document lives in the general library (both ids NULL)
-/// and the role check in [`role_allows`] is the whole rule.
+/// The general library (no team, no project) needs no fold: every active
+/// non-guest member may use it, guests never. `role` comes from the same
+/// membership fold (the `members` table), so this equals `may_view` there and
+/// keeps the document list fast.
 pub fn scope_allows(
-    _conn: &Connection,
-    _me: &Identity,
-    _role: Role,
-    _scope: &DocScope,
-    _action: DocAction,
+    conn: &Connection,
+    me: &Identity,
+    role: Role,
+    scope: &DocScope,
+    action: DocAction,
+    guests: &dyn GuestProjects,
 ) -> AppResult<bool> {
-    Ok(true)
+    if scope.team_id.is_none() && scope.project_id.is_none() {
+        return Ok(role != Role::Guest);
+    }
+    let Some(state) = permissions::load_state(conn)? else {
+        return Ok(false);
+    };
+    let pk = me.public_key_hex();
+    if is_write(action) {
+        scope::may_write(conn, &state, guests, pk, scope)
+    } else {
+        scope::may_view(conn, &state, guests, pk, scope)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db;
+    use crate::documents::test_lab::Lab;
     use crate::identity::{self, MemoryKeyStore};
 
     const ALL: [DocAction; 6] = [
@@ -162,6 +212,7 @@ mod tests {
         for action in ALL {
             let expected = matches!(action, DocAction::View | DocAction::Export);
             assert_eq!(role_allows(Role::Guest, action), expected, "{action:?}");
+            assert_eq!(is_write(action), !expected, "{action:?}");
             for role in [Role::Member, Role::TeamAdmin, Role::Superadmin] {
                 assert!(role_allows(role, action), "{role:?} {action:?}");
             }
@@ -191,13 +242,13 @@ mod tests {
             RoleAccess.check(&conn, &me, &scope, action).unwrap();
         }
 
+        // A guest sees nothing in the general library (plan, "Batas tim dan
+        // proyek"); project scopes are covered with real guests below.
         conn.execute("UPDATE members SET role = 'guest'", [])
             .unwrap();
         for action in ALL {
-            let allowed = RoleAccess.allows(&conn, &me, &scope, action).unwrap();
-            assert_eq!(
-                allowed,
-                matches!(action, DocAction::View | DocAction::Export),
+            assert!(
+                !RoleAccess.allows(&conn, &me, &scope, action).unwrap(),
                 "{action:?}"
             );
         }
@@ -219,5 +270,51 @@ mod tests {
                 .allows(&conn, &me, &scope, DocAction::View)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn scope_follows_teams_and_guest_projects() {
+        let project = "ab".repeat(16);
+        let mut lab = Lab::new(&["Sari", "Budi"]);
+        let guest = lab.add_guest("Tamu", &[&project]);
+        let outsider = lab.add_member_elsewhere("Dewi");
+        let team = DocScope {
+            team_id: Some(lab.team.clone()),
+            project_id: None,
+        };
+        let allowed_project = DocScope {
+            team_id: Some(lab.team.clone()),
+            project_id: Some(project.clone()),
+        };
+        let other_project = DocScope {
+            team_id: Some(lab.team.clone()),
+            project_id: Some("cd".repeat(16)),
+        };
+        let general = DocScope::default();
+        let allows = |who: usize, scope: &DocScope, action: DocAction| {
+            lab.laptops[who].with(|c| RoleAccess.allows(&c.db, &c.identity, scope, action).unwrap())
+        };
+        for action in ALL {
+            assert!(allows(0, &team, action), "superadmin {action:?}");
+            assert!(allows(1, &team, action), "team member {action:?}");
+            assert!(allows(1, &general, action), "general {action:?}");
+            assert!(!allows(outsider, &team, action), "other team {action:?}");
+            assert!(allows(outsider, &general, action), "other team, general {action:?}");
+            assert!(!allows(guest, &general, action), "guest, general {action:?}");
+            assert!(!allows(guest, &team, action), "guest, team {action:?}");
+            assert!(!allows(guest, &other_project, action), "guest {action:?}");
+            assert_eq!(
+                allows(guest, &allowed_project, action),
+                !is_write(action),
+                "guest, own project {action:?}"
+            );
+        }
+        let with = RoleAccessWith(Arc::new(InviteGuestProjects));
+        lab.laptops[guest].with(|c| {
+            assert!(
+                with.allows(&c.db, &c.identity, &allowed_project, DocAction::View)
+                    .unwrap()
+            );
+        });
     }
 }

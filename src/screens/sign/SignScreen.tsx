@@ -2,6 +2,7 @@ import {
   IconAlertTriangle,
   IconChevronRight,
   IconClockHour4,
+  IconDownload,
   IconFileSearch,
   IconFileTypePdf,
   IconFileUpload,
@@ -9,7 +10,7 @@ import {
   IconSignature,
 } from "@tabler/icons-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ChangeEvent } from "react";
-import { toAppError, type AppError } from "../../api";
+import { subscribeFeature, toAppError, type AppError } from "../../api";
 import {
   signingApi,
   type ImportedPdf,
@@ -27,13 +28,18 @@ import { NewRequestDialog } from "./NewRequestDialog";
 import { VerifyDialog } from "./VerifyDialog";
 import {
   checkPdfFile,
+  downloadLabel,
   exportWarningLabel,
+  fileNeed,
+  fileNeedText,
+  formatSize,
   formatWhen,
   integrityLabel,
   isActionable,
   modeLabel,
   readFileBytes,
   requestStateLabel,
+  signErrorMessage,
 } from "./labels";
 import { checkSignablePdf } from "./stamp";
 import "./sign.css";
@@ -55,8 +61,34 @@ export function sortRequests(list: RequestSummary[]): RequestSummary[] {
   return [...list].sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
+// Permintaan dari rekan yang masih menunggu tanda tangan saya. Yang bisa
+// ditandatangani sekarang paling atas, lalu giliran saya yang menunggu file,
+// lalu yang masih menunggu penanda tangan sebelum saya.
+function waitRank(r: RequestSummary): number {
+  if (r.myState === "your_turn") return isActionable(r) ? 0 : 1;
+  return 2;
+}
+
+export function waitingRequests(list: RequestSummary[]): RequestSummary[] {
+  return list
+    .filter(
+      (r) =>
+        r.fromPeer === true &&
+        r.status === "in_progress" &&
+        (r.myState === "your_turn" || r.myState === "waiting_others"),
+    )
+    .sort((a, b) => waitRank(a) - waitRank(b) || b.updatedAt.localeCompare(a.updatedAt));
+}
+
+// File dari rekan yang belum tersalin juga tercatat "missing" di inti Rust,
+// tetapi itu keadaan biasa, bukan file yang hilang.
+function integrityWarn(r: RequestSummary): boolean {
+  if (r.integrity === "missing" && r.fileAvailable === false) return false;
+  return r.integrity !== "intact";
+}
+
 function hasWarning(r: RequestSummary): boolean {
-  return r.integrity !== "intact" || r.exportWarnings > 0;
+  return integrityWarn(r) || r.exportWarnings > 0;
 }
 
 function futureTime(iso: string | null | undefined, now: number): number | null {
@@ -102,9 +134,12 @@ function useOverview() {
     // File bisa diubah aplikasi lain saat Mira di belakang; periksa lagi saat jendela kembali aktif.
     const onFocus = () => void reload();
     window.addEventListener("focus", onFocus);
+    // Permintaan, tanda tangan, dan pembatalan dari laptop rekan.
+    const stopFeature = subscribeFeature("sign", () => void reload());
     return () => {
       alive.current = false;
       window.removeEventListener("focus", onFocus);
+      stopFeature();
     };
   }, [reload]);
 
@@ -182,10 +217,28 @@ function MySignature({
   );
 }
 
-function RequestRow({ r, onOpen }: { r: RequestSummary; onOpen: (id: string) => void }) {
+type DownloadCtl = { busyId: string | null; start: (r: RequestSummary) => void };
+
+function RequestRow({
+  r,
+  onOpen,
+  download,
+}: {
+  r: RequestSummary;
+  onOpen: (id: string) => void;
+  download: DownloadCtl;
+}) {
   const mine = isActionable(r);
   const warn = hasWarning(r);
   const when = r.completedAt ?? r.updatedAt;
+  const need = fileNeed(r);
+  // Sibuk: tombol ini sedang mengunduh, atau laptop ini sudah menyalin file
+  // permintaan ini (misalnya dari jendela lain).
+  const busy = download.busyId === r.id || need?.downloading === true;
+  // Satu unduhan pada satu waktu. aria-disabled, bukan disabled, supaya fokus
+  // keyboard tidak lepas dari tombol yang sedang menunggu.
+  const blocked = download.busyId !== null || busy;
+  const size = need?.size ? `, ${formatSize(need.size)}` : "";
   return (
     <li>
       <button
@@ -197,7 +250,14 @@ function RequestRow({ r, onOpen }: { r: RequestSummary; onOpen: (id: string) => 
         <IconFileTypePdf size={22} className="sign-row-icon" aria-hidden="true" />
         <span className="sign-row-main">
           <span className="sign-row-title">{r.title}</span>
+          {r.fromPeer && (
+            <span className="sign-row-from">
+              <span className="sr-only">, </span>
+              Diminta oleh {r.requestedByName}
+            </span>
+          )}
           <span className="sign-row-meta">
+            <span className="sr-only">, </span>
             {r.signedCount} dari {r.signerCount} sudah tanda tangan
             <span aria-hidden="true"> · </span>
             <span className="sr-only">, </span>
@@ -206,9 +266,20 @@ function RequestRow({ r, onOpen }: { r: RequestSummary; onOpen: (id: string) => 
             <span className="sr-only">, </span>
             {r.completedAt ? "selesai" : "terakhir berubah"} {formatWhen(when)}
           </span>
+          {need && (
+            <span className="sign-row-file">
+              <span className="sr-only">, </span>
+              {need.state === "manual" ? (
+                <IconDownload size={16} aria-hidden="true" />
+              ) : (
+                <IconClockHour4 size={16} aria-hidden="true" />
+              )}
+              {fileNeedText(need)}
+            </span>
+          )}
           {warn && (
             <span className="sign-row-warnings">
-              {r.integrity !== "intact" && (
+              {integrityWarn(r) && (
                 <span className="sign-warn-line">
                   <IconAlertTriangle size={16} aria-hidden="true" />
                   {integrityLabel(r.integrity)}
@@ -226,6 +297,23 @@ function RequestRow({ r, onOpen }: { r: RequestSummary; onOpen: (id: string) => 
         <span className={`chip${mine ? " chip-on" : ""}`}>{requestStateLabel(r)}</span>
         <IconChevronRight size={18} className="sign-row-chevron" aria-hidden="true" />
       </button>
+      {need?.state === "manual" && (
+        <div className="sign-row-extra">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            aria-label={busy ? `Mengunduh file ${r.title}` : `Unduh file ${r.title}${size}`}
+            aria-busy={busy || undefined}
+            aria-disabled={blocked || undefined}
+            onClick={() => {
+              if (!blocked) download.start(r);
+            }}
+          >
+            <IconDownload size={16} aria-hidden="true" />
+            {busy ? "Mengunduh..." : downloadLabel(need)}
+          </button>
+        </div>
+      )}
     </li>
   );
 }
@@ -246,6 +334,8 @@ export function SignScreen() {
   const [imported, setImported] = useState<ImportedPdf | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const downloadRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const pickRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -375,9 +465,43 @@ export function SignScreen() {
     openDoc(detail.id);
   }
 
-  const requests = overview ? sortRequests(overview.requests) : [];
-  const yourTurn = requests.filter(isActionable).length;
-  const warned = requests.filter(hasWarning).length;
+  // File di atas 20 MB dari rekan diunduh lewat tombol di baris. Setelah
+  // berhasil, tombolnya hilang; fokus dipindah ke baris dokumen itu.
+  async function downloadFile(r: RequestSummary) {
+    if (downloadRef.current) return;
+    downloadRef.current = true;
+    setDownloadingId(r.id);
+    setFeedback(null);
+    try {
+      const result = await signingApi.downloadFile(r.id);
+      // File yang sedang disalin otomatis tidak diunduh dua kali.
+      const text = result?.downloading
+        ? `File ${r.title} sedang disalin. Daftar diperbarui begitu selesai.`
+        : `File ${r.title} sudah ada di laptop ini.`;
+      setFeedback({ kind: "ok", text });
+      await reload();
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (active && active !== document.body && active.isConnected) return;
+        document.querySelector<HTMLButtonElement>(`[data-request="${CSS.escape(r.id)}"]`)?.focus();
+      }, 0);
+    } catch (err) {
+      const error = toAppError(err);
+      setFeedback({ kind: "error", title: "File belum bisa diunduh", error: { ...error, message: signErrorMessage(error) } });
+      void reload();
+    } finally {
+      downloadRef.current = false;
+      setDownloadingId(null);
+    }
+  }
+
+  const download: DownloadCtl = { busyId: downloadingId, start: (r) => void downloadFile(r) };
+  const all = overview?.requests ?? [];
+  const waiting = waitingRequests(all);
+  const waitingIds = new Set(waiting.map((r) => r.id));
+  const requests = sortRequests(all.filter((r) => !waitingIds.has(r.id)));
+  const yourTurn = all.filter(isActionable).length;
+  const warned = all.filter(hasWarning).length;
 
   return (
     <main className="sign" aria-labelledby="page-title">
@@ -420,6 +544,22 @@ export function SignScreen() {
               </ErrorAlert>
             )}
           </div>
+
+          {waiting.length > 0 && (
+            <section className="sign-section" aria-labelledby="sign-wait-title">
+              <div className="sign-head-text">
+                <h2 id="sign-wait-title" className="sign-h2">
+                  Menunggu tanda tangan Anda
+                </h2>
+                <p className="hint">Permintaan dari rekan yang mencantumkan nama Anda. Giliran Anda tampil paling atas.</p>
+              </div>
+              <ul className="sign-list">
+                {waiting.map((r) => (
+                  <RequestRow key={r.id} r={r} onOpen={openDoc} download={download} />
+                ))}
+              </ul>
+            </section>
+          )}
 
           <MySignature
             saved={overview.saved}
@@ -473,8 +613,8 @@ export function SignScreen() {
 
             {!overview.canRequest && (
               <p className="sign-guest">
-                Tamu tidak bisa meminta tanda tangan. Dokumen yang meminta tanda tangan Anda muncul di sini setelah
-                pengiriman lewat jaringan tersedia.
+                Sebagai Tamu, Anda tidak bisa meminta tanda tangan, tetapi bisa menandatangani dokumen dari rekan untuk
+                proyek yang boleh Anda buka.
               </p>
             )}
 
@@ -490,22 +630,24 @@ export function SignScreen() {
 
             {requests.length === 0 ? (
               <div className="sign-empty">
-                {overview.canRequest ? (
+                {waiting.length > 0 ? (
+                  <p>Dokumen lain yang Anda kirim atau sudah Anda tanda tangani muncul di sini.</p>
+                ) : overview.canRequest ? (
                   <p>
-                    Belum ada dokumen. Pilih PDF untuk ditandatangani sendiri atau bersama rekan. Permintaan ke rekan
-                    tersimpan di laptop ini sampai pengiriman lewat jaringan tersedia.
+                    Belum ada dokumen. Pilih PDF untuk ditandatangani sendiri atau bersama rekan. Permintaan dikirim ke
+                    penanda tangan saat laptop mereka tersambung.
                   </p>
                 ) : (
                   <p>
-                    Belum ada dokumen untuk Anda tanda tangani. Permintaan dari rekan belum bisa sampai ke laptop ini
-                    karena pengiriman lewat jaringan belum tersedia.
+                    Belum ada dokumen untuk Anda tanda tangani. Permintaan dari rekan muncul di sini begitu laptop
+                    pengirimnya tersambung.
                   </p>
                 )}
               </div>
             ) : (
               <ul className="sign-list">
                 {requests.map((r) => (
-                  <RequestRow key={r.id} r={r} onOpen={openDoc} />
+                  <RequestRow key={r.id} r={r} onOpen={openDoc} download={download} />
                 ))}
               </ul>
             )}
