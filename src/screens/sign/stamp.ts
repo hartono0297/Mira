@@ -16,6 +16,7 @@ import {
   PDFDocument,
   PDFFont,
   PDFHexString,
+  PDFImage,
   PDFName,
   PDFObject,
   PDFPage,
@@ -24,6 +25,7 @@ import {
   PDFString,
   PageSizes,
   StandardFonts,
+  decodePDFRawStream,
   degrees,
   popGraphicsState,
   pushGraphicsState,
@@ -540,14 +542,79 @@ function isolateExistingContent(doc: PDFDocument, page: PDFPage): void {
 
 // ---------------------------------------------------------------------------
 // Stempel
+//
+// Inti Rust (`signing::increment`) menolak stempel yang bisa menutup isi
+// dokumen: gambar harus berlatar transparan (rata-rata alpha paling besar
+// 0,5, tanpa piksel terang yang legap), keterangan paling banyak 120 huruf
+// Helvetica atau Courier sampai 12 pt, dan gambar beserta keterangannya muat
+// dalam satu persegi seluas paling besar 15% MediaBox (atau 20.000 pt
+// persegi). Batas di sini sedikit lebih ketat supaya stempel sah selalu lolos.
 
 const CAPTION_MIN_SIZE = 6;
 const CAPTION_MAX_SIZE = 10;
 const PAGE_MARGIN = 2;
+/** Nama dan waktu bersama paling banyak sekian huruf (inti: 120 per halaman). */
+const CAPTION_MAX_GLYPHS = 100;
+/** Persegi gambar dan keterangan paling luas sekian dari MediaBox (inti: 15%). */
+const STAMP_MAX_AREA_FRACTION = 0.12;
+/** Luas yang selalu boleh untuk halaman kecil, pt persegi (inti: 20.000). */
+const STAMP_MIN_AREA = 16_000;
+// Perkiraan tinta huruf di sekitar lebarnya (em), sama dengan inti.
+const GLYPH_PAD_X = 0.2;
+const GLYPH_BOTTOM = -0.3;
+const GLYPH_TOP = 1.0;
+/** Batas rata-rata alpha gambar tanda tangan, sama dengan inti. */
+export const SIGNATURE_MAX_MEAN_ALPHA = 0.5;
+// Piksel penutup: alpha >= 128 dan kecerahan >= 216 (dari 255), sama dengan inti.
+const COVER_MIN_ALPHA = 128;
+const COVER_MIN_LUMA = 216;
+
+const IMAGE_NOT_TRANSPARENT_MESSAGE =
+  "Gambar tanda tangan ini tidak berlatar transparan, jadi bisa menutup tulisan di dokumen. Gambar ulang tanda tangan, atau impor foto tanda tangan di atas kertas putih.";
+const IMAGE_DENSE_MESSAGE =
+  "Lebih dari separuh gambar tanda tangan ini tertutup tinta, jadi bisa menutup tulisan di dokumen. Gambar ulang dengan goresan yang lebih tipis, atau impor foto tanda tangan di atas kertas putih.";
+const IMAGE_COVER_MESSAGE =
+  "Gambar tanda tangan ini punya bagian putih yang tidak transparan, jadi bisa menutup tulisan di dokumen. Gambar ulang tanda tangan, atau impor foto tanda tangan di atas kertas putih.";
 
 /** Ukuran huruf keterangan: seperenam belas lebar kotak, dibatasi 6 sampai 10 pt. */
 export function captionFontSize(boxWidth: number): number {
   return Math.min(CAPTION_MAX_SIZE, Math.max(CAPTION_MIN_SIZE, boxWidth / 16));
+}
+
+/**
+ * Pesan kalau gambar tanda tangan akan ditolak inti Rust, atau null.
+ * `rgb` 3 byte per piksel, `alpha` 1 byte per piksel (SMask; null kalau tidak ada).
+ */
+export function signatureImageProblem(rgb: Uint8Array, alpha: Uint8Array | null, pixels: number): string | null {
+  if (!alpha || pixels <= 0 || alpha.length < pixels || rgb.length < pixels * 3) {
+    return IMAGE_NOT_TRANSPARENT_MESSAGE;
+  }
+  let sum = 0;
+  let cover = 0;
+  for (let i = 0; i < pixels; i++) {
+    const a = alpha[i];
+    sum += a;
+    if (a >= COVER_MIN_ALPHA) {
+      const luma = Math.floor((299 * rgb[3 * i] + 587 * rgb[3 * i + 1] + 114 * rgb[3 * i + 2]) / 1000);
+      if (luma >= COVER_MIN_LUMA) cover++;
+    }
+  }
+  if (sum / (pixels * 255) > SIGNATURE_MAX_MEAN_ALPHA + 1e-6) return IMAGE_DENSE_MESSAGE;
+  if (cover > 0) return IMAGE_COVER_MESSAGE;
+  return null;
+}
+
+/** Memeriksa gambar seperti yang ditulis pdf-lib ke PDF (RGB dan SMask). */
+async function checkSignatureImage(doc: PDFDocument, image: PDFImage): Promise<void> {
+  await image.embed();
+  const xobject = doc.context.lookup(image.ref);
+  if (!(xobject instanceof PDFRawStream)) throw new Error(IMAGE_NOT_TRANSPARENT_MESSAGE);
+  const maskRef = xobject.dict.get(PDFName.of("SMask"));
+  const mask = maskRef ? doc.context.lookup(maskRef) : undefined;
+  const rgb = decodePDFRawStream(xobject).decode();
+  const alpha = mask instanceof PDFRawStream ? decodePDFRawStream(mask).decode() : null;
+  const problem = signatureImageProblem(rgb, alpha, image.width * image.height);
+  if (problem) throw new Error(problem);
 }
 
 function fitText(font: PDFFont, text: string, size: number, maxWidth: number): string {
@@ -557,6 +624,21 @@ function fitText(font: PDFFont, text: string, size: number, maxWidth: number): s
     chars.pop();
   }
   return `${chars.join("").trimEnd()}...`;
+}
+
+/** Nama dipotong supaya nama dan waktu bersama paling banyak CAPTION_MAX_GLYPHS huruf. */
+function capCaptionName(name: string, when: string): string {
+  const room = CAPTION_MAX_GLYPHS - when.length - 2;
+  const chars = Array.from(name);
+  if (chars.length <= room) return name;
+  return `${chars.slice(0, Math.max(1, room - 3)).join("").trimEnd()}...`;
+}
+
+/** Lebar tanpa kerning, seperti teks yang benar-benar digambar `Tj`. */
+function drawnWidth(font: PDFFont, text: string, size: number): number {
+  let w = 0;
+  for (const ch of text) w += font.widthOfTextAtSize(ch, size);
+  return w;
 }
 
 function assertPlacement(doc: PDFDocument, p: PdfRect): PDFPage {
@@ -571,51 +653,50 @@ function assertPlacement(doc: PDFDocument, p: PdfRect): PDFPage {
   return doc.getPage(p.pageIndex);
 }
 
-export async function stampSignature(pdf: Uint8Array, opts: StampOptions): Promise<Uint8Array> {
-  assertDocTag(opts.docTag);
-  const editable = await openForIncrement(pdf);
-  const { doc } = editable;
-  const page = assertPlacement(doc, opts.placement);
-  // normalize() pdf-lib menambah /Annots kosong; dikembalikan supaya hanya
-  // /Contents dan /Resources halaman yang berubah.
-  const annots = page.node.get(PDFName.Annots);
+type CaptionLine = { text: string; u: number; v: number; width: number };
 
-  let image;
-  try {
-    image = await doc.embedPng(opts.png);
-  } catch {
-    throw new Error("Gambar tanda tangan tidak bisa dibaca.");
-  }
-  const font = await doc.embedFont(StandardFonts.Helvetica);
+/** Letak gambar dan keterangan di bingkai visual kotak. */
+type StampLayout = {
+  frame: Frame;
+  image: { u: number; v: number; width: number; height: number };
+  size: number;
+  lines: CaptionLine[];
+};
 
-  const frame = frameFor(opts.placement, normalizeAngle(page.getRotation().angle));
-  const rotate = degrees(frame.angle);
-  isolateExistingContent(doc, page);
+function layoutStamp(
+  page: PDFPage,
+  rect: PdfRect,
+  angle: 0 | 90 | 180 | 270,
+  image: { width: number; height: number },
+  font: PDFFont,
+  name: string,
+  when: string,
+): StampLayout {
+  const frame = frameFor(rect, angle);
 
   // Gambar mengisi kotak dengan rasio tetap, di tengah.
   const scale = Math.min(frame.width / image.width, frame.height / image.height);
-  const dw = image.width * scale;
-  const dh = image.height * scale;
-  const imgOrigin = toUser(frame, (frame.width - dw) / 2, (frame.height - dh) / 2);
-  page.drawImage(image, { x: imgOrigin.x, y: imgOrigin.y, width: dw, height: dh, rotate });
+  const width = image.width * scale;
+  const height = image.height * scale;
 
   // Keterangan: nama dan waktu, di bawah kotak (atau di atas kalau tidak muat).
-  const name = toWinAnsiSafe(opts.signerName);
-  const when = toWinAnsiSafe(formatSignedAt(opts.signedAt, opts.timeZone));
+  // Paling lebar selebar kotak, atau selebar baris waktu kalau kotaknya lebih
+  // sempit, supaya tetap menempel pada gambar.
   const bounds = visibleBounds(page, frame);
   const size = captionFontSize(frame.width);
   const lineHeight = size * 1.2;
   const gap = size * 0.4;
   const ascent = font.heightAtSize(size, { descender: false });
   const descent = font.heightAtSize(size) - ascent;
-  const maxWidth = Math.max(size * 4, bounds.uMax - bounds.uMin - 2 * PAGE_MARGIN);
+  const pageWidth = Math.max(size * 4, bounds.uMax - bounds.uMin - 2 * PAGE_MARGIN);
+  const maxWidth = Math.min(pageWidth, Math.max(frame.width, font.widthOfTextAtSize(when, size)));
 
   const oneLine = name ? `${name}, ${when}` : when;
-  const lines =
+  const texts =
     font.widthOfTextAtSize(oneLine, size) <= frame.width || !name
       ? [oneLine]
       : [name, when];
-  const fitted = lines.map((l) => fitText(font, l, size, maxWidth));
+  const fitted = texts.map((l) => fitText(font, l, size, maxWidth));
   const blockHeight = ascent + descent + (fitted.length - 1) * lineHeight;
 
   let firstBaseline: number;
@@ -630,14 +711,92 @@ export async function stampSignature(pdf: Uint8Array, opts: StampOptions): Promi
     firstBaseline = bounds.vMin + PAGE_MARGIN + descent + (fitted.length - 1) * lineHeight;
   }
 
-  fitted.forEach((line, i) => {
-    const w = font.widthOfTextAtSize(line, size);
+  const lines = fitted.map((text, i) => {
+    const w = font.widthOfTextAtSize(text, size);
     let u = (frame.width - w) / 2;
     u = Math.min(u, bounds.uMax - PAGE_MARGIN - w);
     u = Math.max(u, bounds.uMin + PAGE_MARGIN);
-    const p = toUser(frame, u, firstBaseline - i * lineHeight);
-    page.drawText(line, { x: p.x, y: p.y, size, font, color: INK, rotate });
+    return { text, u, v: firstBaseline - i * lineHeight, width: drawnWidth(font, text, size) };
   });
+  return {
+    frame,
+    image: { u: (frame.width - width) / 2, v: (frame.height - height) / 2, width, height },
+    size,
+    lines,
+  };
+}
+
+/** Luas persegi yang memuat gambar dan kotak tinta keterangan, seperti dihitung inti. */
+function stampArea({ image, size, lines }: StampLayout): number {
+  let u0 = image.u;
+  let v0 = image.v;
+  let u1 = image.u + image.width;
+  let v1 = image.v + image.height;
+  for (const l of lines) {
+    u0 = Math.min(u0, l.u - GLYPH_PAD_X * size);
+    u1 = Math.max(u1, l.u + l.width + GLYPH_PAD_X * size);
+    v0 = Math.min(v0, l.v + GLYPH_BOTTOM * size);
+    v1 = Math.max(v1, l.v + GLYPH_TOP * size);
+  }
+  return (u1 - u0) * (v1 - v0);
+}
+
+/** Persegi diperkecil dengan titik tengah tetap. */
+function shrinkRect(r: PdfRect, factor: number): PdfRect {
+  const width = r.width * factor;
+  const height = r.height * factor;
+  return { ...r, x: r.x + (r.width - width) / 2, y: r.y + (r.height - height) / 2, width, height };
+}
+
+export async function stampSignature(pdf: Uint8Array, opts: StampOptions): Promise<Uint8Array> {
+  assertDocTag(opts.docTag);
+  const editable = await openForIncrement(pdf);
+  const { doc } = editable;
+  const page = assertPlacement(doc, opts.placement);
+  // normalize() pdf-lib menambah /Annots kosong; dikembalikan supaya hanya
+  // /Contents dan /Resources halaman yang berubah.
+  const annots = page.node.get(PDFName.Annots);
+
+  let image: PDFImage;
+  try {
+    image = await doc.embedPng(opts.png);
+  } catch {
+    throw new Error("Gambar tanda tangan tidak bisa dibaca.");
+  }
+  await checkSignatureImage(doc, image);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+
+  const when = toWinAnsiSafe(formatSignedAt(opts.signedAt, opts.timeZone));
+  const name = capCaptionName(toWinAnsiSafe(opts.signerName), when);
+  const angle = normalizeAngle(page.getRotation().angle);
+
+  // Kotak yang sangat besar diperkecil (titik tengah tetap) sampai gambar dan
+  // keterangan muat dalam batas luas stempel.
+  const media = page.getMediaBox();
+  const budget = Math.max(STAMP_MAX_AREA_FRACTION * Math.abs(media.width * media.height), STAMP_MIN_AREA);
+  let rect = opts.placement;
+  let layout = layoutStamp(page, rect, angle, image, font, name, when);
+  for (let i = 0; i < 8 && stampArea(layout) > budget; i++) {
+    rect = shrinkRect(rect, Math.sqrt(budget / stampArea(layout)) * 0.98);
+    layout = layoutStamp(page, rect, angle, image, font, name, when);
+  }
+
+  const { frame, size } = layout;
+  const rotate = degrees(frame.angle);
+  isolateExistingContent(doc, page);
+
+  const imgOrigin = toUser(frame, layout.image.u, layout.image.v);
+  page.drawImage(image, {
+    x: imgOrigin.x,
+    y: imgOrigin.y,
+    width: layout.image.width,
+    height: layout.image.height,
+    rotate,
+  });
+  for (const line of layout.lines) {
+    const p = toUser(frame, line.u, line.v);
+    page.drawText(line.text, { x: p.x, y: p.y, size, font, color: INK, rotate });
+  }
 
   if (annots === undefined) page.node.delete(PDFName.Annots);
   else page.node.set(PDFName.Annots, annots);

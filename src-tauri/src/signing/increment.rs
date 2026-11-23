@@ -23,7 +23,7 @@
 //! - Kamus halaman lama: hanya `/Contents` dan `/Resources`. Daftar isi lama
 //!   tetap utuh dan bersambung; di depannya hanya stream baru berisi `q`,
 //!   di belakangnya hanya stream baru dengan operator gambar dan teks
-//!   (lihat [`check_stamp_ops`]). Larik `/Contents` tidak langsung milik
+//!   (lihat `StampCheck`). Larik `/Contents` tidak langsung milik
 //!   halaman boleh berubah dengan aturan yang sama.
 //! - `/Resources` (milik halaman atau warisan, langsung atau tidak
 //!   langsung, termasuk sub-kamus `/Font`, `/XObject`, dan seterusnya):
@@ -38,12 +38,40 @@
 //!   atau menambah halaman.
 //! - Halaman baru hanya di urutan terakhir dan berupa objek baru (halaman
 //!   catatan; lebih dari satu kalau daftar penanda tangan panjang, paling
-//!   banyak [`MAX_ADDED_PAGES`]). Isinya bebas.
+//!   banyak [`MAX_ADDED_PAGES`]), dan hanya kalau [`IncrementRules`]
+//!   mengizinkannya (penanda tangan terakhir). Isinya hanya teks font
+//!   standar dan garis tipis seperti `appendAuditPage`: tanpa gambar,
+//!   XObject, shading, `cm`, atau bidang terisi (lihat `Checker::check_new_page`).
 //! - Tidak ada aksi aktif (`/JS`, `/JavaScript`, `/AA`, `/OpenAction`,
 //!   `/Launch`, `/EmbeddedFile(s)`, `/URI`, `/SubmitForm`, ...) di objek
 //!   baru atau berubah.
+//!
+//! Stempel di halaman lama tidak boleh bisa menutup isi lama (misalnya
+//! menimpa "Rp 10.000.000" dengan bidang putih lalu menulis angka lain):
+//!
+//! - Setiap gambar berbentuk keluaran `embedPng` pdf-lib: RGB 8 bit dengan
+//!   SMask abu-abu 8 bit seukuran. Gambar tanpa SMask ditolak. Rata-rata
+//!   alpha paling besar [`MAX_IMAGE_MEAN_ALPHA`] dari luas gambar sendiri,
+//!   dan tidak ada piksel yang legap (alpha >= 128) sekaligus terang
+//!   (kecerahan >= 216 dari 255). Tanda tangan gambar tangan bertinta gelap;
+//!   impor foto membuang piksel kertas (lihat `pad/image.ts`), jadi piksel
+//!   ber-alpha 128 ke atas paling terang sekitar 207.
+//! - Semua tanda stempel satu versi di satu halaman (gambar dan kotak huruf
+//!   keterangan, diperkirakan dari Tm, Td, ukuran font, dan lebar huruf
+//!   Helvetica atau Courier) muat dalam satu persegi yang luasnya paling
+//!   besar [`MAX_STAMP_RECT_FRACTION`] dari MediaBox (paling sedikit
+//!   [`MIN_STAMP_RECT_AREA`] pt persegi untuk halaman kecil).
+//! - Teks keterangan paling banyak [`MAX_GLYPHS_PER_PAGE`] huruf per halaman,
+//!   paling besar [`MAX_FONT_SIZE`] pt, font Helvetica atau Courier.
+//!
+//! Batas sumber daya: jumlah objek kedua versi (paling banyak
+//! [`MAX_OBJECTS`]), perkiraan byte objek yang diurai lopdf termasuk isi
+//! object stream ([`MAX_LOADED_BYTES`]), dan total byte hasil dekompresi
+//! selama pemeriksaan ([`MAX_TOTAL_DECODED`]). Melewati batas ditolak sebagai
+//! `pdf_invalid`.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId, Stream};
 
@@ -72,14 +100,51 @@ pub const MAX_IMAGE_AREA_FRACTION: f64 = 1.0;
 /// terhadap luas halaman. Tanda tangan bergaris di atas latar transparan
 /// jauh di bawah ini; gambar legap yang menutup isi tidak.
 pub const MAX_IMAGE_INK_FRACTION: f64 = 0.25;
+/// Batas rata-rata alpha (dari SMask) satu gambar stempel, terhadap luas
+/// gambar itu sendiri. Goresan tanda tangan di atas latar transparan
+/// biasanya 5 sampai 30 persen (garis lurus tebal dengan margin pangkas
+/// stamp.ts sekitar 25 persen); gambar yang sebagian besar legap ditolak.
+pub const MAX_IMAGE_MEAN_ALPHA: f64 = 0.5;
+/// Piksel penutup: alpha paling sedikit ini (dari 255) ...
+pub const COVER_MIN_ALPHA: u8 = 128;
+/// ... dan kecerahan (0,299 R + 0,587 G + 0,114 B) paling sedikit ini.
+/// Tidak satu pun piksel penutup boleh ada.
+pub const COVER_MIN_LUMA: u32 = 216;
+/// Batas piksel gambar stempel (inti menolak PNG di atas 2000 x 2000).
+pub const MAX_IMAGE_PIXELS: usize = 2000 * 2000;
 /// Batas ukuran huruf efektif teks stempel (keterangan memakai 6 sampai 10 pt).
-pub const MAX_FONT_SIZE: f64 = 24.0;
-/// Batas jumlah karakter teks stempel per halaman per versi.
-pub const MAX_GLYPHS_PER_PAGE: usize = 400;
+pub const MAX_FONT_SIZE: f64 = 12.0;
+/// Batas jumlah karakter teks stempel per halaman per versi. stamp.ts
+/// membatasi keterangan (nama dan waktu) 100 karakter, ditambah "..." dari
+/// pemotongan per baris.
+pub const MAX_GLYPHS_PER_PAGE: usize = 120;
+/// Batas luas persegi yang memuat semua tanda stempel satu versi di satu
+/// halaman, terhadap luas MediaBox. stamp.ts mengecilkan kotak yang lebih
+/// besar dari 12 persen (kotak bawaan 160 x 80 pt dengan keterangan sekitar
+/// 3,4 persen A4), jadi sisa 3 persen menampung perbedaan perkiraan.
+pub const MAX_STAMP_RECT_FRACTION: f64 = 0.15;
+/// Luas persegi stempel yang selalu boleh (pt persegi), untuk halaman kecil:
+/// kotak bawaan 160 x 80 pt dengan keterangan dua baris sekitar 17.000.
+pub const MIN_STAMP_RECT_AREA: f64 = 20_000.0;
 /// Batas halaman baru per versi. Halaman catatan untuk 20 penanda tangan
 /// (batas `request::MAX_SIGNERS`) dengan nama panjang bisa lebih dari satu
 /// halaman.
 pub const MAX_ADDED_PAGES: usize = 10;
+/// Batas ukuran huruf di halaman baru (judul halaman catatan 18 pt).
+pub const MAX_NEW_PAGE_FONT_SIZE: f64 = 24.0;
+/// Batas karakter per halaman baru.
+pub const MAX_NEW_PAGE_GLYPHS: usize = 10_000;
+/// Batas segmen garis per halaman baru (halaman catatan: satu per baris tabel).
+pub const MAX_NEW_PAGE_LINES: usize = 200;
+/// Batas tebal garis di halaman baru (halaman catatan memakai 0,5 dan 0,8 pt).
+pub const MAX_LINE_WIDTH: f64 = 2.0;
+/// Batas jumlah objek kedua versi bersama.
+pub const MAX_OBJECTS: usize = 400_000;
+/// Batas perkiraan byte objek bukan stream yang diurai lopdf dari kedua versi
+/// (termasuk isi object stream setelah dekompresi).
+pub const MAX_LOADED_BYTES: usize = 256 * 1024 * 1024;
+/// Batas total byte hasil dekompresi stream selama satu pemeriksaan.
+pub const MAX_TOTAL_DECODED: usize = 256 * 1024 * 1024;
 
 const MAX_SECTIONS: usize = 16;
 const MAX_XREF_ENTRIES: usize = 100_000;
@@ -89,6 +154,14 @@ const MAX_DEPTH: usize = 64;
 const MAX_GSTATE_STACK: usize = 4096;
 /// Toleransi pembulatan untuk batas luas dan ukuran.
 const EPS: f64 = 1e-6;
+
+/// Aturan yang bergantung pada posisi penanda tangan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IncrementRules {
+    /// Halaman baru (halaman catatan) boleh ditambah. Hanya untuk penanda
+    /// tangan terakhir.
+    pub allow_new_pages: bool,
+}
 
 const NOT_PREFIX_MESSAGE: &str = "Versi baru tidak dibangun di atas versi sebelumnya.";
 
@@ -119,8 +192,56 @@ fn invalid(detail: impl AsRef<str>) -> IncrementError {
 type Res<T> = Result<T, IncrementError>;
 
 /// Memeriksa bahwa `new` = `old` + incremental update yang hanya menambah
-/// stempel. Murni (tanpa IO); pemanggil menyimpan hasilnya.
+/// stempel, halaman baru diizinkan. Sama dengan [`check_increment_with`]
+/// dengan `allow_new_pages: true`.
 pub fn check_increment(old: &[u8], new: &[u8]) -> Result<IncrementInfo, IncrementError> {
+    check_increment_with(
+        old,
+        new,
+        &IncrementRules {
+            allow_new_pages: true,
+        },
+    )
+}
+
+/// Memeriksa bahwa `new` = `old` + incremental update yang hanya menambah
+/// stempel (dan halaman catatan kalau `rules` mengizinkan). Murni (tanpa
+/// IO); pemanggil menyimpan hasilnya. Batas tanda stempel berlaku per
+/// panggilan: memeriksa beberapa versi sekaligus menggabungkan stempel
+/// semua versi itu.
+pub fn check_increment_with(
+    old: &[u8],
+    new: &[u8],
+    rules: &IncrementRules,
+) -> Result<IncrementInfo, IncrementError> {
+    check_with_caps(old, new, rules, Caps::DEFAULT)
+}
+
+fn check_with_caps(
+    old: &[u8],
+    new: &[u8],
+    rules: &IncrementRules,
+    caps: Caps,
+) -> Result<IncrementInfo, IncrementError> {
+    BUDGET.with(|b| *b.borrow_mut() = Budget::new(caps));
+    let result = check_inner(old, new, rules);
+    let exceeded = BUDGET.with(|b| {
+        let mut b = b.borrow_mut();
+        let exceeded = b.exceeded;
+        *b = Budget::new(Caps::DEFAULT);
+        exceeded
+    });
+    if exceeded {
+        return Err(invalid("PDF terlalu besar untuk diperiksa"));
+    }
+    result
+}
+
+fn check_inner(
+    old: &[u8],
+    new: &[u8],
+    rules: &IncrementRules,
+) -> Result<IncrementInfo, IncrementError> {
     if new.len() <= old.len() || !new.starts_with(old) {
         return Err(not_prefix());
     }
@@ -138,6 +259,14 @@ pub fn check_increment(old: &[u8], new: &[u8]) -> Result<IncrementInfo, Incremen
     old_buf.extend_from_slice(old);
     old_buf.extend_from_slice(format!("\nstartxref\n{old_startxref}\n%%EOF\n").as_bytes());
     let old_doc = load(&old_buf).map_err(|e| invalid(format!("versi sebelumnya: {e}")))?;
+    if old_doc
+        .objects
+        .len()
+        .checked_add(new_doc.objects.len())
+        .is_none_or(|n| n > MAX_OBJECTS)
+    {
+        return Err(invalid("objek terlalu banyak"));
+    }
 
     if new_doc.xref_start != sections.last_xref {
         return Err(invalid("startxref tidak cocok"));
@@ -176,7 +305,116 @@ pub fn check_increment(old: &[u8], new: &[u8]) -> Result<IncrementInfo, Incremen
         }
     }
 
-    Checker::new(&old_doc, &new_doc)?.run()
+    Checker::new(&old_doc, &new_doc, *rules)?.run()
+}
+
+// ---------------------------------------------------------------------------
+// Batas sumber daya
+
+#[derive(Debug, Clone, Copy)]
+struct Caps {
+    objects: usize,
+    loaded: usize,
+    decoded: usize,
+}
+
+impl Caps {
+    const DEFAULT: Caps = Caps {
+        objects: MAX_OBJECTS,
+        loaded: MAX_LOADED_BYTES,
+        decoded: MAX_TOTAL_DECODED,
+    };
+}
+
+/// Sisa anggaran satu pemeriksaan. Disimpan per thread karena filter lopdf
+/// berupa `fn` biasa tanpa closure; lopdf di sini tanpa fitur `rayon`, jadi
+/// pemuatan berjalan di thread pemanggil. Jumlah objek juga diperiksa lagi
+/// setelah pemuatan.
+struct Budget {
+    objects: usize,
+    loaded: usize,
+    decoded: usize,
+    exceeded: bool,
+}
+
+impl Budget {
+    fn new(caps: Caps) -> Self {
+        Self {
+            objects: caps.objects,
+            loaded: caps.loaded,
+            decoded: caps.decoded,
+            exceeded: false,
+        }
+    }
+}
+
+thread_local! {
+    static BUDGET: RefCell<Budget> = RefCell::new(Budget::new(Caps::DEFAULT));
+}
+
+fn budget_exceeded() -> bool {
+    BUDGET.with(|b| b.borrow().exceeded)
+}
+
+/// Filter lopdf: menghitung objek dan perkiraan byte-nya. Setelah anggaran
+/// habis objek dibuang dan pemeriksaan gagal sebagai `pdf_invalid`.
+///
+/// lopdf memakai nilai kembalian untuk anggota object stream dan objek yang
+/// diberikan (bukan kembalian) untuk objek tingkat atas. Anggota object
+/// stream tidak pernah berupa stream, jadi stream dikembalikan sebagai Null
+/// supaya isinya tidak disalin.
+fn load_filter(id: ObjectId, obj: &mut Object) -> Option<(ObjectId, Object)> {
+    let size = approx_size(obj);
+    let ok = BUDGET.with(|b| {
+        let mut b = b.borrow_mut();
+        match (b.objects.checked_sub(1), b.loaded.checked_sub(size)) {
+            (Some(o), Some(l)) if !b.exceeded => {
+                b.objects = o;
+                b.loaded = l;
+                true
+            }
+            _ => {
+                b.exceeded = true;
+                false
+            }
+        }
+    });
+    if !ok {
+        return None;
+    }
+    let returned = match obj {
+        Object::Stream(_) => Object::Null,
+        other => other.clone(),
+    };
+    Some((id, returned))
+}
+
+/// Perkiraan byte objek di memori, tanpa isi stream (isi stream mentah
+/// dibatasi ukuran file). Tanpa rekursi, jadi aman untuk objek yang dalam.
+fn approx_size(obj: &Object) -> usize {
+    let mut total = 0usize;
+    let mut stack: Vec<&Object> = vec![obj];
+    while let Some(o) = stack.pop() {
+        total = total.saturating_add(24);
+        match o {
+            Object::Name(n) | Object::String(n, _) => total = total.saturating_add(n.len()),
+            Object::Array(a) => stack.extend(a.iter()),
+            Object::Dictionary(d) => {
+                for (k, v) in d.iter() {
+                    total = total.saturating_add(k.len());
+                    stack.push(v);
+                }
+            }
+            Object::Stream(s) => {
+                for (k, v) in s.dict.iter() {
+                    total = total.saturating_add(k.len());
+                    stack.push(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    total
 }
 
 // ---------------------------------------------------------------------------
@@ -185,9 +423,14 @@ pub fn check_increment(old: &[u8], new: &[u8]) -> Result<IncrementInfo, Incremen
 fn load(bytes: &[u8]) -> Result<Document, String> {
     let options = LoadOptions {
         max_decompressed_size: Some(MAX_DECODED_STREAM),
+        filter: Some(load_filter),
         ..Default::default()
     };
-    let doc = Document::load_mem_with_options(bytes, options).map_err(|e| e.to_string())?;
+    let doc = Document::load_mem_with_options(bytes, options);
+    if budget_exceeded() {
+        return Err("terlalu besar".into());
+    }
+    let doc = doc.map_err(|e| e.to_string())?;
     if doc.xref_recovery.is_some() {
         return Err("tabel xref rusak".into());
     }
@@ -198,7 +441,7 @@ fn load(bytes: &[u8]) -> Result<Document, String> {
 }
 
 fn stream_length_exact(s: &Stream) -> bool {
-    matches!(s.dict.get(b"Length"), Ok(Object::Integer(n)) if *n >= 0 && *n as usize == s.content.len())
+    matches!(s.dict.get(b"Length"), Ok(Object::Integer(n)) if usize::try_from(*n) == Ok(s.content.len()))
 }
 
 fn trailer_ref(dict: &Dictionary, key: &[u8]) -> Option<ObjectId> {
@@ -253,6 +496,7 @@ fn parse_sections(new: &[u8], old_len: usize, old_startxref: usize) -> Res<Secti
     let mut entries: BTreeMap<u32, (usize, u16)> = BTreeMap::new();
     let mut x = last_xref;
     let mut limit = new.len();
+    let mut rows = 0usize;
     loop {
         if x == old_startxref {
             break;
@@ -261,6 +505,10 @@ fn parse_sections(new: &[u8], old_len: usize, old_startxref: usize) -> Res<Secti
             return Err(not_prefix());
         }
         let (section_entries, trailer) = parse_xref_table(new, x)?;
+        rows = rows.saturating_add(section_entries.len());
+        if rows > MAX_XREF_ENTRIES {
+            return Err(invalid("tabel xref tambahan terlalu besar"));
+        }
         for (id, offset, generation) in section_entries {
             if offset < old_len || offset >= x {
                 return Err(invalid("entri xref menunjuk ke luar bagian tambahan"));
@@ -319,11 +567,26 @@ fn parse_xref_table(buf: &[u8], at: usize) -> Res<(Vec<XrefRow>, Dictionary)> {
                 else {
                     return Err(bad());
                 };
-                if start < 0.0 || count < 0.0 || out.len() + count as usize > MAX_XREF_ENTRIES {
+                // Batas diperiksa sebagai f64 sebelum cast: angka raksasa
+                // tidak boleh jenuh lalu meluap saat dijumlah.
+                if !(0.0..=f64::from(u32::MAX)).contains(&start)
+                    || !(0.0..=MAX_XREF_ENTRIES as f64).contains(&count)
+                {
                     return Err(bad());
                 }
-                for k in 0..count as u64 {
-                    let id = u32::try_from(start as u64 + k).map_err(|_| bad())?;
+                let (start, count) = (start as u64, count as u64);
+                if usize::try_from(count)
+                    .ok()
+                    .and_then(|c| out.len().checked_add(c))
+                    .is_none_or(|n| n > MAX_XREF_ENTRIES)
+                {
+                    return Err(bad());
+                }
+                for k in 0..count {
+                    let id = start
+                        .checked_add(k)
+                        .and_then(|v| u32::try_from(v).ok())
+                        .ok_or_else(bad)?;
                     let (
                         Some(Tok::Num {
                             value: off,
@@ -342,7 +605,7 @@ fn parse_xref_table(buf: &[u8], at: usize) -> Res<(Vec<XrefRow>, Dictionary)> {
                     else {
                         return Err(bad());
                     };
-                    if !(0.0..=65535.0).contains(&g) || off < 0.0 {
+                    if !(0.0..=65535.0).contains(&g) || !(0.0..=buf.len() as f64).contains(&off) {
                         return Err(bad());
                     }
                     match kind.as_slice() {
@@ -398,10 +661,11 @@ struct Checker<'a> {
     changed: BTreeSet<ObjectId>,
     /// Objek berubah yang sudah dibuktikan sah.
     covered: BTreeSet<ObjectId>,
+    rules: IncrementRules,
 }
 
 impl<'a> Checker<'a> {
-    fn new(old: &'a Document, new: &'a Document) -> Res<Self> {
+    fn new(old: &'a Document, new: &'a Document, rules: IncrementRules) -> Res<Self> {
         let mut added = BTreeSet::new();
         let mut changed = BTreeSet::new();
         for (id, obj) in &new.objects {
@@ -424,6 +688,7 @@ impl<'a> Checker<'a> {
             added,
             changed,
             covered: BTreeSet::new(),
+            rules,
         })
     }
 
@@ -455,6 +720,17 @@ impl<'a> Checker<'a> {
         }
         if extra.iter().any(|leaf| !self.added.contains(&leaf.id)) {
             return Err(changes("halaman tambahan bukan halaman baru"));
+        }
+        if !extra.is_empty() && !self.rules.allow_new_pages {
+            return Err(changes(
+                "menambah halaman, padahal hanya penanda tangan terakhir yang menambah halaman catatan",
+            ));
+        }
+        let mut seen_new = HashSet::new();
+        for (i, leaf) in extra.iter().enumerate() {
+            if seen_new.insert(leaf.id) {
+                self.check_new_page(leaf.id, n_old + i + 1)?;
+            }
         }
 
         // Simpul /Pages lama yang berubah: Count naik sebanyak halaman baru
@@ -668,22 +944,100 @@ impl<'a> Checker<'a> {
             });
             let page_area = media_box_area(self.new, id)
                 .ok_or_else(|| changes(format!("ukuran halaman {number} tidak terbaca")))?;
-            let mut stamp = StampCheck {
-                doc: self.new,
-                added: &self.added,
+            let mut stamp = StampCheck::new(
+                Mode::Stamp,
+                self.new,
+                &self.added,
                 resources,
                 page_area,
-                ink: 0.0,
-                glyphs: 0,
                 number,
-            };
+            );
             for r in suffix {
                 let bytes = self.stamp_stream(*r, number)?;
                 stamp.check_stream(&bytes, &mut sim)?;
             }
+            stamp.finish()?;
         }
         self.covered.insert(id);
         Ok(())
+    }
+
+    /// Halaman baru (halaman catatan): kamus seperti `PDFDocument.addPage`
+    /// pdf-lib, sumber daya hanya font standar, isi hanya teks dan garis.
+    fn check_new_page(&mut self, id: ObjectId, number: usize) -> Res<()> {
+        let bad = |what: &str| changes(format!("halaman baru {number} {what}"));
+        let d = self
+            .new
+            .get_dictionary(id)
+            .map_err(|_| bad("tidak terbaca"))?;
+        for (k, v) in d.iter() {
+            match k.as_slice() {
+                b"Type" | b"Parent" | b"Contents" | b"Resources" | b"MediaBox" | b"CropBox" => {}
+                b"Annots" => {
+                    if !matches!(resolve(self.new, v), Object::Array(a) if a.is_empty()) {
+                        return Err(bad("berisi anotasi"));
+                    }
+                }
+                _ => return Err(bad("memakai kunci halaman yang tidak didukung")),
+            }
+        }
+        let area = media_box_area(self.new, id).ok_or_else(|| bad("tanpa ukuran halaman"))?;
+        if area > 14_400.0 * 14_400.0 {
+            return Err(bad("terlalu besar"));
+        }
+
+        // Sumber daya sendiri: hanya Font (objek font baru atau lama, diperiksa
+        // saat dipakai Tf), kategori lain harus kosong.
+        let own = d.get(b"Resources").ok();
+        if let Some(res) = own {
+            if let Object::Reference(r) = res
+                && !self.added.contains(r)
+            {
+                return Err(bad("memakai sumber daya lama"));
+            }
+            let Object::Dictionary(rd) = resolve(self.new, res) else {
+                return Err(bad("sumber dayanya tidak terbaca"));
+            };
+            for (k, v) in rd.iter() {
+                match k.as_slice() {
+                    b"Font" | b"ProcSet" => {}
+                    k if is_category(k) => {
+                        if !matches!(resolve(self.new, v), Object::Dictionary(c) if c.is_empty()) {
+                            return Err(bad("memakai gambar atau sumber daya lain selain font"));
+                        }
+                    }
+                    _ => return Err(bad("memakai sumber daya yang tidak didukung")),
+                }
+            }
+        }
+        let resources = inherited(self.new, id, b"Resources")
+            .map(|r| resolve(self.new, r))
+            .and_then(|r| match r {
+                Object::Dictionary(d) => Some(d),
+                _ => None,
+            });
+
+        let (list, arr) = content_refs(self.new, d.get(b"Contents").ok())
+            .ok_or_else(|| bad("isinya tidak terbaca"))?;
+        if arr.is_some_and(|a| !self.added.contains(&a))
+            || list.iter().any(|r| !self.added.contains(r))
+        {
+            return Err(bad("memakai isi halaman lama"));
+        }
+        let mut sim = Sim::new();
+        let mut check = StampCheck::new(
+            Mode::NewPage,
+            self.new,
+            &self.added,
+            resources,
+            area,
+            number,
+        );
+        for r in list {
+            let bytes = self.stamp_stream(r, number)?;
+            check.check_stream(&bytes, &mut sim)?;
+        }
+        check.finish()
     }
 
     /// Posisi `old` di dalam `new` kalau `new` = stream baru + `old` utuh +
@@ -705,15 +1059,7 @@ impl<'a> Checker<'a> {
         let Some(Object::Stream(s)) = self.new.objects.get(&id) else {
             return Err(changes(format!("isi halaman {number} bukan stream")));
         };
-        let filters_ok = match s.dict.get(b"Filter") {
-            Err(_) => true,
-            Ok(Object::Name(n)) => n == b"FlateDecode",
-            Ok(Object::Array(a)) => a
-                .iter()
-                .all(|f| matches!(f, Object::Name(n) if n == b"FlateDecode")),
-            _ => false,
-        };
-        if !filters_ok || s.dict.has(b"DecodeParms") || s.dict.has(b"F") {
+        if !flate_only(&s.dict) {
             return Err(changes(format!(
                 "stream stempel halaman {number} memakai filter lain"
             )));
@@ -1020,12 +1366,34 @@ fn num(o: &Object) -> Option<f64> {
     }
 }
 
+/// Isi stream setelah dekompresi, dibatasi per stream dan dari anggaran total
+/// satu pemeriksaan. Anggaran yang habis menandai pemeriksaan gagal sebagai
+/// `pdf_invalid` (lihat [`check_increment_with`]).
 fn decode(s: &Stream) -> Result<Vec<u8>, ()> {
     if s.dict.has(b"F") {
         return Err(());
     }
-    s.decompressed_content_with_limit(MAX_DECODED_STREAM)
-        .map_err(|_| ())
+    let remaining = BUDGET.with(|b| {
+        let b = b.borrow();
+        if b.exceeded { 0 } else { b.decoded }
+    });
+    let limit = remaining.min(MAX_DECODED_STREAM);
+    match s.decompressed_content_with_limit(limit) {
+        Ok(bytes) => {
+            BUDGET.with(|b| {
+                let mut b = b.borrow_mut();
+                b.decoded = b.decoded.saturating_sub(bytes.len());
+            });
+            Ok(bytes)
+        }
+        Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded { .. }))
+            if limit < MAX_DECODED_STREAM =>
+        {
+            BUDGET.with(|b| b.borrow_mut().exceeded = true);
+            Err(())
+        }
+        Err(_) => Err(()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,16 +1611,130 @@ fn mul(m1: &Mat, m2: &Mat) -> Mat {
     ]
 }
 
+fn apply(m: &Mat, x: f64, y: f64) -> (f64, f64) {
+    (x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5])
+}
+
+/// Persegi sejajar sumbu `[x0, y0, x1, y1]`.
+type Rect = [f64; 4];
+
+/// Persegi sejajar sumbu yang memuat persegi `[x0, x1] x [y0, y1]` setelah
+/// dikali `m`.
+fn bounds_of(m: &Mat, x0: f64, y0: f64, x1: f64, y1: f64) -> Rect {
+    let mut r = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for (x, y) in [
+        apply(m, x0, y0),
+        apply(m, x1, y0),
+        apply(m, x0, y1),
+        apply(m, x1, y1),
+    ] {
+        r[0] = r[0].min(x);
+        r[1] = r[1].min(y);
+        r[2] = r[2].max(x);
+        r[3] = r[3].max(y);
+    }
+    r
+}
+
+fn union(a: Option<Rect>, b: Rect) -> Rect {
+    match a {
+        None => b,
+        Some(a) => [
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[2].max(b[2]),
+            a[3].max(b[3]),
+        ],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Metrik font standar
+
+/// Font teks yang sudah diperiksa `Tf`. Stempel hanya memakai Helvetica dan
+/// Courier, yang lebar hurufnya diketahui, supaya letak keterangan bisa
+/// diperkirakan. Halaman baru boleh memakai font standar lain.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Metrics {
+    Helvetica { win_ansi: bool },
+    Courier { win_ansi: bool },
+    Unmeasured,
+}
+
+/// Lebar Helvetica (per 1000 em) untuk WinAnsiEncoding, dari AFM yang sama
+/// dengan pdf-lib (`widthOfTextAtSize`). 0: kode tanpa huruf.
+#[rustfmt::skip]
+static HELVETICA_WIN_ANSI: [u16; 256] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278,
+    556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+    1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778,
+    667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556,
+    333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556,
+    556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584, 0,
+    556, 0, 222, 556, 333, 1000, 556, 556, 333, 1000, 667, 333, 1000, 0, 611, 0,
+    0, 222, 222, 333, 333, 350, 556, 1000, 333, 1000, 500, 333, 944, 0, 500, 500,
+    278, 333, 556, 556, 556, 556, 260, 556, 333, 737, 370, 556, 584, 333, 737, 333,
+    400, 584, 333, 333, 333, 556, 537, 278, 333, 333, 365, 556, 834, 834, 834, 611,
+    667, 667, 667, 667, 667, 667, 1000, 722, 667, 667, 667, 667, 278, 278, 278, 278,
+    722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722, 722, 667, 667, 611,
+    556, 556, 556, 556, 556, 556, 889, 500, 556, 556, 556, 556, 278, 278, 278, 278,
+    556, 556, 556, 556, 556, 556, 556, 584, 611, 556, 556, 556, 556, 500, 556, 500,
+];
+/// Lebar terbesar Helvetica (`@`), dipakai untuk kode yang tidak pasti.
+const HELVETICA_MAX_WIDTH: f64 = 1.015;
+const COURIER_WIDTH: f64 = 0.6;
+/// Batas tinta huruf di sekitar lebarnya (em): kiri dan kanan, bawah, atas.
+/// FontBBox Helvetica [-166 -225 1000 931], Courier [-23 -250 715 805].
+const GLYPH_PAD_X: f64 = 0.2;
+const GLYPH_BOTTOM: f64 = -0.3;
+const GLYPH_TOP: f64 = 1.0;
+
+impl Metrics {
+    /// Rentang lebar satu kode (em). Kode yang hurufnya tidak pasti (tanpa
+    /// huruf di WinAnsi, atau di luar ASCII untuk encoding lain) bisa selebar
+    /// apa pun sampai lebar terbesar.
+    fn width(self, code: u8) -> (f64, f64) {
+        let table = HELVETICA_WIN_ANSI[usize::from(code)];
+        // Di StandardEncoding 0x27 dan 0x60 adalah tanda kutip lain.
+        let known = |win_ansi: bool| {
+            table != 0
+                && (win_ansi || ((0x20..=0x7e).contains(&code) && code != 0x27 && code != 0x60))
+        };
+        match self {
+            Metrics::Helvetica { win_ansi } if known(win_ansi) => {
+                let w = f64::from(table) / 1000.0;
+                (w, w)
+            }
+            Metrics::Helvetica { .. } => (0.0, HELVETICA_MAX_WIDTH),
+            Metrics::Courier { win_ansi } if known(win_ansi) => (COURIER_WIDTH, COURIER_WIDTH),
+            Metrics::Courier { .. } => (0.0, COURIER_WIDTH),
+            Metrics::Unmeasured => (0.0, HELVETICA_MAX_WIDTH),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Keadaan grafis
+
 #[derive(Clone)]
 struct GState {
     ctm: Mat,
     font_size: f64,
     /// Font dipilih lewat `Tf` yang sudah diperiksa (bukan bocoran isi lama).
-    font_ok: bool,
+    font: Option<Metrics>,
     h_scale: f64,
     rise: f64,
     leading: f64,
     render: i64,
+    char_spacing: f64,
+    word_spacing: f64,
 }
 
 /// Simulasi keadaan grafis secukupnya: matriks, keadaan teks.
@@ -1262,6 +1744,11 @@ struct Sim {
     tm: Mat,
     tlm: Mat,
     in_text: bool,
+    /// Geseran teks (ruang teks, sudah dikali ukuran dan Tz) sejak `tm`
+    /// terakhir ditetapkan: rentang bawah dan atas, karena lebar sebagian
+    /// kode hanya diketahui batasnya.
+    text_lo: f64,
+    text_hi: f64,
 }
 
 impl Sim {
@@ -1270,16 +1757,20 @@ impl Sim {
             gs: GState {
                 ctm: IDENTITY,
                 font_size: 0.0,
-                font_ok: false,
+                font: None,
                 h_scale: 1.0,
                 rise: 0.0,
                 leading: 0.0,
                 render: 0,
+                char_spacing: 0.0,
+                word_spacing: 0.0,
             },
             stack: Vec::new(),
             tm: IDENTITY,
             tlm: IDENTITY,
             in_text: false,
+            text_lo: 0.0,
+            text_hi: 0.0,
         }
     }
 
@@ -1303,41 +1794,82 @@ impl Sim {
             }
             b"BT" => {
                 self.in_text = true;
-                self.tm = IDENTITY;
-                self.tlm = IDENTITY;
+                self.set_tm(IDENTITY);
             }
             b"ET" => self.in_text = false,
             b"Tf" => {
                 if let Some(s) = nums.last() {
                     self.gs.font_size = *s;
                 }
-                self.gs.font_ok = false;
+                self.gs.font = None;
             }
             b"Tz" if nums.len() == 1 => self.gs.h_scale = nums[0] / 100.0,
             b"Ts" if nums.len() == 1 => self.gs.rise = nums[0],
             b"TL" if nums.len() == 1 => self.gs.leading = nums[0],
+            b"Tc" if nums.len() == 1 => self.gs.char_spacing = nums[0],
+            b"Tw" if nums.len() == 1 => self.gs.word_spacing = nums[0],
             b"Tr" if nums.len() == 1 => self.gs.render = nums[0] as i64,
             b"Tm" if nums.len() == 6 => {
-                self.tm = [nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]];
-                self.tlm = self.tm;
+                self.set_tm([nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]]);
             }
             b"Td" if nums.len() == 2 => self.td(nums[0], nums[1]),
             b"TD" if nums.len() == 2 => {
                 self.gs.leading = -nums[1];
                 self.td(nums[0], nums[1]);
             }
-            b"T*" | b"'" | b"\"" => self.td(0.0, -self.gs.leading),
+            b"\"" => {
+                if nums.len() >= 2 {
+                    self.gs.word_spacing = nums[0];
+                    self.gs.char_spacing = nums[1];
+                }
+                self.td(0.0, -self.gs.leading);
+            }
+            b"T*" | b"'" => self.td(0.0, -self.gs.leading),
             _ => {}
         }
     }
 
+    fn set_tm(&mut self, m: Mat) {
+        self.tm = m;
+        self.tlm = m;
+        self.text_lo = 0.0;
+        self.text_hi = 0.0;
+    }
+
     fn td(&mut self, tx: f64, ty: f64) {
-        self.tlm = mul(&[1.0, 0.0, 0.0, 1.0, tx, ty], &self.tlm);
-        self.tm = self.tlm;
+        let m = mul(&[1.0, 0.0, 0.0, 1.0, tx, ty], &self.tlm);
+        self.set_tm(m);
     }
 }
 
+// ---------------------------------------------------------------------------
+// Isi stempel dan halaman baru
+
+/// Apa yang diperiksa [`StampCheck`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Stream baru di belakang isi halaman lama: gambar tanda tangan dan
+    /// keterangan.
+    Stamp,
+    /// Isi halaman baru (halaman catatan): teks dan garis.
+    NewPage,
+}
+
+/// Potongan teks yang digambar: string, atau geseran angka di larik `TJ`.
+enum TextItem<'a> {
+    Str(&'a [u8]),
+    Adjust(f64),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImageInfo {
+    mean_alpha: f64,
+    /// Piksel legap dan terang: bisa menutup isi halaman seperti tip-ex.
+    cover_pixels: usize,
+}
+
 struct StampCheck<'d> {
+    mode: Mode,
     doc: &'d Document,
     added: &'d BTreeSet<ObjectId>,
     resources: Option<&'d Dictionary>,
@@ -1345,14 +1877,46 @@ struct StampCheck<'d> {
     ink: f64,
     glyphs: usize,
     number: usize,
+    /// Persegi yang memuat semua tanda stempel sejauh ini.
+    rect: Option<Rect>,
+    images: HashMap<ObjectId, ImageInfo>,
+    lines: usize,
+    path_open: bool,
 }
 
-impl StampCheck<'_> {
-    fn err(&self, what: &str) -> IncrementError {
-        changes(format!("stempel halaman {} {what}", self.number))
+impl<'d> StampCheck<'d> {
+    fn new(
+        mode: Mode,
+        doc: &'d Document,
+        added: &'d BTreeSet<ObjectId>,
+        resources: Option<&'d Dictionary>,
+        page_area: f64,
+        number: usize,
+    ) -> Self {
+        Self {
+            mode,
+            doc,
+            added,
+            resources,
+            page_area,
+            ink: 0.0,
+            glyphs: 0,
+            number,
+            rect: None,
+            images: HashMap::new(),
+            lines: 0,
+            path_open: false,
+        }
     }
 
-    fn resource(&self, category: &[u8], name: &[u8]) -> Option<(ObjectId, &Object)> {
+    fn err(&self, what: &str) -> IncrementError {
+        match self.mode {
+            Mode::Stamp => changes(format!("stempel halaman {} {what}", self.number)),
+            Mode::NewPage => changes(format!("halaman baru {} {what}", self.number)),
+        }
+    }
+
+    fn resource(&self, category: &[u8], name: &[u8]) -> Option<(ObjectId, &'d Object)> {
         let cat = self.resources?.get(category).ok()?;
         let Object::Dictionary(cat) = resolve(self.doc, cat) else {
             return None;
@@ -1377,7 +1941,29 @@ impl StampCheck<'_> {
         Ok(())
     }
 
+    /// Pemeriksaan setelah semua stream halaman ini.
+    fn finish(&self) -> Res<()> {
+        if self.path_open {
+            return Err(self.err("berisi garis yang tidak selesai"));
+        }
+        if let Some(r) = self.rect {
+            let area = (r[2] - r[0]) * (r[3] - r[1]);
+            let limit = (self.page_area * MAX_STAMP_RECT_FRACTION).max(MIN_STAMP_RECT_AREA);
+            if !area.is_finite() || area > limit + EPS {
+                return Err(self.err(
+                    "tersebar terlalu luas (gambar tanda tangan dan keterangannya harus berdekatan)",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn check_op(&mut self, op: &[u8], args: &[Operand], sim: &mut Sim) -> Res<()> {
+        let stamp = self.mode == Mode::Stamp;
+        let new_page = self.mode == Mode::NewPage;
+        if self.path_open && !matches!(op, b"m" | b"l" | b"S") {
+            return Err(self.err("berisi garis tidak sah"));
+        }
         let nums: Option<Vec<f64>> = args.iter().map(Operand::num).collect();
         let n_args = |n: usize| -> Res<Vec<f64>> {
             match &nums {
@@ -1400,7 +1986,7 @@ impl StampCheck<'_> {
                 text_only(false)?;
                 sim.op(op, args);
             }
-            b"cm" => {
+            b"cm" if stamp => {
                 n_args(6)?;
                 text_only(false)?;
                 sim.op(op, args);
@@ -1415,12 +2001,13 @@ impl StampCheck<'_> {
                 text_only(true)?;
                 sim.op(op, args);
             }
-            b"Do" => {
+            b"Do" if stamp => {
                 text_only(false)?;
                 let [Operand::Name(name)] = args else {
                     return Err(self.err("berisi operand tidak sah"));
                 };
-                self.check_image(name, &sim.gs.ctm)?;
+                let ctm = sim.gs.ctm;
+                self.check_image(name, &ctm)?;
             }
             b"Tf" => {
                 let [Operand::Name(name), Operand::Num(size)] = args else {
@@ -1429,9 +2016,9 @@ impl StampCheck<'_> {
                 if !size.is_finite() {
                     return Err(self.err("berisi operand tidak sah"));
                 }
-                self.check_font(name)?;
+                let metrics = self.check_font(name)?;
                 sim.op(op, args);
-                sim.gs.font_ok = true;
+                sim.gs.font = Some(metrics);
             }
             b"Td" | b"TD" => {
                 n_args(2)?;
@@ -1460,28 +2047,37 @@ impl StampCheck<'_> {
             }
             b"Tj" | b"'" | b"\"" => {
                 text_only(true)?;
-                let text = match (op, args) {
-                    (b"\"", [Operand::Num(_), Operand::Num(_), Operand::Str(s)]) => s.len(),
-                    (b"Tj" | b"'", [Operand::Str(s)]) => s.len(),
+                let text: &[u8] = match (op, args) {
+                    (b"\"", [Operand::Num(aw), Operand::Num(ac), Operand::Str(s)])
+                        if aw.is_finite()
+                            && ac.is_finite()
+                            && aw.abs() <= 1e7
+                            && ac.abs() <= 1e7 =>
+                    {
+                        s
+                    }
+                    (b"Tj" | b"'", [Operand::Str(s)]) => s,
                     _ => return Err(self.err("berisi operand tidak sah")),
                 };
                 sim.op(op, args);
-                self.show_text(text, sim)?;
+                self.show_text(&[TextItem::Str(text)], sim)?;
             }
             b"TJ" => {
                 text_only(true)?;
-                let [Operand::Array(items)] = args else {
+                let [Operand::Array(raw)] = args else {
                     return Err(self.err("berisi operand tidak sah"));
                 };
-                let mut len = 0;
-                for item in items {
+                let mut items = Vec::with_capacity(raw.len());
+                for item in raw {
                     match item {
-                        Operand::Str(s) => len += s.len(),
-                        Operand::Num(n) if n.is_finite() => {}
+                        Operand::Str(s) => items.push(TextItem::Str(s)),
+                        Operand::Num(n) if n.is_finite() && n.abs() <= 1e7 => {
+                            items.push(TextItem::Adjust(*n));
+                        }
                         _ => return Err(self.err("berisi operand tidak sah")),
                     }
                 }
-                self.show_text(len, sim)?;
+                self.show_text(&items, sim)?;
             }
             b"g" | b"G" => {
                 n_args(1)?;
@@ -1506,34 +2102,144 @@ impl StampCheck<'_> {
                     return Err(self.err("berisi operand tidak sah"));
                 }
             }
-            b"gs" => {
+            b"gs" if stamp => {
                 let [Operand::Name(name)] = args else {
                     return Err(self.err("berisi operand tidak sah"));
                 };
                 self.check_ext_gstate(name)?;
+            }
+            // Garis halaman catatan (pdf-lib `drawLine`): w, d, m, l, S.
+            b"w" if new_page => {
+                let w = n_args(1)?[0];
+                text_only(false)?;
+                if !(0.0..=MAX_LINE_WIDTH).contains(&w) {
+                    return Err(self.err("memakai garis terlalu tebal"));
+                }
+            }
+            b"J" | b"j" if new_page => {
+                if ![0.0, 1.0, 2.0].contains(&n_args(1)?[0]) {
+                    return Err(self.err("berisi operand tidak sah"));
+                }
+            }
+            b"M" if new_page => {
+                n_args(1)?;
+            }
+            b"d" if new_page => {
+                let [Operand::Array(dash), Operand::Num(phase)] = args else {
+                    return Err(self.err("berisi operand tidak sah"));
+                };
+                if dash.len() > 16
+                    || !phase.is_finite()
+                    || !dash
+                        .iter()
+                        .all(|d| matches!(d, Operand::Num(n) if n.is_finite() && *n >= 0.0))
+                {
+                    return Err(self.err("berisi operand tidak sah"));
+                }
+            }
+            b"m" if new_page => {
+                n_args(2)?;
+                text_only(false)?;
+                self.path_open = true;
+            }
+            b"l" if new_page => {
+                n_args(2)?;
+                if !self.path_open {
+                    return Err(self.err("berisi garis tidak sah"));
+                }
+                self.lines += 1;
+                if self.lines > MAX_NEW_PAGE_LINES {
+                    return Err(self.err("berisi terlalu banyak garis"));
+                }
+            }
+            b"S" if new_page => {
+                n_args(0)?;
+                if !self.path_open {
+                    return Err(self.err("berisi garis tidak sah"));
+                }
+                self.path_open = false;
             }
             _ => return Err(self.err("memakai operator terlarang")),
         }
         Ok(())
     }
 
-    fn show_text(&mut self, len: usize, sim: &Sim) -> Res<()> {
-        if !sim.gs.font_ok {
+    fn show_text(&mut self, items: &[TextItem], sim: &mut Sim) -> Res<()> {
+        let Some(font) = sim.gs.font else {
             return Err(self.err("memakai font yang tidak diperiksa"));
-        }
+        };
         if !matches!(sim.gs.render, 0 | 3 | 4 | 7) {
             return Err(self.err("memakai mode teks terlarang"));
         }
+        let (max_glyphs, max_size) = match self.mode {
+            Mode::Stamp => (MAX_GLYPHS_PER_PAGE, MAX_FONT_SIZE),
+            Mode::NewPage => (MAX_NEW_PAGE_GLYPHS, MAX_NEW_PAGE_FONT_SIZE),
+        };
+        let len = items.iter().fold(0usize, |n, i| match i {
+            TextItem::Str(s) => n.saturating_add(s.len()),
+            TextItem::Adjust(_) => n,
+        });
         self.glyphs = self.glyphs.saturating_add(len);
-        if self.glyphs > MAX_GLYPHS_PER_PAGE {
+        if self.glyphs > max_glyphs {
             return Err(self.err("berisi teks terlalu panjang"));
         }
         let m = mul(&sim.tm, &sim.gs.ctm);
-        let fs = sim.gs.font_size.abs();
-        let x = fs * sim.gs.h_scale.abs() * m[0].hypot(m[1]);
-        let y = fs * m[2].hypot(m[3]);
-        if !(x.is_finite() && y.is_finite()) || x > MAX_FONT_SIZE + EPS || y > MAX_FONT_SIZE + EPS {
+        let fs = sim.gs.font_size;
+        let th = sim.gs.h_scale;
+        let x = fs.abs() * th.abs() * m[0].hypot(m[1]);
+        let y = fs.abs() * m[2].hypot(m[3]);
+        if !(x.is_finite() && y.is_finite()) || x > max_size + EPS || y > max_size + EPS {
             return Err(self.err("memakai huruf terlalu besar"));
+        }
+        if self.mode != Mode::Stamp {
+            return Ok(());
+        }
+        if font == Metrics::Unmeasured {
+            return Err(self.err("memakai font selain Helvetica atau Courier"));
+        }
+
+        // Kotak tinta setiap huruf di ruang teks, lalu ke ruang halaman.
+        let k = fs * th;
+        let (mut lo, mut hi) = (sim.text_lo, sim.text_hi);
+        let (mut x0, mut x1) = (f64::INFINITY, f64::NEG_INFINITY);
+        for item in items {
+            match *item {
+                TextItem::Adjust(n) => {
+                    let d = -n / 1000.0 * k;
+                    lo += d;
+                    hi += d;
+                }
+                TextItem::Str(bytes) => {
+                    for &code in bytes {
+                        let (wa, wb) = font.width(code);
+                        let p = -GLYPH_PAD_X * k;
+                        let q = (wb + GLYPH_PAD_X) * k;
+                        x0 = x0.min(lo + p.min(q));
+                        x1 = x1.max(hi + p.max(q));
+                        let extra = sim.gs.char_spacing
+                            + if code == b' ' {
+                                sim.gs.word_spacing
+                            } else {
+                                0.0
+                            };
+                        let d1 = (wa * fs + extra) * th;
+                        let d2 = (wb * fs + extra) * th;
+                        lo += d1.min(d2);
+                        hi += d1.max(d2);
+                    }
+                }
+            }
+        }
+        sim.text_lo = lo;
+        sim.text_hi = hi;
+        if x0 <= x1 {
+            let a = sim.gs.rise + GLYPH_BOTTOM * fs;
+            let b = sim.gs.rise + GLYPH_TOP * fs;
+            let r = bounds_of(&m, x0, a.min(b), x1, a.max(b));
+            if !r.iter().all(|v| v.is_finite()) {
+                return Err(self.err("berisi teks di luar jangkauan"));
+            }
+            self.rect = Some(union(self.rect, r));
         }
         Ok(())
     }
@@ -1555,31 +2261,66 @@ impl StampCheck<'_> {
         if !area.is_finite() || area > self.page_area * MAX_IMAGE_AREA_FRACTION + EPS {
             return Err(self.err("berisi gambar terlalu besar"));
         }
-        self.ink += area * opacity(self.doc, s);
+        let info = match self.images.get(&id) {
+            Some(info) => *info,
+            None => {
+                let info = image_info(self.doc, self.added, s).map_err(|what| self.err(what))?;
+                self.images.insert(id, info);
+                info
+            }
+        };
+        if info.mean_alpha > MAX_IMAGE_MEAN_ALPHA + EPS {
+            return Err(self.err("berisi gambar yang sebagian besar legap"));
+        }
+        if info.cover_pixels > 0 {
+            return Err(self.err(
+                "berisi gambar dengan bidang terang yang legap, yang bisa menutup isi halaman",
+            ));
+        }
+        self.ink += area * info.mean_alpha;
         if self.ink > self.page_area * MAX_IMAGE_INK_FRACTION + EPS {
             return Err(self.err("menutup terlalu banyak bagian halaman"));
         }
+        let r = bounds_of(ctm, 0.0, 0.0, 1.0, 1.0);
+        if !r.iter().all(|v| v.is_finite()) {
+            return Err(self.err("berisi gambar di luar jangkauan"));
+        }
+        self.rect = Some(union(self.rect, r));
         Ok(())
     }
 
-    fn check_font(&self, name: &[u8]) -> Res<()> {
+    fn check_font(&self, name: &[u8]) -> Res<Metrics> {
         let (_, obj) = self
             .resource(b"Font", name)
             .ok_or_else(|| self.err("memakai font yang tidak ada"))?;
         let Object::Dictionary(d) = obj else {
             return Err(self.err("memakai font tidak sah"));
         };
+        let base = match d.get(b"BaseFont") {
+            Ok(Object::Name(n)) if STANDARD_FONTS.contains(&n.as_slice()) => n.as_slice(),
+            _ => return Err(self.err("memakai font selain font standar")),
+        };
         let standard = matches!(d.get(b"Subtype"), Ok(Object::Name(n)) if n == b"Type1")
-            && matches!(d.get(b"BaseFont"), Ok(Object::Name(n)) if STANDARD_FONTS.contains(&n.as_slice()))
             && d.iter().all(|(k, v)| match k.as_slice() {
                 b"Type" | b"Subtype" | b"BaseFont" | b"Name" => true,
                 b"Encoding" => matches!(v, Object::Name(_)),
                 _ => false,
             });
-        if standard {
-            Ok(())
-        } else {
-            Err(self.err("memakai font selain font standar"))
+        if !standard {
+            return Err(self.err("memakai font selain font standar"));
+        }
+        let win_ansi = matches!(d.get(b"Encoding"), Ok(Object::Name(n)) if n == b"WinAnsiEncoding");
+        match (self.mode, base) {
+            (Mode::Stamp, b"Helvetica" | b"Helvetica-Oblique") => {
+                Ok(Metrics::Helvetica { win_ansi })
+            }
+            (
+                Mode::Stamp,
+                b"Courier" | b"Courier-Bold" | b"Courier-Oblique" | b"Courier-BoldOblique",
+            ) => Ok(Metrics::Courier { win_ansi }),
+            (Mode::Stamp, _) => Err(self.err("memakai font selain Helvetica atau Courier")),
+            (Mode::NewPage, b"Symbol" | b"ZapfDingbats") => Err(self.err("memakai font simbol")),
+            (Mode::NewPage, _) => Ok(Metrics::Unmeasured),
         }
     }
 
@@ -1621,46 +2362,132 @@ const STANDARD_FONTS: [&[u8]; 14] = [
     b"ZapfDingbats",
 ];
 
-/// Rata-rata kelegapan gambar (0 sampai 1) dari SMask 8 bit abu-abu. Tanpa
-/// SMask yang bisa dibaca, gambar dianggap legap penuh.
-fn opacity(doc: &Document, image: &Stream) -> f64 {
-    let Ok(Object::Reference(mask_id)) = image.dict.get(b"SMask") else {
-        return 1.0;
+/// Hanya tanpa filter atau FlateDecode tanpa parameter (keluaran pdf-lib).
+fn flate_only(d: &Dictionary) -> bool {
+    let filters_ok = match d.get(b"Filter") {
+        Err(_) => true,
+        Ok(Object::Name(n)) => n == b"FlateDecode",
+        Ok(Object::Array(a)) => a
+            .iter()
+            .all(|f| matches!(f, Object::Name(n) if n == b"FlateDecode")),
+        _ => false,
     };
-    let Some(Object::Stream(mask)) = doc.objects.get(mask_id) else {
-        return 1.0;
-    };
-    let int = |k: &[u8]| match mask.dict.get(k) {
-        Ok(Object::Integer(n)) => Some(*n),
+    filters_ok && !d.has(b"DecodeParms") && !d.has(b"F")
+}
+
+fn dims(d: &Dictionary) -> Option<(usize, usize)> {
+    let int = |k: &[u8]| match d.get(k) {
+        Ok(Object::Integer(n)) if *n > 0 => usize::try_from(*n).ok(),
         _ => None,
     };
-    let gray = matches!(mask.dict.get(b"ColorSpace"), Ok(Object::Name(n)) if n == b"DeviceGray");
+    Some((int(b"Width")?, int(b"Height")?))
+}
+
+const IMAGE_FORMAT: &str = "berisi gambar dengan format yang tidak didukung";
+const IMAGE_NO_MASK: &str = "berisi gambar tanpa latar transparan (SMask)";
+
+/// Rata-rata alpha dan jumlah piksel penutup gambar stempel. Gambar harus
+/// berbentuk keluaran `embedPng` pdf-lib: RGB 8 bit, SMask abu-abu 8 bit
+/// seukuran dengan Decode identitas.
+fn image_info(
+    doc: &Document,
+    added: &BTreeSet<ObjectId>,
+    image: &Stream,
+) -> Result<ImageInfo, &'static str> {
+    let d = &image.dict;
+    let name_is =
+        |d: &Dictionary, k: &[u8], v: &[u8]| matches!(d.get(k), Ok(Object::Name(n)) if n == v);
+    let int_is =
+        |d: &Dictionary, k: &[u8], v: i64| matches!(d.get(k), Ok(Object::Integer(n)) if *n == v);
+    let keys_ok = d.iter().all(|(k, _)| {
+        matches!(
+            k.as_slice(),
+            b"Type"
+                | b"Subtype"
+                | b"Width"
+                | b"Height"
+                | b"BitsPerComponent"
+                | b"ColorSpace"
+                | b"SMask"
+                | b"Filter"
+                | b"Length"
+        )
+    });
+    if !keys_ok
+        || !name_is(d, b"ColorSpace", b"DeviceRGB")
+        || !int_is(d, b"BitsPerComponent", 8)
+        || !flate_only(d)
+    {
+        return Err(IMAGE_FORMAT);
+    }
+    let (w, h) = dims(d).ok_or(IMAGE_FORMAT)?;
+    let pixels = w
+        .checked_mul(h)
+        .filter(|p| *p <= MAX_IMAGE_PIXELS)
+        .ok_or("berisi gambar terlalu besar")?;
+
+    let Ok(Object::Reference(mask_id)) = d.get(b"SMask") else {
+        return Err(IMAGE_NO_MASK);
+    };
+    let Some(Object::Stream(mask)) = doc.objects.get(mask_id).filter(|_| added.contains(mask_id))
+    else {
+        return Err(IMAGE_NO_MASK);
+    };
+    let md = &mask.dict;
+    let mask_keys_ok = md.iter().all(|(k, _)| {
+        matches!(
+            k.as_slice(),
+            b"Type"
+                | b"Subtype"
+                | b"Width"
+                | b"Height"
+                | b"BitsPerComponent"
+                | b"ColorSpace"
+                | b"Decode"
+                | b"Filter"
+                | b"Length"
+        )
+    });
     // pdf-lib menulis /Decode [0 1] (identitas); Decode lain bisa membalik alpha.
-    let identity_decode = match mask.dict.get(b"Decode") {
+    let identity_decode = match md.get(b"Decode") {
         Err(_) => true,
-        Ok(Object::Array(d)) => d.len() == 2 && num(&d[0]) == Some(0.0) && num(&d[1]) == Some(1.0),
+        Ok(Object::Array(a)) => a.len() == 2 && num(&a[0]) == Some(0.0) && num(&a[1]) == Some(1.0),
         Ok(_) => false,
     };
-    if !gray || int(b"BitsPerComponent") != Some(8) || !identity_decode || mask.dict.has(b"Matte") {
-        return 1.0;
+    if !mask_keys_ok
+        || !name_is(md, b"ColorSpace", b"DeviceGray")
+        || !int_is(md, b"BitsPerComponent", 8)
+        || !identity_decode
+        || !flate_only(md)
+        || dims(md) != Some((w, h))
+    {
+        return Err(IMAGE_NO_MASK);
     }
-    let (Some(w), Some(h)) = (int(b"Width"), int(b"Height")) else {
-        return 1.0;
-    };
-    let Some(pixels) = usize::try_from(w)
-        .ok()
-        .zip(usize::try_from(h).ok())
-        .and_then(|(w, h)| w.checked_mul(h))
-    else {
-        return 1.0;
-    };
-    match decode(mask) {
-        Ok(alpha) if pixels > 0 && alpha.len() >= pixels => {
-            let sum: u64 = alpha[..pixels].iter().map(|&a| u64::from(a)).sum();
-            sum as f64 / (pixels as f64 * 255.0)
+
+    let alpha = decode(mask).map_err(|_| IMAGE_FORMAT)?;
+    let color = decode(image).map_err(|_| IMAGE_FORMAT)?;
+    let rgb_len = pixels.checked_mul(3).ok_or(IMAGE_FORMAT)?;
+    if alpha.len() < pixels || color.len() < rgb_len {
+        return Err(IMAGE_FORMAT);
+    }
+    let mut sum: u64 = 0;
+    let mut cover = 0usize;
+    let (rgb_pixels, _) = color[..rgb_len].as_chunks::<3>();
+    for (a, rgb) in alpha[..pixels].iter().zip(rgb_pixels) {
+        sum += u64::from(*a);
+        if *a >= COVER_MIN_ALPHA {
+            let luma =
+                (299 * u32::from(rgb[0]) + 587 * u32::from(rgb[1]) + 114 * u32::from(rgb[2]))
+                    / 1000;
+            if luma >= COVER_MIN_LUMA {
+                cover += 1;
+            }
         }
-        _ => 1.0,
     }
+    Ok(ImageInfo {
+        mean_alpha: sum as f64 / (pixels as f64 * 255.0),
+        cover_pixels: cover,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2176,6 +3003,37 @@ pub mod testing {
         inc.finish()
     }
 
+    /// Gambar stempel untuk tes: RGB 8 bit dan SMask (None: tanpa SMask).
+    #[derive(Clone)]
+    pub struct TestImage {
+        pub width: usize,
+        pub height: usize,
+        pub rgb: Vec<u8>,
+        pub alpha: Option<Vec<u8>>,
+    }
+
+    impl TestImage {
+        /// 2 x 1: kiri merah legap, kanan transparan (rata-rata alpha 0,5).
+        pub fn signature() -> Self {
+            Self {
+                width: 2,
+                height: 1,
+                rgb: vec![255, 0, 0, 0, 0, 0],
+                alpha: Some(vec![255, 0]),
+            }
+        }
+
+        /// Satu warna dengan alpha yang sama di semua piksel.
+        pub fn solid(width: usize, height: usize, rgb: [u8; 3], alpha: Option<u8>) -> Self {
+            Self {
+                width,
+                height,
+                rgb: rgb.repeat(width * height),
+                alpha: alpha.map(|a| vec![a; width * height]),
+            }
+        }
+    }
+
     /// Penulis incremental update untuk tes, meniru bentuk keluaran pdf-lib.
     pub struct Increment {
         old: Vec<u8>,
@@ -2204,7 +3062,7 @@ pub mod testing {
             self.doc.get_page_contents(page)
         }
 
-        fn add(&mut self, obj: Object) -> ObjectId {
+        pub fn add(&mut self, obj: Object) -> ObjectId {
             let id = (self.next_id, 0);
             self.next_id += 1;
             self.objects.push((id, obj));
@@ -2217,7 +3075,8 @@ pub mod testing {
             self.objects.push((id, obj));
         }
 
-        fn current(&self, id: ObjectId) -> Object {
+        /// Nilai objek yang akan ditulis (atau dari versi lama).
+        pub fn current(&self, id: ObjectId) -> Object {
             self.objects
                 .iter()
                 .rev()
@@ -2245,6 +3104,21 @@ pub mod testing {
             opaque: bool,
             draw: &dyn Fn(&str, &str) -> String,
         ) {
+            let mut image = TestImage::signature();
+            if opaque {
+                image.alpha = None;
+            }
+            self.stamp_page_image(index, doc_tag, &image, draw);
+        }
+
+        /// Seperti `stamp_page_with` dengan gambar sendiri.
+        pub fn stamp_page_image(
+            &mut self,
+            index: usize,
+            doc_tag: &str,
+            img: &TestImage,
+            draw: &dyn Fn(&str, &str) -> String,
+        ) {
             let page_id = self.page_ids()[index];
             let mut page = match self.current(page_id) {
                 Object::Dictionary(d) => d,
@@ -2258,25 +3132,23 @@ pub mod testing {
                 Dictionary::new(),
                 b"Q\n".to_vec(),
             )));
-            let smask = self.add(Object::Stream(Stream::new(
-                lopdf::dictionary! {
-                    "Type" => "XObject", "Subtype" => "Image", "Width" => 2, "Height" => 1,
-                    "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray",
-                    "Decode" => vec![0.into(), 1.into()],
-                },
-                vec![255, 0],
-            )));
+            let (w, h) = (img.width as i64, img.height as i64);
             let mut image_dict = lopdf::dictionary! {
-                "Type" => "XObject", "Subtype" => "Image", "Width" => 2, "Height" => 1,
+                "Type" => "XObject", "Subtype" => "Image", "Width" => w, "Height" => h,
                 "BitsPerComponent" => 8, "ColorSpace" => "DeviceRGB",
             };
-            if !opaque {
+            if let Some(alpha) = &img.alpha {
+                let smask = self.add(Object::Stream(Stream::new(
+                    lopdf::dictionary! {
+                        "Type" => "XObject", "Subtype" => "Image", "Width" => w, "Height" => h,
+                        "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray",
+                        "Decode" => vec![0.into(), 1.into()],
+                    },
+                    alpha.clone(),
+                )));
                 image_dict.set("SMask", smask);
             }
-            let image = self.add(Object::Stream(Stream::new(
-                image_dict,
-                vec![255, 0, 0, 0, 0, 0],
-            )));
+            let image = self.add(Object::Stream(Stream::new(image_dict, img.rgb.clone())));
             let font = self.add(Object::Dictionary(lopdf::dictionary! {
                 "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
                 "Encoding" => "WinAnsiEncoding",
@@ -2343,6 +3215,18 @@ pub mod testing {
 
         /// Halaman baru di posisi `index` pada /Kids akar (dijepit ke akhir).
         pub fn add_page_at(&mut self, text: &str, index: usize) {
+            let font = self.add(Object::Dictionary(lopdf::dictionary! {
+                "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            }));
+            let content =
+                format!("0 0 0 RG 56 700 m 539 700 l S\nBT /F1 18 Tf 56 760 Td ({text}) Tj ET\n");
+            let resources = lopdf::dictionary! { "Font" => lopdf::dictionary! { "F1" => font } };
+            self.add_page_raw(&content, resources, index);
+        }
+
+        /// Halaman baru dengan isi dan sumber daya sendiri, di posisi `index`
+        /// pada /Kids akar (dijepit ke akhir).
+        pub fn add_page_raw(&mut self, content: &str, resources: Dictionary, index: usize) {
             let root = self
                 .doc
                 .trailer
@@ -2355,21 +3239,16 @@ pub mod testing {
                 .and_then(|c| c.get(b"Pages"))
                 .and_then(Object::as_reference)
                 .expect("Pages");
-            let font = self.add(Object::Dictionary(lopdf::dictionary! {
-                "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
-            }));
-            let content =
-                format!("0 0 0 RG 56 700 m 539 700 l S\nBT /F1 18 Tf 56 760 Td ({text}) Tj ET\n");
             let content = self.add(Object::Stream(Stream::new(
                 Dictionary::new(),
-                content.into_bytes(),
+                content.as_bytes().to_vec(),
             )));
             let page = self.add(Object::Dictionary(lopdf::dictionary! {
                 "Type" => "Page",
                 "Parent" => pages_id,
                 "MediaBox" => vec![0.into(), 0.into(), 595.28.into(), 841.89.into()],
                 "Contents" => content,
-                "Resources" => lopdf::dictionary! { "Font" => lopdf::dictionary! { "F1" => font } },
+                "Resources" => resources,
             }));
             let Object::Dictionary(mut pages) = self.current(pages_id) else {
                 panic!("Pages bukan kamus")
@@ -2518,7 +3397,7 @@ pub mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::testing::{Increment, sample_pdf, stamp, stamp_with_audit_page, tamper};
+    use super::testing::{Increment, TestImage, sample_pdf, stamp, stamp_with_audit_page, tamper};
     use super::*;
     use lopdf::dictionary;
 
@@ -2679,9 +3558,14 @@ mod tests {
             format!("q 612 0 0 792 0 0 cm /{img} Do Q\n")
         });
         assert_eq!(code(&old, &new), "version_changes_content");
-        // Gambar legap kecil boleh (20% halaman).
+        // Gambar legap kecil (tanpa SMask) juga ditolak.
         let new = custom(&old, true, &|img, _| {
-            format!("q 306 0 0 316 0 0 cm /{img} Do Q\n")
+            format!("q 30 0 0 15 72 715 cm /{img} Do Q\n")
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // Gambar setengah transparan seluas 10% halaman boleh.
+        let new = custom(&old, false, &|img, _| {
+            format!("q 220 0 0 220 0 0 cm /{img} Do Q\n")
         });
         assert_eq!(code(&old, &new), "ok");
         // Gambar setengah transparan selebar halaman: tinta 50%.
@@ -2961,8 +3845,9 @@ mod tests {
 
     #[test]
     fn pdf_lib_stempel_selebar_halaman_lolos() {
-        // Gambar PNG pdf-lib (SMask dengan /Decode [0 1]) seluas 50% halaman,
-        // tinta jauh di bawah batas.
+        // Kotak selebar halaman: stamp.ts mengecilkannya sampai gambar PNG
+        // pdf-lib (SMask dengan /Decode [0 1]) dan keterangan muat dalam batas
+        // luas stempel.
         assert_eq!(
             check_increment(fixture!("original-objstm"), fixture!("large-stamp")),
             Ok(IncrementInfo { added_pages: 0 })
@@ -2976,6 +3861,7 @@ mod tests {
             ("teks", fixture!("tampered-text")),
             ("persegi penutup", fixture!("tampered-cover")),
             ("MediaBox", fixture!("tampered-mediabox")),
+            ("bidang terang", fixture!("tampered-whiteout")),
         ] {
             let err = check_increment(original, tampered).expect_err(name);
             assert_eq!(
@@ -2984,33 +3870,80 @@ mod tests {
                 err.message
             );
         }
+        // Tip-ex lewat pdf-lib sungguhan ditolak karena piksel putih legap.
+        let err = check_increment(original, fixture!("tampered-whiteout")).unwrap_err();
+        assert!(err.message.contains("bidang terang"), "{}", err.message);
     }
 
     #[test]
-    fn kelegapan_dari_smask() {
+    fn info_gambar_dari_smask() {
         let mut doc = Document::with_version("1.7");
-        let mut image_with = |decode: Option<Object>, alpha: Vec<u8>| {
+        let mut added = BTreeSet::new();
+        let mut image_with = |decode: Option<Object>, rgb: Vec<u8>, alpha: Vec<u8>| {
             let mut d = dictionary! {
+                "Type" => "XObject", "Subtype" => "Image",
                 "Width" => 4, "Height" => 1, "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray",
             };
             if let Some(decode) = decode {
                 d.set("Decode", decode);
             }
             let mask = doc.add_object(Stream::new(d, alpha));
+            added.insert(mask);
             Stream::new(
-                dictionary! { "Subtype" => "Image", "SMask" => mask },
-                vec![],
+                dictionary! {
+                    "Type" => "XObject", "Subtype" => "Image", "Width" => 4, "Height" => 1,
+                    "BitsPerComponent" => 8, "ColorSpace" => "DeviceRGB", "SMask" => mask,
+                },
+                rgb,
             )
         };
-        let plain = image_with(None, vec![255, 0, 0, 0]);
-        let identity = image_with(Some(vec![0.into(), 1.into()].into()), vec![255, 255, 0, 0]);
-        let inverted = image_with(Some(vec![1.into(), 0.into()].into()), vec![0, 0, 0, 0]);
-        let short = image_with(None, vec![0]);
-        assert!((opacity(&doc, &plain) - 0.25).abs() < 1e-9);
-        assert!((opacity(&doc, &identity) - 0.5).abs() < 1e-9);
-        assert_eq!(opacity(&doc, &inverted), 1.0);
-        assert_eq!(opacity(&doc, &short), 1.0);
-        assert_eq!(opacity(&doc, &Stream::new(dictionary! {}, vec![])), 1.0);
+        let dark = [20u8, 20, 20].repeat(4);
+        let mut white_left = vec![255u8, 255, 255];
+        white_left.extend([0u8; 9]);
+        let plain = image_with(None, dark.clone(), vec![255, 0, 0, 0]);
+        let identity = image_with(
+            Some(vec![0.into(), 1.into()].into()),
+            dark.clone(),
+            vec![255, 255, 0, 0],
+        );
+        let inverted = image_with(
+            Some(vec![1.into(), 0.into()].into()),
+            dark.clone(),
+            vec![0, 0, 0, 0],
+        );
+        let short = image_with(None, dark.clone(), vec![0]);
+        let short_rgb = image_with(None, vec![0; 6], vec![0; 4]);
+        let cover = image_with(None, white_left.clone(), vec![255, 0, 0, 0]);
+        // Piksel terang tapi hampir transparan bukan penutup.
+        let faint = image_with(None, white_left, vec![127, 0, 0, 0]);
+        let (doc, added) = (doc, added);
+        let info = |s: &Stream| image_info(&doc, &added, s);
+        assert!((info(&plain).unwrap().mean_alpha - 0.25).abs() < 1e-9);
+        assert_eq!(info(&plain).unwrap().cover_pixels, 0);
+        assert!((info(&identity).unwrap().mean_alpha - 0.5).abs() < 1e-9);
+        assert_eq!(info(&inverted).unwrap_err(), IMAGE_NO_MASK);
+        assert_eq!(info(&short).unwrap_err(), IMAGE_FORMAT);
+        assert_eq!(info(&short_rgb).unwrap_err(), IMAGE_FORMAT);
+        assert_eq!(info(&cover).unwrap().cover_pixels, 1);
+        assert_eq!(info(&faint).unwrap().cover_pixels, 0);
+        assert_eq!(
+            info(&Stream::new(dictionary! {}, vec![])).unwrap_err(),
+            IMAGE_FORMAT
+        );
+        // SMask yang bukan objek baru tidak dipercaya.
+        let mut doc2 = Document::with_version("1.7");
+        let mask = doc2.add_object(Stream::new(
+            dictionary! { "Width" => 1, "Height" => 1, "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray" },
+            vec![0],
+        ));
+        let img = Stream::new(
+            dictionary! { "Width" => 1, "Height" => 1, "BitsPerComponent" => 8, "ColorSpace" => "DeviceRGB", "SMask" => mask },
+            vec![0, 0, 0],
+        );
+        assert_eq!(
+            image_info(&doc2, &BTreeSet::new(), &img).unwrap_err(),
+            IMAGE_NO_MASK
+        );
     }
 
     #[test]
@@ -3049,5 +3982,297 @@ mod tests {
             flipped[old.len() + (state as usize >> 3) % span] ^= 1 << (state % 8);
             let _ = check_increment(old, &flipped);
         }
+    }
+
+    fn with_pages(old: &[u8], new: &[u8], allow_new_pages: bool) -> &'static str {
+        match check_increment_with(old, new, &IncrementRules { allow_new_pages }) {
+            Ok(_) => "ok",
+            Err(e) => e.code,
+        }
+    }
+
+    fn with_image(old: &[u8], img: &TestImage, draw: &dyn Fn(&str, &str) -> String) -> Vec<u8> {
+        let mut inc = Increment::open(old);
+        inc.stamp_page_image(0, TAG, img, draw);
+        inc.finish()
+    }
+
+    #[test]
+    fn bidang_putih_lalu_angka_baru_di_atas_isi_lama_ditolak() {
+        // Isi lama halaman 1: teks 18 pt di (72, 720). Penyerang menutupnya
+        // dengan gambar kecil lalu menulis angka lain sebagai keterangan.
+        let old = sample_pdf(1);
+        let forge = |img: &str, font: &str| {
+            format!(
+                "q 200 0 0 24 70 714 cm /{img} Do Q\n\
+                 q BT 0 0 0 rg /{font} 10 Tf 1 0 0 1 72 722 Tm (Rp 90.000.000) Tj ET Q\n"
+            )
+        };
+        // Putih legap seluruhnya: terlalu legap.
+        let white = TestImage::solid(8, 2, [255, 255, 255], Some(255));
+        let err = check_increment(&old, &with_image(&old, &white, &forge)).unwrap_err();
+        assert_eq!(err.code, "version_changes_content");
+        assert!(err.message.contains("legap"), "{}", err.message);
+        // Separuh putih legap, separuh transparan: rata-rata alpha 0,5 lolos
+        // batas rata-rata, tetapi piksel putih legap menutup isi.
+        let mut half = white.clone();
+        half.alpha = Some([[255u8; 8], [0u8; 8]].concat());
+        let err = check_increment(&old, &with_image(&old, &half, &forge)).unwrap_err();
+        assert_eq!(err.code, "version_changes_content");
+        assert!(err.message.contains("bidang terang"), "{}", err.message);
+        // Abu-abu sangat muda juga dianggap penutup.
+        let mut pale = half.clone();
+        pale.rgb = [235u8, 235, 235].repeat(16);
+        assert_eq!(
+            code(&old, &with_image(&old, &pale, &forge)),
+            "version_changes_content"
+        );
+        // Tanpa SMask sama sekali.
+        let mut bare = TestImage::solid(8, 2, [255, 255, 255], None);
+        bare.alpha = None;
+        let err = check_increment(&old, &with_image(&old, &bare, &forge)).unwrap_err();
+        assert!(err.message.contains("SMask"), "{}", err.message);
+        // Tinta gelap yang sama di tempat yang sama tidak menutup apa pun:
+        // stempel sah boleh menumpuk teks lama.
+        let mut ink = half.clone();
+        ink.rgb = [35u8, 29, 26].repeat(16);
+        assert_eq!(code(&old, &with_image(&old, &ink, &forge)), "ok");
+    }
+
+    #[test]
+    fn keterangan_dibatasi_jumlah_ukuran_dan_font() {
+        let old = sample_pdf(1);
+        let sixty = "A".repeat(60);
+        let new = custom(&old, false, &|_, f| {
+            format!("BT /{f} 6 Tf 1 0 0 1 72 300 Tm ({sixty}) Tj 0 -8 Td ({sixty}) Tj ET\n")
+        });
+        assert_eq!(code(&old, &new), "ok");
+        // 121 huruf, dipecah lewat TJ.
+        let new = custom(&old, false, &|_, f| {
+            format!("BT /{f} 6 Tf 1 0 0 1 72 300 Tm [({sixty}) -10 ({sixty}) 5 (B)] TJ ET\n")
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // Banyak Tj kecil tetap dihitung bersama, juga lintas stream.
+        let new = custom(&old, false, &|_, f| {
+            let one = "(AB) Tj ".repeat(61);
+            format!("BT /{f} 6 Tf 1 0 0 1 72 300 Tm {one} ET\n")
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // 12 pt boleh, 13 pt tidak.
+        let new = custom(&old, false, &|_, f| {
+            format!("BT /{f} 12 Tf 1 0 0 1 72 300 Tm (Nama) Tj ET\n")
+        });
+        assert_eq!(code(&old, &new), "ok");
+        let new = custom(&old, false, &|_, f| {
+            format!("BT /{f} 13 Tf 1 0 0 1 72 300 Tm (Nama) Tj ET\n")
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // Font standar selain Helvetica dan Courier (misalnya ZapfDingbats
+        // yang punya kotak hitam penuh) ditolak di stempel.
+        let mut inc = Increment::open(&old);
+        let dingbats = inc.add(Object::Dictionary(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "ZapfDingbats",
+        }));
+        inc.stamp_page_with(0, TAG, false, &|_, _| {
+            "BT /Z 10 Tf 1 0 0 1 72 300 Tm (nnnn) Tj ET\n".into()
+        });
+        let page = inc.page_ids()[0];
+        let Object::Dictionary(mut d) = inc.current(page) else {
+            panic!()
+        };
+        let Ok(Object::Dictionary(res)) = d.get_mut(b"Resources") else {
+            panic!()
+        };
+        let Ok(Object::Dictionary(fonts)) = res.get_mut(b"Font") else {
+            panic!()
+        };
+        fonts.set("Z", dingbats);
+        inc.put(page, Object::Dictionary(d));
+        let err = check_increment(&old, &inc.finish()).unwrap_err();
+        assert!(
+            err.message.contains("Helvetica atau Courier"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn tanda_yang_tersebar_jauh_ditolak() {
+        let old = sample_pdf(1); // 612 x 792
+        // Gambar di kiri bawah, keterangan di kanan atas.
+        let new = custom(&old, false, &|img, f| {
+            format!(
+                "q 60 0 0 30 20 20 cm /{img} Do Q\n\
+                 BT /{f} 8 Tf 1 0 0 1 500 760 Tm (Rina) Tj ET\n"
+            )
+        });
+        let err = check_increment(&old, &new).unwrap_err();
+        assert!(err.message.contains("tersebar"), "{}", err.message);
+        // Dua gambar di dua sudut.
+        let new = custom(&old, false, &|img, _| {
+            format!("q 60 0 0 30 20 20 cm /{img} Do Q q 60 0 0 30 530 740 cm /{img} Do Q\n")
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // Teks dimulai dekat gambar lalu digeser jauh lewat TJ dan Ts.
+        let new = custom(&old, false, &|img, f| {
+            format!(
+                "q 60 0 0 30 20 20 cm /{img} Do Q\n\
+                 BT /{f} 8 Tf 700 Ts 1 0 0 1 20 10 Tm [(A) -70000 (B)] TJ ET\n"
+            )
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // Td di antara dua Tj.
+        let new = custom(&old, false, &|img, f| {
+            format!(
+                "q 60 0 0 30 20 20 cm /{img} Do Q\n\
+                 BT /{f} 8 Tf 1 0 0 1 20 10 Tm (A) Tj 500 700 Td (B) Tj ET\n"
+            )
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // Spasi huruf (Tc) yang melempar huruf berikutnya jauh.
+        let new = custom(&old, false, &|img, f| {
+            format!(
+                "q 60 0 0 30 20 20 cm /{img} Do Q\n\
+                 BT /{f} 8 Tf 5000 Tc 1 0 0 1 20 10 Tm (AB) Tj ET\n"
+            )
+        });
+        assert_eq!(code(&old, &new), "version_changes_content");
+        // Gambar dan keterangan berdekatan, kotak 300 x 150: boleh.
+        let new = custom(&old, false, &|img, f| {
+            format!(
+                "q 300 0 0 150 150 120 cm /{img} Do Q\n\
+                 BT /{f} 10 Tf 1 0 0 1 200 105 Tm (Rina Wulandari, 22 November 2026) Tj ET\n"
+            )
+        });
+        assert_eq!(code(&old, &new), "ok");
+    }
+
+    #[test]
+    fn halaman_baru_hanya_untuk_penanda_tangan_terakhir() {
+        let old = sample_pdf(1);
+        let mut inc = Increment::open(&old);
+        inc.add_page("Halaman catatan tanda tangan");
+        let with_page = inc.finish();
+        assert_eq!(with_pages(&old, &with_page, true), "ok");
+        assert_eq!(
+            with_pages(&old, &with_page, false),
+            "version_changes_content"
+        );
+        assert_eq!(with_pages(&old, &stamp(&old, TAG), false), "ok");
+        assert_eq!(
+            with_pages(&old, &stamp_with_audit_page(&old, TAG), false),
+            "version_changes_content"
+        );
+    }
+
+    #[test]
+    fn isi_halaman_baru_hanya_teks_dan_garis() {
+        let old = sample_pdf(1);
+        let font = |inc: &mut Increment| {
+            let f = inc.add(Object::Dictionary(dictionary! {
+                "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica-Bold",
+                "Encoding" => "WinAnsiEncoding",
+            }));
+            dictionary! { "Font" => dictionary! { "F1" => f } }
+        };
+        let page = |content: &str| {
+            let mut inc = Increment::open(&old);
+            let res = font(&mut inc);
+            inc.add_page_raw(content, res, usize::MAX);
+            inc.finish()
+        };
+        // Bentuk appendAuditPage: teks, TL, T*, garis tipis.
+        let audit = "q BT 0.2 0.2 0.2 rg /F1 18 Tf 24 TL 1 0 0 1 56 767 Tm (Judul) Tj T* ET Q\n\
+                     q 0.4 0.4 0.4 RG 0.8 w [] 0 d 56 600 m 56 600 m 539 600 l S Q\n";
+        assert_eq!(code(&old, &page(audit)), "ok");
+        for bad in [
+            "0 0 595 842 re f\n",
+            "1 1 1 rg 0 0 m 595 0 l 595 842 l f\n",
+            "100 w 0 400 m 595 400 l S\n",
+            "q 10 0 0 10 0 0 cm 0.8 w 0 40 m 59 40 l S Q\n",
+            "q 595 0 0 842 0 0 cm /Im Do Q\n",
+            "BT /F1 40 Tf 1 0 0 1 56 700 Tm (Besar) Tj ET\n",
+            "BT /F1 10 Tf 2 Tr 1 0 0 1 56 700 Tm (Garis) Tj ET\n",
+            "0 0 m 10 10 l\n",
+            "/GS gs\n",
+            "0 0 m 10 10 c S\n",
+        ] {
+            assert_eq!(code(&old, &page(bad)), "version_changes_content", "{bad}");
+        }
+        let many: String = (0..=MAX_NEW_PAGE_LINES)
+            .map(|i| format!("56 {i} m 539 {i} l S\n"))
+            .collect();
+        assert_eq!(code(&old, &page(&many)), "version_changes_content");
+
+        // Gambar di halaman baru, dengan XObject di sumber dayanya.
+        let mut inc = Increment::open(&old);
+        let img = inc.add(Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 1, "Height" => 1,
+                "BitsPerComponent" => 8, "ColorSpace" => "DeviceRGB",
+            },
+            vec![0, 0, 0],
+        )));
+        inc.add_page_raw(
+            "q 595 0 0 842 0 0 cm /Im Do Q\n",
+            dictionary! { "XObject" => dictionary! { "Im" => img } },
+            usize::MAX,
+        );
+        let err = check_increment(&old, &inc.finish()).unwrap_err();
+        assert_eq!(err.code, "version_changes_content");
+        assert!(err.message.contains("halaman baru"), "{}", err.message);
+    }
+
+    #[test]
+    fn jumlah_xref_raksasa_tidak_panik() {
+        let old = sample_pdf(1);
+        let new = stamp(&old, TAG);
+        let text = String::from_utf8_lossy(&new).into_owned();
+        let xref_at = text.rfind("\nxref\n").unwrap() + 1;
+        for header in [
+            "0 99999999999999999999999\n",
+            "0 18446744073709551615\n",
+            "18446744073709551615 3\n",
+            "4294967295 2\n",
+            "0 100001\n",
+            "99999999999999999999 1\n",
+        ] {
+            let mut bad = new[..xref_at].to_vec();
+            bad.extend_from_slice(
+                text[xref_at..]
+                    .replacen("xref\n", &format!("xref\n{header}"), 1)
+                    .as_bytes(),
+            );
+            assert_ne!(code(&old, &bad), "ok", "{header}");
+        }
+    }
+
+    #[test]
+    fn batas_sumber_daya_ditolak_sebagai_pdf_invalid() {
+        let old = sample_pdf(2);
+        let new = stamp(&old, TAG);
+        let rules = IncrementRules {
+            allow_new_pages: true,
+        };
+        assert!(check_with_caps(&old, &new, &rules, Caps::DEFAULT).is_ok());
+        for caps in [
+            Caps {
+                objects: 10,
+                ..Caps::DEFAULT
+            },
+            Caps {
+                loaded: 200,
+                ..Caps::DEFAULT
+            },
+            Caps {
+                decoded: 10,
+                ..Caps::DEFAULT
+            },
+        ] {
+            let err = check_with_caps(&old, &new, &rules, caps).unwrap_err();
+            assert_eq!(err.code, "pdf_invalid", "{caps:?}: {}", err.message);
+        }
+        // Anggaran penuh lagi untuk pemeriksaan berikutnya.
+        assert_eq!(code(&old, &new), "ok");
     }
 }
