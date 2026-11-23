@@ -19,14 +19,36 @@
 //!   only records of documents the peer may view (`scope::may_view`), from
 //!   authors who are still active members, edit marks only while fresh.
 //! - Receiving ([`FeatureSync::ingest`]): valid signature, the payload names
-//!   the signer as author, the signer is an active member allowed to write in
-//!   the document's scope (`scope::may_write`; for `ver` and `edit` the scope
-//!   of the stored document, never the sender's). A `ver` or `edit` for a
-//!   document not here yet is stored `pending` and applied when the document
-//!   arrives. Refused records are logged (`permissions::log_rejection`, codes
+//!   the signer as author, the signer is an active member, not a guest, and
+//!   allowed to write in the document's scope (`scope::may_write`; for `ver`
+//!   and `edit` the scope of the stored document, never the sender's).
+//!   Refused records are logged (`permissions::log_rejection`, codes
 //!   `docs_*`), not stored and so never forwarded.
-//! - Files ([`BlobSource`]): a blob is served only when a version with that
-//!   hash belongs to a document the peer may view.
+//! - Ids are bound to their author: new documents and versions get
+//!   `store::derive_id(author, salt)` and the salt travels in the payload. A
+//!   record whose id does not match is refused (`docs_bad_id`). Records from
+//!   before (no salt) are accepted only for an id unknown here, or known with
+//!   the same author and the same content. An id already stored is never
+//!   given other content, another author or another scope (`docs_bad_id`).
+//! - Waiting: a `ver` for a document not here yet is stored `pending` (at
+//!   most [`PENDING_MAX_PER_AUTHOR`] per author, dropped after
+//!   [`PENDING_MAX_AGE_SECS`]) and applied when the document arrives. An
+//!   `edit` mark for an unknown document is dropped.
+//! - Reusing a file (`docs_blob_reuse`): a received version may name a file
+//!   (hash) that this laptop already knows only when its author may see every
+//!   other use of it here: every document scope with a version of that hash,
+//!   every signing request with that file (as sender or signer), and, when
+//!   the file is in the blob store, at least one such use. Without this, a
+//!   member could announce the hash of a team or signing file in the general
+//!   library and have rekan copy it to everyone.
+//! - Files ([`BlobSource`]): a blob is served to a peer only through a
+//!   version of a document the peer may view that is either made on this
+//!   laptop or whose author may see every other use of the file here (the
+//!   rule above, checked again when serving). So a reused hash that arrived
+//!   before the file's real owner cannot open the owner's file to the reuse's
+//!   readers. Cost: when the same bytes are in the general library and later
+//!   in a team document or signing request its author does not take part in,
+//!   this laptop serves them only for the team or request.
 //! - Downloads: after a version arrives, files up to
 //!   [`blobs::AUTO_REPLICATE_MAX_BYTES`] are copied right away through the
 //!   [`BlobFetcher`] (again when a rekan connects and at start); larger files
@@ -60,7 +82,8 @@ use crate::identity::Identity;
 use crate::network::feature::{
     BlobFuture, BlobSource, FeatureHub, FeatureIngest, FeatureRecord, FeatureSync, TOPIC_DOCS,
 };
-use crate::permissions::{self, OrgState};
+use crate::org::is_lower_hex;
+use crate::permissions::{self, MemberKind, OrgState};
 use crate::state::{Core, MiraState};
 
 /// While this laptop edits a document, its "Sedang diedit" mark is sent again
@@ -73,6 +96,12 @@ pub const INCOMING_DIR: &str = "docs-incoming";
 /// Error code of [`DocsPeerSync::download_version`] when no connected rekan
 /// serves the file.
 pub const NOT_AVAILABLE: &str = "not_available";
+
+/// Most `pending` records kept per author (versions of documents not here).
+pub const PENDING_MAX_PER_AUTHOR: i64 = 1000;
+
+/// `pending` records older than this (since arrival) are dropped.
+pub const PENDING_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
 
 // ---------------------------------------------------------------------------
 // Records
@@ -185,10 +214,7 @@ fn store_record(
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let new_key = mark_key(&e.at, &record.id);
-        if existing
-            .iter()
-            .any(|(id, at)| mark_key(at, id) >= new_key)
-        {
+        if existing.iter().any(|(id, at)| mark_key(at, id) >= new_key) {
             return Ok(false);
         }
         conn.execute(
@@ -212,6 +238,60 @@ fn store_record(
         ],
     )?;
     Ok(n > 0)
+}
+
+/// Drops `pending` records that arrived more than [`PENDING_MAX_AGE_SECS`]
+/// ago (or whose arrival time is unreadable). Returns how many.
+fn expire_pending(conn: &Connection, now: OffsetDateTime) -> AppResult<usize> {
+    let rows: Vec<(String, Option<String>)> = conn
+        .prepare("SELECT id, received_at FROM docs_sync_records WHERE state = 'pending'")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut dropped = 0;
+    for (id, received_at) in rows {
+        let old = received_at
+            .as_deref()
+            .and_then(parse_time)
+            .is_none_or(|t| (now - t).whole_seconds() > PENDING_MAX_AGE_SECS);
+        if old {
+            dropped += conn.execute(
+                "DELETE FROM docs_sync_records WHERE id = ?1 AND state = 'pending'",
+                params![id],
+            )?;
+        }
+    }
+    Ok(dropped)
+}
+
+fn is_guest(state: &OrgState, pk: &str) -> bool {
+    state
+        .member(pk)
+        .is_some_and(|m| m.kind == MemberKind::Guest)
+}
+
+/// True when `author` already has a record for this document or version
+/// (one record per document and per version; edit marks are always new).
+fn published(conn: &Connection, payload: &DocPayload, author: &str) -> AppResult<bool> {
+    let found = match payload {
+        DocPayload::Doc(d) => conn
+            .query_row(
+                "SELECT 1 FROM docs_sync_records WHERE kind = 'doc' AND document_id = ?1 AND author = ?2",
+                params![d.id, author],
+                |_| Ok(()),
+            )
+            .optional()?,
+        DocPayload::Ver(v) => conn
+            .query_row(
+                "SELECT 1 FROM docs_sync_records
+                 WHERE kind = 'ver' AND document_id = ?1 AND author = ?2
+                   AND json_extract(json_extract(body, '$.p'), '$.id') = ?3",
+                params![v.document_id, author, v.id],
+                |_| Ok(()),
+            )
+            .optional()?,
+        DocPayload::Edit(_) => None,
+    };
+    Ok(found.is_some())
 }
 
 fn record_known(conn: &Connection, id: &str) -> AppResult<bool> {
@@ -338,6 +418,131 @@ fn bad_record(err: AppError) -> Fail {
     }
 }
 
+fn bad_id(detail: &str) -> Fail {
+    reject("docs_bad_id", detail)
+}
+
+/// The id is bound to the author when the record carries a salt
+/// (`store::derive_id`). Without a salt (records from before) nothing can be
+/// checked here; [`check_known_document`] and [`check_known_version`] then
+/// keep stored ids from changing.
+fn check_bound_id(id: &str, author: &str, salt: Option<&str>) -> Result<(), Fail> {
+    match salt {
+        Some(salt) if !is_lower_hex(salt, store::ID_HEX_LEN) => {
+            Err(bad_id("Garam id catatan tidak valid."))
+        }
+        Some(salt) if store::derive_id(author, salt) != id => Err(bad_id(
+            "Id catatan tidak cocok dengan penulisnya, jadi tidak dipakai.",
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// A document id already stored keeps its creator, scope and time.
+fn check_known_document(conn: &Connection, d: &RemoteDocument) -> Result<(), Fail> {
+    if !store::document_exists(conn, &d.id)? {
+        return Ok(());
+    }
+    let stored = store::get_document(conn, &d.id)?;
+    let scope = DocScope {
+        team_id: d.team_id.clone(),
+        project_id: d.project_id.clone(),
+    };
+    if stored.created_by != d.created_by
+        || stored.scope() != scope
+        || stored.created_at != d.created_at
+    {
+        return Err(bad_id(
+            "Id dokumen ini sudah tercatat dengan pembuat, tim, proyek, atau waktu lain.",
+        ));
+    }
+    Ok(())
+}
+
+/// A version id already stored keeps its content. `Ok(true)` when it is
+/// stored (and the same).
+fn check_known_version(conn: &Connection, v: &RemoteVersion) -> Result<bool, Fail> {
+    let stored = match store::get_version(conn, &v.id) {
+        Ok(stored) => stored,
+        Err(AppError::NotFound(_)) => return Ok(false),
+        Err(err) => return Err(Fail::App(err)),
+    };
+    let mut parents = v.parent_ids.clone();
+    parents.sort();
+    parents.dedup();
+    let same = stored.document_id == v.document_id
+        && stored.author == v.author
+        && stored.blob.hash.as_str() == v.blob_hash
+        && stored.blob.size == v.size
+        && stored.created_at == v.created_at
+        && stored.origin == v.origin
+        && stored.restored_from == v.restored_from
+        && stored.parent_ids == parents;
+    if same {
+        Ok(true)
+    } else {
+        Err(bad_id(
+            "Id versi ini sudah tercatat dengan isi atau penulis lain.",
+        ))
+    }
+}
+
+/// True when `author` may see every other use of file `hash` on this laptop
+/// (module docs, "Reusing a file"): every document scope with a version of
+/// it other than `except_version`, and every signing request with it (as
+/// sender or signer). With `in_store`, at least one such use must exist,
+/// since a file here that nothing the author may see uses belongs to
+/// something else (signing, another feature).
+fn may_reuse_blob(
+    conn: &Connection,
+    state: &OrgState,
+    guests: &dyn GuestProjects,
+    author: &str,
+    hash: &str,
+    except_version: &str,
+    in_store: bool,
+) -> AppResult<bool> {
+    let scopes: Vec<DocScope> = conn
+        .prepare(
+            "SELECT DISTINCT d.team_id, d.project_id
+             FROM document_versions v JOIN documents d ON d.id = v.document_id
+             WHERE v.blob_hash = ?1 AND v.id <> ?2",
+        )?
+        .query_map(params![hash, except_version], |r| {
+            Ok(DocScope {
+                team_id: r.get(0)?,
+                project_id: r.get(1)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut seen = false;
+    for scope in &scopes {
+        if !scope::may_view(conn, state, guests, author, scope)? {
+            return Ok(false);
+        }
+        seen = true;
+    }
+    let requests: Vec<bool> = conn
+        .prepare(
+            "SELECT r.requested_by = ?2
+                 OR EXISTS (SELECT 1 FROM sign_signers s
+                            WHERE s.request_id = r.id AND s.public_key = ?2)
+             FROM sign_requests r
+             WHERE r.original_hash = ?1 OR r.current_hash = ?1
+                OR EXISTS (SELECT 1 FROM sign_signers s
+                           WHERE s.request_id = r.id AND s.hash_after = ?1)",
+        )?
+        .query_map(params![hash, author], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    for takes_part in requests {
+        if !takes_part {
+            return Ok(false);
+        }
+        seen = true;
+    }
+    Ok(seen || !in_store)
+}
+
 /// What applying records changed.
 #[derive(Default)]
 struct Applied {
@@ -428,6 +633,9 @@ impl DocsPeerSync {
         let stored = self.core(|db, me| {
             let mut stored = false;
             for p in payloads {
+                if published(db, p, me.public_key_hex())? {
+                    continue;
+                }
                 let record = envelope::seal(me, DOCS_DOMAIN, p).map_err(AppError::Internal)?;
                 stored |= store_record(db, &record, p, me.public_key_hex(), "applied", None)?;
             }
@@ -655,6 +863,7 @@ impl DocsPeerSync {
         let (out, jobs) = self.core(|db, _| {
             let mut out = FeatureIngest::default();
             let mut jobs = Vec::new();
+            expire_pending(db, now)?;
             for (id, why) in &bad {
                 let detail = format!("Catatan dokumen {id}: {why}");
                 log_rejection(db, from, "docs_bad_signature", &detail, now)?;
@@ -716,6 +925,35 @@ impl DocsPeerSync {
         }
     }
 
+    /// [`may_reuse_blob`] for a received version not stored yet.
+    fn check_blob_reuse(
+        &self,
+        conn: &Connection,
+        state: &OrgState,
+        v: &RemoteVersion,
+    ) -> Result<(), Fail> {
+        if check_known_version(conn, v)? {
+            return Ok(());
+        }
+        let in_store = BlobHash::parse(&v.blob_hash).is_ok_and(|h| self.blobs.contains(&h));
+        if may_reuse_blob(
+            conn,
+            state,
+            self.guests.as_ref(),
+            &v.author,
+            &v.blob_hash,
+            &v.id,
+            in_store,
+        )? {
+            Ok(())
+        } else {
+            Err(reject(
+                "docs_blob_reuse",
+                "Versi ini memakai file milik tim, proyek, atau tanda tangan yang tidak bisa dibuka penulisnya.",
+            ))
+        }
+    }
+
     fn ingest_one(
         &self,
         db: &mut Connection,
@@ -736,23 +974,22 @@ impl DocsPeerSync {
                 "Penulis bukan anggota aktif organisasi.",
             ));
         }
+        if is_guest(b.state, author) {
+            return Err(reject(
+                "docs_forbidden",
+                "Tamu tidak bisa menambah atau mengubah dokumen.",
+            ));
+        }
         store::check_id(o.payload.document_id(), "dokumen").map_err(bad_record)?;
         let received = Some(b.now_s.as_str());
         match &o.payload {
             DocPayload::Doc(d) => {
+                check_bound_id(&d.id, author, d.salt.as_deref())?;
                 let scope = DocScope {
                     team_id: d.team_id.clone(),
                     project_id: d.project_id.clone(),
                 };
-                if store::document_exists(db, &d.id)? {
-                    let stored = store::get_document(db, &d.id)?;
-                    if stored.scope() != scope || stored.created_by != d.created_by {
-                        return Err(reject(
-                            "docs_bad_record",
-                            "Dokumen ini sudah tercatat dengan tim, proyek, atau pembuat lain.",
-                        ));
-                    }
-                }
+                check_known_document(db, d)?;
                 self.may_write(db, b.state, author, &scope)?;
                 let inserted = sync::apply_remote_document(db, d, &b.now_s).map_err(bad_record)?;
                 store_record(db, record, &o.payload, author, "applied", received)?;
@@ -765,7 +1002,21 @@ impl DocsPeerSync {
                 Ok(a)
             }
             DocPayload::Ver(v) => {
+                store::check_id(&v.id, "versi").map_err(bad_record)?;
+                check_bound_id(&v.id, author, v.salt.as_deref())?;
+                check_known_version(db, v)?;
                 if !store::document_exists(db, &v.document_id)? {
+                    let waiting: i64 = db.query_row(
+                        "SELECT count(*) FROM docs_sync_records WHERE state = 'pending' AND author = ?1",
+                        params![author],
+                        |r| r.get(0),
+                    )?;
+                    if waiting >= PENDING_MAX_PER_AUTHOR {
+                        return Err(reject(
+                            "docs_pending_full",
+                            "Terlalu banyak versi dari penulis ini yang dokumennya belum ada.",
+                        ));
+                    }
                     let stored = store_record(db, record, &o.payload, author, "pending", received)?;
                     return Ok(Applied {
                         stored,
@@ -774,6 +1025,7 @@ impl DocsPeerSync {
                 }
                 let scope = store::get_document(db, &v.document_id)?.scope();
                 self.may_write(db, b.state, author, &scope)?;
+                self.check_blob_reuse(db, b.state, v)?;
                 let out = sync::apply_remote_version(db, v, &b.now_s).map_err(bad_record)?;
                 store_record(db, record, &o.payload, author, "applied", received)?;
                 Ok(Applied {
@@ -797,11 +1049,9 @@ impl DocsPeerSync {
                     return Ok(Applied::default());
                 }
                 if !store::document_exists(db, &e.document_id)? {
-                    let stored = store_record(db, record, &o.payload, author, "pending", received)?;
-                    return Ok(Applied {
-                        stored,
-                        ..Applied::default()
-                    });
+                    // Not stored: the editor repeats the mark every few
+                    // minutes, so one arrives after the document.
+                    return Ok(Applied::default());
                 }
                 let scope = store::get_document(db, &e.document_id)?.scope();
                 self.may_write(db, b.state, author, &scope)?;
@@ -875,6 +1125,7 @@ impl DocsPeerSync {
         self.may_write(db, b.state, &o.author, scope)?;
         match &o.payload {
             DocPayload::Ver(v) => {
+                self.check_blob_reuse(db, b.state, v)?;
                 let out = sync::apply_remote_version(db, v, &b.now_s).map_err(bad_record)?;
                 a.changed |= out.inserted;
                 a.fetch.extend(self.auto_job(v, b.from));
@@ -934,6 +1185,12 @@ impl DocsPeerSync {
                 }
             }));
         }
+    }
+
+    /// Drops `pending` records older than [`PENDING_MAX_AGE_SECS`]. Called at
+    /// start (and with every received batch).
+    pub fn expire_pending(&self) -> AppResult<usize> {
+        self.core(|db, _| expire_pending(db, clock::now()))
     }
 
     /// Starts the automatic downloads of every received small version whose
@@ -1069,9 +1326,13 @@ impl DocsPeerSync {
     fn store_download(&self, hash: &BlobHash, temp: &Path) -> AppResult<()> {
         let info = self.blobs.put_file(temp)?;
         if info.hash != *hash {
-            return Err(AppError::Storage(format!(
-                "File yang diterima tidak sama dengan versi {hash}, jadi tidak dipakai."
-            )));
+            eprintln!(
+                "Mira: file dokumen dari rekan berbeda: diminta {hash}, diterima {}.",
+                info.hash
+            );
+            return Err(AppError::Storage(
+                "File yang diterima dari laptop rekan rusak di jalan. Coba unduh lagi.".into(),
+            ));
         }
         Ok(())
     }
@@ -1145,21 +1406,36 @@ impl BlobSource for DocsPeerSync {
             let Some(state) = permissions::load_state(db)? else {
                 return Ok(false);
             };
-            let scopes: Vec<DocScope> = db
+            type Row = (String, String, bool, Option<String>, Option<String>);
+            let rows: Vec<Row> = db
                 .prepare(
-                    "SELECT DISTINCT d.team_id, d.project_id
+                    "SELECT v.id, v.author, v.received_at IS NULL, d.team_id, d.project_id
                      FROM document_versions v JOIN documents d ON d.id = v.document_id
                      WHERE v.blob_hash = ?1",
                 )?
                 .query_map(params![hash.as_str()], |r| {
-                    Ok(DocScope {
-                        team_id: r.get(0)?,
-                        project_id: r.get(1)?,
-                    })
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
                 })?
                 .collect::<Result<_, _>>()?;
-            for scope in scopes {
-                if scope::may_view(db, &state, self.guests.as_ref(), peer, &scope)? {
+            for (version_id, author, made_here, team_id, project_id) in rows {
+                let scope = DocScope {
+                    team_id,
+                    project_id,
+                };
+                if !scope::may_view(db, &state, self.guests.as_ref(), peer, &scope)? {
+                    continue;
+                }
+                if made_here
+                    || may_reuse_blob(
+                        db,
+                        &state,
+                        self.guests.as_ref(),
+                        &author,
+                        hash.as_str(),
+                        &version_id,
+                        false,
+                    )?
+                {
                     return Ok(true);
                 }
             }

@@ -9,9 +9,9 @@
 //!
 //! Sync with rekan: [`DocumentsRuntime::new`] builds the [`DocsPeerSync`],
 //! registers it with the managed `Arc<FeatureHub>` (topic `docs` and blob
-//! source), uses it as the environment's outbound [`DocumentSync`], resumes
-//! small downloads at start and repeats this laptop's "Sedang diedit" marks
-//! every minute on a background thread.
+//! source), uses it as the environment's outbound [`DocumentSync`], drops
+//! expired waiting records and resumes small downloads at start, and repeats
+//! this laptop's "Sedang diedit" marks every minute on a background thread.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
@@ -157,6 +157,12 @@ fn spawn_background(peer: Weak<DocsPeerSync>) {
         .name("mira-docs-sync".into())
         .spawn(move || {
             if let Some(p) = peer.upgrade() {
+                if let Err(err) = p.expire_pending() {
+                    eprintln!(
+                        "Mira: catatan dokumen yang menunggu tidak bisa dibersihkan [{}]: {err}",
+                        err.code()
+                    );
+                }
                 p.resume_downloads(Vec::new());
             }
             loop {

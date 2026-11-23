@@ -339,6 +339,57 @@ impl World {
     fn ingest(&self, to: usize, from: usize, records: Vec<FeatureRecord>) -> FeatureIngest {
         self.sync(to).ingest(&self.pk(from), records).unwrap()
     }
+
+    /// `payload` signed by laptop `i`.
+    fn signed(&self, i: usize, payload: &DocPayload) -> FeatureRecord {
+        self.laptop(i)
+            .with(|c| envelope::seal(&c.identity, DOCS_DOMAIN, payload))
+            .unwrap()
+    }
+
+    /// A version by laptop `i` with an id bound to it (new salt).
+    fn remote_version(
+        &self,
+        i: usize,
+        document_id: &str,
+        parents: &[&str],
+        hash: &BlobHash,
+        size: u64,
+    ) -> RemoteVersion {
+        let pk = self.pk(i);
+        let salt = store::new_id();
+        RemoteVersion {
+            id: store::derive_id(&pk, &salt),
+            document_id: document_id.to_owned(),
+            parent_ids: parents.iter().map(|p| p.to_string()).collect(),
+            blob_hash: hash.as_str().to_owned(),
+            size,
+            author: pk,
+            created_at: now_s(),
+            origin: VersionOrigin::Edited,
+            restored_from: None,
+            salt: Some(salt),
+        }
+    }
+
+    fn pending_count(&self, i: usize) -> i64 {
+        self.laptop(i)
+            .with(|c| {
+                c.db.query_row(
+                    "SELECT count(*) FROM docs_sync_records WHERE state = 'pending'",
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap()
+    }
+
+    fn scope_of(&self, i: usize, doc: &str) -> DocScope {
+        self.laptop(i)
+            .with(|c| store::get_document(&c.db, doc))
+            .unwrap()
+            .scope()
+    }
 }
 
 fn kind_of(r: &FeatureRecord) -> &'static str {
@@ -652,6 +703,7 @@ fn members_of_another_team_and_relays_respect_team_scope() {
                     created_at: now_s(),
                     origin: VersionOrigin::Edited,
                     restored_from: None,
+                    salt: None,
                 }),
             )
         })
@@ -959,4 +1011,262 @@ fn documents_made_before_sync_are_backfilled_once() {
     w.sync(0).version_added(&doc, &v2);
     assert_eq!(w.record_count(0, "ver"), 2);
     assert_eq!(w.sync(0).backfill().unwrap(), 0);
+}
+
+#[test]
+fn ids_are_bound_to_their_author_and_never_change() {
+    let w = World::new(&["Sari", "Budi", "Citra"]);
+    let (doc, v1) = w.add_doc(0, &general(), "a.docx", b"a");
+    w.sync_among(&[0, 1]);
+
+    // New records carry the salt of their id.
+    for r in w.records(0, 1) {
+        let salt = match envelope::open::<DocPayload>(DOCS_DOMAIN, &r)
+            .unwrap()
+            .payload
+        {
+            DocPayload::Doc(d) => d.salt,
+            DocPayload::Ver(v) => v.salt,
+            DocPayload::Edit(_) => continue,
+        };
+        assert!(salt.is_some());
+    }
+
+    // Citra reuses Sari's version id with other content: with a salt of her
+    // own the id does not match her key; without one (old format) the id is
+    // already Sari's.
+    let other = BlobHash::of_bytes(b"lain");
+    let hijack = RemoteVersion {
+        id: v1.id.clone(),
+        ..w.remote_version(2, &doc.id, &[], &other, 4)
+    };
+    let legacy = RemoteVersion {
+        salt: None,
+        ..hijack.clone()
+    };
+    let bad_salt = RemoteVersion {
+        salt: Some("xyz".into()),
+        ..w.remote_version(2, &doc.id, &[&v1.id], &other, 4)
+    };
+    for p in [hijack.clone(), legacy, bad_salt] {
+        let got = w.ingest(1, 2, vec![w.signed(2, &DocPayload::Ver(p))]);
+        assert_eq!((got.accepted, got.rejected), (0, 1));
+        assert_eq!(w.rejections(1).last().unwrap(), "docs_bad_id");
+    }
+    // The first arrival does not decide either: Citra's laptop has not seen
+    // Sari's version, and still refuses the salted hijack.
+    let got = w.ingest(2, 2, vec![w.signed(2, &DocPayload::Ver(hijack))]);
+    assert_eq!(got.rejected, 1);
+    assert_eq!(w.rejections(2).last().unwrap(), "docs_bad_id");
+    assert_eq!(w.version_ids(1, &doc.id), vec![v1.id.clone()]);
+
+    // Citra re-announces Sari's document in a project (where guests could
+    // see it): refused, and the stored scope stays.
+    let project = DocScope {
+        team_id: Some(w.lab.team.clone()),
+        project_id: Some("ab".repeat(16)),
+    };
+    let moved_by_citra = RemoteDocument {
+        team_id: project.team_id.clone(),
+        project_id: project.project_id.clone(),
+        created_by: w.pk(2),
+        salt: None,
+        ..RemoteDocument::from_record(&doc)
+    };
+    // Not even Sari moves her own document.
+    let moved_by_sari = RemoteDocument {
+        team_id: project.team_id.clone(),
+        project_id: project.project_id.clone(),
+        ..RemoteDocument::from_record(&doc)
+    };
+    for (who, p) in [(2, moved_by_citra), (0, moved_by_sari)] {
+        let got = w.ingest(1, who, vec![w.signed(who, &DocPayload::Doc(p))]);
+        assert_eq!((got.accepted, got.rejected), (0, 1));
+        assert_eq!(w.rejections(1).last().unwrap(), "docs_bad_id");
+        assert_eq!(w.scope_of(1, &doc.id), general());
+    }
+
+    // Old-format records (no salt) are still accepted for an id seen first.
+    let old_format = RemoteVersion {
+        salt: None,
+        ..w.remote_version(2, &doc.id, &[&v1.id], &other, 4)
+    };
+    let got = w.ingest(1, 2, vec![w.signed(2, &DocPayload::Ver(old_format))]);
+    assert_eq!((got.accepted, got.rejected), (1, 0));
+
+    // The genuine records again: nothing refused.
+    let again = w.records(0, 1);
+    assert_eq!(w.ingest(1, 0, again).rejected, 0);
+}
+
+#[test]
+fn versions_reusing_files_of_other_scopes_are_refused_and_not_served() {
+    let mut w = World::new(&["Sari", "Budi", "Citra"]);
+    let d = w.outsider("Dewi");
+    let team = DocScope {
+        team_id: Some(w.lab.team.clone()),
+        project_id: None,
+    };
+    let (g, gv) = w.add_doc(0, &general(), "umum.docx", b"umum");
+    w.sync_everyone();
+    assert!(w.has_doc(d, &g.id));
+
+    // A team file reaches Sari and Budi; Citra (team) has not synced yet.
+    let (_, tv) = w.add_doc(0, &team, "tim.docx", b"rahasia tim");
+    w.sync_among(&[0, 1]);
+    let h = tv.blob.hash.clone();
+
+    // Dewi (other team) knows the hash and announces it in the general
+    // library. Laptops that know the team file refuse it.
+    let reuse = w.remote_version(d, &g.id, &[&gv.id], &h, tv.blob.size);
+    let record = w.signed(d, &DocPayload::Ver(reuse.clone()));
+    for i in [0, 1] {
+        let got = w.ingest(i, d, vec![record.clone()]);
+        assert_eq!((got.accepted, got.rejected), (0, 1), "laptop {i}");
+        assert_eq!(w.rejections(i).last().unwrap(), "docs_blob_reuse");
+    }
+
+    // Citra does not know the file yet and accepts the version. Then the
+    // team document arrives and Citra copies the file (served for the team).
+    let got = w.ingest(2, d, vec![record]);
+    assert_eq!((got.accepted, got.rejected), (1, 0));
+    w.sync_among(&[0, 1, 2]);
+    w.nodes[2].fetcher.run_all();
+    assert!(w.has_blob(2, &h));
+
+    // Citra serves the file to the team, never through Dewi's version.
+    assert!(w.sync(2).blob_path_for(&w.pk(1), h.as_str()).is_some());
+    assert!(w.sync(2).blob_path_for(&w.pk(d), h.as_str()).is_none());
+    assert!(w.sync(0).blob_path_for(&w.pk(d), h.as_str()).is_none());
+    let dest = w.laptop(d).data_dir().join("curian.part");
+    assert!(copy_blob(w.sync(2), &w.pk(d), h.as_str(), tv.blob.size, &dest).is_err());
+
+    // A file this laptop holds for something else (signing, another
+    // feature) is not taken over by a document version either.
+    let other_use = w.laptop(0).blobs().put_bytes(b"berkas lain").unwrap();
+    let foreign = w.remote_version(d, &g.id, &[&gv.id], &other_use.hash, other_use.size);
+    let got = w.ingest(0, d, vec![w.signed(d, &DocPayload::Ver(foreign))]);
+    assert_eq!(got.rejected, 1);
+    assert_eq!(w.rejections(0).last().unwrap(), "docs_blob_reuse");
+
+    // A signing request Dewi takes no part in names a file this laptop does
+    // not have yet: refused as well.
+    let sign_hash = BlobHash::of_bytes(b"kontrak");
+    w.laptop(1)
+        .with(|c| {
+            c.db.execute(
+                "INSERT INTO sign_requests (id, title, requested_by, mode, status, original_hash,
+                     current_hash, created_at, updated_at)
+                 VALUES (?1, 'Kontrak', ?2, 'sequential', 'in_progress', ?3, ?3, ?4, ?4)",
+                params![store::new_id(), w.pk(0), sign_hash.as_str(), now_s()],
+            )
+        })
+        .unwrap();
+    let signing = w.remote_version(d, &g.id, &[&gv.id], &sign_hash, 7);
+    let got = w.ingest(1, d, vec![w.signed(d, &DocPayload::Ver(signing))]);
+    assert_eq!(got.rejected, 1);
+    assert_eq!(w.rejections(1).last().unwrap(), "docs_blob_reuse");
+
+    // Budi (team member) may put the team file in the general library.
+    let copied = w.add_version(1, &g, b"rahasia tim");
+    assert_eq!(copied.blob.hash, h);
+    let got = w.pull(1, 0);
+    assert_eq!(got.rejected, 0);
+    assert!(w.version_ids(0, &g.id).contains(&copied.id));
+}
+
+#[test]
+fn waiting_records_are_limited() {
+    let project = "ab".repeat(16);
+    let mut w = World::new(&["Sari", "Budi"]);
+    let g = w.guest("Tamu", &[&project]);
+    let unknown_doc = store::new_id();
+    let hash = BlobHash::of_bytes(b"x");
+
+    // Guests never write, not even into the waiting list.
+    let from_guest = w.remote_version(g, &unknown_doc, &[], &hash, 1);
+    let got = w.ingest(1, g, vec![w.signed(g, &DocPayload::Ver(from_guest))]);
+    assert_eq!((got.accepted, got.rejected), (0, 1));
+    assert_eq!(w.rejections(1).last().unwrap(), "docs_forbidden");
+    assert_eq!(w.pending_count(1), 0);
+
+    // An edit mark for an unknown document is dropped, not kept.
+    let mark = DocPayload::Edit(EditMark {
+        document_id: unknown_doc.clone(),
+        editor: w.pk(0),
+        editing: true,
+        since: now_s(),
+        at: now_s(),
+    });
+    let got = w.ingest(1, 0, vec![w.signed(0, &mark)]);
+    assert_eq!((got.accepted, got.rejected), (0, 0));
+    assert_eq!(w.pending_count(1), 0);
+
+    // A version for an unknown document waits.
+    let waiting = w.remote_version(0, &unknown_doc, &[], &hash, 1);
+    let got = w.ingest(1, 0, vec![w.signed(0, &DocPayload::Ver(waiting))]);
+    assert_eq!(got.accepted, 1);
+    assert_eq!(w.pending_count(1), 1);
+
+    // At most PENDING_MAX_PER_AUTHOR per author.
+    let sari = w.pk(0);
+    let old = clock::format_rfc3339(clock::now() - time::Duration::days(8));
+    w.laptop(1)
+        .with(|c| {
+            let tx = c.db.transaction()?;
+            for n in 1..PENDING_MAX_PER_AUTHOR {
+                tx.execute(
+                    "INSERT INTO docs_sync_records
+                         (id, kind, document_id, author, body, state, created_at, received_at)
+                     VALUES (?1, 'ver', ?2, ?3, '{}', 'pending', ?4, ?5)",
+                    params![
+                        format!("{n:064x}"),
+                        unknown_doc,
+                        sari,
+                        now_s(),
+                        if n == 1 { old.clone() } else { now_s() }
+                    ],
+                )?;
+            }
+            tx.commit()
+        })
+        .unwrap();
+    let one_more = w.remote_version(0, &unknown_doc, &[], &hash, 1);
+    let one_more = w.signed(0, &DocPayload::Ver(one_more));
+    // The batch first drops the record older than 7 days, so this still fits.
+    let got = w.ingest(1, 0, vec![one_more]);
+    assert_eq!(got.accepted, 1);
+    assert_eq!(w.pending_count(1), PENDING_MAX_PER_AUTHOR);
+    let full = w.remote_version(0, &unknown_doc, &[], &hash, 1);
+    let got = w.ingest(1, 0, vec![w.signed(0, &DocPayload::Ver(full))]);
+    assert_eq!((got.accepted, got.rejected), (0, 1));
+    assert_eq!(w.rejections(1).last().unwrap(), "docs_pending_full");
+
+    // Old waiting records are dropped at start too.
+    w.laptop(1)
+        .with(|c| {
+            c.db.execute(
+                "UPDATE docs_sync_records SET received_at = ?1 WHERE state = 'pending'",
+                params![old],
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        w.sync(1).expire_pending().unwrap(),
+        PENDING_MAX_PER_AUTHOR as usize
+    );
+    assert_eq!(w.pending_count(1), 0);
+}
+
+#[test]
+fn a_damaged_download_shows_no_hash() {
+    let w = World::new(&["Sari", "Budi"]);
+    let temp = w.laptop(1).data_dir().join("rusak.part");
+    std::fs::write(&temp, b"bukan isinya").unwrap();
+    let wanted = BlobHash::of_bytes(b"isi asli");
+    let err = w.sync(1).store_download(&wanted, &temp).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "File yang diterima dari laptop rekan rusak di jalan. Coba unduh lagi."
+    );
 }
