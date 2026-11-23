@@ -20,7 +20,12 @@
 // sampai ke C (atau ke B setelah keluar) diperiksa bersama setelah dua putaran sinkron
 // cadangan.
 //
-// Pakai:  node scripts/e2e-fitur-multi.mjs <path mira.exe> <folder screenshot> [folder screenshot v0.3]
+// Pemeriksaan 13 menguji chat v0.4 (docs/plans/v04-chat.md): chat proyek tampil sebagai
+// grup berisi anggota proyek dan ikut berubah saat anggota proyek berubah, grup yang hanya
+// berisi pembuatnya, dan lipatan sidebar yang benar-benar menyembunyikan isinya (CSS) dan
+// bertahan setelah halaman dimuat ulang.
+//
+// Pakai:  node scripts/e2e-fitur-multi.mjs <path mira.exe> <folder screenshot> [folder screenshot v0.3] [folder screenshot v0.4]
 // Build dulu: npx tauri build --no-bundle (atau --debug --no-bundle untuk build debug)
 
 import { spawn, execFileSync } from "node:child_process";
@@ -35,6 +40,8 @@ const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/fitur-multi"
 mkdirSync(shots, { recursive: true });
 const shotsV03 = resolve(process.argv[4] ?? "docs/progress/screenshots/v03-c");
 mkdirSync(shotsV03, { recursive: true });
+const shotsV04 = resolve(process.argv[5] ?? "docs/progress/screenshots/v04-chat");
+mkdirSync(shotsV04, { recursive: true });
 const ONLY_V03 = process.env.MIRA_E2E_ONLY_V03 === "1";
 const root = mkdtempSync(join(tmpdir(), "mira-fitur-multi-"));
 
@@ -186,6 +193,7 @@ const settle = (desc, fn, timeoutMs) => waitFor(desc, fn, timeoutMs).catch((e) =
 const page = (id) => running[id].page;
 const shot = (id, name) => page(id).screenshot({ path: join(shots, name) }).catch(() => {});
 const shotV03 = (id, name) => page(id).screenshot({ path: join(shotsV03, name) }).catch(() => {});
+const shotV04 = (id, name) => page(id).screenshot({ path: join(shotsV04, name) }).catch(() => {});
 const onlineNames = async (id) =>
   (await must(id, "get_network_status")).peers.filter((p) => p.online).map((p) => p.displayName).sort();
 
@@ -198,6 +206,12 @@ const sel = {
   // v0.2: "Chat pribadi dengan X"; v0.3: "Pesan pribadi dengan X".
   dmRow: (p, name) => sel.list(p).getByRole("button", { name: new RegExp(`^(Chat|Pesan) pribadi dengan ${name}(,|$)`) }),
   groupRow: (p, name) => sel.list(p).getByRole("button", { name: new RegExp(`^Grup ${name}(,|$)`) }),
+  // v0.4: chat bawaan proyek tampil seperti grup, tanpa "#".
+  projectRow: (p, name) => sel.list(p).getByRole("button", { name: new RegExp(`^Chat proyek ${name}(,|$)`) }),
+  // Juga baris di bagian terlipat (tersembunyi).
+  projectRowAny: (p, name) =>
+    sel.list(p).getByRole("button", { name: new RegExp(`^Chat proyek ${name}(,|$)`), includeHidden: true }),
+  section: (p, title) => sel.list(p).getByRole("region", { name: title, exact: true }),
   conv: (p, title) => p.getByRole("region", { name: title, exact: true }),
   log: (p) => p.getByRole("region", { name: /^Pesan di/ }),
   composer: (p) => p.getByRole("combobox", { name: /^Pesan untuk/ }),
@@ -217,6 +231,17 @@ async function goChat(id) {
 async function openChannel(id, name) {
   await sel.channelRow(page(id), name).click({ timeout: SYNC_MS });
   await sel.conv(page(id), `#${name}`).waitFor({ timeout: 15000 });
+}
+async function openProjectChat(id, name) {
+  await sel.projectRow(page(id), name).click({ timeout: SYNC_MS });
+  await sel.conv(page(id), name).waitFor({ timeout: 15000 });
+}
+// Keadaan lipat bagian menurut tampilan sungguhan: tombol, lalu CSS isi bagian.
+async function foldState(id, title) {
+  const section = sel.section(page(id), title);
+  const expanded = await section.locator("button.chat-fold").getAttribute("aria-expanded");
+  const display = await section.locator(".chat-sec-body").evaluate((el) => getComputedStyle(el).display);
+  return { expanded, display };
 }
 async function send(id, text) {
   const input = sel.composer(page(id));
@@ -820,7 +845,8 @@ try {
 
     negatives.push(async () => {
       const cOv = await ov("C");
-      const has = cOv.conversations.some((c) => c.id === groupConv || c.kind === "group");
+      // C punya grup satu orangnya sendiri (13b), jadi yang dicari grup ini atau grup lain bernama sama.
+      const has = cOv.conversations.some((c) => c.id === groupConv || (c.kind === "group" && c.name === V3.group));
       const m = await msgTexts("C", groupConv);
       const row = await sel.groupRow(page("C"), V3.group).count();
       const body = await page("C").locator("body").innerText();
@@ -842,28 +868,28 @@ try {
     const since = Date.now();
     const bConv = await settle("channel proyek ada di B", () => findConv("B", isProj));
     check(
-      "10. Channel proyek tampil di A dan B (anggota proyek) pada bagian Proyek",
+      "10. Chat proyek tampil di A dan B (anggota proyek) pada bagian Proyek",
       aConv.section === "proyek" && typeof bConv === "object" && bConv?.section === "proyek",
-      typeof bConv === "object" ? `#${aConv.name}, B setelah ${secs(since)}` : bConv,
+      typeof bConv === "object" ? `${aConv.name} (${aConv.kind}), B setelah ${secs(since)}` : bConv,
     );
     await goChat("A");
-    await openChannel("A", aConv.name);
+    await openProjectChat("A", aConv.name);
     await send("A", V3.projectMsg);
     lastSendAt = Date.now();
     const sentAt = Date.now();
     await goChat("B");
-    await openChannel("B", aConv.name);
+    await openProjectChat("B", aConv.name);
     const got = await settle("B menerima pesan proyek", async () => (await sel.message(page("B"), V3.projectMsg).count()) > 0);
-    check(`10. Pesan A di #${aConv.name} tampil di layar B`, got === true, got === true ? secs(sentAt) : got);
+    check(`10. Pesan A di chat ${aConv.name} tampil di layar B`, got === true, got === true ? secs(sentAt) : got);
     await shotV03("B", "v03c-05-channel-proyek-b.png");
 
     negatives.push(async () => {
       const cConv = await findConv("C", isProj);
       const m = await msgTexts("C", aConv.id);
       const cProjects = await must("C", "board_list_projects");
-      const row = await sel.channelRow(page("C"), aConv.name).count();
+      const row = await sel.projectRow(page("C"), aConv.name).count();
       check(
-        `10. C (bukan anggota proyek) tidak menerima #${aConv.name}, pesannya, maupun proyeknya`,
+        `10. C (bukan anggota proyek) tidak menerima chat ${aConv.name}, pesannya, maupun proyeknya`,
         !cConv && m.texts.length === 0 && row === 0 && !cProjects.some((p) => p.id === proj.id),
         `percakapan=${Boolean(cConv)}, chat_messages=${describeMsgs(m)}, baris=${row}, proyek=${cProjects.map((p) => p.code).join(",") || "kosong"}`,
       );
@@ -960,6 +986,164 @@ try {
       await sleep(500);
       await shotV03("B", "v03c-06-grup-bukan-anggota-b.png");
     });
+  }
+
+  // ---------- 13a. v0.4: chat proyek sebagai grup ----------
+  {
+    const V4 = { name: "Gudang Baru", code: "GB", msg: "Daftar barang gudang baru, khusus anggota proyek." };
+    const proj = await must("A", "board_create_project", { name: V4.name, code: V4.code, teamId: null });
+    await must("A", "org_add_project_member", { projectId: proj.id, publicKey: pk.B });
+    const isP = (c) => c.scope?.kind === "project" && c.scope?.id === proj.id;
+    const aP = await waitFor("chat proyek ada di A", () => findConv("A", isP), 30000);
+    const since = Date.now();
+    const bP = await settle("chat proyek ada di B dengan 2 anggota", async () => {
+      const c = await findConv("B", isP);
+      return c?.memberCount === 2 ? c : null;
+    });
+    const asGroup = (c) => c?.kind === "project" && c?.section === "proyek" && c?.name === V4.name && c?.memberCount === 2;
+    check(
+      "13a. Proyek baru langsung punya chat berjenis proyek (seperti grup) di A dan B: bagian Proyek, nama proyek, 2 anggota",
+      asGroup(aP) && typeof bP === "object" && asGroup(bP) && !aP.canArchive && !aP.canDelete,
+      typeof bP === "object" ? `A: ${aP.kind}/${aP.section}/${aP.name}/${aP.memberCount}; B setelah ${secs(since)}` : bP,
+    );
+    const umumLeak = [];
+    for (const id of ["A", "B", "C"]) {
+      for (const c of (await ov(id)).conversations) {
+        if ((c.kind === "project" || c.scope?.kind === "project") && c.section !== "proyek") umumLeak.push(`${id}:${c.name}=${c.section}`);
+      }
+    }
+    check("13a. Tidak ada chat proyek di luar bagian Proyek di A, B, maupun C", umumLeak.length === 0, umumLeak.join(", ") || "semua di Proyek");
+
+    await goChat("A");
+    await openProjectChat("A", V4.name);
+    await send("A", V4.msg);
+    lastSendAt = Date.now();
+    const membersBtn = page("A").getByRole("button", { name: /^Proyek · \d+ anggota/ });
+    await membersBtn.click();
+    const pop = page("A").getByRole("dialog", { name: /^Anggota/ });
+    const listed = await pop
+      .waitFor({ timeout: 10000 })
+      .then(async () => {
+        await pop.getByText(NODES.B.name).first().waitFor({ timeout: 10000 });
+        return pop.innerText();
+      })
+      .catch((e) => `gagal: ${String(e.message).slice(0, 120)}`);
+    const btnText = await membersBtn.innerText().catch(() => "");
+    check(
+      "13a. Kepala chat proyek di A: Proyek · 2 anggota, daftar memuat Ayu dan Budi dan menyebut Board",
+      btnText.includes("2 anggota") && listed.includes(NODES.A.name) && listed.includes(NODES.B.name) && /Board/.test(listed),
+      `${btnText}; ${listed.replace(/\s+/g, " ").slice(0, 200)}`,
+    );
+    await shotV04("A", "v04-02-kepala-chat-proyek-a.png");
+    await page("A").keyboard.press("Escape");
+    const arch = await call("A", "chat_set_archived", { conv: aP.id, archived: true });
+    const del = await call("A", "chat_delete_channel", { conv: aP.id });
+    check(
+      "13a. Chat proyek tidak bisa diarsipkan atau dihapus, bahkan oleh pengelola proyek",
+      !arch.ok && !del.ok,
+      `arsip: ${arch.ok ? "berhasil" : arch.error?.code}, hapus: ${del.ok ? "berhasil" : del.error?.code}`,
+    );
+
+    // C masuk proyek: chat proyek muncul di C dengan riwayatnya, jumlah anggota di A ikut naik.
+    await must("A", "org_add_project_member", { projectId: proj.id, publicKey: pk.C });
+    const addAt = Date.now();
+    const cP = await settle("C melihat chat proyek dengan 3 anggota", async () => {
+      const c = await findConv("C", isP);
+      return c?.memberCount === 3 ? c : null;
+    });
+    const cMsgs = await settle("C menerima riwayat chat proyek", async () => (await msgTexts("C", aP.id)).texts.includes(V4.msg));
+    check(
+      "13a. C ditambahkan ke proyek: chat proyek muncul di C (jenis proyek, 3 anggota) dengan pesan lama",
+      typeof cP === "object" && cP?.kind === "project" && cP?.section === "proyek" && cMsgs === true,
+      typeof cP === "object" ? `${secs(addAt)}, riwayat=${cMsgs}` : cP,
+    );
+    const aThree = await settle("kepala A menjadi 3 anggota", async () =>
+      (await page("A").getByRole("button", { name: /^Proyek · 3 anggota/ }).count()) > 0,
+    );
+    check("13a. Kepala chat proyek di A ikut menjadi Proyek · 3 anggota", aThree === true, aThree === true ? "" : aThree);
+    await goChat("C");
+    await openProjectChat("C", V4.name);
+    await shotV04("C", "v04-04-chat-proyek-c-setelah-ditambah.png");
+
+    // B dikeluarkan dari proyek: B tidak lagi anggota chat proyek, pesannya tetap terbaca.
+    await must("A", "org_remove_project_member", { projectId: proj.id, publicKey: pk.B });
+    const rmAt = Date.now();
+    const bGone = await settle("B menjadi bukan anggota chat proyek", async () => {
+      const a = await findConv("A", isP);
+      const b = await findConv("B", isP);
+      return a?.memberCount === 2 && b?.former === true ? b : null;
+    });
+    const bOld = await msgTexts("B", aP.id);
+    check(
+      "13a. B dikeluarkan dari proyek: A melihat 2 anggota, B melihat chat proyek sebagai bukan anggota lagi dengan pesan lama",
+      typeof bGone === "object" && bGone?.canPost === false && bOld.texts.includes(V4.msg),
+      typeof bGone === "object" ? `${secs(rmAt)}, pesan lama=${bOld.texts.includes(V4.msg)}` : bGone,
+    );
+  }
+
+  // ---------- 13b. v0.4: grup yang hanya berisi pembuatnya ----------
+  {
+    const pc = page("C");
+    await goChat("C");
+    await sel.list(pc).getByRole("button", { name: "Grup baru", exact: true }).click();
+    const dlg = sel.dialog(pc, "Grup baru");
+    await dlg.waitFor({ timeout: 10000 });
+    await dlg.getByLabel("Nama grup").fill("Catatan Citra");
+    await dlg.getByRole("button", { name: /^Buat grup$/ }).click();
+    await dlg.waitFor({ state: "hidden", timeout: 15000 });
+    const solo = await waitFor("grup satu orang ada di C", () => findConv("C", (c) => c.kind === "group" && c.name === "Catatan Citra"), 15000);
+    await sel.conv(pc, "Catatan Citra").waitFor({ timeout: 15000 });
+    await send("C", "Catatan untuk diri sendiri.");
+    lastSendAt = Date.now();
+    check(
+      "13b. C membuat grup tanpa memilih orang lewat dialog Grup baru: 1 anggota, bisa menulis",
+      solo.memberCount === 1 && solo.section === "grup" && solo.canPost,
+      `anggota=${solo.memberCount}, bagian=${solo.section}`,
+    );
+    negatives.push(async () => {
+      const where = [];
+      for (const id of ["A", "B"]) {
+        if ((await ov(id)).conversations.some((c) => c.id === solo.id)) where.push(id);
+        if ((await msgTexts(id, solo.id)).texts.length) where.push(`${id} (pesan)`);
+      }
+      check("13b. Grup satu orang milik C tidak sampai ke A maupun B", where.length === 0, where.join(", ") || "hanya di C");
+    });
+  }
+
+  // ---------- 13c. v0.4: lipat sidebar ----------
+  {
+    const pb = page("B");
+    await goChat("B");
+    const rowsBefore = await sel.projectRow(pb, V3.projectName).count();
+    await sel.section(pb, "Proyek").locator("button.chat-fold").click();
+    const folded = await foldState("B", "Proyek");
+    const rowsAfter = await sel.projectRowAny(pb, V3.projectName).count();
+    const rowVisible = await sel.projectRowAny(pb, V3.projectName).isVisible();
+    const grup = await foldState("B", "Grup");
+    check(
+      "13c. B melipat bagian Proyek: panah tertutup, isi tersembunyi menurut CSS, bagian lain tetap terbuka",
+      rowsBefore === 1 &&
+        rowsAfter === 1 &&
+        folded.expanded === "false" &&
+        folded.display === "none" &&
+        !rowVisible &&
+        grup.expanded === "true" &&
+        grup.display !== "none",
+      `baris sebelum=${rowsBefore}; Proyek: ${folded.expanded}/${folded.display}, baris terlihat=${rowVisible}; Grup: ${grup.expanded}/${grup.display}`,
+    );
+    await shotV04("B", "v04-03-sidebar-proyek-terlipat-b.png");
+    await pb.reload();
+    await pb.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+    await goChat("B");
+    const again = await foldState("B", "Proyek");
+    check(
+      "13c. Lipatan bagian Proyek di B bertahan setelah halaman dimuat ulang",
+      again.expanded === "false" && again.display === "none",
+      `${again.expanded}/${again.display}`,
+    );
+    await sel.section(pb, "Proyek").locator("button.chat-fold").click();
+    const open = await foldState("B", "Proyek");
+    check("13c. Bagian Proyek di B dibuka lagi", open.expanded === "true" && open.display !== "none", `${open.expanded}/${open.display}`);
   }
 
   // ---------- Yang tidak boleh sampai, setelah dua putaran sinkron cadangan ----------

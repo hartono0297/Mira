@@ -13,10 +13,10 @@ use super::model::{
 use super::read::{self, readable};
 use super::seal::{self, FileKey, SealedContent};
 use super::store::{self, Effects};
-use super::sync::{ChatSync, NOTIFY_SETTING};
+use super::sync::{ChatSync, FOLDED_SETTING, NOTIFY_SETTING};
 use super::view::{
-    ChatOverview, ConversationSummary, ConversationView, GroupView, MessageView, NewChannelScope,
-    NotifyMode, ProjectRef, ReceiptView, ScopeKind, TeamRef,
+    ChatOverview, ChatSection, ConversationSummary, ConversationView, GroupView, MessageView,
+    NewChannelScope, NotifyMode, ProjectChatView, ProjectRef, ReceiptView, ScopeKind, TeamRef,
 };
 use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
 use crate::clock;
@@ -453,6 +453,12 @@ impl ChatSync {
             if info.scope == Scope::Umum {
                 return Err(forbidden("#umum tidak bisa diarsipkan."));
             }
+            // Restoring an archive made by v0.3 stays possible.
+            if info.is_project_chat() && archived {
+                return Err(invalid(
+                    "Chat proyek ikut proyeknya dan tidak bisa diarsipkan.",
+                ));
+            }
             if !read::can_admin_channel(ctx, &info)? {
                 return Err(forbidden("Hanya admin channel ini yang bisa mengarsipkan."));
             }
@@ -482,6 +488,11 @@ impl ChatSync {
             }
             if info.scope == Scope::Umum {
                 return Err(forbidden("#umum tidak bisa dihapus."));
+            }
+            if info.is_project_chat() {
+                return Err(invalid(
+                    "Chat proyek ikut proyeknya dan tidak bisa dihapus.",
+                ));
             }
             if !read::can_admin_channel(ctx, &info)? {
                 return Err(forbidden("Hanya admin channel ini yang bisa menghapusnya."));
@@ -552,7 +563,8 @@ impl ChatSync {
     }
 
     /// A new group with this laptop's person as owner and `members` (active
-    /// members who are not guests).
+    /// members who are not guests). `members` may be empty (v0.4): the group
+    /// then holds only its creator, and people are added later.
     pub fn create_group(&self, name: &str, members: Vec<String>) -> AppResult<ConversationSummary> {
         self.with_ctx(|ctx, identity, fx| {
             require_member(ctx)?;
@@ -588,10 +600,25 @@ impl ChatSync {
         })
     }
 
+    /// The members of a project chat (the project's members on the board).
+    pub fn project_chat(&self, conv: &str) -> AppResult<ProjectChatView> {
+        self.with_ctx(|ctx, _, _| {
+            require_member(ctx)?;
+            let info = readable(ctx, conv)?;
+            if !info.is_project_chat() {
+                return Err(invalid("Percakapan ini bukan chat proyek."));
+            }
+            read::project_chat_view(ctx, &info)
+        })
+    }
+
     pub fn group_add(&self, conv: &str, members: Vec<String>) -> AppResult<()> {
         self.group_change(conv, |ctx, g, me| {
             let current: Vec<String> = g.members.iter().map(|m| m.pk.clone()).collect();
             let members = group_targets(ctx, members, me, &current)?;
+            if members.is_empty() {
+                return Err(invalid("Pilih minimal satu orang yang belum ada di grup."));
+            }
             Ok(Some(Body::GroupAdd {
                 conv: conv.to_owned(),
                 members,
@@ -682,6 +709,19 @@ impl ChatSync {
         })
     }
 
+    /// Sidebar sections folded on this laptop. Unknown names are dropped.
+    /// Nothing visible changes elsewhere, so no reload is sent.
+    pub fn set_folded(&self, sections: &[String]) -> AppResult<()> {
+        self.with_ctx(|ctx, _, _| {
+            let value: Vec<&str> = ChatSection::known(sections)
+                .into_iter()
+                .map(ChatSection::as_str)
+                .collect();
+            crate::settings::set(ctx.conn, FOLDED_SETTING, &value.join(","))?;
+            Ok(())
+        })
+    }
+
     pub fn set_muted(&self, conv: &str, muted: bool) -> AppResult<()> {
         self.with_ctx(|ctx, _, fx| {
             require_member(ctx)?;
@@ -732,9 +772,6 @@ fn group_targets(
             }
             Some(_) => out.push(pk),
         }
-    }
-    if out.is_empty() {
-        return Err(invalid("Pilih minimal satu orang yang belum ada di grup."));
     }
     if out.len() + current.len().max(1) > model::MAX_GROUP_MEMBERS {
         return Err(invalid("Satu grup paling banyak 100 orang."));
@@ -909,6 +946,12 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
     let superadmin = full && ctx.dir.is_superadmin(&me);
     let notify = crate::settings::get(ctx.conn, NOTIFY_SETTING)?
         .map_or(NotifyMode::All, |m| NotifyMode::parse(&m));
+    let folded = crate::settings::get(ctx.conn, FOLDED_SETTING)?
+        .map(|v| {
+            let names: Vec<String> = v.split(',').map(str::to_owned).collect();
+            ChatSection::known(&names)
+        })
+        .unwrap_or_default();
     Ok(ChatOverview {
         me: me.clone(),
         is_superadmin: superadmin,
@@ -924,5 +967,6 @@ fn build_overview(ctx: &Ctx) -> AppResult<ChatOverview> {
         projects,
         other_projects,
         notify,
+        folded,
     })
 }

@@ -1,21 +1,30 @@
 import { IconBell, IconBellOff, IconChevronDown, IconLock, IconPlus, IconUsers } from "@tabler/icons-react";
-import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AppError } from "../../api";
-import { CHAT_SECTIONS, type ChatOverview, type ChatSection, type ConversationSummary } from "../../api/chat";
+import {
+  CHAT_SECTIONS,
+  chatApi,
+  type ChatOverview,
+  type ChatSection,
+  type ConversationSummary,
+} from "../../api/chat";
 import { initials } from "../../components/initials";
 import {
   SECTION_TITLES,
   badgeCount,
   groupConversations,
-  readFolded,
+  sectionOf,
   sectionUnread,
   unreadText,
-  writeFolded,
 } from "./ListFormat";
 
 type Props = {
   overview: ChatOverview;
   currentId: string | null;
+  // Percakapan yang baru dibuat atau dibuka lewat dialog (grup baru, pesan pribadi baru). Kalau
+  // bagiannya terlipat, bagian itu dibuka sekali begitu percakapannya ada di daftar.
+  revealId: string | null;
+  onRevealed: () => void;
   // Muat ulang terakhir gagal: daftar lama tetap tampil dengan catatan kecil.
   staleError: AppError | null;
   onSelect: (id: string) => void;
@@ -26,9 +35,16 @@ type Props = {
   onNotify: () => void;
 };
 
+// Gagal simpan diabaikan: lipatan tetap berlaku selama layar terbuka.
+function saveFolded(next: ChatSection[]) {
+  chatApi.setFolded(next).catch(() => {});
+}
+
 export function ConversationList({
   overview,
   currentId,
+  revealId,
+  onRevealed,
   staleError,
   onSelect,
   onRetry,
@@ -37,15 +53,33 @@ export function ConversationList({
   onNewDirect,
   onNotify,
 }: Props) {
-  const [folded, setFolded] = useState<ChatSection[]>(readFolded);
+  // Dibaca sekali saat dipasang; setelah itu layar ini yang memegang lipatan.
+  const [folded, setFolded] = useState<ChatSection[]>(() => overview.folded);
   const ids = useId();
   const groups = groupConversations(overview.conversations);
 
   function toggle(section: ChatSection) {
-    const next = folded.includes(section) ? folded.filter((s) => s !== section) : [...folded, section];
+    const next = CHAT_SECTIONS.filter((s) => (s === section ? !folded.includes(s) : folded.includes(s)));
     setFolded(next);
-    writeFolded(next);
+    saveFolded(next);
   }
+
+  // Hanya aksi pengguna (grup baru, pesan pribadi baru) yang membuka bagian terlipat. Pindah
+  // otomatis, misalnya kembali ke #umum setelah percakapan dihapus, tidak mengubah lipatan.
+  // Percakapan yang belum ada di ringkasan ditunggu sampai muncul.
+  useEffect(() => {
+    if (!revealId) return;
+    const target = overview.conversations.find((c) => c.id === revealId);
+    if (!target) return;
+    const section = sectionOf(target);
+    setFolded((prev) => {
+      if (!prev.includes(section)) return prev;
+      const next = prev.filter((s) => s !== section);
+      saveFolded(next);
+      return next;
+    });
+    onRevealed();
+  }, [revealId, overview.conversations, onRevealed]);
 
   const rows = (list: ConversationSummary[]) => (
     <ul className="chat-rows">
@@ -92,7 +126,7 @@ export function ConversationList({
           <>
             {has ? rows(list) : note("Belum ada proyek yang Anda ikuti.")}
             {overview.isGuest
-              ? note("Sebagai Tamu, Anda hanya melihat channel proyek yang Anda ikuti.")
+              ? note("Sebagai Tamu, Anda hanya melihat chat proyek yang Anda ikuti.")
               : overview.otherProjects > 0 && note("Proyek lain tidak tampil karena Anda bukan anggotanya.")}
           </>
         );
@@ -172,7 +206,6 @@ export function ConversationList({
             title={SECTION_TITLES[section]}
             list={list}
             folded={folded.includes(section)}
-            pinned={list.some((c) => c.id === currentId)}
             onToggle={() => toggle(section)}
           >
             {body(section, list)}
@@ -188,20 +221,18 @@ function Section({
   title,
   list,
   folded,
-  pinned,
   onToggle,
   children,
 }: {
   id: string;
   title: string;
   list: ConversationSummary[];
+  // Terlipat menyembunyikan semua baris, termasuk percakapan yang sedang dibuka di panel kanan.
   folded: boolean;
-  // Percakapan yang sedang dibuka ada di bagian ini: bagian tetap terbuka.
-  pinned: boolean;
   onToggle: () => void;
   children: ReactNode;
 }) {
-  const open = !folded || pinned;
+  const open = !folded;
   const { unread, mentions, loud } = sectionUnread(list);
   const showCount = !open && unread > 0;
   const label = showCount ? `${title}, ${unreadText(unread, mentions)}` : title;
@@ -215,11 +246,7 @@ function Section({
           aria-expanded={open}
           aria-controls={id}
           aria-label={label}
-          aria-disabled={pinned || undefined}
-          title={pinned ? "Bagian ini tetap terbuka selama Anda membuka percakapan di dalamnya." : undefined}
-          onClick={() => {
-            if (!pinned) onToggle();
-          }}
+          onClick={onToggle}
         >
           <IconChevronDown size={16} className="chat-fold-icon" aria-hidden="true" />
           <span className="chat-fold-title">{title}</span>
@@ -245,6 +272,7 @@ function Section({
 function rowLabel(c: ConversationSummary): string {
   if (c.kind === "dm") return `Pesan pribadi dengan ${c.name}`;
   if (c.kind === "group") return `Grup ${c.name}`;
+  if (c.kind === "project") return `Chat proyek ${c.name}`;
   return `Channel ${c.name}`;
 }
 
@@ -298,7 +326,7 @@ function ListRow({
         <span className="chat-av" aria-hidden="true">
           {initials(c.name)}
         </span>
-      ) : c.kind === "group" ? (
+      ) : c.kind === "group" || c.kind === "project" ? (
         <IconUsers size={18} className="chat-kind" aria-hidden="true" />
       ) : (
         <span className="chat-hash" aria-hidden="true">

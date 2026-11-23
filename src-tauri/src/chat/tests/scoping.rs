@@ -69,7 +69,12 @@ fn guest_sees_only_its_project_and_cannot_use_chat_pribadi() {
     let ov = g.chat.overview().unwrap();
     let ids: Vec<&str> = ov.conversations.iter().map(|s| s.id.as_str()).collect();
     assert_eq!(ids, vec![p_conv.as_str()]);
-    assert_eq!(ov.conversations[0].name, "renovasi-kantor-klien");
+    // v0.4: the project chat carries the project's own name, not `#name`.
+    assert_eq!(ov.conversations[0].name, "Renovasi Kantor Klien");
+    assert_eq!(
+        ov.conversations[0].kind,
+        super::super::view::ConversationKind::Project
+    );
     assert_eq!(
         ov.conversations[0].scope.as_ref().unwrap().name,
         "Renovasi Kantor Klien"

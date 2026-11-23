@@ -28,6 +28,8 @@ function ChatScreenInner() {
   const { reload, setData } = live;
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState<Open>(null);
+  const [reveal, setReveal] = useState<string | null>(null);
+  const revealed = useCallback(() => setReveal(null), []);
 
   // Pilihan yang sudah tidak ada (channel dihapus, akses dicabut) kembali ke #umum.
   const list = overview?.conversations ?? [];
@@ -43,6 +45,7 @@ function ChatScreenInner() {
     setOpen(null);
     if (overview) setData(withConversation(overview, summary));
     setSelected(summary.id);
+    setReveal(summary.id);
     void reload();
   }
 
@@ -86,6 +89,8 @@ function ChatScreenInner() {
       <ConversationList
         overview={overview}
         currentId={current?.id ?? null}
+        revealId={reveal}
+        onRevealed={revealed}
         staleError={live.error}
         onSelect={setSelected}
         onRetry={changed}
@@ -133,13 +138,13 @@ function EmptyChat({ guest }: { guest: boolean }) {
       <h2 className="chat-empty-title">Belum ada percakapan</h2>
       {guest ? (
         <p>
-          Sebagai Tamu, Anda hanya bisa chat di channel proyek yang Anda diundang ke dalamnya. Channel itu muncul di
+          Sebagai Tamu, Anda hanya bisa chat di proyek yang Anda diundang ke dalamnya. Chat proyek itu muncul di
           bagian Proyek begitu laptop Anda tersambung dengan laptop rekan di kantor. Kalau belum muncul juga, minta
           admin proyek memeriksa undangan Anda.
         </p>
       ) : (
         <p>
-          Channel #umum, channel departemen, dan channel proyek Anda muncul di sini begitu data kantor tersalin dari
+          Channel #umum, channel departemen, dan chat proyek Anda muncul di sini begitu data kantor tersalin dari
           laptop rekan. Sementara itu Anda bisa membuat grup atau mengirim pesan pribadi dari daftar di kiri.
         </p>
       )}

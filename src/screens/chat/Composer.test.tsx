@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSummary, MessageView } from "../../api/chat";
 import { Composer } from "./Composer";
-import { budi, channel, CH, dm, DM, ME, message, PK_B, PK_C, penguji, sari } from "./conversationTestData";
+import { budi, channel, CH, dm, DM, ME, message, PK_B, PK_C, penguji, project, sari } from "./conversationTestData";
 
 const chat = vi.hoisted(() => ({
   send: vi.fn(),
@@ -205,6 +205,27 @@ describe("Komposer", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("x")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("chat proyek: label dan placeholder memakai kata Proyek, tanpa #", () => {
+    const { input } = renderComposer({ summary: project() });
+    expect(input()).toHaveAttribute("placeholder", "Tulis pesan ke Proyek Gedung Alfa");
+    expect(screen.getByLabelText("Pesan untuk Proyek Gedung Alfa")).toBe(input());
+  });
+
+  it("chat proyek bukan anggota lagi: catatan proyek walau bagiannya lain", () => {
+    renderComposer({ summary: project({ former: true, canPost: false, section: "umum" }) });
+    expect(
+      screen.getByText(
+        "Anda sudah bukan anggota proyek ini. Pesan baru tidak dikirim lagi ke laptop Anda; pesan lama tetap tersimpan di sini.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("chat proyek lama yang diarsipkan: tanpa ajakan Kembalikan dari arsip", () => {
+    renderComposer({ summary: project({ archived: true, canPost: false }) });
+    expect(screen.getByText("Chat proyek ini diarsipkan, jadi pesan baru tidak bisa dikirim.")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 

@@ -19,6 +19,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
 import { AddPeopleDialog, GroupMembers, RenameGroupDialog, useGroupView } from "./GroupMembers";
+import { ProjectMembers } from "./ProjectMembers";
 import { conversationTitle, scopeLabel } from "./text";
 
 type Props = {
@@ -51,6 +52,10 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
   const menuId = useId();
   const alive = useRef(true);
   const isGroup = summary.kind === "group";
+  // Chat proyek tampil seperti grup, tetapi anggotanya diatur di Board: tanpa tambah, keluar,
+  // ganti nama, arsip, atau hapus. Menu hanya berisi notifikasi.
+  const isProject = summary.kind === "project";
+  const groupLike = isGroup || isProject;
   const groupState = useGroupView(
     isGroup ? summary.id : null,
     `${summary.memberCount}|${summary.name}|${summary.former}`,
@@ -90,6 +95,10 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
         ? { key: "lock", label: "Buka untuk semua", icon: IconLockOpen }
         : { key: "lock", label: "Jadikan hanya-baca", icon: IconLock },
     );
+  }
+  // Chat proyek tidak bisa diarsipkan lagi (v0.4), tapi arsip lama dari v0.3 tetap bisa dikembalikan.
+  if (isProject && summary.archived && summary.canArchive) {
+    items.push({ key: "archive", label: "Kembalikan dari arsip", icon: IconArchiveOff });
   }
   if (summary.kind === "channel" && summary.canArchive) {
     items.push(
@@ -201,12 +210,12 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
             {initials(title)}
           </span>
         )}
-        {isGroup && (
+        {groupLike && (
           <span className="conv-head-icon" aria-hidden="true">
             <IconUsers size={20} />
           </span>
         )}
-        <div className={isGroup ? "conv-head-text conv-head-group" : "conv-head-text"}>
+        <div className={groupLike ? "conv-head-text conv-head-group" : "conv-head-text"}>
           <h2 className="conv-title">{title}</h2>
           {isGroup && (
             <GroupMembers
@@ -217,8 +226,11 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
               onGone={onGone}
             />
           )}
+          {isProject && (
+            <ProjectMembers conv={summary.id} memberCount={summary.memberCount} former={summary.former} />
+          )}
           <p className="conv-scope">
-            {!isGroup && <span>{scopeLabel(summary)}</span>}
+            {!groupLike && <span>{scopeLabel(summary)}</span>}
             {summary.locked && (
               <span className="chip conv-chip-muted">
                 <IconLock size={12} aria-hidden="true" />

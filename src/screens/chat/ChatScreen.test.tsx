@@ -1,9 +1,9 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConversationSummary, Person } from "../../api/chat";
+import type { ChatSection, ConversationSummary, Person } from "../../api/chat";
 import { ChatScreen } from "./ChatScreen";
-import { CHAT_FOLDED_KEY, defaultConversation, normalizeChannelName, sectionOf, unreadText } from "./ListFormat";
+import { defaultConversation, normalizeChannelName, sectionOf, unreadText } from "./ListFormat";
 import {
   BEKAS,
   DM_B,
@@ -26,6 +26,7 @@ const chat = vi.hoisted(() => ({
   createChannel: vi.fn(),
   openDm: vi.fn(),
   setNotify: vi.fn(),
+  setFolded: vi.fn(),
 }));
 
 // Ringkasan yang dikembalikan dialog grup tiruan saat "Buat tiruan" ditekan.
@@ -110,11 +111,12 @@ const rowNames = (name: string) =>
     .map((b) => b.querySelector(".chat-row-name")?.textContent);
 
 beforeEach(() => {
-  window.localStorage.clear();
   chat.overview.mockResolvedValue(overview());
   chat.createChannel.mockReset();
   chat.openDm.mockReset();
   chat.setNotify.mockResolvedValue(null);
+  chat.setFolded.mockReset();
+  chat.setFolded.mockResolvedValue(null);
   group.created = null;
 });
 
@@ -215,6 +217,11 @@ describe("ChatScreen: lima bagian", () => {
 describe("ChatScreen: melipat bagian", () => {
   it("judul bagian melipat isinya, menampilkan jumlah belum dibaca, dan diingat per laptop", async () => {
     const user = userEvent.setup();
+    // Inti menyimpan lipatan dan mengembalikannya di ringkasan berikutnya.
+    chat.setFolded.mockImplementation(async (sections: ChatSection[]) => {
+      chat.overview.mockResolvedValue(overview({ folded: sections }));
+      return null;
+    });
     const { unmount } = render(<ChatScreen />);
     await panelHeading("#umum");
 
@@ -231,7 +238,7 @@ describe("ChatScreen: melipat bagian", () => {
     expect(dept).toHaveAccessibleName("Departemen, 3 pesan belum dibaca, 1 menyebut Anda");
     expect(within(dept).getByText("3")).toHaveClass("chat-badge");
     expect(within(dept).getByText("@")).toHaveClass("chat-at");
-    expect(JSON.parse(window.localStorage.getItem(CHAT_FOLDED_KEY) ?? "[]")).toEqual(["departemen"]);
+    expect(chat.setFolded).toHaveBeenLastCalledWith(["departemen"]);
 
     // Hanya percakapan dibisukan yang belum dibaca: lencananya netral.
     await user.click(fold("Proyek"));
@@ -248,48 +255,55 @@ describe("ChatScreen: melipat bagian", () => {
 
     await user.click(fold("Departemen"));
     expect(row(/Channel tim-uji/)).toBeInTheDocument();
-    expect(JSON.parse(window.localStorage.getItem(CHAT_FOLDED_KEY) ?? "[]")).toEqual(["proyek"]);
+    expect(chat.setFolded).toHaveBeenLastCalledWith(["proyek"]);
   });
 
-  it("bagian yang berisi percakapan terbuka tetap terbuka", async () => {
+  it("bagian yang berisi percakapan terbuka bisa dilipat, percakapannya tetap terbuka", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem(CHAT_FOLDED_KEY, JSON.stringify(["umum", "grup"]));
+    chat.overview.mockResolvedValue(overview({ folded: ["grup"] }));
     render(<ChatScreen />);
     await panelHeading("#umum");
 
     const umum = fold("Umum");
     expect(umum).toHaveAttribute("aria-expanded", "true");
-    expect(umum).toHaveAttribute("aria-disabled", "true");
+    expect(umum).not.toHaveAttribute("aria-disabled");
     await user.click(umum);
-    expect(umum).toHaveAttribute("aria-expanded", "true");
+    expect(umum).toHaveAttribute("aria-expanded", "false");
+    expect(within(list()).queryByRole("button", { name: /^Channel umum/ })).not.toBeInTheDocument();
+    expect(within(panel()).getByRole("heading", { name: "#umum" })).toBeInTheDocument();
     expect(fold("Grup")).toHaveAttribute("aria-expanded", "false");
-
-    // Pindah ke Departemen: Umum kembali ke lipatan yang tersimpan.
-    await user.click(row(/Channel tim-uji/));
-    expect(fold("Umum")).toHaveAttribute("aria-expanded", "false");
-    expect(fold("Umum")).not.toHaveAttribute("aria-disabled");
+    expect(chat.setFolded).toHaveBeenLastCalledWith(["umum", "grup"]);
   });
 
-  it("tetap jalan kalau penyimpanan browser tidak bisa dipakai", async () => {
+  it("grup baru dibuat saat bagian Grup terlipat: bagian Grup dibuka lagi", async () => {
     const user = userEvent.setup();
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("diblokir");
-    });
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("diblokir");
-    });
+    const created = summary(`gr:${"6".repeat(32)}`, "Makan siang Jumat");
+    group.created = created;
+    render(<ChatScreen />);
+    await panelHeading("#umum");
+
+    await user.click(within(section("Grup")).getByRole("button", { name: "Grup baru" }));
+    // Dialog tiruan tidak modal, jadi bagian Grup bisa dilipat selagi dialog terbuka.
+    await user.click(fold("Grup"));
+    expect(fold("Grup")).toHaveAttribute("aria-expanded", "false");
+    chat.overview.mockResolvedValue(overview({ conversations: [...overview().conversations, created] }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Buat tiruan" }));
+
+    expect(fold("Grup")).toHaveAttribute("aria-expanded", "true");
+    expect(row(/^Grup Makan siang Jumat/)).toHaveAttribute("aria-current", "true");
+    expect(chat.setFolded).toHaveBeenLastCalledWith([]);
+  });
+
+  it("tetap jalan kalau lipatan gagal disimpan", async () => {
+    const user = userEvent.setup();
+    chat.setFolded.mockRejectedValue({ code: "internal", message: "database terkunci" });
     render(<ChatScreen />);
     await panelHeading("#umum");
 
     await user.click(fold("Grup"));
+    await waitFor(() => expect(chat.setFolded).toHaveBeenCalledWith(["grup"]));
     expect(fold("Grup")).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("isi penyimpanan yang rusak diabaikan", async () => {
-    window.localStorage.setItem(CHAT_FOLDED_KEY, "{bukan json");
-    render(<ChatScreen />);
-    await panelHeading("#umum");
-    expect(fold("Departemen")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("panah atas dan bawah berpindah antarbagian dan melewati bagian terlipat", async () => {
@@ -392,11 +406,11 @@ describe("ChatScreen: isi tiap bagian", () => {
     render(<ChatScreen />);
 
     expect(await screen.findByRole("heading", { name: "Belum ada percakapan" })).toBeInTheDocument();
-    expect(screen.getByText(/Sebagai Tamu, Anda hanya bisa chat di channel proyek/)).toBeInTheDocument();
+    expect(screen.getByText(/Sebagai Tamu, Anda hanya bisa chat di proyek/)).toBeInTheDocument();
     expect(headings()).toEqual(["Proyek"]);
     expect(within(section("Proyek")).getByText("Belum ada proyek yang Anda ikuti.")).toBeInTheDocument();
     expect(
-      within(section("Proyek")).getByText("Sebagai Tamu, Anda hanya melihat channel proyek yang Anda ikuti."),
+      within(section("Proyek")).getByText("Sebagai Tamu, Anda hanya melihat chat proyek yang Anda ikuti."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /baru/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pengaturan notifikasi chat" })).toBeInTheDocument();

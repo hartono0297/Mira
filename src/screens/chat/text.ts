@@ -105,12 +105,23 @@ export function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-// Judul percakapan: "#nama" untuk channel, nama rekan untuk chat pribadi.
+// Judul percakapan: "#nama" untuk channel, nama rekan untuk chat pribadi, nama grup atau
+// nama proyek apa adanya.
 export function conversationTitle(summary: ConversationSummary): string {
-  return summary.kind === "channel" ? `#${summary.name}` : (summary.peer?.name ?? summary.name);
+  if (summary.kind === "channel") return `#${summary.name}`;
+  if (summary.kind === "dm") return summary.peer?.name ?? summary.name;
+  return summary.name;
+}
+
+// Sasaran pesan di kolom tulis dan keadaan kosong: "Proyek Alfa" untuk chat proyek (tanpa
+// mengulang kata Proyek kalau namanya sudah diawali kata itu), selain itu sama dengan judul.
+export function conversationTarget(summary: ConversationSummary): string {
+  if (summary.kind !== "project") return conversationTitle(summary);
+  return /^proyek\s/i.test(summary.name) ? summary.name : `Proyek ${summary.name}`;
 }
 
 export function scopeLabel(summary: ConversationSummary): string {
+  if (summary.kind === "project") return "Proyek";
   if (summary.kind === "dm" || !summary.scope) return "Pesan pribadi";
   if (summary.scope.kind === "org") return "Seluruh kantor";
   if (summary.scope.kind === "team") return `Departemen ${summary.scope.name}`;

@@ -9,6 +9,7 @@ mod titipan;
 mod v03_groups;
 mod v03_scoping;
 mod v03_umum;
+mod v04;
 
 use super::model::{self, Body, VerifiedRecord};
 use super::testutil::Laptop;

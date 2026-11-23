@@ -42,12 +42,8 @@ export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props)
   const ids = useId();
 
   const nameError = groupNameError(name);
-  const pickError =
-    selected.length === 0
-      ? "Pilih minimal satu orang."
-      : selected.length > GROUP_PICK_MAX
-        ? `Paling banyak ${GROUP_PICK_MAX} orang sekaligus.`
-        : null;
+  // Tanpa orang dipilih boleh: grupnya berisi saya saja, orang lain ditambah belakangan.
+  const pickError = selected.length > GROUP_PICK_MAX ? `Paling banyak ${GROUP_PICK_MAX} orang sekaligus.` : null;
   const ready = !nameError && !pickError;
 
   function reset() {
@@ -114,7 +110,7 @@ export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props)
           emptyText="Belum ada rekan lain yang bisa dimasukkan ke grup. Tamu tidak bisa dimasukkan ke grup."
           hint={
             count === 0
-              ? "Belum ada yang dipilih. Tamu tidak bisa dimasukkan ke grup."
+              ? "Belum ada yang dipilih. Grup bisa dibuat berisi Anda saja, lalu tambah orang belakangan. Tamu tidak bisa dimasukkan ke grup."
               : `${count} orang dipilih, ditambah Anda. Tamu tidak bisa dimasukkan ke grup.`
           }
         />

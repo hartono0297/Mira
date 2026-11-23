@@ -39,9 +39,10 @@ export function badgeCount(n: number): string {
   return n > 99 ? "99+" : String(n);
 }
 
-// Bagian sebuah percakapan. Nilai yang tidak dikenal (inti lebih baru atau lebih lama) ditebak
-// dari jenis dan cakupannya, supaya tidak ada percakapan yang hilang dari daftar.
+// Bagian sebuah percakapan. Chat proyek selalu di Proyek. Nilai yang tidak dikenal (inti lebih baru
+// atau lebih lama) ditebak dari jenis dan cakupannya, supaya tidak ada percakapan yang hilang dari daftar.
 export function sectionOf(c: ConversationSummary): ChatSection {
+  if (c.kind === "project") return "proyek";
   if (CHAT_SECTIONS.includes(c.section)) return c.section;
   if (c.kind === "dm") return "pribadi";
   if (c.kind === "group") return "grup";
@@ -81,27 +82,6 @@ export function sectionUnread(rows: ConversationSummary[]): { unread: number; me
     if (n > 0 && !c.muted) loud = true;
   }
   return { unread, mentions, loud };
-}
-
-// Bagian yang dilipat, diingat per laptop. Penyimpanan browser bisa tidak tersedia (mode
-// privat, data situs diblokir): lipatan lalu hanya diingat selama layar terbuka.
-export const CHAT_FOLDED_KEY = "mira.chat.folded";
-
-export function readFolded(): ChatSection[] {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(CHAT_FOLDED_KEY) ?? "[]");
-    return Array.isArray(parsed) ? CHAT_SECTIONS.filter((s) => parsed.includes(s)) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function writeFolded(folded: ChatSection[]) {
-  try {
-    window.localStorage.setItem(CHAT_FOLDED_KEY, JSON.stringify(folded));
-  } catch {
-    // Lihat readFolded.
-  }
 }
 
 const active = (c: ConversationSummary) => !c.archived && !c.former;

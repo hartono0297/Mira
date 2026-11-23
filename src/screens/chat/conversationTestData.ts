@@ -8,6 +8,8 @@ import type {
   GroupView,
   MessageView,
   Person,
+  ProjectChatMember,
+  ProjectChatView,
 } from "../../api/chat";
 import type { PersonView } from "../../api/org";
 
@@ -19,6 +21,7 @@ export const DM = `dm:${ME}:${PK_B}`;
 export const GR = `gr:${"3".repeat(32)}`;
 export const PK_D = "d".repeat(64);
 export const PK_E = "e".repeat(64);
+export const PJ = `ch:${"4".repeat(32)}`;
 
 export const penguji: Person = { publicKey: ME, name: "Penguji" };
 export const sari: Person = { publicKey: PK_B, name: "Sari Uji" };
@@ -169,6 +172,43 @@ export function groupViewAsMember(extra: Partial<GroupView> = {}): GroupView {
     canRename: true,
     ...extra,
   });
+}
+
+// Chat proyek v0.4: tampil seperti grup, anggotanya anggota proyek di board.
+
+export function project(extra: Partial<ConversationSummary> = {}): ConversationSummary {
+  return channel({
+    id: PJ,
+    kind: "project",
+    section: "proyek",
+    name: "Gedung Alfa",
+    scope: { kind: "project", id: "5".repeat(32), name: "Gedung Alfa" },
+    memberCount: 3,
+    canArchive: false,
+    canDelete: false,
+    ...extra,
+  });
+}
+
+export function projectMember(person: Person, extra: Partial<ProjectChatMember> = {}): ProjectChatMember {
+  return { person, me: false, manager: false, ...extra };
+}
+
+// Sari pengelola proyek; saya dan Budi anggota biasa.
+export function projectChatView(extra: Partial<ProjectChatView> = {}): ProjectChatView {
+  return {
+    conv: PJ,
+    projectId: "5".repeat(32),
+    name: "Gedung Alfa",
+    members: [
+      projectMember(budi),
+      projectMember(penguji, { me: true }),
+      projectMember(sari, { manager: true }),
+    ],
+    canManage: false,
+    former: false,
+    ...extra,
+  };
 }
 
 export function event(extra: Partial<ConversationEvent> = {}): ConversationEvent {
