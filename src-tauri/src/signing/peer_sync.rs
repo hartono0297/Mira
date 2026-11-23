@@ -38,15 +38,43 @@
 //!    (`created`/`signed`/`completed`/`cancelled`) ditulis ulang persis dari
 //!    record yang `ok`; catatan lain (misalnya `exported`) tidak disentuh.
 //!
+//! Alasan `pending` dan `rejected` disimpan sebagai JSON [`Reason`] dengan
+//! kode tetap (modul [`code`]); layar memilih kalimat dari kode.
+//!
+//! **Id permintaan** = `request_id_for(pengirim, salt)` (salt acak di record).
+//! Record permintaan yang id-nya tidak cocok ditolak, jadi rekan tidak bisa
+//! merebut id permintaan orang lain.
+//!
 //! **Pengirim**: record satu permintaan hanya ditawarkan ke pengirim dan
 //! penanda tangannya yang anggota aktif; Tamu hanya kalau proyek permintaan
 //! diizinkan untuknya (`GuestProjects`). Disaring ulang di `records_for`.
-//! File versi (`BlobSource`) dengan aturan yang sama.
 //!
-//! **File**: setelah `ingest`, file versi sampai 20 MB yang belum ada diminta
-//! lewat `FileFetcher` (aplikasi: `HubFetcher`, lewat
-//! `FeatureHub::fetch_blob`), dan diulang saat rekan tersambung. File lebih
-//! besar diunduh dengan perintah `sign_download_file`.
+//! **File yang dikirim ke rekan** (`BlobSource`): file `H` dikirim ke `P`
+//! hanya kalau ada permintaan yang melibatkan `P` dengan `H` sebagai versi
+//! asli atau versi baru record `ok` (atau record `pending` yang hanya
+//! menunggu file versi lama), DAN orang yang memasukkan `H` ke permintaan itu
+//! (pengirim atau penanda tangan) boleh melihat setiap versi dokumen
+//! (`document_versions`) dengan isi `H` di laptop ini. Record yang ditolak
+//! tidak pernah membuat file terkirim. Saat diterima, record yang memasukkan
+//! file yang sudah dipegang laptop ini untuk dokumen atau permintaan lain yang
+//! tidak boleh dilihat penulisnya ditolak (`check_reuse`).
+//!
+//! **Batas**: paling banyak `MAX_PENDING_PER_AUTHOR` record `pending` per
+//! penulis; record `pending` untuk permintaan yang tidak dikenal dihapus
+//! setelah `ORPHAN_PENDING_DAYS` hari; record `signed` dari bukan penanda
+//! tangan permintaan yang dikenal ditolak sebelum disimpan; paling banyak
+//! `MAX_REJECTED_PER_SIGNER` record `signed` yang tidak `ok` per penanda tangan
+//! per permintaan. Fold hanya diulang kalau ada record baru tersimpan.
+//!
+//! **Bukti stempel** (`check_version`) dijalankan di luar kunci inti untuk
+//! record dari rekan dan file yang selesai diunduh (lihat `SignSync::refold`).
+//!
+//! **File yang diunduh**: versi terkini, dan versi baru dari langkah yang
+//! menunggu di atas versi terkini (`wanted_files`). Setelah `ingest`, file
+//! sampai 20 MB yang belum ada diminta lewat `FileFetcher` (aplikasi:
+//! `HubFetcher`, lewat `FeatureHub::fetch_blob`), dan diulang saat rekan
+//! tersambung. File lebih besar (atau yang ukurannya tidak diketahui)
+//! diunduh dengan perintah `sign_download_file`.
 //!
 //! **Notifikasi**: "Giliran Anda menandatangani: <judul>" sekali per
 //! (permintaan, versi) lewat `sign_notified`, saat giliran laptop ini tiba
@@ -95,6 +123,120 @@ const REJECT_CODE: &str = "sign_rejected";
 const STATE_OK: &str = "ok";
 const STATE_PENDING: &str = "pending";
 const STATE_REJECTED: &str = "rejected";
+
+/// Paling banyak record `pending` dari satu penulis (semua permintaan).
+pub const MAX_PENDING_PER_AUTHOR: i64 = 200;
+/// Record `pending` untuk permintaan yang tidak dikenal dihapus setelah ini.
+pub const ORPHAN_PENDING_DAYS: i64 = 7;
+/// Paling banyak record `signed` yang ditolak per penanda tangan per
+/// permintaan; berikutnya dibuang (dicatat di `rejected_changes`).
+pub const MAX_REJECTED_PER_SIGNER: i64 = 5;
+/// Putaran fold dengan bukti stempel di luar kunci inti (lihat `refold`).
+const MAX_PROOF_ROUNDS: usize = 64;
+
+/// Kode alasan di `sign_sync_records.reason` (lihat [`Reason`]). Layar
+/// memilih kalimat dari kode, bukan dari teks.
+pub mod code {
+    /// Penulis bukan penanda tangan permintaan ini.
+    pub const NOT_ALLOWED: &str = "not_allowed";
+    /// Mode berurutan: versi dibuat sebelum giliran penulis.
+    pub const NOT_YOUR_TURN: &str = "not_your_turn";
+    /// Penulis sudah menandatangani (versi lain miliknya yang dipakai).
+    pub const ALREADY_SIGNED: &str = "already_signed";
+    /// Permintaan sudah selesai (atau dibatalkan) di rantai.
+    pub const REQUEST_CLOSED: &str = "request_closed";
+    /// Ditandatangani bersamaan; versi `other` yang dipakai.
+    pub const SKIPPED_CONCURRENT: &str = "skipped_concurrent";
+    /// Ditandatangani di atas versi yang ditolak.
+    pub const ON_REJECTED: &str = "on_rejected";
+    /// Ditandatangani di atas versi lama yang sudah dilewati rantai.
+    pub const OUTDATED_VERSION: &str = "outdated_version";
+    /// File versi baru tidak memuat penanda dokumen permintaan ini.
+    pub const TAG_MISSING: &str = "tag_missing";
+    /// Isi record tidak sesuai (waktu, catatan selesai).
+    pub const INVALID_RECORD: &str = "invalid_record";
+    /// Record permintaan kedua dengan id yang sama.
+    pub const DUPLICATE_REQUEST: &str = "duplicate_request";
+    /// Pembatalan dari selain pengirim.
+    pub const CANCEL_NOT_REQUESTER: &str = "cancel_not_requester";
+    /// Pembatalan sampai setelah semua menandatangani.
+    pub const CANCEL_AFTER_COMPLETE: &str = "cancel_after_complete";
+    // Kode dari bukti stempel (`increment::IncrementError::code`):
+    // `version_not_prefix`, `version_changes_content`, `pdf_invalid`.
+
+    /// Menunggu: record permintaan belum sampai.
+    pub const WAITING_REQUEST: &str = "waiting_request";
+    /// Menunggu: file versi baru belum ada.
+    pub const WAITING_NEW_FILE: &str = "waiting_new_file";
+    /// Menunggu: file versi lama (yang ditandatangani) belum ada.
+    pub const WAITING_OLD_FILE: &str = "waiting_old_file";
+    /// Menunggu: langkah lain di versi yang sama menunggu file.
+    pub const WAITING_OTHER_FILE: &str = "waiting_other_file";
+    /// Menunggu: versi sebelumnya belum sampai.
+    pub const WAITING_PREVIOUS: &str = "waiting_previous";
+    /// Menunggu: bukti stempel belum diperiksa.
+    pub const CHECKING: &str = "checking";
+}
+
+/// Alasan keadaan record, disimpan sebagai JSON di `sign_sync_records.reason`
+/// (kosong untuk `ok`). `other` = kunci penanda tangan lain yang disebut
+/// (versi siapa yang dipakai pada `skipped_concurrent`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reason {
+    pub code: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<String>,
+}
+
+impl Reason {
+    pub fn new(code: &str, text: impl Into<String>) -> Self {
+        Self {
+            code: code.to_owned(),
+            text: text.into(),
+            other: None,
+        }
+    }
+
+    fn encode(&self) -> String {
+        if self.code.is_empty() {
+            return String::new();
+        }
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    /// Kebalikan `encode`. Teks lama tanpa kode menjadi kode `other`.
+    pub fn decode(s: &str) -> Reason {
+        if s.is_empty() {
+            return Reason::default();
+        }
+        serde_json::from_str(s).unwrap_or_else(|_| Reason::new("other", s))
+    }
+
+    /// Alasan dari `SignRequest::can_sign` yang gagal.
+    fn from_can_sign(e: &AppError) -> Reason {
+        let c = match e.code() {
+            "not_a_signer" => code::NOT_ALLOWED,
+            c => c,
+        };
+        Reason::new(c, e.to_string())
+    }
+}
+
+/// Id permintaan = 32 hex pertama BLAKE3("mira-sign-id\n" + kunci pengirim +
+/// "\n" + salt). Laptop lain tidak bisa memakai id permintaan orang lain.
+pub fn request_id_for(requester: &str, salt: &str) -> String {
+    let h = blake3::hash(format!("mira-sign-id\n{requester}\n{salt}").as_bytes());
+    h.to_hex()[..32].to_owned()
+}
+
+/// Salt acak 16 byte (32 hex) untuk `request_id_for`.
+pub fn new_salt() -> String {
+    use rand_core::{OsRng, RngCore};
+    let mut bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
 
 // ---------------------------------------------------------------------------
 // Bentuk record.
@@ -152,7 +294,12 @@ pub struct WireSigner {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestPayload {
+    /// `request_id_for(requested_by, salt)`.
     pub id: String,
+    /// 32 hex acak. Kosong hanya di record lama sebelum aturan id ini; record
+    /// seperti itu ditolak laptop rekan.
+    #[serde(default)]
+    pub salt: String,
     pub title: String,
     pub mode: SignMode,
     pub requested_by: String,
@@ -258,36 +405,86 @@ fn insert_record(
     Ok(())
 }
 
-/// Hasil bukti stempel `before -> after` dicatat di `sign_proof_checks`.
+/// Satu-satunya tempat bukti stempel dijalankan (lokal dan record rekan).
+/// `completing` = versi ini menutup permintaan (penanda tangan terakhir);
+/// aturan halaman tambahan bisa dibedakan di sini.
+pub fn check_version(
+    old: &[u8],
+    new: &[u8],
+    completing: bool,
+) -> Result<(), increment::IncrementError> {
+    let _ = completing;
+    increment::check_increment(old, new).map(|_| ())
+}
+
+/// Isi kolom `reason` di `sign_proof_checks`: aturan yang dipakai dan, kalau
+/// gagal, kode dan pesannya.
+#[derive(Serialize, Deserialize)]
+struct CachedProof {
+    completing: bool,
+    #[serde(default)]
+    code: String,
+    #[serde(default)]
+    text: String,
+}
+
+/// Hasil bukti stempel `before -> after` (dengan aturan `completing`)
+/// dicatat di `sign_proof_checks`.
 pub fn cache_proof(
     conn: &Connection,
     before: &str,
     after: &str,
-    result: Result<(), &str>,
+    completing: bool,
+    result: Result<(), &increment::IncrementError>,
     at: &str,
 ) -> AppResult<()> {
+    let (code, text) = match result {
+        Ok(()) => (String::new(), String::new()),
+        Err(e) => (e.code.to_owned(), e.message.clone()),
+    };
+    let reason = serde_json::to_string(&CachedProof {
+        completing,
+        code,
+        text,
+    })
+    .unwrap_or_default();
     conn.execute(
         "INSERT OR REPLACE INTO sign_proof_checks (hash_before, hash_after, ok, reason, checked_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            before,
-            after,
-            result.is_ok(),
-            result.err().unwrap_or_default(),
-            at
-        ],
+        params![before, after, result.is_ok(), reason, at],
     )?;
     Ok(())
 }
 
-fn cached_proof(conn: &Connection, before: &str, after: &str) -> AppResult<Option<(bool, String)>> {
-    Ok(conn
+/// Hasil tersimpan untuk aturan `completing`, atau `None` kalau belum ada
+/// (atau dicatat dengan aturan lain atau bentuk lama).
+fn cached_proof(
+    conn: &Connection,
+    before: &str,
+    after: &str,
+    completing: bool,
+) -> AppResult<Option<Result<(), Reason>>> {
+    let row: Option<(bool, String)> = conn
         .query_row(
             "SELECT ok, reason FROM sign_proof_checks WHERE hash_before = ?1 AND hash_after = ?2",
             params![before, after],
-            |r| Ok((r.get::<_, bool>(0)?, r.get::<_, String>(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .optional()?)
+        .optional()?;
+    let Some((ok, reason)) = row else {
+        return Ok(None);
+    };
+    let Ok(c) = serde_json::from_str::<CachedProof>(&reason) else {
+        return Ok(None);
+    };
+    if c.completing != completing || (!ok && c.code.is_empty()) {
+        return Ok(None);
+    }
+    Ok(Some(if ok {
+        Ok(())
+    } else {
+        Err(Reason::new(&c.code, c.text))
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +604,7 @@ pub fn known_size(conn: &Connection, request_id: &str, hash: &str) -> AppResult<
 pub struct RejectedVersion {
     pub signer: String,
     pub at: String,
-    pub reason: String,
+    pub reason: Reason,
 }
 
 pub fn rejected_versions(conn: &Connection, request_id: &str) -> AppResult<Vec<RejectedVersion>> {
@@ -421,7 +618,7 @@ pub fn rejected_versions(conn: &Connection, request_id: &str) -> AppResult<Vec<R
     let mut out: Vec<RejectedVersion> = load_records(conn, request_id)?
         .into_iter()
         .filter_map(|r| {
-            let reason = reasons.get(&r.id)?.clone();
+            let reason = Reason::decode(reasons.get(&r.id)?);
             let Payload::Signed(p) = r.payload else {
                 return None;
             };
@@ -596,6 +793,9 @@ fn check_request(
     if p.requested_by != author {
         return Err("pengirim permintaan bukan penulis record".into());
     }
+    if !is_lower_hex(&p.salt, 32) || p.id != request_id_for(author, &p.salt) {
+        return Err("id permintaan tidak dibuat dari kunci pengirim".into());
+    }
     check_hash(&p.original_hash)?;
     if p.original_size == 0 || p.original_size > MAX_PDF_BYTES as u64 {
         return Err("ukuran file asli tidak valid".into());
@@ -695,21 +895,44 @@ fn check_cancelled(author: &str, p: &CancelledPayload, req: Option<&RequestPaylo
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WantedFile {
     pub hash: String,
+    /// Ukuran menurut record; 0 kalau tidak diketahui.
     pub size: u64,
     /// Laptop yang kemungkinan besar memegangnya, dicoba lebih dulu.
     pub prefer: Vec<String>,
+}
+
+/// Bukti stempel `before -> after` yang diperiksa di luar kunci inti.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProofJob {
+    before: String,
+    after: String,
+    completing: bool,
 }
 
 #[derive(Debug, Default)]
 struct FoldReport {
     /// Judul permintaan kalau giliran laptop ini baru tiba (notifikasi).
     turn: Option<String>,
+    /// Bukti stempel yang belum tercatat (hanya `Checks::Defer`).
+    jobs: Vec<ProofJob>,
+}
+
+/// Cara fold menangani bukti stempel yang belum tercatat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Checks {
+    /// Diperiksa langsung, di dalam transaksi.
+    Inline,
+    /// Langkahnya menunggu (`checking`) dan pasangan versinya dilaporkan di
+    /// `FoldReport::jobs`, supaya diperiksa setelah kunci inti dilepas.
+    Defer,
 }
 
 enum Proof {
     Ok,
-    Missing,
-    Bad(String),
+    MissingNew,
+    MissingOld,
+    Unchecked(ProofJob),
+    Bad(Reason),
 }
 
 /// Isi file `hash` kalau ada dan utuh. File yang rusak dianggap belum ada.
@@ -717,45 +940,70 @@ fn read_verified(store: &dyn DocumentStore, hash: &str) -> AppResult<Option<Vec<
     Ok(store.get(hash)?.filter(|b| seal::hash_hex(b) == hash))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn proof(
     conn: &Connection,
     store: &dyn DocumentStore,
     request_id: &str,
     before: &str,
     after: &str,
+    completing: bool,
+    checks: Checks,
     now: &str,
 ) -> AppResult<Proof> {
-    let Some(new) = read_verified(store, after)? else {
-        return Ok(Proof::Missing);
-    };
-    let failed = match cached_proof(conn, before, after)? {
-        Some((ok, reason)) => (!ok).then_some(reason),
+    if !store.contains(after)? {
+        return Ok(Proof::MissingNew);
+    }
+    let mut new_bytes = None;
+    let failed = match cached_proof(conn, before, after, completing)? {
+        Some(result) => result.err(),
         None => {
-            let Some(old) = read_verified(store, before)? else {
-                return Ok(Proof::Missing);
+            if !store.contains(before)? {
+                return Ok(Proof::MissingOld);
+            }
+            if checks == Checks::Defer {
+                return Ok(Proof::Unchecked(ProofJob {
+                    before: before.to_owned(),
+                    after: after.to_owned(),
+                    completing,
+                }));
+            }
+            let Some(new) = read_verified(store, after)? else {
+                return Ok(Proof::MissingNew);
             };
-            let reason = increment::check_increment(&old, &new)
-                .err()
-                .map(|e| e.message);
+            let Some(old) = read_verified(store, before)? else {
+                return Ok(Proof::MissingOld);
+            };
+            let result = check_version(&old, &new, completing);
             cache_proof(
                 conn,
                 before,
                 after,
-                reason.as_deref().map_or(Ok(()), Err),
+                completing,
+                result.as_ref().map(|_| ()),
                 now,
             )?;
-            reason
+            new_bytes = Some(new);
+            result.err().map(|e| Reason::new(e.code, e.message))
         }
     };
     if let Some(reason) = failed {
         return Ok(Proof::Bad(reason));
     }
+    let new = match new_bytes {
+        Some(b) => b,
+        None => match read_verified(store, after)? {
+            Some(b) => b,
+            None => return Ok(Proof::MissingNew),
+        },
+    };
     // Penanda diperiksa setiap kali (tidak di-cache): pasangan hash yang sama
     // tidak boleh lolos untuk permintaan lain.
     if !seal::contains_doc_tag(&new, request_id) {
-        return Ok(Proof::Bad(
-            "File versi ini tidak memuat penanda dokumen Mira untuk permintaan ini.".into(),
-        ));
+        return Ok(Proof::Bad(Reason::new(
+            code::TAG_MISSING,
+            "File versi ini tidak memuat penanda dokumen Mira untuk permintaan ini.",
+        )));
     }
     Ok(Proof::Ok)
 }
@@ -767,6 +1015,8 @@ struct SignedRec<'a> {
     at: OffsetDateTime,
 }
 
+type Decisions<'a> = BTreeMap<&'a str, (&'static str, Reason)>;
+
 /// Menghitung ulang keadaan permintaan `request_id` dari record yang
 /// tersimpan dan menulis hasilnya. Lihat aturan di dokumentasi modul.
 fn fold(
@@ -776,9 +1026,11 @@ fn fold(
     me: &str,
     request_id: &str,
     now: &str,
+    checks: Checks,
 ) -> AppResult<FoldReport> {
     let records = load_records(tx, request_id)?;
-    let mut decision: BTreeMap<&str, (&'static str, String)> = BTreeMap::new();
+    let mut decision: Decisions<'_> = BTreeMap::new();
+    let mut report = FoldReport::default();
 
     let Some((req_rec, rp)) = records.iter().find_map(|r| match &r.payload {
         Payload::Request(p) => Some((r, p)),
@@ -789,19 +1041,25 @@ fn fold(
                 &r.id,
                 (
                     STATE_PENDING,
-                    "Menunggu data permintaan dari laptop rekan.".into(),
+                    Reason::new(
+                        code::WAITING_REQUEST,
+                        "Menunggu data permintaan dari laptop rekan.",
+                    ),
                 ),
             );
         }
         write_decisions(tx, &decision)?;
-        return Ok(FoldReport::default());
+        return Ok(report);
     };
     for r in &records {
         if matches!(r.payload, Payload::Request(_)) {
             let d = if r.id == req_rec.id {
-                (STATE_OK, String::new())
+                (STATE_OK, Reason::default())
             } else {
-                (STATE_REJECTED, "Data permintaan ganda.".into())
+                (
+                    STATE_REJECTED,
+                    Reason::new(code::DUPLICATE_REQUEST, "Data permintaan ganda."),
+                )
             };
             decision.insert(&r.id, d);
         }
@@ -850,7 +1108,7 @@ fn fold(
                 &r.id,
                 (
                     STATE_REJECTED,
-                    "Bukan penanda tangan permintaan ini.".into(),
+                    Reason::new(code::NOT_ALLOWED, "Bukan penanda tangan permintaan ini."),
                 ),
             );
             continue;
@@ -858,7 +1116,10 @@ fn fold(
         let Some(at) = parse_at(&p.signed.at) else {
             decision.insert(
                 &r.id,
-                (STATE_REJECTED, "Waktu tanda tangan tidak valid.".into()),
+                (
+                    STATE_REJECTED,
+                    Reason::new(code::INVALID_RECORD, "Waktu tanda tangan tidak valid."),
+                ),
             );
             continue;
         };
@@ -890,20 +1151,19 @@ fn fold(
         let mut winner: Option<&SignedRec<'_>> = None;
         for c in cands {
             if let Err(e) = req.can_sign(c.author) {
-                decision.insert(c.id, (STATE_REJECTED, e.to_string()));
+                decision.insert(c.id, (STATE_REJECTED, Reason::from_can_sign(&e)));
                 continue;
             }
             if let Some(w) = winner {
                 let name = signer_name(&req, w.author);
-                decision.insert(
-                    c.id,
-                    (
-                        STATE_REJECTED,
-                        format!(
-                            "Ditandatangani bersamaan dengan {name} pada versi yang sama. Versi {name} yang dipakai, jadi tanda tangani ulang versi terbaru."
-                        ),
+                let mut reason = Reason::new(
+                    code::SKIPPED_CONCURRENT,
+                    format!(
+                        "Ditandatangani bersamaan dengan {name} pada versi yang sama. Versi {name} yang dipakai, jadi tanda tangani ulang versi terbaru."
                     ),
                 );
+                reason.other = Some(w.author.to_owned());
+                decision.insert(c.id, (STATE_REJECTED, reason));
                 continue;
             }
             if stopped {
@@ -911,31 +1171,65 @@ fn fold(
                     c.id,
                     (
                         STATE_PENDING,
-                        "Menunggu file versi lain diunduh dari laptop rekan.".into(),
+                        Reason::new(
+                            code::WAITING_OTHER_FILE,
+                            "Menunggu file versi lain diunduh dari laptop rekan.",
+                        ),
                     ),
                 );
                 continue;
             }
-            if c.p.completed.is_some() != (waiting == 1) {
+            let completing = c.p.completed.is_some();
+            if completing != (waiting == 1) {
                 decision.insert(
                     c.id,
                     (
                         STATE_REJECTED,
-                        "Catatan selesai tidak sesuai dengan jumlah penanda tangan yang tersisa."
-                            .into(),
+                        Reason::new(
+                            code::INVALID_RECORD,
+                            "Catatan selesai tidak sesuai dengan jumlah penanda tangan yang tersisa.",
+                        ),
                     ),
                 );
                 continue;
             }
-            match proof(tx, store, &req.id, &current, &c.p.hash_after, now)? {
-                Proof::Missing => {
+            let pending = |c: &str, text: &str| (STATE_PENDING, Reason::new(c, text));
+            match proof(
+                tx,
+                store,
+                &req.id,
+                &current,
+                &c.p.hash_after,
+                completing,
+                checks,
+                now,
+            )? {
+                Proof::MissingNew => {
                     decision.insert(
                         c.id,
-                        (
-                            STATE_PENDING,
-                            "Menunggu file versi ini diunduh dari laptop rekan.".into(),
+                        pending(
+                            code::WAITING_NEW_FILE,
+                            "Menunggu file versi ini diunduh dari laptop rekan.",
                         ),
                     );
+                    stopped = true;
+                }
+                Proof::MissingOld => {
+                    decision.insert(
+                        c.id,
+                        pending(
+                            code::WAITING_OLD_FILE,
+                            "Menunggu file versi sebelumnya diunduh dari laptop rekan.",
+                        ),
+                    );
+                    stopped = true;
+                }
+                Proof::Unchecked(job) => {
+                    decision.insert(
+                        c.id,
+                        pending(code::CHECKING, "Isi versi ini belum diperiksa."),
+                    );
+                    report.jobs.push(job);
                     stopped = true;
                 }
                 Proof::Bad(reason) => {
@@ -950,7 +1244,7 @@ fn fold(
         let Some(w) = winner else {
             break;
         };
-        decision.insert(w.id, (STATE_OK, String::new()));
+        decision.insert(w.id, (STATE_OK, Reason::default()));
         req.record_signature(w.author, &w.p.signed.at, &w.p.hash_after)?;
         if let Some(rec) = w.p.signed.record(&req.id) {
             events.push((rec, w.p.signed.sig.clone()));
@@ -982,7 +1276,10 @@ fn fold(
                 s.id,
                 (
                     STATE_REJECTED,
-                    "Ditandatangani di atas versi yang ditolak.".into(),
+                    Reason::new(
+                        code::ON_REJECTED,
+                        "Ditandatangani di atas versi yang ditolak.",
+                    ),
                 ),
             );
             progressed = true;
@@ -996,16 +1293,18 @@ fn fold(
             continue;
         }
         let d = if !stopped && chain.contains(&s.p.hash_before) {
-            let reason = req
-                .can_sign(s.author)
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "Versi ini sudah dilewati.".into());
+            let reason = match req.can_sign(s.author) {
+                Err(e) => Reason::from_can_sign(&e),
+                Ok(_) => Reason::new(code::OUTDATED_VERSION, "Versi ini sudah dilewati."),
+            };
             (STATE_REJECTED, reason)
         } else {
             (
                 STATE_PENDING,
-                "Menunggu versi sebelumnya dari laptop rekan.".into(),
+                Reason::new(
+                    code::WAITING_PREVIOUS,
+                    "Menunggu versi sebelumnya dari laptop rekan.",
+                ),
             )
         };
         decision.insert(s.id, d);
@@ -1022,7 +1321,10 @@ fn fold(
                 &r.id,
                 (
                     STATE_REJECTED,
-                    "Hanya pengirim permintaan yang bisa membatalkannya.".into(),
+                    Reason::new(
+                        code::CANCEL_NOT_REQUESTER,
+                        "Hanya pengirim permintaan yang bisa membatalkannya.",
+                    ),
                 ),
             );
             continue;
@@ -1036,8 +1338,10 @@ fn fold(
                 &r.id,
                 (
                     STATE_REJECTED,
-                    "Semua penanda tangan sudah menandatangani sebelum pembatalan sampai, jadi pembatalan tidak berlaku."
-                        .into(),
+                    Reason::new(
+                        code::CANCEL_AFTER_COMPLETE,
+                        "Semua penanda tangan sudah menandatangani sebelum pembatalan sampai, jadi pembatalan tidak berlaku.",
+                    ),
                 ),
             );
         }
@@ -1050,7 +1354,7 @@ fn fold(
             events.push((rec, p.cancelled.sig.clone()));
         }
         for (r, _, _) in &cancels {
-            decision.insert(&r.id, (STATE_OK, String::new()));
+            decision.insert(&r.id, (STATE_OK, Reason::default()));
         }
     }
     req.updated_at = latest.1;
@@ -1068,7 +1372,6 @@ fn fold(
     write_events(tx, &req.id, &events)?;
     write_decisions(tx, &decision)?;
 
-    let mut report = FoldReport::default();
     if req.can_sign(me).is_ok() && store.contains(&req.current_hash)? {
         let n = tx.execute(
             "INSERT OR IGNORE INTO sign_notified (request_id, hash, notified_at) VALUES (?1, ?2, ?3)",
@@ -1127,24 +1430,28 @@ fn write_events(
     Ok(())
 }
 
-fn write_decisions(
-    tx: &Connection,
-    decision: &BTreeMap<&str, (&'static str, String)>,
-) -> AppResult<()> {
+fn write_decisions(tx: &Connection, decision: &Decisions<'_>) -> AppResult<()> {
     let mut stmt =
         tx.prepare_cached("UPDATE sign_sync_records SET state = ?1, reason = ?2 WHERE id = ?3")?;
     for (id, (state, reason)) in decision {
-        stmt.execute(params![state, reason, id])?;
+        stmt.execute(params![state, reason.encode(), id])?;
     }
     Ok(())
 }
 
-/// File versi yang dibutuhkan permintaan ini dan belum ada: versi asli dan
-/// versi dari record `ok` atau `pending`.
+/// File versi yang dibutuhkan permintaan ini dan belum ada di laptop ini:
+/// versi terkini (untuk dibaca dan ditandatangani), dan versi baru dari
+/// langkah yang menunggu di atas versi terkini
+/// (fold membutuhkan versi lama dan baru untuk bukti stempel). Versi asli
+/// dan versi antara tidak diminta.
+///
+/// `verify`: file yang ada tetapi rusak dihitung belum ada (membaca seluruh
+/// isi file). Tanpa `verify` cukup diperiksa keberadaannya.
 fn wanted_files(
     conn: &Connection,
     store: &dyn DocumentStore,
     request_id: &str,
+    verify: bool,
 ) -> AppResult<Vec<WantedFile>> {
     let records = load_records(conn, request_id)?;
     let Some(rp) = records.iter().find_map(|r| match &r.payload {
@@ -1153,9 +1460,20 @@ fn wanted_files(
     }) else {
         return Ok(Vec::new());
     };
+    let Some(req) = repo::load_request(conn, request_id)? else {
+        return Ok(Vec::new());
+    };
     let mut out: Vec<WantedFile> = Vec::new();
     let mut add = |hash: &str, size: u64, prefer: Vec<String>| -> AppResult<()> {
-        if !out.iter().any(|w| w.hash == hash) && read_verified(store, hash)?.is_none() {
+        if out.iter().any(|w| w.hash == hash) {
+            return Ok(());
+        }
+        let present = if verify {
+            read_verified(store, hash)?.is_some()
+        } else {
+            store.contains(hash)?
+        };
+        if !present {
             out.push(WantedFile {
                 hash: hash.to_owned(),
                 size,
@@ -1164,16 +1482,33 @@ fn wanted_files(
         }
         Ok(())
     };
-    add(
-        &rp.original_hash,
-        rp.original_size,
-        vec![rp.requested_by.clone()],
-    )?;
+
+    let current = req.current_hash.as_str();
+    if current == rp.original_hash {
+        add(current, rp.original_size, vec![rp.requested_by.clone()])?;
+    } else {
+        let made = records.iter().find_map(|r| match &r.payload {
+            Payload::Signed(p) if r.state == STATE_OK && p.hash_after == current => {
+                Some((p.size, r.author.clone()))
+            }
+            _ => None,
+        });
+        let (size, author) = made.unwrap_or((0, rp.requested_by.clone()));
+        let mut prefer = vec![author];
+        if prefer[0] != rp.requested_by {
+            prefer.push(rp.requested_by.clone());
+        }
+        add(current, size, prefer)?;
+    }
+    // Juga saat tampil dibatalkan: pembatalan baru berlaku kalau langkah
+    // yang menunggu ternyata tidak menyelesaikan permintaan.
     for r in &records {
-        if r.state == STATE_REJECTED {
+        if r.state != STATE_PENDING {
             continue;
         }
-        if let Payload::Signed(p) = &r.payload {
+        if let Payload::Signed(p) = &r.payload
+            && p.hash_before == current
+        {
             add(
                 &p.hash_after,
                 p.size,
@@ -1182,6 +1517,79 @@ fn wanted_files(
         }
     }
     Ok(out)
+}
+
+/// Jumlah byte file yang masih harus diunduh untuk permintaan ini
+/// (`wanted_files` tanpa `verify`): `Some(0)` kalau tidak ada, `None` kalau
+/// ukuran salah satunya tidak diketahui.
+pub fn download_size(
+    conn: &Connection,
+    store: &dyn DocumentStore,
+    request_id: &str,
+) -> AppResult<Option<u64>> {
+    let wanted = wanted_files(conn, store, request_id, false)?;
+    if wanted.iter().any(|w| w.size == 0) {
+        return Ok(None);
+    }
+    Ok(Some(wanted.iter().map(|w| w.size).sum()))
+}
+
+/// Ada file permintaan ini yang sedang diunduh proses ini.
+pub fn downloading(
+    conn: &Connection,
+    store: &dyn DocumentStore,
+    request_id: &str,
+) -> AppResult<bool> {
+    Ok(wanted_files(conn, store, request_id, false)?
+        .iter()
+        .any(|w| is_downloading(store, &w.hash)))
+}
+
+// ---------------------------------------------------------------------------
+// Unduhan yang sedang berjalan (`downloading` di layar).
+// ---------------------------------------------------------------------------
+
+fn in_flight() -> &'static Mutex<HashSet<PathBuf>> {
+    static SET: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    SET.get_or_init(Default::default)
+}
+
+/// Benar selama proses ini mengunduh file `hash` ke `store`.
+pub fn is_downloading(store: &dyn DocumentStore, hash: &str) -> bool {
+    let Some(key) = store.download_key(hash) else {
+        return false;
+    };
+    in_flight()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&key)
+}
+
+/// Satu unduhan satu file ke satu penyimpanan; dilepas saat di-drop.
+pub struct Downloading(Option<PathBuf>);
+
+impl Downloading {
+    /// `None` kalau file itu sedang diunduh.
+    pub fn begin(store: &dyn DocumentStore, hash: &str) -> Option<Downloading> {
+        let Some(key) = store.download_key(hash) else {
+            return Some(Downloading(None));
+        };
+        let mut set = in_flight().lock().unwrap_or_else(|e| e.into_inner());
+        // `then`, bukan `then_some`: `Downloading` yang dibuat lalu di-drop di
+        // sini mengunci `in_flight()` lagi selagi `set` memegangnya (deadlock).
+        set.insert(key.clone()).then(|| Downloading(Some(key)))
+    }
+}
+
+impl Drop for Downloading {
+    fn drop(&mut self) {
+        if let Some(key) = self.0.take() {
+            in_flight()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1231,24 +1639,52 @@ impl SignSync {
         &self.store
     }
 
-    /// Menjalankan fold untuk `ids` dalam satu transaksi, lalu menampilkan
-    /// notifikasi giliran dan meminta file yang kecil.
+    /// Fold untuk `ids`, lalu notifikasi giliran dan permintaan file kecil.
+    ///
+    /// Bukti stempel (`check_version`, berat untuk PDF besar) tidak dijalankan
+    /// di bawah kunci inti: fold berjalan dengan `Checks::Defer`, dan kalau ada
+    /// pasangan versi yang belum diperiksa, transaksinya dibatalkan, pasangan
+    /// itu diperiksa tanpa kunci (`check_jobs`), hasilnya dicatat, lalu fold
+    /// diulang. Setelah `MAX_PROOF_ROUNDS` putaran, atau kalau file hilang di
+    /// tengah jalan, fold terakhir memeriksa langsung (`Checks::Inline`).
     fn refold(&self, ids: &[String]) -> AppResult<()> {
         let now = clock::now_rfc3339();
-        let (turns, wanted) = self.state.with_core(|core| {
-            let me = core.identity.public_key_hex().to_owned();
-            let state = permissions::load_state(&core.db)?;
-            let tx = core.db.transaction()?;
-            let mut turns = Vec::new();
-            let mut wanted = Vec::new();
-            for id in ids {
-                let report = fold(&tx, &self.store, state.as_ref(), &me, id, &now)?;
-                turns.extend(report.turn);
-                wanted.extend(wanted_files(&tx, &self.store, id)?);
+        let mut checks = Checks::Defer;
+        let mut rounds = 0;
+        let (turns, wanted) = loop {
+            let step = self.state.with_core(|core| {
+                let me = core.identity.public_key_hex().to_owned();
+                let state = permissions::load_state(&core.db)?;
+                let tx = core.db.transaction()?;
+                let mut turns = Vec::new();
+                let mut jobs = Vec::new();
+                for id in ids {
+                    let report = fold(&tx, &self.store, state.as_ref(), &me, id, &now, checks)?;
+                    turns.extend(report.turn);
+                    jobs.extend(report.jobs);
+                }
+                if !jobs.is_empty() {
+                    // `tx` dibatalkan saat di-drop.
+                    return Ok(Err(jobs));
+                }
+                let mut wanted = Vec::new();
+                for id in ids {
+                    wanted.extend(wanted_files(&tx, &self.store, id, true)?);
+                }
+                tx.commit()?;
+                Ok(Ok((turns, wanted)))
+            })?;
+            match step {
+                Ok(done) => break done,
+                Err(jobs) => {
+                    rounds += 1;
+                    let complete = self.check_jobs(&jobs, &now)?;
+                    if !complete || rounds >= MAX_PROOF_ROUNDS {
+                        checks = Checks::Inline;
+                    }
+                }
             }
-            tx.commit()?;
-            Ok((turns, wanted))
-        })?;
+        };
         for title in turns {
             // Notifikasi yang gagal tidak membatalkan sinkron.
             let _ = self.notifier.notify(TURN_TITLE, &title);
@@ -1257,10 +1693,44 @@ impl SignSync {
         Ok(())
     }
 
+    /// Bukti stempel `jobs` tanpa kunci inti; hasilnya dicatat di
+    /// `sign_proof_checks`. `false` kalau ada file yang hilang atau rusak.
+    fn check_jobs(&self, jobs: &[ProofJob], now: &str) -> AppResult<bool> {
+        let mut complete = true;
+        let mut results = Vec::new();
+        for (i, job) in jobs.iter().enumerate() {
+            if jobs[..i].contains(job) {
+                continue;
+            }
+            let old = read_verified(&self.store, &job.before)?;
+            let new = read_verified(&self.store, &job.after)?;
+            let (Some(old), Some(new)) = (old, new) else {
+                complete = false;
+                continue;
+            };
+            results.push((job, check_version(&old, &new, job.completing)));
+        }
+        self.state.with_core(|core| {
+            for (job, result) in &results {
+                cache_proof(
+                    &core.db,
+                    &job.before,
+                    &job.after,
+                    job.completing,
+                    result.as_ref().map(|_| ()),
+                    now,
+                )?;
+            }
+            Ok(())
+        })?;
+        Ok(complete)
+    }
+
     fn request_files(&self, wanted: &[WantedFile], first: Option<&str>) {
         let mut seen = HashSet::new();
         for w in wanted {
-            if w.size > AUTO_REPLICATE_MAX_BYTES || !seen.insert(w.hash.as_str()) {
+            // Ukuran 0 = tidak diketahui: hanya lewat `sign_download_file`.
+            if w.size == 0 || w.size > AUTO_REPLICATE_MAX_BYTES || !seen.insert(w.hash.as_str()) {
                 continue;
             }
             let mut prefer: Vec<String> = first.map(str::to_owned).into_iter().collect();
@@ -1274,11 +1744,11 @@ impl SignSync {
         }
     }
 
-    /// Semua file versi permintaan `request_id` yang belum ada (berapa pun
-    /// ukurannya), untuk perintah `sign_download_file`.
+    /// File yang dibutuhkan permintaan `request_id` dan belum ada (berapa pun
+    /// ukurannya), untuk perintah `sign_download_file`. Lihat `wanted_files`.
     pub fn missing_files(&self, request_id: &str) -> AppResult<Vec<WantedFile>> {
         self.state
-            .with_core(|core| wanted_files(&core.db, &self.store, request_id))
+            .with_core(|core| wanted_files(&core.db, &self.store, request_id, true))
     }
 
     /// File `expected_hash` sudah diunduh ke `path`: simpan ke blob store,
@@ -1329,18 +1799,52 @@ impl SignSync {
         }
         let request_id = opened.payload.request_id().to_owned();
         let known = request_payload(conn, &request_id).map_err(to_msg)?;
+        let guests = self.guests.as_ref();
         match &opened.payload {
             Payload::Request(p) => {
                 if known.is_some() {
                     return Err("id permintaan sudah dipakai".into());
                 }
-                check_request(conn, state, self.guests.as_ref(), &author, p)?;
-                if !involved(conn, state, self.guests.as_ref(), me, p).map_err(to_msg)? {
+                check_request(conn, state, guests, &author, p)?;
+                if !involved(conn, state, guests, me, p).map_err(to_msg)? {
                     return Err("laptop ini tidak terlibat dalam permintaan itu".into());
                 }
+                check_reuse(conn, state, guests, &author, &p.original_hash, None)?;
             }
-            Payload::Signed(p) => check_signed(&author, p, known.as_ref())?,
+            Payload::Signed(p) => {
+                check_signed(&author, p, known.as_ref())?;
+                if known.is_some() {
+                    let open = count(
+                        conn,
+                        "SELECT COUNT(*) FROM sign_sync_records
+                         WHERE request_id = ?1 AND author = ?2 AND kind = 'signed' AND state != 'ok'",
+                        params![request_id, author],
+                    )?;
+                    if open >= MAX_REJECTED_PER_SIGNER {
+                        return Err(
+                            "terlalu banyak versi yang ditolak atau menunggu dari penanda tangan ini"
+                                .into(),
+                        );
+                    }
+                    check_reuse(
+                        conn,
+                        state,
+                        guests,
+                        &author,
+                        &p.hash_after,
+                        Some(&request_id),
+                    )?;
+                }
+            }
             Payload::Cancelled(p) => check_cancelled(&author, p, known.as_ref())?,
+        }
+        let pending = count(
+            conn,
+            "SELECT COUNT(*) FROM sign_sync_records WHERE author = ?1 AND state = 'pending'",
+            params![author],
+        )?;
+        if pending >= MAX_PENDING_PER_AUTHOR {
+            return Err("terlalu banyak record menunggu dari penulis ini".into());
         }
         insert_record(
             conn,
@@ -1376,6 +1880,142 @@ impl SignSync {
             out.extend(ids);
         }
         Ok(out)
+    }
+}
+
+fn count(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> Check<i64> {
+    conn.query_row(sql, params, |r| r.get(0))
+        .map_err(|e| e.to_string())
+}
+
+/// Menghapus record `pending` dari rekan untuk permintaan yang tidak dikenal
+/// setelah `ORPHAN_PENDING_DAYS` hari.
+fn expire_orphans(conn: &Connection, now: OffsetDateTime) -> AppResult<usize> {
+    let rows: Vec<(String, Option<String>)> = conn
+        .prepare(
+            "SELECT id, received_at FROM sign_sync_records
+             WHERE state = 'pending' AND received_at IS NOT NULL
+               AND request_id NOT IN (SELECT request_id FROM sign_sync_records WHERE kind = 'request')",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let cutoff = now - time::Duration::days(ORPHAN_PENDING_DAYS);
+    let mut removed = 0;
+    for (id, received) in rows {
+        if received
+            .as_deref()
+            .and_then(parse_at)
+            .is_some_and(|t| t < cutoff)
+        {
+            removed += conn.execute("DELETE FROM sign_sync_records WHERE id = ?1", params![id])?;
+        }
+    }
+    Ok(removed)
+}
+
+/// Siapa yang memasukkan file `hash` ke permintaan `request_id`, untuk
+/// file yang boleh dikirim ke rekan: pengirim (versi asli), penanda tangan
+/// record `ok`, dan penanda tangan record `pending` yang hanya menunggu file
+/// versi lama (versi barunya ada di sini tetapi belum bisa diperiksa).
+/// Record yang ditolak atau menunggu karena hal lain tidak dihitung.
+fn introducers(conn: &Connection, request_id: &str, hash: &str) -> AppResult<Vec<String>> {
+    let states: HashMap<String, (String, String)> = conn
+        .prepare_cached("SELECT id, state, reason FROM sign_sync_records WHERE request_id = ?1")?
+        .query_map(params![request_id], |r| {
+            Ok((r.get(0)?, (r.get(1)?, r.get(2)?)))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut out = Vec::new();
+    if let Some(p) = request_payload(conn, request_id)?
+        && p.original_hash == hash
+    {
+        out.push(p.requested_by);
+    }
+    for r in load_records(conn, request_id)? {
+        let Payload::Signed(p) = &r.payload else {
+            continue;
+        };
+        if p.hash_after != hash {
+            continue;
+        }
+        let Some((state, reason)) = states.get(&r.id) else {
+            continue;
+        };
+        let serves = state == STATE_OK
+            || (state == STATE_PENDING && Reason::decode(reason).code == code::WAITING_OLD_FILE);
+        if serves && !out.contains(&r.author) {
+            out.push(r.author);
+        }
+    }
+    Ok(out)
+}
+
+/// `pk` boleh memegang file `hash` menurut pemakaian lain file itu di
+/// laptop ini: setiap versi dokumen dengan isi itu ada di cakupan yang boleh
+/// dilihat `pk`, dan (kalau `except` diisi) setiap permintaan tanda tangan
+/// lain yang memakainya melibatkan `pk`.
+fn may_hold(
+    conn: &Connection,
+    state: &OrgState,
+    guests: &dyn GuestProjects,
+    pk: &str,
+    hash: &str,
+    except: Option<&str>,
+) -> AppResult<bool> {
+    let scopes: Vec<(Option<String>, Option<String>)> = conn
+        .prepare_cached(
+            "SELECT d.team_id, d.project_id FROM document_versions v
+             JOIN documents d ON d.id = v.document_id WHERE v.blob_hash = ?1",
+        )?
+        .query_map(params![hash], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (team_id, project_id) in scopes {
+        let scope = DocScope {
+            team_id,
+            project_id,
+        };
+        if !crate::documents::scope::may_view(conn, state, guests, pk, &scope)? {
+            return Ok(false);
+        }
+    }
+    let Some(except) = except else {
+        return Ok(true);
+    };
+    for id in requests_using(conn, hash)? {
+        if id == except || introducers(conn, &id, hash)?.is_empty() {
+            continue;
+        }
+        if let Some(p) = request_payload(conn, &id)?
+            && !involved(conn, state, guests, pk, &p)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Record baru dari `author` yang memasukkan file `hash` ditolak kalau
+/// laptop ini sudah memegang file itu untuk hal yang tidak boleh dilihat
+/// `author` (lihat `may_hold`). Tanpa aturan ini, rekan yang tahu hash
+/// sebuah file bisa memintanya lewat permintaan buatan.
+///
+/// Versi asli permintaan (`signed_in` = `None`) hanya dibandingkan dengan
+/// versi dokumen: dua pengirim boleh memakai PDF yang sama persis (misalnya
+/// formulir baku). Versi bertanda tangan (`signed_in` = id permintaannya)
+/// juga tidak boleh berupa file permintaan lain yang tidak melibatkan
+/// penulisnya: versi yang sah selalu memuat penanda permintaannya sendiri.
+fn check_reuse(
+    conn: &Connection,
+    state: &OrgState,
+    guests: &dyn GuestProjects,
+    author: &str,
+    hash: &str,
+    signed_in: Option<&str>,
+) -> Check<()> {
+    if may_hold(conn, state, guests, author, hash, signed_in).map_err(to_msg)? {
+        Ok(())
+    } else {
+        Err("file versi ini sudah dipakai di laptop ini untuk data yang tidak boleh dilihat penulis".into())
     }
 }
 
@@ -1469,6 +2109,7 @@ impl FeatureSync for SignSync {
                     return Ok(Vec::new());
                 };
                 let tx = core.db.transaction()?;
+                expire_orphans(&tx, now_t)?;
                 let mut touched: Vec<String> = Vec::new();
                 for rec in &records {
                     match self.ingest_one(&tx, &state, &me, rec, &now) {
@@ -1507,7 +2148,7 @@ impl FeatureSync for SignSync {
         let wanted = self.state.with_core(|core| {
             let mut all = Vec::new();
             for p in all_requests(&core.db)? {
-                all.extend(wanted_files(&core.db, &self.store, &p.id)?);
+                all.extend(wanted_files(&core.db, &self.store, &p.id, false)?);
             }
             Ok(all)
         });
@@ -1528,11 +2169,18 @@ impl BlobSource for SignSync {
                 let Some(state) = permissions::load_state(&core.db)? else {
                     return Ok(false);
                 };
+                let guests = self.guests.as_ref();
                 for id in requests_using(&core.db, hash)? {
-                    if let Some(p) = request_payload(&core.db, &id)?
-                        && involved(&core.db, &state, self.guests.as_ref(), peer, &p)?
-                    {
-                        return Ok(true);
+                    let Some(p) = request_payload(&core.db, &id)? else {
+                        continue;
+                    };
+                    if !involved(&core.db, &state, guests, peer, &p)? {
+                        continue;
+                    }
+                    for author in introducers(&core.db, &id, hash)? {
+                        if may_hold(&core.db, &state, guests, &author, hash, None)? {
+                            return Ok(true);
+                        }
                     }
                 }
                 Ok(false)
@@ -1558,7 +2206,6 @@ pub struct HubFetcher {
     app: tauri::AppHandle,
     hub: Arc<crate::network::feature::FeatureHub>,
     sync: OnceLock<Weak<SignSync>>,
-    inflight: Arc<Mutex<HashSet<String>>>,
 }
 
 impl HubFetcher {
@@ -1567,7 +2214,6 @@ impl HubFetcher {
             app,
             hub,
             sync: OnceLock::new(),
-            inflight: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -1587,37 +2233,28 @@ impl FileFetcher for HubFetcher {
         let Some(sync) = self.sync.get().and_then(Weak::upgrade) else {
             return;
         };
-        {
-            let mut set = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-            if !set.insert(hash.to_owned()) {
-                return;
-            }
-        }
-        let Ok(dest) = sync.download_path(hash) else {
-            self.inflight
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(hash);
+        let Some(guard) = Downloading::begin(sync.store(), hash) else {
             return;
         };
-        let (app, hub, inflight) = (self.app.clone(), self.hub.clone(), self.inflight.clone());
+        let Ok(dest) = sync.download_path(hash) else {
+            return;
+        };
+        let (app, hub) = (self.app.clone(), self.hub.clone());
         let (hash, prefer) = (hash.to_owned(), prefer.to_vec());
+        // Layar memuat ulang dan menampilkan "sedang disalin".
+        emit_changed(&app);
         tauri::async_runtime::spawn(async move {
             let fetched = hub.fetch_blob(&hash, max_size, prefer, &dest).await;
             if fetched.is_ok() {
                 let (h, d) = (hash.clone(), dest.clone());
-                let done =
+                let _ =
                     tauri::async_runtime::spawn_blocking(move || sync.add_downloaded(&d, &h)).await;
-                if matches!(done, Ok(Ok(()))) {
-                    emit_changed(&app);
-                }
             } else {
                 let _ = std::fs::remove_file(&dest);
             }
-            inflight
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&hash);
+            // Selesai (berhasil atau tidak): "sedang disalin" hilang dari layar.
+            drop(guard);
+            emit_changed(&app);
         });
     }
 }

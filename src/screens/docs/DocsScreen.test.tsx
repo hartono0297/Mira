@@ -475,6 +475,39 @@ describe("Layar Dokumen", () => {
     expect(await within(row("gambar-kerja.docx")).findByRole("button", { name: "Edit di Word gambar-kerja.docx" })).toBeInTheDocument();
   });
 
+  it("unduhan yang berjalan tidak menahan aksi lain; versi yang masih disalin dikabarkan apa adanya", async () => {
+    const user = userEvent.setup();
+    setup([besar, laporan]);
+    let finish: (value: DocumentSummary) => void = () => {};
+    docsApi.downloadVersion.mockImplementation(() => new Promise<DocumentSummary>((resolve) => (finish = resolve)));
+    docsApi.startEdit.mockResolvedValue(laporan);
+    render(<DocsScreen />);
+
+    await screen.findByText("gambar-kerja.docx", { selector: ".doc-name" });
+    const rowDownload = within(row("gambar-kerja.docx")).getByRole("button", {
+      name: "Unduh dari rekan (45 MB) gambar-kerja.docx",
+    });
+    await user.click(rowDownload);
+    expect(rowDownload).toHaveAttribute("aria-busy", "true");
+
+    // Aksi lain tetap bisa dijalankan selama unduhan berjalan.
+    const edit = within(row("laporan-bulanan.docx")).getByRole("button", { name: "Edit di Word laporan-bulanan.docx" });
+    expect(edit).not.toHaveAttribute("aria-disabled");
+    await user.click(edit);
+    expect(docsApi.startEdit).toHaveBeenCalledWith("d1", null);
+    expect(await screen.findByText(/laporan-bulanan\.docx dibuka di Word/)).toBeInTheDocument();
+    // Unduhan yang sama tetap tidak bisa diulang.
+    expect(rowDownload).toHaveAttribute("aria-disabled", "true");
+    await user.click(rowDownload);
+    expect(docsApi.downloadVersion).toHaveBeenCalledTimes(1);
+
+    // Inti melewati versi yang sedang disalin otomatis: belum "sudah ada".
+    const copying = { ...besar, current: { ...besar.current, downloading: true } };
+    await act(async () => finish(copying));
+    expect(await screen.findByText("Versi 2 sedang disalin. Daftar diperbarui begitu selesai.")).toBeInTheDocument();
+    expect(screen.queryByText(/sudah ada di laptop ini/)).toBeNull();
+  });
+
   it("unduhan gagal karena tidak ada rekan yang menyimpan file: pesan dengan kata biasa", async () => {
     const user = userEvent.setup();
     setup([besar]);

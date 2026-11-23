@@ -5,7 +5,7 @@ import type { AppError } from "../../api";
 import type { DocumentDetail as Detail, DocumentSummary, DocumentVersion } from "../../api/documents";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
-import { keys, type DocActions } from "./actions";
+import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
 import {
   appName,
@@ -58,10 +58,11 @@ function ActionButton({
   primary?: boolean;
   onClick: () => void;
 }) {
-  const busy = actions.pending === pendingKey;
-  // Selama aksi lain berjalan, tombol ini menunggu. aria-disabled menjaga fokus
-  // keyboard tetap di tombol (disabled membuang fokus di WebView2).
-  const blocked = actions.pending !== null;
+  const busy = isBusy(actions, pendingKey);
+  // Selama aksi lain yang mengubah data berjalan, tombol ini menunggu.
+  // aria-disabled menjaga fokus keyboard tetap di tombol (disabled membuang
+  // fokus di WebView2).
+  const blocked = isBlocked(actions, pendingKey);
   return (
     <button
       type="button"

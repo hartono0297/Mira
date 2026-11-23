@@ -51,6 +51,13 @@ pub trait DocumentStore: Send + Sync {
     fn size(&self, hash: &str) -> AppResult<Option<u64>> {
         Ok(self.get(hash)?.map(|b| b.len() as u64))
     }
+    /// Kunci unduhan yang sedang berjalan untuk `hash` di penyimpanan ini
+    /// (`peer_sync::Downloading`), atau `None` kalau penyimpanan ini tidak
+    /// menerima unduhan.
+    fn download_key(&self, hash: &str) -> Option<PathBuf> {
+        let _ = hash;
+        None
+    }
 }
 
 fn check_size(bytes: &[u8]) -> AppResult<()> {
@@ -279,6 +286,10 @@ impl DocumentStore for BlobDocumentStore {
             return self.blobs.size(&h).map(Some);
         }
         Ok(self.get(hash)?.map(|b| b.len() as u64))
+    }
+
+    fn download_key(&self, hash: &str) -> Option<PathBuf> {
+        Self::blob_hash(hash).ok().map(|h| self.blobs.path_of(&h))
     }
 }
 

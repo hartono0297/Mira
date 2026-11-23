@@ -16,7 +16,6 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use data_encoding::BASE64;
-use rand_core::{OsRng, RngCore};
 use rusqlite::{Connection, TransactionBehavior};
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -24,7 +23,6 @@ use time::format_description::well_known::Rfc3339;
 use zeroize::Zeroizing;
 
 use super::err;
-use super::increment;
 use super::outbox::SignOutbox;
 use super::peer_sync::{
     self, CancelledPayload, Payload, RequestPayload, SignedPayload, WireEvent, WireSigner,
@@ -77,6 +75,13 @@ pub struct RequestSummary {
     pub file_size: u64,
     /// Ada langkah yang menunggu file atau versi dari laptop rekan.
     pub pending: bool,
+    /// Jumlah byte yang diunduh `sign_download_file` untuk permintaan ini
+    /// (versi terkini dan versi baru yang menunggu, yang belum ada); 0 kalau
+    /// tidak ada yang perlu diunduh, `None` (`null`) kalau ukurannya tidak
+    /// diketahui.
+    pub download_size: Option<u64>,
+    /// Proses ini sedang mengunduh file permintaan ini dari laptop rekan.
+    pub downloading: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -165,6 +170,13 @@ pub struct ScopeView {
 pub struct RejectedView {
     pub signer_name: String,
     pub at: String,
+    /// Kode tetap (`peer_sync::code`, atau kode bukti stempel); layar memilih
+    /// kalimatnya dari kode ini.
+    pub code: String,
+    /// Nama penanda tangan lain yang disebut kode (versi siapa yang dipakai
+    /// pada `skipped_concurrent`).
+    pub other_name: Option<String>,
+    /// Teks inti Rust, untuk catatan teknis; tidak untuk ditampilkan.
     pub reason: String,
 }
 
@@ -320,12 +332,6 @@ fn store_event(identity: &Identity, conn: &Connection, rec: &EventRecord) -> App
     let sig = seal::sign_event(identity, rec)?;
     repo::insert_event(conn, rec, &sig)?;
     Ok(WireEvent::new(rec, &sig))
-}
-
-fn random_id() -> String {
-    let mut bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut bytes);
-    hex::encode(bytes)
 }
 
 fn request_not_found() -> AppError {
@@ -722,6 +728,8 @@ impl SignContext<'_> {
             file_available,
             file_size,
             pending: peer_sync::has_pending(self.db(), &req.id)?,
+            download_size: peer_sync::download_size(self.db(), self.store, &req.id)?,
+            downloading: peer_sync::downloading(self.db(), self.store, &req.id)?,
         })
     }
 
@@ -732,10 +740,16 @@ impl SignContext<'_> {
         let scope = repo::load_scope(self.db(), &req.id)?;
         let mut rejected = Vec::new();
         for r in peer_sync::rejected_versions(self.db(), &req.id)? {
+            let other_name = match &r.reason.other {
+                Some(pk) => Some(self.name_of(pk, req)?),
+                None => None,
+            };
             rejected.push(RejectedView {
                 signer_name: self.name_of(&r.signer, req)?,
                 at: r.at,
-                reason: r.reason,
+                code: r.reason.code,
+                other_name,
+                reason: r.reason.text,
             });
         }
         let events = repo::events_for(self.db(), &req.id)?;
@@ -1126,7 +1140,9 @@ impl SignContext<'_> {
 
         let at = now_str(now);
         let original_size = original.as_ref().map_or(0, |b| b.len() as u64);
-        let req = SignRequest::new(random_id(), new, me, file_hash.to_owned(), &at);
+        let salt = peer_sync::new_salt();
+        let id = peer_sync::request_id_for(&me, &salt);
+        let req = SignRequest::new(id, new, me, file_hash.to_owned(), &at);
         let identity = self.identity;
         let tx = self
             .conn
@@ -1148,6 +1164,7 @@ impl SignContext<'_> {
         )?;
         let payload = Payload::Request(RequestPayload {
             id: req.id.clone(),
+            salt,
             title: req.title.clone(),
             mode: req.mode,
             requested_by: req.requested_by.clone(),
@@ -1265,7 +1282,8 @@ impl SignContext<'_> {
         }
         // Bukti stempel: versi baru hanya boleh menambah stempel (dan halaman
         // catatan) di atas versi sebelumnya. Laptop rekan memeriksa hal sama.
-        increment::check_increment(current.as_deref().unwrap_or_default(), bytes)
+        let completing = req.is_last_pending(&me);
+        peer_sync::check_version(current.as_deref().unwrap_or_default(), bytes, completing)
             .map_err(|e| err(e.code, e.message))?;
         let new_hash = self.store.put(bytes)?;
         let before = req.current_hash.clone();
@@ -1306,7 +1324,7 @@ impl SignContext<'_> {
             None
         };
         let at = now_str(now);
-        peer_sync::cache_proof(&tx, &before, &new_hash, Ok(()), &at)?;
+        peer_sync::cache_proof(&tx, &before, &new_hash, completing, Ok(()), &at)?;
         let payload = Payload::Signed(SignedPayload {
             request_id: req.id.clone(),
             hash_before: before,

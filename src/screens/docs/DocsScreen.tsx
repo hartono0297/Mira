@@ -68,9 +68,13 @@ export function DocsScreen() {
     await Promise.all([reloadList(), reloadDetail()]);
   }, [reloadList, reloadDetail]);
 
-  // Satu aksi pada satu waktu. Ref dipakai (bukan hanya state) supaya klik
-  // kedua sebelum render berikutnya tetap ditolak.
+  // Satu aksi yang mengubah data pada satu waktu. Ref dipakai (bukan hanya
+  // state) supaya klik kedua sebelum render berikutnya tetap ditolak.
   const busyRef = useRef(false);
+  // Unduhan dari rekan dicatat sendiri: bisa lama (file besar), jadi tidak
+  // menahan aksi lain. Satu unduhan per versi.
+  const downloadsRef = useRef<Set<string>>(new Set());
+  const [downloads, setDownloads] = useState<ReadonlySet<string>>(() => new Set());
 
   // Tombol yang baru ditekan bisa hilang setelah aksi (Selesai mengedit, Pakai
   // versi ini). Kalau fokus jatuh ke body, fokus dipindah ke baris file itu.
@@ -151,9 +155,41 @@ export function DocsScreen() {
     );
   }, [run, focusDoc]);
 
+  const download = useCallback(
+    async (doc: DocumentSummary, version: DocumentVersion) => {
+      const key = keys.download(doc.id, version.id);
+      if (downloadsRef.current.has(key)) return;
+      downloadsRef.current.add(key);
+      setDownloads(new Set(downloadsRef.current));
+      setFeedback(null);
+      try {
+        const result = await downloadVersion(doc.id, version.id);
+        await reloadAll();
+        // Versi yang sedang disalin otomatis tidak diunduh dua kali; inti
+        // mengembalikan ringkasan dengan versi itu masih `downloading`.
+        const same = [result?.current, ...(result?.conflictVersions ?? [])].find((v) => v?.id === version.id);
+        const text = same?.downloading
+          ? `Versi ${version.number} sedang disalin. Daftar diperbarui begitu selesai.`
+          : `Isi versi ${version.number} dari ${doc.name} sudah ada di laptop ini.`;
+        setFeedback({ kind: "ok", text });
+      } catch (err) {
+        const error = toAppError(err);
+        setFeedback({ kind: "error", title: errorTitle(error, "download"), error, hint: errorHint(error, "download") });
+        // Keadaan unduhan mungkin sudah berubah (rekan baru saja putus).
+        void reloadAll();
+      } finally {
+        downloadsRef.current.delete(key);
+        setDownloads(new Set(downloadsRef.current));
+        focusDoc(doc.id);
+      }
+    },
+    [reloadAll, focusDoc],
+  );
+
   const actions: DocActions = useMemo(
     () => ({
       pending,
+      downloads,
       edit: (doc, from) => {
         const app = appName(doc.kind) ?? "aplikasi bawaan";
         void run(
@@ -220,16 +256,10 @@ export function DocsScreen() {
         setFocusConflict((n) => n + 1);
       },
       download: (doc, version) => {
-        void run(
-          keys.download(doc.id, version.id),
-          "download",
-          doc.id,
-          () => downloadVersion(doc.id, version.id),
-          () => `Isi versi ${version.number} dari ${doc.name} sudah ada di laptop ini.`,
-        );
+        void download(doc, version);
       },
     }),
-    [pending, run],
+    [pending, downloads, run, download],
   );
 
   const confirmRestore = useCallback(async () => {

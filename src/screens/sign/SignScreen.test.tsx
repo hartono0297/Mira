@@ -93,6 +93,8 @@ function summary(extra: Partial<RequestSummary> = {}): RequestSummary {
     fileAvailable: true,
     fileSize: 2048,
     pending: false,
+    downloadSize: 0,
+    downloading: false,
     ...extra,
   };
 }
@@ -187,7 +189,7 @@ describe("SignScreen: keadaan dasar", () => {
     render(<SignScreen />);
     expect(
       await screen.findByText(
-        "Tamu tidak bisa meminta tanda tangan, tetapi bisa menandatangani dokumen yang dikirim rekan untuk proyek yang boleh Anda buka.",
+        "Sebagai Tamu, Anda tidak bisa meminta tanda tangan, tetapi bisa menandatangani dokumen dari rekan untuk proyek yang boleh Anda buka.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pilih PDF untuk ditandatangani" })).not.toBeInTheDocument();
@@ -475,7 +477,7 @@ describe("SignScreen: permintaan dari rekan", () => {
       }),
     );
     render(<SignScreen />);
-    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan" });
+    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan Anda" });
     const titles = within(wait)
       .getAllByRole("listitem")
       .map((li) => li.querySelector(".sign-row-title")?.textContent);
@@ -498,7 +500,7 @@ describe("SignScreen: permintaan dari rekan", () => {
     api.overview.mockResolvedValue(overview({ requests: [summary({ title: "Milik Saya Uji" })] }));
     render(<SignScreen />);
     await screen.findByText("Milik Saya Uji");
-    expect(screen.queryByText("Menunggu tanda tangan")).not.toBeInTheDocument();
+    expect(screen.queryByText("Menunggu tanda tangan Anda")).not.toBeInTheDocument();
   });
 
   it("file kecil yang belum tersalin: status tenang, tanpa tombol, tanpa peringatan file hilang", async () => {
@@ -510,14 +512,73 @@ describe("SignScreen: permintaan dari rekan", () => {
       }),
     );
     render(<SignScreen />);
-    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan" });
-    expect(within(wait).getByText("File sedang disalin dari laptop rekan")).toBeInTheDocument();
+    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan Anda" });
+    expect(
+      within(wait).getByText("File disalin otomatis saat laptop rekan yang menyimpannya tersambung."),
+    ).toBeInTheDocument();
     expect(within(wait).getByText("Menunggu file")).toBeInTheDocument();
     expect(within(wait).queryByRole("button", { name: /^Unduh file/ })).not.toBeInTheDocument();
     expect(screen.queryByText(integrityLabel("missing"))).not.toBeInTheDocument();
     expect(screen.queryByText(/perlu diperiksa/)).not.toBeInTheDocument();
     // Belum bisa ditandatangani, jadi belum dihitung menunggu tanda tangan Anda.
     expect(screen.queryByText(/menunggu tanda tangan Anda/)).not.toBeInTheDocument();
+  });
+
+  it("file kecil yang sedang disalin: sedang disalin hanya saat itu", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [
+          fromRekan({ id: "k2", title: "Kecil Uji", myState: "your_turn", fileAvailable: false, integrity: "missing", downloading: true }),
+        ],
+      }),
+    );
+    render(<SignScreen />);
+    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan Anda" });
+    expect(within(wait).getByText("File sedang disalin dari laptop rekan")).toBeInTheDocument();
+  });
+
+  it("ukuran file tidak diketahui: tombol Unduh file tanpa ukuran", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [
+          fromRekan({ id: "u1", title: "Tanpa Ukuran Uji", fileAvailable: false, integrity: "missing", fileSize: 0, downloadSize: null }),
+        ],
+      }),
+    );
+    render(<SignScreen />);
+    const button = await screen.findByRole("button", { name: "Unduh file Tanpa Ukuran Uji" });
+    expect(button).toHaveTextContent("Unduh file");
+    expect(button).not.toHaveTextContent("(");
+  });
+
+  it("giliran Anda tetapi tanda tangan rekan belum sampai: tidak dihitung dan tidak di atas", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [
+          fromRekan({ id: "p1", title: "Tunggu Rekan Uji", myState: "your_turn", pending: true, updatedAt: "2026-11-22T09:00:00Z" }),
+          fromRekan({ id: "p2", title: "Siap Uji", myState: "your_turn", updatedAt: "2026-11-20T09:00:00Z" }),
+        ],
+      }),
+    );
+    render(<SignScreen />);
+    const wait = await screen.findByRole("region", { name: "Menunggu tanda tangan Anda" });
+    const titles = within(wait)
+      .getAllByRole("listitem")
+      .map((li) => li.querySelector(".sign-row-title")?.textContent);
+    expect(titles).toEqual(["Siap Uji", "Tunggu Rekan Uji"]);
+    expect(within(wait).getByText("Menunggu tanda tangan rekan")).toBeInTheDocument();
+    expect(screen.getByText("1 dokumen menunggu tanda tangan Anda")).toBeInTheDocument();
+  });
+
+  it("unduh saat file itu sedang disalin otomatis: pesan sedang disalin, bukan sudah ada", async () => {
+    const before = fromRekan({ id: "b3", title: "Besar Uji", fileAvailable: false, integrity: "missing", fileSize: 32 * 1024 * 1024 });
+    api.overview.mockResolvedValue(overview({ requests: [before] }));
+    api.downloadFile.mockResolvedValue({ ...before, downloading: true } as RequestDetail);
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    await user.click(await screen.findByRole("button", { name: "Unduh file Besar Uji, 32 MB" }));
+    expect(await screen.findByText("File Besar Uji sedang disalin. Daftar diperbarui begitu selesai.")).toBeInTheDocument();
+    expect(screen.queryByText("File Besar Uji sudah ada di laptop ini.")).not.toBeInTheDocument();
   });
 
   it("file besar: Unduh file sibuk, lalu berhasil dan fokus ke baris", async () => {

@@ -41,8 +41,12 @@ export type RequestSummary = {
   fromPeer: boolean; // dibuat di laptop rekan
   requestedByName: string;
   fileAvailable: boolean; // file versi terkini ada di laptop ini
-  fileSize: number;
+  fileSize: number; // 0 kalau tidak diketahui
   pending: boolean; // ada tanda tangan dari rekan yang filenya belum sampai
+  // Byte yang diunduh "Unduh file" (versi terkini dan tanda tangan terbaru
+  // yang belum ada). 0 kalau tidak ada, null kalau ukurannya tidak diketahui.
+  downloadSize: number | null;
+  downloading: boolean; // laptop ini sedang menyalin file permintaan ini dari rekan
 };
 
 // File sampai 20 MB disalin otomatis dari laptop rekan; yang lebih besar
@@ -114,7 +118,29 @@ export type RequestDetail = RequestSummary & {
   rejected: RejectedVersion[];
 };
 
-export type RejectedVersion = { signerName: string; at: string; reason: string };
+// code menentukan kalimat di layar (lihat labels.ts rejectedText). reason
+// adalah teks teknis dari inti Rust dan tidak ditampilkan.
+export type RejectedCode =
+  | "version_not_prefix"
+  | "version_changes_content"
+  | "pdf_invalid"
+  | "tag_missing"
+  | "skipped_concurrent"
+  | "on_rejected"
+  | "outdated_version"
+  | "not_allowed"
+  | "not_your_turn"
+  | "already_signed"
+  | "request_closed"
+  | "invalid_record";
+
+export type RejectedVersion = {
+  signerName: string;
+  at: string;
+  code: RejectedCode | string;
+  otherName: string | null; // versi siapa yang dipakai (skipped_concurrent)
+  reason: string;
+};
 
 export type NewRequestInput = {
   title: string;

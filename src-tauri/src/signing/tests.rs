@@ -1013,6 +1013,8 @@ fn json_uses_contract_field_names() {
         "fileAvailable",
         "fileSize",
         "pending",
+        "downloadSize",
+        "downloading",
     ];
     let mut detail_keys = summary_keys.to_vec();
     detail_keys.extend([

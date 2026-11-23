@@ -213,7 +213,7 @@ describe("NewRequestDialog", () => {
     await user.selectOptions(select, "");
     expect(
       await screen.findByText(
-        "Tamu Uji tidak bisa melihat dokumen dengan pilihan proyek ini, jadi dilepas dari penanda tangan.",
+        "Mira melepas Tamu Uji dari penanda tangan karena Tamu hanya bisa menandatangani dokumen di proyek yang boleh ia buka.",
       ),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Buat permintaan" }));
@@ -225,6 +225,25 @@ describe("NewRequestDialog", () => {
       mode: "sequential",
       signers: [ME_KEY],
     });
+  });
+
+  it("pindah ke proyek tim lain: anggota yang tidak bisa membukanya dilepas, dengan nama", async () => {
+    board.listProjects.mockResolvedValue([
+      { id: "p2", code: "GDG", name: "Gudang Uji", teamId: null, openCount: 0, taskCount: 0, canManage: true },
+      { id: "p3", code: "TIM", name: "Tim Uji", teamId: "t3", openCount: 0, taskCount: 0, canManage: true },
+    ]);
+    api.listCandidates.mockImplementation(async (scope?: { projectId?: string | null }) =>
+      scope?.projectId === "p3" ? candidates.filter((c) => c.publicKey !== KEY_B) : candidates,
+    );
+    const { user } = setup();
+    const select = screen.getByLabelText("Proyek");
+    await screen.findByRole("option", { name: "TIM · Tim Uji" });
+    await user.selectOptions(select, "p2");
+    await user.click(await screen.findByRole("checkbox", { name: "Anggota Uji" }));
+    await user.selectOptions(select, "p3");
+    expect(
+      await screen.findByText("Mira melepas Anggota Uji dari penanda tangan karena ia tidak bisa membuka proyek ini."),
+    ).toBeInTheDocument();
   });
 
   it("daftar proyek gagal dibaca: permintaan tetap bisa dibuat tanpa proyek", async () => {

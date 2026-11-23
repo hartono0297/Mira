@@ -107,6 +107,8 @@ function detail(over: Partial<RequestDetail> = {}): RequestDetail {
     fileAvailable: true,
     fileSize: 1024,
     pending: false,
+    downloadSize: 0,
+    downloading: false,
     scope: { teamId: null, projectId: null },
     rejected: [],
     requestedBy: { publicKey: OTHER, displayName: "Pengirim Uji" },
@@ -542,25 +544,49 @@ describe("SignDocumentView", () => {
     ).toBeInTheDocument();
   });
 
-  it("versi yang ditolak tampil dengan penanda tangan, waktu, dan alasan", async () => {
+  it("versi yang ditolak: siapa dan kenapa dari kode, tanpa teks teknis inti", async () => {
     setup(
       detail({
         requestedBy: { publicKey: ME, displayName: "Penanda Uji" },
         rejected: [
-          { signerName: "Rekan Uji", at: "2026-11-21T04:00:00Z", reason: "version_changes_content" },
-          { signerName: "Tamu Uji", at: "2026-11-21T05:00:00Z", reason: "ditandatangani bersamaan" },
+          {
+            signerName: "Rekan Uji",
+            at: "2026-11-21T04:00:00Z",
+            code: "version_changes_content",
+            otherName: null,
+            reason: "Objek 12 tidak ada di tabel startxref versi lama.",
+          },
+          {
+            signerName: "Tamu Uji",
+            at: "2026-11-21T05:00:00Z",
+            code: "already_signed",
+            otherName: null,
+            reason: "Anda sudah menandatangani dokumen ini.",
+          },
+          {
+            signerName: "Rekan Uji",
+            at: "2026-11-21T06:00:00Z",
+            code: "skipped_concurrent",
+            otherName: "Tamu Uji",
+            reason: "Ditandatangani bersamaan dengan Tamu Uji.",
+          },
+          { signerName: "Rekan Uji", at: "2026-11-21T07:00:00Z", code: "kode_baru", otherName: null, reason: "katalog rusak" },
         ],
       }),
     );
     const section = await screen.findByRole("region", { name: "Versi yang ditolak" });
     expect(within(section).getByText(/Dokumen tetap memakai versi sah terakhir/)).toBeInTheDocument();
     const items = within(section).getAllByRole("listitem");
-    expect(within(items[0]).getByText("Versi dari Rekan Uji")).toBeInTheDocument();
+    expect(
+      within(items[0]).getByText("Versi dari Rekan Uji ditolak karena mengubah isi dokumen, bukan hanya menambah tanda tangan."),
+    ).toBeInTheDocument();
     expect(within(items[0]).getByText(/21 November 2026/)).toBeInTheDocument();
     expect(
-      within(items[0]).getByText("Versi ditolak karena mengubah isi dokumen selain stempel tanda tangan."),
+      within(items[1]).getByText("Versi dari Tamu Uji tidak dipakai karena Tamu Uji sudah menandatangani versi lain dokumen ini."),
     ).toBeInTheDocument();
-    expect(within(items[1]).getByText("Versi ditolak karena ditandatangani bersamaan.")).toBeInTheDocument();
+    expect(within(items[2]).getByText(/karena Tamu Uji menandatangani versi yang sama lebih dulu/)).toBeInTheDocument();
+    expect(within(items[3]).getByText("Versi dari Rekan Uji tidak dipakai Mira.")).toBeInTheDocument();
+    expect(within(section).queryByText(/startxref|katalog|Anda sudah/)).not.toBeInTheDocument();
   });
 
   it("tanpa versi ditolak, bagiannya tidak tampil", async () => {
@@ -591,8 +617,30 @@ describe("SignDocumentView", () => {
     expect(await screen.findByText(/isi versi sebelumnya tidak utuh di dalamnya/)).toBeInTheDocument();
   });
 
-  it("file kecil dari rekan belum tersalin: status, tanpa banner hilang, belum bisa ditandatangani", async () => {
+  it("file kecil dari rekan belum tersalin dan rekan belum tersambung: disalin otomatis nanti", async () => {
     setup(detail({ fileAvailable: false, integrity: "missing", fileSize: 300 * 1024 }));
+    expect(
+      await screen.findByText("File disalin otomatis saat laptop rekan yang menyimpannya tersambung."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/sedang disalin/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Unduh file/ })).not.toBeInTheDocument();
+  });
+
+  it("ukuran file dari rekan tidak diketahui: Unduh file tanpa ukuran", async () => {
+    setup(detail({ fileAvailable: false, integrity: "missing", fileSize: 0, downloadSize: null }));
+    expect(
+      await screen.findByText("File ini belum diunduh. Ukurannya belum diketahui, jadi tidak disalin otomatis."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unduh file" })).toBeInTheDocument();
+  });
+
+  it("ukuran di tombol unduh mengikuti downloadSize dari inti", async () => {
+    setup(detail({ fileAvailable: false, integrity: "missing", fileSize: 25 * 1024 * 1024, downloadSize: 30 * 1024 * 1024 }));
+    expect(await screen.findByRole("button", { name: "Unduh file (30 MB)" })).toBeInTheDocument();
+  });
+
+  it("file kecil dari rekan sedang disalin: status, tanpa banner hilang, belum bisa ditandatangani", async () => {
+    setup(detail({ fileAvailable: false, integrity: "missing", fileSize: 300 * 1024, downloading: true }));
     expect(await screen.findByText(/File sedang disalin dari laptop rekan\. Halaman tampil di sini/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("File dokumen tidak ditemukan")).not.toBeInTheDocument();
@@ -640,11 +688,21 @@ describe("SignDocumentView", () => {
     expect(screen.queryByText("no peer")).not.toBeInTheDocument();
   });
 
-  it("tanda tangan terbaru dari rekan belum sampai: keterangan di atas layar", async () => {
-    setup(detail({ pending: true }));
+  it("tanda tangan terbaru dari rekan sedang disalin: keterangan di atas layar", async () => {
+    setup(detail({ pending: true, downloading: true, downloadSize: 2048 }));
     expect(
       await screen.findByText(/Tanda tangan terbaru dari rekan sedang disalin ke laptop ini\. Status penanda tangan/),
     ).toBeInTheDocument();
     expect(await screen.findByTestId("viewer")).toBeInTheDocument();
+  });
+
+  it("mode bebas, tanda tangan rekan belum sampai: tunggu dulu, tanpa tombol tanda tangan", async () => {
+    setup(detail({ mode: "parallel", pending: true, downloadSize: 2048 }));
+    expect(await screen.findByText("Tunggu tanda tangan terbaru dari rekan sampai, lalu tanda tangani.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tempatkan tanda tangan" })).not.toBeInTheDocument();
+    expect(screen.getByText("Giliran Anda, menunggu tanda tangan rekan")).toBeInTheDocument();
+    expect(
+      screen.getByText("Tanda tangan terbaru dari rekan disalin otomatis saat laptop rekan yang menyimpannya tersambung."),
+    ).toBeInTheDocument();
   });
 });
