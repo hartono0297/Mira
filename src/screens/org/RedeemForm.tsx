@@ -26,7 +26,10 @@ function redeemErrorText(error: AppError): ErrorText {
 // departemen di kode itu. Orang yang sudah di departemen ditolak inti Rust
 // (`already_in_department`) dan Tamu juga ditolak, jadi InvitesPanel hanya
 // menampilkan formulir ini untuk orang tanpa departemen yang bukan Tamu.
-export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
+// labelledBy: id judul milik pemanggil (tab Undangan untuk orang yang hanya bisa
+// memakai kode). Formulir lalu tidak membawa judul sendiri, dan petunjuknya tidak
+// menyebut peran admin.
+export function RedeemForm({ ctx, labelledBy }: { ctx: OrgCtx; labelledBy?: string }) {
   const [code, setCode] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [server, setServer] = useState<AppError | null>(null);
@@ -70,10 +73,12 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
   const text = server ? redeemErrorText(server) : null;
 
   return (
-    <form className="redeem" onSubmit={submit} noValidate aria-labelledby={titleId}>
-      <h3 id={titleId} className="set-sub">
-        Belum punya departemen? Pakai kode undangan
-      </h3>
+    <form className="redeem" onSubmit={submit} noValidate aria-labelledby={labelledBy ?? titleId}>
+      {!labelledBy && (
+        <h3 id={titleId} className="set-sub">
+          Belum punya departemen? Pakai kode undangan
+        </h3>
+      )}
       <div className="field">
         <label htmlFor={inputId}>Kode undangan</label>
         <div className="manual-row">
@@ -94,7 +99,9 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
           </button>
         </div>
         <p id={hintId} className="hint">
-          Kode memasukkan Anda ke departemen yang tertulis di kode itu. Minta kode ke admin departemen atau superadmin.
+          {labelledBy
+            ? "Kode memasukkan Anda ke departemen yang tertulis di kode itu."
+            : "Kode memasukkan Anda ke departemen yang tertulis di kode itu. Minta kode ke admin departemen atau superadmin."}
         </p>
         <div id={errId} aria-live="polite">
           {fieldError && <FieldError text={fieldError} />}

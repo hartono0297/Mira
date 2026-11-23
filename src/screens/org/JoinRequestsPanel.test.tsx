@@ -111,13 +111,20 @@ describe("Permintaan bergabung: tampilan", () => {
     expect(fact(rina, "Versi Mira")).toHaveTextContent("0.3.0");
     expect(fact(rina, "Akun login")).toHaveTextContent("rina.w");
     expect(fact(rina, "Akun login")).toHaveClass("mono");
-    expect(within(rina).getByText("Keterangan")).toBeInTheDocument();
-    expect(within(rina).getByRole("blockquote", { name: "Keterangan" })).toHaveTextContent(
-      "Drafter baru di proyek Gedung B, nomor karyawan 0412.",
-    );
+    // Label keterangan dibacakan sekali: figcaption memberi nama figure (browser
+    // menurunkannya sendiri; jsdom belum), kutipannya tanpa nama sendiri.
+    expect(within(rina).getAllByText("Keterangan")).toHaveLength(1);
+    const noteFigure = within(rina).getByRole("figure");
+    expect(within(noteFigure).getByText("Keterangan", { selector: "figcaption" })).toBeInTheDocument();
+    const noteQuote = within(noteFigure).getByRole("blockquote");
+    expect(noteQuote).toHaveTextContent("Drafter baru di proyek Gedung B, nomor karyawan 0412.");
+    expect(noteQuote).not.toHaveAttribute("aria-labelledby");
+    expect(noteQuote).toHaveAttribute("dir", "auto");
     expect(within(rina).getByText("4F2A 91C0")).toBeInTheDocument();
     expect(within(rina).getByText(CARD_TEXT.verifyHint)).toBeInTheDocument();
-    expect(CARD_TEXT.verifyHint).toMatch(/^Pastikan orangnya benar: telepon atau datangi orangnya/);
+    expect(CARD_TEXT.verifyHint).toBe(
+      "Pastikan orangnya benar: telepon atau datangi dia, lalu minta ia membacakan kode di layarnya. Setujui hanya kalau kodenya sama.",
+    );
     expect(within(rina).getByText("Diterima lewat laptop Andi")).toBeInTheDocument();
 
     const fajar = card("Fajar");
@@ -126,6 +133,7 @@ describe("Permintaan bergabung: tampilan", () => {
     expect(within(fajar).getByText("Tidak tercatat")).toBeInTheDocument();
     // Mira v0.3 tidak mengirim keterangan dan akun: tanpa label kosong.
     expect(within(fajar).queryByText("Keterangan")).not.toBeInTheDocument();
+    expect(within(fajar).queryByRole("figure")).not.toBeInTheDocument();
     expect(within(fajar).queryByRole("blockquote")).not.toBeInTheDocument();
     expect(fact(fajar, "Akun login")).toHaveTextContent("Tidak dikirim (Mira versi lama)");
     expect(fact(fajar, "Akun login")).not.toHaveClass("mono");
@@ -150,7 +158,7 @@ describe("Permintaan bergabung: tampilan", () => {
     await openTab();
 
     const dewi = await screen.findByRole("heading", { name: "Dewi" }).then((h) => h.closest("li") as HTMLElement);
-    const quote = within(dewi).getByRole("blockquote", { name: "Keterangan" });
+    const quote = within(within(dewi).getByRole("figure")).getByRole("blockquote");
     expect(quote).toHaveTextContent('<img src=x onerror="alert(1)">');
     expect(quote.querySelector("img")).toBeNull();
     expect(quote).toHaveClass("req-note-text");
@@ -160,6 +168,32 @@ describe("Permintaan bergabung: tampilan", () => {
     const eko = card("Eko");
     expect(within(eko).queryByText("Keterangan")).not.toBeInTheDocument();
     expect(fact(eko, "Akun login")).toHaveTextContent("eko");
+  });
+
+  it("akun tidak dikirim: versi lama hanya kalau peminta memakai Mira di bawah 0.4", async () => {
+    const without = (id: string, name: string, appVersion: string) =>
+      joinRequest(id, name, { appVersion, note: null, account: null, ip: null });
+    setup([
+      without("v1", "Gita", "0.3.9"),
+      without("v2", "Hadi", "0.4.0"),
+      without("v3", "Indah", "0.10.2"),
+      without("v4", "Joko", "1.0"),
+      without("v5", "Kiki", "versi-uji"),
+      without("v6", "Lina", ""),
+    ]);
+    await openTab();
+    await screen.findByRole("heading", { name: "Gita" });
+
+    // Peminta v0.4 ke atas: akunnya tidak sampai karena laptop kantor yang menjawab masih versi lama.
+    for (const name of ["Hadi", "Indah", "Joko"]) {
+      expect(fact(card(name), "Akun login")).toHaveTextContent(CARD_TEXT.accountOldOffice);
+    }
+    // Di bawah 0.4, atau versinya tidak terbaca: Mira peminta yang versi lama.
+    for (const name of ["Gita", "Kiki", "Lina"]) {
+      expect(fact(card(name), "Akun login")).toHaveTextContent(CARD_TEXT.accountOldVersion);
+    }
+    expect(CARD_TEXT.accountOldVersion).toBe("Tidak dikirim (Mira versi lama)");
+    expect(CARD_TEXT.accountOldOffice).toBe("Tidak dikirim (ada laptop kantor yang masih memakai Mira versi lama)");
   });
 
   it("memuat", async () => {

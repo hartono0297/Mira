@@ -131,7 +131,9 @@ describe("Organisasi: tab per peran", () => {
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
     expect(tabNames()).toEqual(["Anggota", "Undangan"]);
     await user.click(screen.getByRole("button", { name: "Undangan" }));
-    expect(await screen.findByRole("heading", { name: "Kode undangan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Pakai kode undangan", level: 2 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Kode undangan", { selector: "input" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Kode undangan" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Buat kode undangan" })).not.toBeInTheDocument();
   });
 

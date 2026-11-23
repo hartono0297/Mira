@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 const state = appState() as AppState & { organization: OrgInfo };
 const CODE = "ABCD-EFGH-JKMN-PQRS-TVWX";
+const REDEEM_ONLY_INTRO = "Anda belum masuk departemen mana pun. Admin yang mengundang Anda memberikan kodenya.";
 
 const desain: TeamView = {
   id: TEAM_1,
@@ -80,7 +81,10 @@ function answer(extra: Table = {}, who: OrgOverview = overview()) {
 
 async function openTab(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Undangan" }));
-  return (await screen.findByRole("heading", { name: "Kode undangan" })).closest("section") as HTMLElement;
+  // Pengelola melihat "Kode undangan"; orang yang hanya bisa memakai kode melihat "Pakai kode undangan".
+  return (await screen.findByRole("heading", { name: /^(Kode undangan|Pakai kode undangan)$/, level: 2 })).closest(
+    "section",
+  ) as HTMLElement;
 }
 
 async function openDialog(user: ReturnType<typeof userEvent.setup>) {
@@ -198,13 +202,29 @@ describe("Undangan: daftar", () => {
     expect(within(list).getByRole("button", { name: "Buat kode undangan" })).toBeInTheDocument();
   });
 
-  it("anggota tanpa departemen tidak melihat tombol buat dan diberi tahu siapa yang membuat kode", async () => {
+  it("anggota tanpa departemen hanya melihat formulir memakai kode, tanpa teks untuk pengelola", async () => {
     const user = userEvent.setup();
     answer({ get_directory: dir(memberDir) }, memberOverview({ departmentId: null }));
     renderOrg();
-    const list = await openTab(user);
-    expect(within(list).getByText(/Kode undangan dibuat oleh admin departemen dan superadmin/)).toBeInTheDocument();
-    expect(within(list).queryByRole("button", { name: "Buat kode undangan" })).not.toBeInTheDocument();
+    const section = await openTab(user);
+    expect(within(section).getByRole("heading", { name: "Pakai kode undangan", level: 2 })).toBeInTheDocument();
+    expect(within(section).getByText(REDEEM_ONLY_INTRO)).toBeInTheDocument();
+    expect(within(section).getByLabelText("Kode undangan", { selector: "input" })).toBeInTheDocument();
+    expect(within(section).queryByRole("heading", { name: "Kode undangan" })).not.toBeInTheDocument();
+    expect(within(section).queryByRole("button", { name: "Buat kode undangan" })).not.toBeInTheDocument();
+    expect(within(section).queryByText(/Isi kode hanya ditampilkan sekali/)).not.toBeInTheDocument();
+    expect(within(section).queryByText(/Belum ada kode undangan/)).not.toBeInTheDocument();
+    expect(within(section).queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("superadmin tanpa departemen tetap melihat tampilan pengelola beserta formulir memakai kode", async () => {
+    const user = userEvent.setup();
+    answer({}, overview({ departmentId: null }));
+    renderOrg();
+    const section = await openTab(user);
+    expect(within(section).getByRole("heading", { name: "Kode undangan", level: 2 })).toBeInTheDocument();
+    expect(within(section).getByText(/Isi kode hanya ditampilkan sekali/)).toBeInTheDocument();
+    expect(within(section).queryByText(REDEEM_ONLY_INTRO)).not.toBeInTheDocument();
   });
 
   it("direktori gagal dibaca: error di tab dan Coba lagi memuat ulang", async () => {
@@ -503,7 +523,8 @@ describe("Undangan: memakai kode", () => {
     answer({ get_directory: dir(memberDir) }, memberOverview({ departmentId: null }));
     renderOrg();
     await openTab(user);
-    expect(screen.getByRole("heading", { name: "Belum punya departemen? Pakai kode undangan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pakai kode undangan" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Belum punya departemen? Pakai kode undangan" })).not.toBeInTheDocument();
     expect(screen.getByText(/Kode memasukkan Anda ke departemen yang tertulis di kode itu/)).toBeInTheDocument();
     await user.type(screen.getByLabelText("Kode undangan", { selector: "input" }), "abcdefghjkmnpqrstvwx");
     await user.click(screen.getByRole("button", { name: "Pakai kode" }));

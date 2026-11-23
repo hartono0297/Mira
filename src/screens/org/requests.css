@@ -84,16 +84,20 @@
 }
 
 /* Keterangan ditulis sendiri oleh peminta (v0.4), jadi tampil sebagai kutipan
-   kata-katanya, terpisah dari fakta yang dicatat Mira. Tanpa garis warna di kiri:
-   bedanya cukup dari latar dan label. Teks panjang tanpa spasi tetap dipatahkan. */
+   kata-katanya, terpisah dari fakta yang dicatat Mira. Kotaknya memakai latar
+   halaman (--bg) dengan garis --border, bukan --hover, supaya tidak terbaca
+   sebagai keadaan disorot. Garisnya hiasan (labelnya sudah menandai kotak),
+   jadi tidak perlu 3:1. Teks panjang tanpa spasi tetap dipatahkan. */
 .req-note {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  margin: 0;
   padding: 10px 14px;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--hover);
+  background: var(--bg);
 }
 
 .req-note-label {
@@ -108,7 +112,6 @@
   font-size: 14px;
   line-height: 1.5;
   color: var(--text);
-  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 

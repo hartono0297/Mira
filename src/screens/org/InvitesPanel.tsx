@@ -60,6 +60,9 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
   // Superadmin boleh mengundang ke departemen mana pun; kalau tidak ada yang
   // terbuka, sebabnya departemen, bukan izin.
   const noOpenDepartment = dir.me.isSuperadmin && manageable.length === 0;
+  // Bukan superadmin dan tidak mengelola departemen mana pun (juga yang diarsipkan):
+  // tab ini hanya untuk memakai kode, jadi teks pengelola dan daftar kode disembunyikan.
+  const redeemOnly = canRedeem && !dir.me.isSuperadmin && dir.can.manageTeamIds.length === 0;
 
   function detail(inv: InviteView): string {
     const by = `Dibuat oleh ${ctx.name(inv.createdBy)}, ${formatDateTime(inv.createdAt)}.`;
@@ -93,6 +96,20 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
     } finally {
       setRevokeBusy(false);
     }
+  }
+
+  if (redeemOnly) {
+    return (
+      <section className="set-section" aria-labelledby="invites-title">
+        <div>
+          <h2 id="invites-title" className="set-title">
+            Pakai kode undangan
+          </h2>
+          <p className="hint">Anda belum masuk departemen mana pun. Admin yang mengundang Anda memberikan kodenya.</p>
+        </div>
+        <RedeemForm ctx={ctx} labelledBy="invites-title" />
+      </section>
+    );
   }
 
   return (

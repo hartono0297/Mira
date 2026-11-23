@@ -19,15 +19,27 @@ export const CARD_TEXT = {
   note: "Keterangan",
   laptop: "Laptop",
   account: "Akun login",
-  // `account` null: permintaan dari Mira v0.3, yang belum mengirim akun login.
+  // `account` null dari peminta di bawah v0.4: Mira-nya belum mengirim akun login.
   accountOldVersion: "Tidak dikirim (Mira versi lama)",
+  // `account` null dari peminta v0.4 ke atas: laptop kantor yang menjawabnya
+  // masih v0.3, jadi peminta tidak mengirim akun dan keterangan.
+  accountOldOffice: "Tidak dikirim (ada laptop kantor yang masih memakai Mira versi lama)",
   ip: "Alamat IP",
   os: "Sistem",
   appVersion: "Versi Mira",
   codeLabel: "Kode cocok",
   verifyHint:
-    "Pastikan orangnya benar: telepon atau datangi orangnya dan minta ia membacakan kode di layarnya. Setujui hanya kalau kodenya sama.",
+    "Pastikan orangnya benar: telepon atau datangi dia, lalu minta ia membacakan kode di layarnya. Setujui hanya kalau kodenya sama.",
 } as const;
+
+// Versi Mira peminta sudah mengirim akun login (v0.4 ke atas). Versi yang tidak
+// terbaca dianggap lama.
+function sendsAccount(appVersion: string | null | undefined): boolean {
+  const m = /^\s*v?(\d+)\.(\d+)/.exec(appVersion ?? "");
+  if (!m) return false;
+  const major = Number(m[1]);
+  return major > 0 || Number(m[2]) >= 4;
+}
 
 // Isi bebas dari peminta: kosong atau hanya spasi dianggap tidak ada.
 function filled(s: string | null | undefined): string | null {
@@ -340,14 +352,12 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                 </div>
 
                 {note && (
-                  <div className="req-note">
-                    <span className="req-note-label" id={`req-note-${r.id}`}>
-                      {CARD_TEXT.note}
-                    </span>
-                    <blockquote className="req-note-text" aria-labelledby={`req-note-${r.id}`}>
+                  <figure className="req-note">
+                    <figcaption className="req-note-label">{CARD_TEXT.note}</figcaption>
+                    <blockquote className="req-note-text" dir="auto">
                       {note}
                     </blockquote>
-                  </div>
+                  </figure>
                 )}
 
                 <dl className="req-facts">
@@ -362,7 +372,11 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                   <div>
                     <dt>{CARD_TEXT.account}</dt>
                     <dd className={account ? "mono" : undefined}>
-                      {r.account == null ? CARD_TEXT.accountOldVersion : (account ?? NOT_RECORDED)}
+                      {r.account == null
+                        ? sendsAccount(r.appVersion)
+                          ? CARD_TEXT.accountOldOffice
+                          : CARD_TEXT.accountOldVersion
+                        : (account ?? NOT_RECORDED)}
                     </dd>
                   </div>
                   <div>
