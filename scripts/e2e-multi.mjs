@@ -245,7 +245,8 @@ try {
   // Laptop yang dimatikan menyusul perubahan yang terlewat.
   await stop("C");
   const marketing = await must("A", "create_team", { name: "Tim Pemasaran" });
-  await must("A", "add_team_member", { teamId: marketing.id, publicKey: pk.B });
+  // v0.3: satu orang satu departemen, jadi B dipindah (superadmin), bukan ditambah ke tim kedua.
+  await must("A", "org_move_member", { publicKey: pk.B, teamId: marketing.id });
   await launch("C");
   const caught = await waitFor("C menerima Tim Pemasaran setelah menyala", async () =>
     (await teamNames("C")).includes("Tim Pemasaran"),

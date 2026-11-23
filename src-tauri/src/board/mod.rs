@@ -12,6 +12,7 @@ pub mod assignees;
 pub mod commands;
 pub mod doc;
 pub mod feature;
+pub mod membership;
 pub mod model;
 pub mod numbers;
 pub mod policy;

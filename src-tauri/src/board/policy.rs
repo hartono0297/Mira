@@ -145,13 +145,8 @@ fn decide(
         if rights.can_create_project(actor, team_id.as_deref()) {
             return Ok(());
         }
-        if team_id.is_some() && rights.is_superadmin(actor) {
-            return Err(forbidden(
-                "Superadmin perlu masuk ke tim ini dulu sebelum membuat proyek untuk tim itu. Tambahkan diri Anda ke tim di halaman Organisasi.",
-            ));
-        }
         return Err(forbidden(
-            "Hanya superadmin atau admin tim yang bisa membuat proyek. Minta admin tim membuatkannya.",
+            "Hanya superadmin atau admin departemen yang bisa membuat proyek. Minta admin departemen membuatkannya.",
         ));
     }
     let Some(owner) = owner else {
@@ -160,13 +155,13 @@ fn decide(
     let p = owner.as_ref();
     if !rights.can_read(actor, p) {
         return Err(forbidden(
-            "Anda bukan anggota tim proyek ini. Minta admin tim menambahkan Anda.",
+            "Anda bukan anggota proyek ini. Minta pengelola proyek menambahkan Anda.",
         ));
     }
     match action {
         BoardAction::ViewProject { .. } => Ok(()),
         _ if rights.is_guest(actor) => Err(forbidden(
-            "Tamu hanya bisa melihat board dan komentar. Minta admin tim kalau perlu mengubah task.",
+            "Tamu hanya bisa melihat board dan komentar. Minta pengelola proyek kalau perlu mengubah task.",
         )),
         BoardAction::CreateTask { .. }
         | BoardAction::EditTask { .. }
@@ -184,7 +179,7 @@ fn decide(
                 Ok(())
             } else {
                 Err(forbidden(
-                    "Hanya superadmin, admin tim proyek ini, atau pembuat proyek yang bisa mengatur proyek ini.",
+                    "Hanya pembuat proyek, admin departemen proyek ini, atau superadmin yang menjadi anggota proyek yang bisa mengatur proyek ini.",
                 ))
             }
         }
@@ -193,7 +188,7 @@ fn decide(
                 Ok(())
             } else {
                 Err(forbidden(
-                    "Task ini hanya bisa dihapus oleh pembuatnya, admin tim proyek, atau superadmin.",
+                    "Task ini hanya bisa dihapus oleh pembuatnya atau pengelola proyek.",
                 ))
             }
         }
@@ -310,7 +305,7 @@ impl BoardPolicy for BatchPolicy {
 mod tests {
     use super::*;
     use rusqlite::params;
-    use crate::board::testutil::{Laptop, add_member, add_team};
+    use crate::board::testutil::{Laptop, add_member, add_project_member, add_team, register_project};
 
     fn pk(n: u8) -> String {
         format!("{n:02x}").repeat(32)
@@ -355,12 +350,9 @@ mod tests {
         let other_team = add_team(&l.conn, "Lain", &[]);
 
         assert!(p.allows(&l.conn, &l.pk(), &create(None)), "superadmin");
-        let err = p
-            .check(&l.conn, &l.pk(), &create(Some(&other_team)))
-            .unwrap_err();
         assert!(
-            err.to_string().contains("masuk ke tim"),
-            "superadmin outside the team: {err}"
+            p.allows(&l.conn, &l.pk(), &create(Some(&other_team))),
+            "v0.3: a superadmin creates projects for any department"
         );
         assert!(p.allows(&l.conn, &admin, &create(Some(&team))));
         assert!(
@@ -406,7 +398,8 @@ mod tests {
             &[(&admin, "admin"), (&member, "member"), (&other, "member")],
         );
         let proj = "ab".repeat(16);
-        insert_project(&l, &proj, Some(&team), &l.pk());
+        insert_project(&l, &proj, Some(&team), &admin);
+        register_project(&l.conn, &proj, Some(&team), &admin, &[&admin, &member, &other]);
         let pid = proj.clone();
         let edits = [
             BoardAction::CreateTask {
@@ -440,10 +433,10 @@ mod tests {
             created_by: member.clone(),
         };
         assert!(p.allows(&l.conn, &member, &delete), "creator");
-        assert!(p.allows(&l.conn, &admin, &delete), "team admin");
+        assert!(p.allows(&l.conn, &admin, &delete), "department admin");
         assert!(
             !p.allows(&l.conn, &l.pk(), &delete),
-            "superadmin outside the team"
+            "superadmin outside the project"
         );
         assert_eq!(
             p.check(&l.conn, &other, &delete).unwrap_err().code(),
@@ -456,26 +449,35 @@ mod tests {
         assert!(!p.allows(&l.conn, &l.pk(), &manage));
         assert!(p.allows(&l.conn, &admin, &manage));
         assert!(!p.allows(&l.conn, &member, &manage));
-        // A superadmin who joins the team may manage and delete there.
+        // Joining the department is not enough for a superadmin (v0.3).
         l.conn
             .execute(
                 "INSERT INTO team_members (team_id, public_key, role, added_at) VALUES (?1, ?2, 'member', 't')",
                 params![team, l.pk()],
             )
             .unwrap();
+        assert!(!p.allows(&l.conn, &l.pk(), &manage), "superadmin in the department");
+        // A superadmin who joins the project may manage and delete there.
+        add_project_member(&l.conn, &proj, &l.pk());
         assert!(p.allows(&l.conn, &l.pk(), &manage));
-        assert!(p.allows(&l.conn, &l.pk(), &delete), "superadmin in the team");
-        // Members outside the team see nothing.
+        assert!(p.allows(&l.conn, &l.pk(), &delete), "superadmin in the project");
+        // Department members outside the project see nothing.
         let outsider = pk(6);
         add_member(&l.conn, &outsider, "Eko", "member");
-        assert_eq!(
-            p.check(&l.conn, &outsider, &edits[0]).unwrap_err().code(),
-            "forbidden"
-        );
+        l.conn
+            .execute(
+                "INSERT INTO team_members (team_id, public_key, role, added_at) VALUES (?1, ?2, 'member', 't')",
+                params![team, outsider],
+            )
+            .unwrap();
+        let err = p.check(&l.conn, &outsider, &edits[0]).unwrap_err();
+        assert_eq!(err.code(), "forbidden");
+        assert!(err.to_string().contains("anggota proyek"), "{err}");
 
-        // Project without team: only creator and superadmin may manage/delete others' tasks.
+        // Project without department: the creator manages; others need membership.
         let solo = "cd".repeat(16);
         insert_project(&l, &solo, None, &member);
+        register_project(&l.conn, &solo, None, &member, &[&member]);
         let manage_solo = BoardAction::ManageProject {
             project_id: solo.clone(),
         };
@@ -505,15 +507,26 @@ mod tests {
             InviteRole::Member,
             vec![],
         );
-        let proj = "ab".repeat(16);
-        insert_project(&l, &proj, Some(&desain), &l.pk());
+        let proj = crate::board::store::create_project_with_members(
+            &mut l.conn,
+            &l.id,
+            "Gudang",
+            "GD",
+            Some(&desain),
+            &[budi.pk()],
+        )
+        .unwrap()
+        .value
+        .id;
         let write = BoardAction::RemoteChange {
             project_id: proj.clone(),
         };
+        assert!(LocalRolePolicy.allows(&l.conn, &budi.pk(), &write));
         let before = org_ops::now().unix_timestamp() - 60;
-        // Budi moves to another team but stays in the organization.
-        p::remove_team_member(&mut l.conn, &l.id, &desain, &budi.pk(), org_ops::now()).unwrap();
-        p::add_team_member(&mut l.conn, &l.id, &lain, &budi.pk(), org_ops::now()).unwrap();
+        // Budi leaves the project and moves to another department, but stays
+        // in the organization.
+        p::remove_project_member(&mut l.conn, &l.id, &proj, &budi.pk(), org_ops::now()).unwrap();
+        p::move_member(&mut l.conn, &l.id, &budi.pk(), &lain, org_ops::now()).unwrap();
         let after = org_ops::now().unix_timestamp() + 60;
 
         assert!(!LocalRolePolicy.allows(&l.conn, &budi.pk(), &write));
@@ -521,13 +534,13 @@ mod tests {
             BatchPolicy::new()
                 .check_at(&l.conn, &budi.pk(), &write, before)
                 .is_ok(),
-            "made while in the team"
+            "made while in the project"
         );
         assert!(
             BatchPolicy::new()
                 .check_at(&l.conn, &budi.pk(), &write, after)
                 .is_err(),
-            "made after leaving the team"
+            "made after leaving the project"
         );
         // Someone who never had the right gets nothing from the history.
         let stranger = pk(9);

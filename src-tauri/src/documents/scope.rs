@@ -11,8 +11,9 @@
 //!   only after joining the team (F-ROLE-11).
 //! - Project scope: the project must exist on this laptop's board, be
 //!   syncable (`board::store::is_syncable`) and belong to exactly the team the
-//!   scope names ([`board_team`]). Then the team rule above, or every active
-//!   non-guest member for a project without team.
+//!   scope names ([`board_team`]). Then, since v0.3, the board's project
+//!   rule (`board::access::may_access_project`): explicit project members
+//!   only, from any department; a superadmin only as a member.
 //! - Guests: only a project scope that [`GuestProjects`] allows for them.
 //!   [`BoardGuestProjects`] asks the board (`board::access::may_access_project`):
 //!   the invite's team must be the project's team, and a project without team
@@ -162,6 +163,11 @@ pub fn may_view(
             None => Ok(false),
         };
     }
+    // v0.3: project data is for the project's members only, whatever
+    // department they are in (`board::access`).
+    if let Some(project) = scope.project_id.as_deref() {
+        return board::access::may_access_project(conn, pk, project);
+    }
     Ok(match scope.team_id.as_deref() {
         None => true,
         Some(team) => state.team_role(team, pk).is_some(),
@@ -182,7 +188,9 @@ pub fn may_write(
 
 /// Tests only: board project `id` of `team` (none for a project without
 /// team), created by `creator`, marked syncable (`bound = 1`) so the scope
-/// rules accept it without a real project document.
+/// rules accept it without a real project document. Since v0.3 nobody reads
+/// it until it is registered in the membership log
+/// ([`register_test_project`], or `test_lab::Lab::register_project`).
 #[cfg(test)]
 pub fn insert_test_project(conn: &Connection, id: &str, team: Option<&str>, creator: &str) {
     conn.execute(
@@ -192,6 +200,35 @@ pub fn insert_test_project(conn: &Connection, id: &str, team: Option<&str>, crea
         params![id, team, creator],
     )
     .unwrap();
+}
+
+/// Tests only: registers a project made by `identity` in the membership log
+/// (`project_create` with `members`) and adds its board row. Returns the id.
+#[cfg(test)]
+pub fn register_test_project(
+    conn: &mut Connection,
+    identity: &crate::identity::Identity,
+    team: Option<&str>,
+    members: &[String],
+) -> String {
+    use crate::permissions::{self, Body, Scope};
+    let me = identity.public_key_hex().to_owned();
+    let nonce = crate::board::doc::random_id();
+    let id = permissions::project_id_for(&me, team, &nonce);
+    let mut members: Vec<String> = members.iter().filter(|m| m.as_str() != me).cloned().collect();
+    members.sort();
+    members.dedup();
+    let body = Body::ProjectCreate {
+        project: id.clone(),
+        team: team.map(str::to_owned),
+        creator: me.clone(),
+        nonce,
+        members,
+    };
+    permissions::author_op(conn, identity, Scope::Org, body, time::OffsetDateTime::now_utc())
+        .unwrap();
+    insert_test_project(conn, &id, team, &me);
+    id
 }
 
 #[cfg(test)]
@@ -209,14 +246,10 @@ mod tests {
 
     #[test]
     fn project_scopes_follow_the_board() {
-        let (p, q, r) = ("ab".repeat(16), "cd".repeat(16), "ef".repeat(16));
         let unknown = "12".repeat(16);
         let loose = "34".repeat(16);
         let mut lab = Lab::new(&["Sari", "Budi"]);
         let outsider = lab.add_member_elsewhere("Dewi");
-        // Invited to p (team project), q (no team), r (other team) and an
-        // unknown project, all under "Tim Proyek".
-        let guest = lab.add_guest("Tamu", &[&p, &q, &r, &unknown]);
         let other_team = lab.laptops[1]
             .org_state()
             .teams
@@ -226,12 +259,19 @@ mod tests {
             .id
             .clone();
         let team = lab.team.clone();
+        // v0.3: explicit members. p (team project) is Budi's, q (no team)
+        // has Dewi from the other department, r belongs to the other team.
+        let p = lab.register_project(1, Some(&team), &[]);
+        let q = lab.register_project(0, None, &[outsider]);
+        let r = lab.register_project(0, Some(&other_team), &[]);
+        // Invited to p, q, r and an unknown project, all under "Tim Proyek".
+        let guest = lab.add_guest("Tamu", &[&p, &q, &r, &unknown]);
         lab.add_project(&p, Some(&team));
         lab.add_project(&q, None);
         lab.add_project(&r, Some(&other_team));
         lab.add_project(&loose, None);
         let s = lab.laptops[1].org_state();
-        let (budi, dewi, tamu) = (lab.pk(1), lab.pk(outsider), lab.pk(guest));
+        let (sari, budi, dewi, tamu) = (lab.pk(0), lab.pk(1), lab.pk(outsider), lab.pk(guest));
         lab.laptops[1].with(|c| {
             let db = &c.db;
             // A project id the board does not bind to its creator.
@@ -246,6 +286,8 @@ mod tests {
             assert_eq!(board_team(db, &loose).unwrap(), None);
 
             assert!(view(&budi, scope(t, Some(&p))));
+            assert!(!view(&sari, scope(t, Some(&p))), "same department, not a member");
+            assert!(!view(&budi, scope(None, Some(&q))), "project without team, not a member");
             assert!(!view(&budi, scope(None, Some(&p))), "team project without team");
             assert!(!view(&dewi, scope(None, Some(&p))), "team project without team");
             assert!(view(&dewi, scope(None, Some(&q))));
@@ -269,36 +311,43 @@ mod tests {
         });
     }
 
+    /// Team data follows the department, project data the project's
+    /// members: a superadmin sees neither from outside (F-ROLE-11).
     #[test]
     fn superadmin_sees_team_data_only_inside_the_team() {
-        let p = "ab".repeat(16);
         let mut lab = Lab::new(&["Sari", "Budi"]);
-        lab.add_project(&p, Some(&lab.team));
         let team = lab.team.clone();
+        let p = lab.register_project(1, Some(&team), &[]);
+        lab.add_project(&p, Some(&team));
         let sari = lab.pk(0);
-        let check = |lab: &Lab, inside: bool| {
+        let check = |lab: &Lab, in_team: bool, in_project: bool| {
             let s = lab.laptops[1].org_state();
             assert!(s.is_superadmin(&sari));
             lab.laptops[1].with(|c| {
                 let g = BoardGuestProjects;
                 let team_scope = scope(Some(&team), None);
                 let project = scope(Some(&team), Some(&p));
-                assert_eq!(may_view(&c.db, &s, &g, &sari, &team_scope).unwrap(), inside);
-                assert_eq!(may_view(&c.db, &s, &g, &sari, &project).unwrap(), inside);
-                assert_eq!(may_write(&c.db, &s, &g, &sari, &project).unwrap(), inside);
+                assert_eq!(may_view(&c.db, &s, &g, &sari, &team_scope).unwrap(), in_team);
+                assert_eq!(may_view(&c.db, &s, &g, &sari, &project).unwrap(), in_project);
+                assert_eq!(may_write(&c.db, &s, &g, &sari, &project).unwrap(), in_project);
                 assert!(may_view(&c.db, &s, &g, &sari, &DocScope::default()).unwrap());
             });
         };
-        check(&lab, true);
+        check(&lab, true, false);
+        // Adding herself to the project is recorded in the log.
+        lab.add_to_project(0, &p, 0);
+        check(&lab, true, true);
         lab.leave_team(0);
-        check(&lab, false);
-        // Joining again restores it.
+        check(&lab, false, true);
+        lab.remove_from_project(0, &p, 0);
+        check(&lab, false, false);
+        // Joining the department again restores the department's data only.
         lab.laptops[0].with(|c| {
             let me = c.identity.public_key_hex().to_owned();
             permissions::add_team_member(&mut c.db, &c.identity, &team, &me, time::OffsetDateTime::now_utc())
                 .unwrap();
         });
         lab.sync_membership();
-        check(&lab, true);
+        check(&lab, true, false);
     }
 }

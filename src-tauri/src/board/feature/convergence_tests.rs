@@ -201,13 +201,22 @@ impl Office {
         [self.sari.me(), self.budi.me(), self.citra.me()]
     }
 
-    /// A new laptop that joins team Desain as a member through Sari's
+    /// A new laptop that joins department Desain as a member through Sari's
     /// invite; the membership ops reach every laptop of the office.
     fn member(&self, name: &str) -> Lap {
         let l = Lap::new(name);
         join(&self.sari, &l, &self.team, InviteRole::Member, vec![]);
         sync_ops(&[&self.sari, &self.budi, &self.citra, &l]);
         l
+    }
+
+    /// Budi (admin of Desain, so a manager of its projects) adds `who` to
+    /// project `pid`; the op reaches every laptop of the office and `who`.
+    fn add_to_project(&self, pid: &str, who: &Lap) {
+        let pk = who.pk.clone();
+        self.budi
+            .core(|c| p::add_project_member(&mut c.db, &c.identity, pid, &pk, org_ops::now()));
+        sync_ops(&[&self.sari, &self.budi, &self.citra, who]);
     }
 }
 
@@ -237,15 +246,33 @@ fn office() -> Office {
     office_with(true)
 }
 
-fn project(l: &Lap, team: &str, name: &str, code: &str) -> String {
-    commands::create_project(&l.state, &NoopSync, name, code, Some(team))
+/// `creator`'s project of Desain, with every other office laptop in Desain
+/// as a project member (everyone who saw a department project before v0.3).
+/// The membership ops reach every laptop of the office.
+fn project(o: &Office, creator: &Lap, name: &str, code: &str) -> String {
+    let pid = commands::create_project(&creator.state, &NoopSync, name, code, Some(&o.team))
         .unwrap()
-        .id
+        .id;
+    let team = o.team.clone();
+    let others: Vec<String> = creator.core(|c| {
+        let state = p::require_state(&c.db)?;
+        Ok(state
+            .members
+            .keys()
+            .filter(|pk| **pk != creator.pk && state.team_role(&team, pk).is_some())
+            .cloned()
+            .collect())
+    });
+    for pk in others {
+        creator.core(|c| p::add_project_member(&mut c.db, &c.identity, &pid, &pk, org_ops::now()));
+    }
+    sync_ops(&o.laps());
+    pid
 }
 
 /// A project every laptop of the office already holds.
 fn shared_project(o: &Office, creator: &Lap, name: &str, code: &str) -> String {
-    let pid = project(creator, &o.team, name, code);
+    let pid = project(o, creator, name, code);
     sync_all(&o.all()).unwrap();
     pid
 }
@@ -574,7 +601,7 @@ proptest! {
 #[test]
 fn colliding_numbers_end_unique_and_the_same_everywhere() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "Peluncuran produk", "PL");
+    let pid = project(&o, &o.budi, "Peluncuran produk", "PL");
     sync_all(&o.all()).unwrap();
     // Offline: Budi and Citra both create PL-1 and PL-2; Budi's are older.
     let b1 = task_at(&o.budi, &pid, "b1", &at(1));
@@ -613,7 +640,7 @@ fn colliding_numbers_end_unique_and_the_same_everywhere() {
 #[test]
 fn three_laptops_creating_the_first_task_at_once_converge() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "Peluncuran produk", "PL");
+    let pid = project(&o, &o.budi, "Peluncuran produk", "PL");
     sync_all(&o.all()).unwrap();
     let mut created = Vec::new();
     for (l, title) in [(&o.sari, "Satu dari Sari"), (&o.budi, "Satu dari Budi"), (&o.citra, "Satu dari Citra")] {
@@ -704,6 +731,9 @@ fn records_in_any_arrival_order_give_the_same_result() {
     assert_converged(&o.laps(), &pid, "PL");
 
     let receivers = [o.member("Dewi"), o.member("Eko"), o.member("Fajar"), o.member("Gita")];
+    for r in &receivers {
+        o.add_to_project(&pid, r);
+    }
     let ids = o.budi.f.record_ids_for(&receivers[0].pk).unwrap();
     let records = o.budi.f.records_for(&receivers[0].pk, &ids).unwrap();
     assert_eq!(records.len(), o.budi.record_ids(&pid).len());
@@ -729,7 +759,7 @@ fn records_in_any_arrival_order_give_the_same_result() {
 // 5. Scoping.
 
 #[test]
-fn other_team_gets_nothing_and_a_guest_gets_only_their_project() {
+fn other_department_gets_nothing_and_a_guest_gets_only_their_project() {
     let o = office();
     let pa = shared_project(&o, &o.budi, "Untuk klien", "PA");
     let pb = shared_project(&o, &o.budi, "Internal", "PB");
@@ -748,7 +778,7 @@ fn other_team_gets_nothing_and_a_guest_gets_only_their_project() {
     let mut every: Vec<String> = o.budi.record_ids(&pa);
     every.extend(o.budi.record_ids(&pb));
     for l in o.laps() {
-        // Another team: nothing offered, nothing sent even when asked by id.
+        // Another department: nothing offered, nothing sent even when asked by id.
         assert!(l.f.record_ids_for(&dodi.pk).unwrap().is_empty());
         assert!(l.f.records_for(&dodi.pk, &every).unwrap().is_empty());
         // The guest: project PA only.
@@ -802,14 +832,17 @@ fn other_team_gets_nothing_and_a_guest_gets_only_their_project() {
 }
 
 #[test]
-fn member_removed_from_the_team_gets_nothing_new_and_is_not_accepted() {
+fn member_removed_from_the_project_gets_nothing_new_and_is_not_accepted() {
     let o = office();
-    let pid = project(&o.budi, &o.team, "Peluncuran produk", "PL");
+    let pid = project(&o, &o.budi, "Peluncuran produk", "PL");
     let task = new_task(&o.budi, &pid, "Logo");
     sync_all(&o.all()).unwrap();
 
-    let (team, citra_pk) = (o.team.clone(), o.citra.pk.clone());
-    o.sari.core(|c| p::remove_team_member(&mut c.db, &c.identity, &team, &citra_pk, org_ops::now()));
+    // Budi (department admin) takes Citra out of the project; she stays in
+    // the department.
+    let citra_pk = o.citra.pk.clone();
+    o.budi
+        .core(|c| p::remove_project_member(&mut c.db, &c.identity, &pid, &citra_pk, org_ops::now()));
     sync_ops(&o.laps());
 
     new_task(&o.budi, &pid, "Sesudah Citra keluar");
@@ -851,9 +884,9 @@ fn member_removed_from_the_team_gets_nothing_new_and_is_not_accepted() {
 }
 
 #[test]
-fn superadmin_reads_a_team_project_only_after_joining_the_team() {
+fn superadmin_reads_a_project_only_after_joining_it() {
     let o = office_with(false);
-    let pid = project(&o.budi, &o.team, "Peluncuran produk", "PL");
+    let pid = project(&o, &o.budi, "Peluncuran produk", "PL");
     new_task(&o.budi, &pid, "Logo");
     sync_all(&o.all()).unwrap();
     let ids = o.budi.record_ids(&pid);
@@ -863,8 +896,16 @@ fn superadmin_reads_a_team_project_only_after_joining_the_team() {
         assert!(l.f.records_for(&o.sari.pk, &ids).unwrap().is_empty());
     }
 
+    // Joining the department is not enough (v0.3).
     let (team, sari_pk) = (o.team.clone(), o.sari.pk.clone());
     o.sari.core(|c| p::add_team_member(&mut c.db, &c.identity, &team, &sari_pk, org_ops::now()));
+    sync_ops(&o.laps());
+    for l in [&o.budi, &o.citra] {
+        assert!(l.f.record_ids_for(&o.sari.pk).unwrap().is_empty());
+    }
+    // She adds herself to the project (recorded in the log).
+    o.sari
+        .core(|c| p::add_project_member(&mut c.db, &c.identity, &pid, &sari_pk, org_ops::now()));
     sync_ops(&o.laps());
     for l in [&o.budi, &o.citra] {
         let offered: BTreeSet<String> = l.f.record_ids_for(&o.sari.pk).unwrap().into_iter().collect();
@@ -1001,8 +1042,9 @@ fn forged_changes_are_refused_logged_and_not_asked_again() {
 #[test]
 fn rename_by_team_admin_syncs_and_rename_by_member_is_held() {
     let o = office();
-    // Sari (superadmin in Desain) creates it; Budi is admin, not creator.
-    let pid = project(&o.sari, &o.team, "Peluncuran produk", "PL");
+    // Sari (superadmin in Desain) creates it; Budi is department admin and
+    // a project member, not creator.
+    let pid = project(&o, &o.sari, "Peluncuran produk", "PL");
     sync_all(&o.all()).unwrap();
     commands::update_project(&o.budi.state, &NoopSync, &pid, "Peluncuran 2027").unwrap();
     sync_all(&o.all()).unwrap();
@@ -1038,8 +1080,8 @@ fn rename_by_team_admin_syncs_and_rename_by_member_is_held() {
 fn two_projects_with_the_same_code_show_the_same_codes_everywhere() {
     let o = office();
     // Offline, Sari and Budi both create a project with code PA.
-    let p1 = project(&o.sari, &o.team, "Alfa", "PA");
-    let p2 = project(&o.budi, &o.team, "Beta", "PA");
+    let p1 = project(&o, &o.sari, "Alfa", "PA");
+    let p2 = project(&o, &o.budi, "Beta", "PA");
     let t1 = new_task(&o.sari, &p1, "Satu");
     let t2 = new_task(&o.budi, &p2, "Dua");
     sync_all(&o.all()).unwrap();
@@ -1138,6 +1180,7 @@ fn concurrent_task_with_the_same_id_does_not_split_the_laptops() {
     let o = office();
     let pid = shared_project(&o, &o.budi, "Peluncuran produk", "PL");
     let dewi = o.member("Dewi");
+    o.add_to_project(&pid, &dewi);
     pull(o.budi.me(), dewi.me()).unwrap();
     let x = new_task(&o.budi, &pid, "Asli dari Budi");
     // Built on Citra's copy, which does not have Budi's task.

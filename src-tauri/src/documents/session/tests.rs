@@ -758,7 +758,7 @@ fn command_results_use_the_contract_field_names() {
 fn project_documents_take_the_board_team() {
     let h = Harness::new();
     let now = time::OffsetDateTime::now_utc();
-    let (team, me) = h
+    let (team, _me) = h
         .env
         .core(|db, me| {
             let team = crate::permissions::create_team(db, me, "Tim Proyek", now)?.id;
@@ -767,12 +767,13 @@ fn project_documents_take_the_board_team() {
             Ok((team, pk))
         })
         .unwrap();
-    let (in_team, no_team) = ("ab".repeat(16), "cd".repeat(16));
-    h.env
-        .core(|db, _| {
-            crate::documents::scope::insert_test_project(db, &in_team, Some(&team), &me);
-            crate::documents::scope::insert_test_project(db, &no_team, None, &me);
-            Ok(())
+    // Registered in the membership log (v0.3), with this laptop as creator
+    // and so as member.
+    let (in_team, no_team) = h
+        .env
+        .core(|db, id| {
+            let reg = crate::documents::scope::register_test_project;
+            Ok((reg(db, id, Some(&team), &[]), reg(db, id, None, &[])))
         })
         .unwrap();
 

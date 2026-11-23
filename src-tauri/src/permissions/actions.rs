@@ -31,12 +31,14 @@ fn random_hex16() -> String {
     hex::encode(b)
 }
 
-fn reason_error(reason: Reason) -> AppError {
+pub(crate) fn reason_error(reason: Reason) -> AppError {
     match reason {
         Reason::LastSuperadmin => AppError::LastSuperadmin,
-        Reason::TeamNotFound | Reason::TargetNotActive | Reason::InviteNotFound => {
-            AppError::NotFound(reason.message().into())
-        }
+        Reason::TeamNotFound
+        | Reason::TargetNotActive
+        | Reason::InviteNotFound
+        | Reason::ProjectNotFound
+        | Reason::LabelNotFound => AppError::NotFound(reason.message().into()),
         Reason::InviteExpired | Reason::InviteNotYetValid => AppError::InviteExpired,
         Reason::InviteUsed => AppError::InviteUsed,
         Reason::InviteRevoked | Reason::InviterNotAuthorized => AppError::InviteRevoked,
@@ -725,6 +727,14 @@ pub fn redeem_as_member(
     if inv.used_by.iter().any(|m| m == me) {
         return Err(AppError::Forbidden(
             "Anda sudah pernah memakai kode undangan ini.".into(),
+        ));
+    }
+    if inv.role != InviteRole::Guest
+        && state.team_role(&inv.team, me).is_none()
+        && state.department_of(me).is_some()
+    {
+        return Err(AppError::Forbidden(
+            Reason::AlreadyInDepartment.message().into(),
         ));
     }
     if !state.accept_changes_anything(inv, me) {

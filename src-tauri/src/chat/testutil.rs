@@ -162,6 +162,7 @@ impl Office {
             .unwrap();
             c.execute("DELETE FROM team_members WHERE public_key = ?1", [pk]).unwrap();
             c.execute("DELETE FROM guest_access WHERE public_key = ?1", [pk]).unwrap();
+            c.execute("DELETE FROM project_members WHERE public_key = ?1", [pk]).unwrap();
         });
     }
 
@@ -192,9 +193,17 @@ impl Office {
         (id, super::model::channel_conv(&channel))
     }
 
-    /// Board project row marked syncable (`bound = 1`); returns its id (its
+    /// Board project row marked syncable (`bound = 1`), registered in the
+    /// membership tables (v0.3, like the fold would leave it) with the
+    /// creator and `members` as its explicit members; returns its id (its
     /// channel is `ch:<id>`).
-    pub fn add_project(&self, name: &str, team: Option<&str>, creator: &str) -> String {
+    pub fn add_project(
+        &self,
+        name: &str,
+        team: Option<&str>,
+        creator: &str,
+        members: &[&str],
+    ) -> String {
         let id = super::model::random_hex32();
         let code = format!("P{}", &id[..6]);
         self.each(|c| {
@@ -204,8 +213,34 @@ impl Office {
                 params![id, code, name, team, creator],
             )
             .unwrap();
+            c.execute(
+                "INSERT INTO projects (id, team_id, creator, registered_by, created_at)
+                 VALUES (?1, ?2, ?3, ?3, 't')",
+                params![id, team, creator],
+            )
+            .unwrap();
+            for pk in std::iter::once(&creator).chain(members) {
+                c.execute(
+                    "INSERT OR IGNORE INTO project_members (project_id, public_key, added_at, added_by)
+                     VALUES (?1, ?2, 't', ?3)",
+                    params![id, pk, creator],
+                )
+                .unwrap();
+            }
         });
         id
+    }
+
+    /// Adds `pk` to project `id` on every laptop (`project_member_add`).
+    pub fn add_project_member(&self, id: &str, pk: &str) {
+        self.each(|c| {
+            c.execute(
+                "INSERT OR IGNORE INTO project_members (project_id, public_key, added_at, added_by)
+                 VALUES (?1, ?2, 't', ?2)",
+                params![id, pk],
+            )
+            .unwrap();
+        });
     }
 
     pub fn grant_guest(&self, guest: &str, team: &str, project: &str) {

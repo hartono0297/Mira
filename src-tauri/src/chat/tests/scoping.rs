@@ -57,8 +57,8 @@ fn guest_sees_only_its_project_and_cannot_use_chat_pribadi() {
     ]);
     let (a, b, g) = (&o.l[0], &o.l[1], &o.l[2]);
     let (team, team_conv) = o.add_team("Proyek", &[(&a.pk, true), (&b.pk, false)]);
-    let p = o.add_project("Renovasi Kantor Klien", Some(&team), &a.pk);
-    let q = o.add_project("Gudang", Some(&team), &a.pk);
+    let p = o.add_project("Renovasi Kantor Klien", Some(&team), &a.pk, &[&b.pk]);
+    let q = o.add_project("Gudang", Some(&team), &a.pk, &[&b.pk]);
     o.grant_guest(&g.pk, &team, &p);
     let (p_conv, q_conv) = (model::channel_conv(&p), model::channel_conv(&q));
     a.hooks.set_connected(&[&b.pk, &g.pk]);
@@ -171,8 +171,8 @@ fn guest_access_counts_only_for_the_projects_own_team() {
     let (a, b, g) = (&o.l[0], &o.l[1], &o.l[2]);
     let (team, _) = o.add_team("Proyek", &[(&a.pk, true), (&b.pk, false)]);
     let (other, _) = o.add_team("Gudang", &[(&b.pk, true)]);
-    let p = o.add_project("Renovasi Kantor Klien", Some(&team), &a.pk);
-    let open = o.add_project("Kegiatan Kantor", None, &a.pk);
+    let p = o.add_project("Renovasi Kantor Klien", Some(&team), &a.pk, &[&b.pk]);
+    let open = o.add_project("Kegiatan Kantor", None, &a.pk, &[&b.pk]);
     // An invite from another team, and any invite to a project without a
     // team, grant nothing on the board, so nothing in chat either.
     o.grant_guest(&g.pk, &other, &p);
@@ -210,7 +210,7 @@ fn project_the_board_never_syncs_has_no_channel() {
     let o = Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member)]);
     let (a, b) = (&o.l[0], &o.l[1]);
     let (team, _) = o.add_team("Proyek", &[(&a.pk, true), (&b.pk, false)]);
-    let p = o.add_project("Arsip Lama", Some(&team), &a.pk);
+    let p = o.add_project("Arsip Lama", Some(&team), &a.pk, &[&b.pk]);
     o.each(|c| {
         c.execute("UPDATE board_projects SET bound = 0 WHERE id = ?1", [&p])
             .unwrap();
@@ -259,7 +259,7 @@ fn superadmin_outside_the_team_does_not_administer_its_project_channel() {
     ]);
     let (a, b, d) = (&o.l[0], &o.l[1], &o.l[2]);
     let (team, _) = o.add_team("Lapangan", &[(&b.pk, true), (&d.pk, false)]);
-    let p = o.add_project("Gedung B", Some(&team), &b.pk);
+    let p = o.add_project("Gedung B", Some(&team), &b.pk, &[&d.pk]);
     let conv = model::channel_conv(&p);
     d.hooks.set_connected(&[&b.pk]);
     let m = d
@@ -305,7 +305,8 @@ fn superadmin_outside_the_team_does_not_administer_its_project_channel() {
         0
     );
 
-    // Once Sari joins the team she administers its project channel.
+    // v0.3: joining the department is not enough; once Sari adds herself
+    // to the project she administers its channel.
     b.with_conn(|c| {
         c.execute(
             "INSERT INTO team_members (team_id, public_key, role, added_at) VALUES (?1, ?2, 'member', 't')",
@@ -314,6 +315,13 @@ fn superadmin_outside_the_team_does_not_administer_its_project_channel() {
         .unwrap();
         let ctx = Ctx::load(c, &b.pk, &BoardAudience).unwrap().unwrap();
         let info = ctx.conv(&conv).unwrap().unwrap();
+        assert!(!ctx.is_admin(&info, &a.pk).unwrap());
+    });
+    o.add_project_member(&p, &a.pk);
+    b.with_conn(|c| {
+        let ctx = Ctx::load(c, &b.pk, &BoardAudience).unwrap().unwrap();
+        let info = ctx.conv(&conv).unwrap().unwrap();
         assert!(ctx.is_admin(&info, &a.pk).unwrap());
+        assert!(!ctx.is_admin(&info, &d.pk).unwrap(), "plain project member");
     });
 }

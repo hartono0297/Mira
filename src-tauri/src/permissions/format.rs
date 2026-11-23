@@ -80,6 +80,60 @@ pub fn channel_name_for(team_name: &str) -> String {
     team_name.to_lowercase().replace(' ', "-")
 }
 
+pub const LABEL_NAME_MAX_CHARS: usize = 30;
+pub const LAPTOP_NAME_MAX_CHARS: usize = 64;
+pub const OS_NAME_MAX_CHARS: usize = 64;
+pub const APP_VERSION_MAX_CHARS: usize = 32;
+
+/// Trimmed text of 1 to `max` characters without control or invisible
+/// characters.
+fn is_short_text(s: &str, max: usize) -> bool {
+    let len = s.chars().count();
+    s.trim() == s && (1..=max).contains(&len) && !identity::has_forbidden_chars(s)
+}
+
+/// Trimmed label name, 1 to 30 characters, same character rules as names.
+pub fn validate_label_name(name: &str) -> AppResult<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::InvalidName(
+            "Nama label tidak boleh kosong.".into(),
+        ));
+    }
+    if name.chars().count() > LABEL_NAME_MAX_CHARS {
+        return Err(AppError::InvalidName(format!(
+            "Nama label paling banyak {LABEL_NAME_MAX_CHARS} karakter."
+        )));
+    }
+    if identity::has_forbidden_chars(name) {
+        return Err(AppError::InvalidName(
+            "Nama label berisi karakter yang tidak diizinkan, misalnya baris baru atau tab.".into(),
+        ));
+    }
+    Ok(name.to_owned())
+}
+
+pub fn is_canonical_label_name(s: &str) -> bool {
+    validate_label_name(s).is_ok_and(|v| v == s)
+}
+
+/// Laptop name as the operating system reports it, 1 to 64 characters.
+pub fn is_valid_laptop_name(s: &str) -> bool {
+    is_short_text(s, LAPTOP_NAME_MAX_CHARS)
+}
+
+/// Operating system with version, for example `Windows 11` or `macOS 15.1`.
+pub fn is_valid_os_name(s: &str) -> bool {
+    is_short_text(s, OS_NAME_MAX_CHARS)
+}
+
+/// Mira version: 1 to 32 ASCII letters, digits, `.`, `-` or `+`.
+pub fn is_valid_app_version(s: &str) -> bool {
+    (1..=APP_VERSION_MAX_CHARS).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+}
+
 /// Trimmed, 1 to 120 characters, no control or invisible characters.
 pub fn is_valid_channel_name(s: &str) -> bool {
     let len = s.chars().count();
@@ -132,6 +186,29 @@ mod tests {
         assert!(is_canonical_team_name(&"é".repeat(60)));
         assert!(!is_canonical_team_name("Tim\tA"));
         assert!(!is_canonical_team_name("Tim\u{200B}A"));
+    }
+
+    #[test]
+    fn label_and_device_fields() {
+        assert_eq!(validate_label_name("  K3 ").unwrap(), "K3");
+        assert!(is_canonical_label_name("Senior"));
+        assert!(!is_canonical_label_name(""));
+        assert!(!is_canonical_label_name(" K3"));
+        assert!(!is_canonical_label_name(&"x".repeat(31)));
+        assert!(!is_canonical_label_name(
+            "a
+b"
+        ));
+        assert!(is_valid_laptop_name("LAPTOP-DESAIN-03"));
+        assert!(!is_valid_laptop_name(""));
+        assert!(!is_valid_laptop_name(&"x".repeat(65)));
+        assert!(is_valid_os_name("Windows 11"));
+        assert!(!is_valid_os_name("Windows	11"));
+        assert!(is_valid_app_version("0.3.0"));
+        assert!(is_valid_app_version("0.3.0-beta.1+abc"));
+        assert!(!is_valid_app_version("0.3 0"));
+        assert!(!is_valid_app_version(""));
+        assert!(!is_valid_app_version(&"1".repeat(33)));
     }
 
     #[test]

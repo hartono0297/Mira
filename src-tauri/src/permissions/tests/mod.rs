@@ -1,6 +1,8 @@
 mod causal_tests;
 mod db_tests;
 mod fold_tests;
+mod join_tests;
 mod op_tests;
 mod security_tests;
 mod sim;
+mod v03_tests;

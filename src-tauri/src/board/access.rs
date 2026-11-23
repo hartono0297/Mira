@@ -2,22 +2,30 @@
 //! "Aturan akses").
 //!
 //! [`Rights`] is the membership as far as the board cares: active members
-//! (guest or not, superadmin or not), live teams with their admins, and guest
-//! access per project. It is read from the tables the Tahap 1 fold keeps
-//! (`members`, `teams`, `team_members`, `guest_access`), or built from an
-//! `OrgState`.
+//! (guest or not, superadmin or not), live departments (internally `team`)
+//! with their admins, guest access per project, and the projects registered
+//! in the membership log with their explicit members (v0.3,
+//! docs/plans/v0.3-kontrak.md). It is read from the tables the fold keeps
+//! (`members`, `teams`, `team_members`, `guest_access`, `projects`,
+//! `project_members`), or built from an `OrgState`.
 //!
-//! | Right | Project of team T | Project without team |
-//! |---|---|---|
-//! | read | active member of T (any role), or guest access (pk, T, project) | active non-guest member |
-//! | write | read, and not a guest | active non-guest member |
-//! | delete task | write, and task creator, admin of T or superadmin in T | write, and task creator or superadmin |
-//! | manage project | write, and admin of T, superadmin in T or project creator | write, and project creator or superadmin |
-//! | create project | admin of T, or superadmin in T | superadmin, or admin of any team |
+//! "Manager" of a project P of department T: the creator while a member of
+//! P, an admin of T, or a superadmin who is a member of P.
 //!
-//! Guest access only counts when the invite's team is the project's team.
-//! A superadmin does not read a team's projects until joining the team
-//! (F-ROLE-11).
+//! | Right | Rule |
+//! |---|---|
+//! | read | P is registered and the person is an explicit member of P, or has guest access (pk, T, P) |
+//! | write | read, and not a guest |
+//! | delete task | write, and task creator or manager |
+//! | manage project (rename) | write, and manager |
+//! | manage members | manager (an admin of T need not be a member) |
+//! | create project | admin of T or any superadmin; without department: superadmin or admin of any department |
+//!
+//! A project that is not registered (`project_create` not received yet, or
+//! made before v0.3 and not registered yet) is readable by nobody: data
+//! stays where it is until the log says who may have it. Guest access only
+//! counts when the invite's department is the project's department.
+//! Superadmins do not read a project unless they are members (F-ROLE-11).
 //!
 //! [`RightsHistory`] replays the accepted membership ops to answer "did the
 //! author have this right when the change was made": allowed when the right
@@ -50,6 +58,15 @@ struct MemberRights {
     superadmin: bool,
 }
 
+/// A project registered in the membership log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Registered {
+    team: Option<String>,
+    creator: String,
+    /// Explicit members, guests included.
+    members: BTreeSet<String>,
+}
+
 /// Board-relevant membership at one moment.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rights {
@@ -59,6 +76,8 @@ pub struct Rights {
     teams: BTreeMap<String, BTreeMap<String, bool>>,
     /// `(public key, team id, project id)`.
     guests: BTreeSet<(String, String, String)>,
+    /// Registered projects by id.
+    projects: BTreeMap<String, Registered>,
     /// `false` without an organization.
     has_org: bool,
 }
@@ -125,6 +144,33 @@ impl Rights {
         for row in rows {
             rights.guests.insert(row?);
         }
+        let mut stmt = conn.prepare("SELECT id, team_id, creator FROM projects")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, team, creator) = row?;
+            rights.projects.insert(
+                id,
+                Registered {
+                    team,
+                    creator,
+                    members: BTreeSet::new(),
+                },
+            );
+        }
+        let mut stmt = conn.prepare("SELECT project_id, public_key FROM project_members")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (project, pk) = row?;
+            if let Some(p) = rights.projects.get_mut(&project) {
+                p.members.insert(pk);
+            }
+        }
         Ok(rights)
     }
 
@@ -161,10 +207,25 @@ impl Rights {
             .iter()
             .map(|g| (g.public_key.clone(), g.team.clone(), g.project.clone()))
             .collect();
+        let projects = state
+            .projects
+            .values()
+            .map(|p| {
+                (
+                    p.id.clone(),
+                    Registered {
+                        team: p.team.clone(),
+                        creator: p.creator.clone(),
+                        members: p.members.keys().cloned().collect(),
+                    },
+                )
+            })
+            .collect();
         Rights {
             members,
             teams,
             guests,
+            projects,
             has_org: true,
         }
     }
@@ -217,23 +278,51 @@ impl Rights {
             .contains(&(pk.to_owned(), team.to_owned(), project.to_owned()))
     }
 
-    /// Admin of the project's team or superadmin in it; superadmin for a
-    /// project without team.
-    fn project_admin(&self, pk: &str, team: Option<&str>) -> bool {
-        match team {
-            Some(t) => self.is_team_admin(t, pk) || (self.is_superadmin(pk) && self.in_team(t, pk)),
-            None => self.is_superadmin(pk),
+    /// The registered project, when the board's row agrees with the log on
+    /// department and creator (the id binds both, so a mismatch means a
+    /// forged or broken row: no access at all).
+    fn registered(&self, p: ProjectRef<'_>) -> Option<&Registered> {
+        self.projects
+            .get(p.id)
+            .filter(|r| r.team.as_deref() == p.team_id && r.creator == p.created_by)
+    }
+
+    /// Whether the project is registered in the membership log.
+    pub fn is_registered(&self, project_id: &str) -> bool {
+        self.projects.contains_key(project_id)
+    }
+
+    /// Explicit member of the registered project.
+    pub fn is_project_member(&self, pk: &str, p: ProjectRef<'_>) -> bool {
+        self.registered(p).is_some_and(|r| r.members.contains(pk))
+    }
+
+    /// Creator while a member, admin of the project's department, or
+    /// superadmin who is a member. Guests never.
+    pub fn is_project_manager(&self, pk: &str, p: ProjectRef<'_>) -> bool {
+        let Some(r) = self.registered(p) else {
+            return false;
+        };
+        if !self.is_active_member(pk) {
+            return false;
         }
+        let member = r.members.contains(pk);
+        (member && r.creator == pk)
+            || r.team.as_deref().is_some_and(|t| self.is_team_admin(t, pk))
+            || (member && self.is_superadmin(pk))
     }
 
     pub fn can_read(&self, pk: &str, p: ProjectRef<'_>) -> bool {
-        let Some(m) = self.active(pk) else {
+        if self.active(pk).is_none() {
+            return false;
+        }
+        let Some(r) = self.registered(p) else {
             return false;
         };
-        match p.team_id {
-            None => !m.guest,
-            Some(team) => self.in_team(team, pk) || self.has_guest_access(pk, team, p.id),
-        }
+        r.members.contains(pk)
+            || r.team
+                .as_deref()
+                .is_some_and(|team| self.has_guest_access(pk, team, p.id))
     }
 
     pub fn can_write(&self, pk: &str, p: ProjectRef<'_>) -> bool {
@@ -241,11 +330,18 @@ impl Rights {
     }
 
     pub fn can_delete_task(&self, pk: &str, p: ProjectRef<'_>, task_created_by: &str) -> bool {
-        self.can_write(pk, p) && (task_created_by == pk || self.project_admin(pk, p.team_id))
+        self.can_write(pk, p) && (task_created_by == pk || self.is_project_manager(pk, p))
     }
 
     pub fn can_manage(&self, pk: &str, p: ProjectRef<'_>) -> bool {
-        self.can_write(pk, p) && (p.created_by == pk || self.project_admin(pk, p.team_id))
+        self.can_write(pk, p) && self.is_project_manager(pk, p)
+    }
+
+    /// May add and remove project members (`project_member_add` and
+    /// `project_member_remove`). Does not need read access: an admin of
+    /// the department manages members without being one.
+    pub fn can_manage_members(&self, pk: &str, p: ProjectRef<'_>) -> bool {
+        self.is_project_manager(pk, p)
     }
 
     pub fn can_create_project(&self, pk: &str, team: Option<&str>) -> bool {
@@ -253,7 +349,7 @@ impl Rights {
             return false;
         }
         match team {
-            Some(t) => self.project_admin(pk, Some(t)),
+            Some(t) => self.is_superadmin(pk) || self.is_team_admin(t, pk),
             None => self.is_superadmin(pk) || self.is_any_team_admin(pk),
         }
     }
@@ -333,13 +429,16 @@ impl RightsHistory {
 
 /// Applies the accepted ops one at a time from genesis and keeps the rights
 /// after each op that changed them.
-fn replay(org: &org::Organization, ops: &[permissions::VerifiedOp]) -> Vec<(OffsetDateTime, Rights)> {
+fn replay(
+    org: &org::Organization,
+    ops: &[permissions::VerifiedOp],
+) -> Vec<(OffsetDateTime, Rights)> {
     let result = permissions::fold(org, ops);
     let by_id: HashMap<&str, &permissions::VerifiedOp> =
         ops.iter().map(|op| (op.id.as_str(), op)).collect();
     let mut state = OrgState::genesis(org);
-    let start = permissions::format::parse_time(&org.created_at)
-        .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    let start =
+        permissions::format::parse_time(&org.created_at).unwrap_or(OffsetDateTime::UNIX_EPOCH);
     let mut steps = vec![(start, Rights::from_state(&state))];
     for (id, outcome) in &result.outcomes {
         if outcome.is_err() {
@@ -423,7 +522,11 @@ pub fn may_access_project(conn: &Connection, peer: &str, project_id: &str) -> Ap
 
 /// For a guest invite: every project must exist on this laptop and belong to
 /// `team_id`, otherwise the invite would grant nothing.
-pub fn check_guest_projects(conn: &Connection, team_id: &str, project_ids: &[String]) -> AppResult<()> {
+pub fn check_guest_projects(
+    conn: &Connection,
+    team_id: &str,
+    project_ids: &[String],
+) -> AppResult<()> {
     for id in project_ids {
         let team: Option<Option<String>> = conn
             .query_row(

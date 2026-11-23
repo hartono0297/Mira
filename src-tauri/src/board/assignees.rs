@@ -25,10 +25,9 @@ pub trait AssigneeDirectory {
     }
 }
 
-/// Everyone who may write in the project (`access::Rights::writers`): the
-/// team's non-guest members plus members of other teams invited to the
-/// project; for a project without team, every active non-guest member. This
-/// laptop comes first when it may write.
+/// Everyone who may write in the project (`access::Rights::writers`): its
+/// non-guest project members, from any department (v0.3). This laptop comes
+/// first when it may write.
 #[derive(Debug, Clone)]
 pub struct LocalMembers {
     me: String,
@@ -94,7 +93,7 @@ impl AssigneeDirectory for LocalMembers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board::testutil::{Laptop, add_member, add_team};
+    use crate::board::testutil::{Laptop, add_member, add_team, register_project};
 
     fn pk(n: u8) -> String {
         format!("{n:02x}").repeat(32)
@@ -123,6 +122,14 @@ mod tests {
         add_member(&l.conn, &pk(2), "Ani", "member");
         add_member(&l.conn, &pk(3), "Tamu", "guest");
         add_member(&l.conn, &pk(4), "Lama", "removed");
+        let me = l.pk();
+        register_project(
+            &l.conn,
+            &"0".repeat(32),
+            None,
+            &pk(9),
+            &[&me, &pk(1), &pk(2), &pk(3), &pk(4)],
+        );
         let dir = LocalMembers::new(&l.id);
         let people = dir.assignable(&l.conn, &project(None)).unwrap();
         assert_eq!(keys(&people), ["Sari", "Ani", "budi"]);
@@ -130,23 +137,26 @@ mod tests {
     }
 
     #[test]
-    fn team_project_restricts_to_team() {
+    fn project_members_only_from_any_department() {
         let l = Laptop::founder("Sari");
         add_member(&l.conn, &pk(1), "Budi", "member");
         add_member(&l.conn, &pk(2), "Ani", "member");
-        let team = add_team(&l.conn, "Desain", &[(&pk(1), "member")]);
-        let empty = add_team(&l.conn, "Kosong", &[]);
+        add_member(&l.conn, &pk(3), "Citra", "member");
+        let team = add_team(&l.conn, "Desain", &[(&pk(1), "member"), (&pk(3), "member")]);
+        add_team(&l.conn, "Drafting", &[(&pk(2), "member")]);
+        let id = "0".repeat(32);
+        register_project(&l.conn, &id, Some(&team), &pk(9), &[&pk(1), &pk(2)]);
         let dir = LocalMembers::new(&l.id);
         assert_eq!(
-            keys(&dir.assignable(&l.conn, &project(Some(team))).unwrap()),
-            ["Budi"],
-            "the superadmin outside the team is not offered"
+            keys(&dir.assignable(&l.conn, &project(Some(team.clone()))).unwrap()),
+            ["Ani", "Budi"],
+            "project members from both departments; Citra (same department, not a member) and the superadmin are not offered"
         );
+        let mut other = project(Some(team));
+        other.id = "1".repeat(32);
         assert!(
-            dir.assignable(&l.conn, &project(Some(empty)))
-                .unwrap()
-                .is_empty(),
-            "team without members has nobody to assign"
+            dir.assignable(&l.conn, &other).unwrap().is_empty(),
+            "an unregistered project has nobody to assign"
         );
     }
 

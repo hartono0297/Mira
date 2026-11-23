@@ -109,17 +109,42 @@ mod tests {
         // v1 foundation, v2 membership log, v3 board, v4 documents, ...
         let before = 3;
         let (pk, org_id) = {
-            let mut conn = db::open_at_version(tmp.path(), before).unwrap();
+            // Today's code writes today's derived tables, so the organization
+            // is made in a scratch database at the latest version and its
+            // rows are copied into the old one.
+            let src_dir = tempfile::tempdir().unwrap();
+            let (pk, info) = {
+                let mut src = db::open(src_dir.path()).unwrap();
+                let mut me = identity::ensure_identity(&src, &MemoryKeyStore::new()).unwrap();
+                identity::save_display_name(&mut src, &mut me, "Sari").unwrap();
+                let info = org::create_organization(&mut src, &me, "CV Maju Jaya").unwrap();
+                (me.public_key_hex().to_owned(), info)
+            };
+            let conn = db::open_at_version(tmp.path(), before).unwrap();
             assert!(!table_exists(&conn, DOCUMENT_TABLES[0]));
-            let mut me = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
-            identity::save_display_name(&mut conn, &mut me, "Sari").unwrap();
-            let info = org::create_organization(&mut conn, &me, "CV Maju Jaya").unwrap();
+            let src_db = src_dir.path().join(db::DB_FILE_NAME);
+            conn.execute(
+                "ATTACH DATABASE ?1 AS src",
+                [src_db.to_string_lossy().as_ref()],
+            )
+            .unwrap();
+            conn.execute_batch(
+                "INSERT INTO identity SELECT * FROM src.identity;
+                 INSERT INTO organizations SELECT * FROM src.organizations;
+                 INSERT INTO members (organization_id, public_key, display_name, role, added_at,
+                                      status, is_superadmin, kind, removed_at)
+                   SELECT organization_id, public_key, display_name, role, added_at,
+                          status, is_superadmin, kind, removed_at FROM src.members;
+                 INSERT INTO org_ops SELECT * FROM src.org_ops;
+                 DETACH DATABASE src;",
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO settings (key, value, updated_at) VALUES ('theme.mode', 'dark', 't')",
                 [],
             )
             .unwrap();
-            (me.public_key_hex().to_owned(), info.id)
+            (pk, info.id)
         };
 
         let mut conn = db::open(tmp.path()).unwrap();

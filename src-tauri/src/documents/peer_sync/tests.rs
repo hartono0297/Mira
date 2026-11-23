@@ -587,9 +587,10 @@ fn large_files_are_not_fetched_automatically_but_on_demand() {
 
 #[test]
 fn guests_receive_only_their_projects_and_cannot_write() {
-    let project = "ab".repeat(16);
-    let other = "cd".repeat(16);
     let mut w = World::new(&["Sari", "Budi", "Citra"]);
+    let team_id = w.lab.team.clone();
+    let project = w.lab.register_project(0, Some(&team_id), &[1, 2]);
+    let other = w.lab.register_project(0, Some(&team_id), &[1, 2]);
     let g = w.guest("Tamu", &[&project]);
     w.lab.add_project(&project, Some(&w.lab.team));
     w.lab.add_project(&other, Some(&w.lab.team));
@@ -603,7 +604,7 @@ fn guests_receive_only_their_projects_and_cannot_write() {
     };
     let in_other = DocScope {
         team_id: Some(w.lab.team.clone()),
-        project_id: Some(other),
+        project_id: Some(other.clone()),
     };
     let (umum, _) = w.add_doc(0, &general(), "umum.docx", b"umum");
     let (tim, _) = w.add_doc(0, &team, "tim.docx", b"tim");
@@ -1319,9 +1320,11 @@ fn chat_attachments_are_not_served_through_document_versions() {
 }
 
 #[test]
-fn project_scope_needs_the_board_team_and_superadmins_in_the_team() {
-    let project = "ab".repeat(16);
+fn project_scope_needs_the_board_team_and_superadmins_in_the_project() {
     let mut w = World::new(&["Sari", "Budi", "Citra"]);
+    let team_id = w.lab.team.clone();
+    // Budi's project, with Sari (superadmin) and Citra as members.
+    let project = w.lab.register_project(1, Some(&team_id), &[0, 2]);
     let g = w.guest("Tamu", &[&project]);
     w.lab.add_project(&project, Some(&w.lab.team));
     let in_project = DocScope {
@@ -1346,9 +1349,11 @@ fn project_scope_needs_the_board_team_and_superadmins_in_the_team() {
         assert!(!w.has_doc(i, &loose.id), "laptop {i}");
     }
 
-    // Sari (superadmin) leaves the team: new team documents and project
-    // documents no longer reach her.
+    // Sari (superadmin) leaves the department and Budi takes her out of
+    // the project: new department and project documents no longer reach
+    // her (v0.3: project data follows project membership only).
     w.lab.leave_team(0);
+    w.lab.remove_from_project(1, &project, 0);
     let (tim, _) = w.add_doc(1, &team, "tim.docx", b"tim");
     let (proj2, _) = w.add_doc(1, &in_project, "proyek2.docx", b"proyek 2");
     let (umum, _) = w.add_doc(1, &general(), "umum.docx", b"umum");
