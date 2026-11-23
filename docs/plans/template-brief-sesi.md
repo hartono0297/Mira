@@ -18,7 +18,11 @@ Session utama memakai template ini setiap kali memulai sesi baru untuk satu task
   - pecah jadi tugas kecil dan pakai TDD;
   - minta reviewer terpisah (keamanan atau tampilan);
   - verifikasi sebelum menyatakan selesai.
-- Panggil subagent sebanyak mungkin dan paralel, beberapa sekaligus dalam satu pesan. Tugas yang paralel tidak boleh mengedit file yang sama.
+- **Wajib: panggil subagent sebanyak mungkin, supaya cepat.**
+  - Pecah setiap pekerjaan sampai ke bagian-bagian yang bisa dikerjakan bersamaan, lalu kirim beberapa Agent sekaligus dalam satu pesan.
+  - Selama satu subagent menunggu build atau tes, jangan biarkan bagian lain yang sudah bisa jalan menganggur. Mulai juga subagent untuk bagian itu.
+  - Reviewer, penulis tes, dan pengerjaan uji ujung ke ujung juga dikerjakan subagent.
+  - Satu-satunya batas: tugas yang paralel tidak boleh mengedit file yang sama, dan uji ujung ke ujung dijalankan satu per satu, karena memakai port dan Credential Manager yang sama.
 - Untuk tampilan dan teks, muat skill `antislop:antislop`, `antislop:antislop-ui`, `antislop:antislop-human`, dan `antislop:antislop-copywriting` sebelum menulis baris pertama.
   - Cek pasangan warna dengan `check_contrast`.
   - Jangan pakai em dash.
