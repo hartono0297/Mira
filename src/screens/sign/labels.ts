@@ -229,7 +229,7 @@ const REJECT_TEXT: Record<string, RejectText> = {
   version_changes_content: (n) => `Versi dari ${n} ditolak karena mengubah isi dokumen, bukan hanya menambah tanda tangan.`,
   version_not_prefix: (n) =>
     `Versi dari ${n} ditolak karena isi dokumen sebelumnya tidak utuh di dalamnya. Tanda tangan hanya boleh ditambahkan di belakang isi lama.`,
-  pdf_invalid: (n) => `Versi dari ${n} ditolak karena filenya bukan PDF yang bisa dibaca Mira.`,
+  pdf_invalid: (n) => `Versi dari ${n} ditolak karena Mira tidak bisa membaca atau memeriksa file PDF-nya.`,
   tag_missing: (n) => `Versi dari ${n} ditolak karena file itu bukan untuk dokumen ini.`,
   skipped_concurrent: (n, other) =>
     `Versi dari ${n} tidak dipakai karena ${other ?? "penanda tangan lain"} menandatangani versi yang sama lebih dulu. ${n} perlu menandatangani versi terbaru.`,

@@ -57,7 +57,10 @@ type TextDraw = { origin: { x: number; y: number }; matrix: Mat };
 
 function pageContentBytes(doc: PDFDocument, pageIndex: number): string {
   const page = doc.getPage(pageIndex);
-  const contents = page.node.get(PDFName.of("Contents"));
+  // Larik /Contents bisa tak langsung (tree.pdf).
+  const contents = page.node.lookup(PDFName.of("Contents")) instanceof PDFArray
+    ? page.node.lookup(PDFName.of("Contents"))
+    : page.node.get(PDFName.of("Contents"));
   const refs: PDFRef[] = [];
   if (contents instanceof PDFArray) {
     for (let i = 0; i < contents.size(); i++) refs.push(contents.get(i) as PDFRef);
@@ -905,5 +908,55 @@ describe("batas bukti stempel", () => {
     expect(lines.join("").length).toBeLessThanOrEqual(104);
     const font = await doc.embedFont(StandardFonts.Helvetica);
     for (const l of lines) expect(font.widthOfTextAtSize(l, 10)).toBeLessThanOrEqual(placement.width + EPS);
+  });
+});
+
+// PDF dari pembuat lain (cetak Chrome, pindaian, tiruan Word, linearized, sudah
+// pernah diperbarui, AcroForm, ...). Inti Rust memeriksa hasil stempelnya di
+// src-tauri/src/signing/increment.rs; di sini dipastikan stamp.ts menulis
+// incremental update yang benar dan terbaca lagi untuk setiap file.
+describe("PDF dunia nyata (src-tauri/tests/fixtures/sign/real)", () => {
+  // Data URL base64 tiap PDF, dibaca Vite saat tes dimuat.
+  const inlined = import.meta.glob<string>("../../../src-tauri/tests/fixtures/sign/real/*.pdf", {
+    query: "?inline",
+    import: "default",
+    eager: true,
+  });
+  const fixtures = new Map(
+    Object.entries(inlined)
+      .map(([path, url]) => [path.split("/").pop() ?? path, url] as const)
+      .filter(([f]) => !f.includes(".signed") && !f.startsWith("tamper-")),
+  );
+  const files = [...fixtures.keys()].sort();
+  const bytesOf = (file: string) =>
+    Uint8Array.from(atob((fixtures.get(file) ?? "").split(",")[1] ?? ""), (c) => c.charCodeAt(0));
+
+  it("ada fixture dari berbagai pembuat", () => {
+    expect(files).toEqual(
+      expect.arrayContaining(["chrome-photo.pdf", "scan.pdf", "word-hybrid.pdf", "linearized.pdf"]),
+    );
+  });
+
+  for (const file of files) it(`${file}: dua penanda tangan dan halaman catatan`, async () => {
+    const v0 = bytesOf(file);
+    await checkSignablePdf(v0);
+    const before = await PDFDocument.load(v0, { updateMetadata: false });
+    const pages = before.getPageCount();
+    const v1 = await stampSignature(v0, { ...baseOpts, placement: FIRST });
+    const v2 = await stampSignature(v1, {
+      ...baseOpts,
+      signerName: "Agus Prasetyo",
+      placement: { ...FIRST, pageIndex: pages - 1 },
+    });
+    const v3 = await appendAuditPage(v2, AUDIT);
+    expectIncrement(v0, v1);
+    expectIncrement(v1, v2);
+    expectIncrement(v2, v3);
+
+    const after = await PDFDocument.load(v3, { updateMetadata: false });
+    expect(after.getPageCount()).toBe(pages + 1);
+    const added = pages === 1 ? 2 : 1;
+    expect(stampDraws(after, 0).images.length).toBe(stampDraws(before, 0).images.length + added);
+    expect(after.getKeywords()).toContain(DOC_TAG);
   });
 });

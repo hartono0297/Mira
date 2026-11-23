@@ -10,6 +10,7 @@
     "tauri": "tauri",
     "test": "vitest run",
     "fixtures:sign": "node --experimental-strip-types --no-warnings scripts/make-sign-fixtures.mjs",
+    "fixtures:sign-real": "node --experimental-strip-types --no-warnings scripts/make-sign-real-fixtures.mjs",
     "build:installer": "tauri build",
     "build:installer-offline": "tauri build --config src-tauri/tauri.offline.conf.json",
     "build:installer-mac": "tauri build --target universal-apple-darwin",
