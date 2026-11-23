@@ -211,6 +211,7 @@ pub fn run() {
             board::commands::board_add_comment,
             board::commands::board_my_tasks,
             board::commands::board_update_project,
+            board::outside::board_outside_projects,
             documents::commands::list_documents,
             documents::commands::get_document,
             documents::commands::add_documents,

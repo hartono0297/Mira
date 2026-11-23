@@ -1,12 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardView, ColumnId, ProjectSummary, TaskCard, TaskDetail as TaskDetailData } from "../../api/board";
-import { BOARD_SELECTION_KEY, BoardScreen, MY_TASKS } from "./BoardScreen";
-import { directory, member, TEAM_1 } from "../../test/fixtures";
+import type {
+  BoardView,
+  ColumnId,
+  MyTask,
+  OutsideProject,
+  ProjectSummary,
+  TaskCard,
+  TaskDetail as TaskDetailData,
+} from "../../api/board";
+import type { DepartmentView, OrgOverview, PersonView, ProjectMembersView } from "../../api/org";
+import { BOARD_SELECTION_KEY, BoardScreen, CREATE_NOTE, MY_TASKS } from "./BoardScreen";
 import { applyMove } from "./boardMoves";
 import { NAME_RULE } from "./format";
-import { CODE_RULE, NewProjectDialog, NO_TEAM_HINT } from "./NewProjectDialog";
 
 const board = vi.hoisted(() => ({
   listProjects: vi.fn(),
@@ -15,6 +22,8 @@ const board = vi.hoisted(() => ({
   createTask: vi.fn(),
   moveTask: vi.fn(),
   updateProject: vi.fn(),
+  myTasks: vi.fn(),
+  outsideProjects: vi.fn(),
 }));
 
 // Event board (lokal atau dari laptop lain) dipicu sendiri oleh tes lewat boardEvent().
@@ -29,18 +38,63 @@ vi.mock("../../api/board", async (importOriginal) => ({
   },
 }));
 
-const org = vi.hoisted(() => ({ getDirectory: vi.fn() }));
+const org = vi.hoisted(() => ({
+  overview: vi.fn(),
+  people: vi.fn(),
+  departments: vi.fn(),
+  projectMembers: vi.fn(),
+  addProjectMember: vi.fn(),
+  removeProjectMember: vi.fn(),
+}));
 
-vi.mock("../../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../api")>();
-  return { ...actual, api: { ...actual.api, getDirectory: org.getDirectory } };
-});
+// Event organisasi (mira://directory) dipicu lewat orgEvent().
+const orgListeners = vi.hoisted(() => new Set<() => void>());
+
+vi.mock("../../api/org", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/org")>()),
+  orgApi: org,
+  subscribeOrg: (handler: () => void) => {
+    orgListeners.add(handler);
+    return () => orgListeners.delete(handler);
+  },
+}));
 
 async function boardEvent() {
   await act(async () => {
     listeners.forEach((h) => h());
   });
 }
+
+async function orgEvent() {
+  await act(async () => {
+    orgListeners.forEach((h) => h());
+  });
+}
+
+// Dialog Proyek baru punya tes sendiri (NewProjectDialog.test.tsx); di sini cukup hasilnya.
+const fakeCreate = vi.hoisted(() => ({ project: null as ProjectSummary | null }));
+
+vi.mock("./NewProjectDialog", () => ({
+  NewProjectDialog: ({
+    open,
+    onOpenChange,
+    onCreated,
+  }: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    onCreated: (project: ProjectSummary) => void;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label="Proyek baru">
+        <button type="button" onClick={() => fakeCreate.project && onCreated(fakeCreate.project)}>
+          Buat proyek tiruan
+        </button>
+        <button type="button" onClick={() => onOpenChange(false)}>
+          Batal
+        </button>
+      </div>
+    ) : null,
+}));
 
 // Detail task dan Task saya dibuat terpisah dan punya tes sendiri.
 const fake = vi.hoisted(() => ({ removeTask: (_taskId: string) => {} }));
@@ -85,6 +139,68 @@ vi.mock("./MyTasks", () => ({
 const P1 = "1".repeat(32);
 const P2 = "2".repeat(32);
 const ME = "a".repeat(64);
+const PK_B = "b".repeat(64);
+const DEPT = "9".repeat(32);
+
+function overview(extra: Partial<OrgOverview> = {}): OrgOverview {
+  return {
+    publicKey: ME,
+    isSuperadmin: true,
+    isGuest: false,
+    departmentId: DEPT,
+    decideJoinTeamIds: [],
+    pendingJoinCount: 0,
+    manageOrg: true,
+    ...extra,
+  };
+}
+
+function person(publicKey: string, displayName: string, extra: Partial<PersonView> = {}): PersonView {
+  return {
+    publicKey,
+    displayName,
+    fingerprint: "AAAA 0000",
+    role: "member",
+    isSuperadmin: false,
+    isGuest: false,
+    departmentId: DEPT,
+    departmentName: "Keuangan",
+    departmentRole: null,
+    labels: [],
+    ...extra,
+  };
+}
+
+const DEPARTMENTS: DepartmentView[] = [
+  {
+    id: DEPT,
+    name: "Keuangan",
+    createdAt: "2026-11-22T03:00:00Z",
+    archived: false,
+    archivedAt: null,
+    memberCount: 2,
+    admins: [],
+    channelId: null,
+    channelName: null,
+  },
+];
+
+function membersView(extra: Partial<ProjectMembersView> = {}): ProjectMembersView {
+  return {
+    projectId: P1,
+    registered: true,
+    teamId: null,
+    creator: ME,
+    members: [
+      { publicKey: ME, displayName: "Rekan Uji", departmentName: "Keuangan", role: "manager", isCreator: true, byInvite: false },
+      { publicKey: PK_B, displayName: "Budi Uji", departmentName: "Keuangan", role: "member", isCreator: false, byInvite: false },
+    ],
+    canManage: true,
+    canLeave: true,
+    canJoinSelf: false,
+    ...extra,
+  };
+}
 
 function project(id: string, code: string, name: string, extra: Partial<ProjectSummary> = {}): ProjectSummary {
   return { id, code, name, teamId: null, teamName: null, openCount: 2, taskCount: 3, canManage: true, ...extra };
@@ -172,7 +288,16 @@ function emptyBoard(): BoardView {
 beforeEach(() => {
   window.localStorage.clear();
   listeners.clear();
-  org.getDirectory.mockReset().mockResolvedValue(directory());
+  orgListeners.clear();
+  fakeCreate.project = null;
+  org.overview.mockReset().mockResolvedValue(overview());
+  org.people.mockReset().mockResolvedValue([person(ME, "Rekan Uji", { isSuperadmin: true, role: "superadmin" })]);
+  org.departments.mockReset().mockResolvedValue(DEPARTMENTS);
+  org.projectMembers.mockReset().mockResolvedValue(membersView());
+  org.addProjectMember.mockReset().mockResolvedValue(null);
+  org.removeProjectMember.mockReset().mockResolvedValue(null);
+  board.myTasks.mockReset().mockResolvedValue([]);
+  board.outsideProjects.mockReset().mockResolvedValue([]);
   board.updateProject.mockReset();
   current = view();
   fake.removeTask = (id) => {
@@ -313,65 +438,21 @@ describe("Board: keadaan kosong dan error", () => {
 });
 
 describe("Board: proyek baru", () => {
-  it("mengusulkan kode dari nama, menolak kode yang salah, lalu membuat proyek", async () => {
+  it("proyek yang baru dibuat langsung dibuka dan judulnya difokus", async () => {
     const user = userEvent.setup();
     const created = project("3".repeat(32), "LKU", "Laporan Keuangan", { openCount: 0, taskCount: 0 });
-    board.createProject.mockResolvedValue(created);
+    fakeCreate.project = created;
     board.getBoard.mockImplementation(async (id: string) => (id === created.id ? view({ project: created }) : current));
     await renderBoard();
     await user.click(screen.getByRole("button", { name: "Proyek baru" }));
-    const dlg = screen.getByRole("dialog", { name: "Proyek baru" });
-    await user.type(within(dlg).getByLabelText("Nama proyek"), "Laporan Keuangan");
-    const code = within(dlg).getByLabelText("Kode proyek");
-    expect(code).toHaveValue("LK");
-
-    await user.clear(code);
-    await user.type(code, "1a");
-    expect(code).toHaveValue("1A");
-    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
-    expect(within(dlg).getByText(CODE_RULE)).toBeInTheDocument();
-    expect(code).toHaveAttribute("aria-invalid", "true");
-    expect(code).toHaveFocus();
-    expect(board.createProject).not.toHaveBeenCalled();
-
-    // Nama diubah lagi: kode yang sudah diketik sendiri tidak ditimpa usulan.
-    await user.type(within(dlg).getByLabelText("Nama proyek"), " Utama");
-    expect(code).toHaveValue("1A");
-
-    await user.clear(code);
-    await user.type(code, "lku");
     board.listProjects.mockResolvedValue([...PROJECTS, created]);
-    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
-    // Bawaan: tim pertama yang boleh dipilih.
-    expect(board.createProject).toHaveBeenCalledWith("Laporan Keuangan Utama", "LKU", TEAM_1);
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Proyek baru" })).getByRole("button", { name: "Buat proyek tiruan" }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(window.localStorage.getItem(BOARD_SELECTION_KEY)).toBe(created.id);
     expect(screen.getByRole("button", { name: /Laporan Keuangan/ })).toHaveAttribute("aria-current", "page");
     await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: /Laporan Keuangan/ })).toHaveFocus());
-  });
-
-  it("tanpa izin: pesan jelas dari inti Rust", async () => {
-    const user = userEvent.setup();
-    board.createProject.mockRejectedValue({ code: "forbidden", message: "Hanya superadmin atau admin tim yang bisa membuat proyek." });
-    await renderBoard();
-    await user.click(screen.getByRole("button", { name: "Proyek baru" }));
-    const dlg = screen.getByRole("dialog", { name: "Proyek baru" });
-    await user.type(within(dlg).getByLabelText("Nama proyek"), "Riset Pasar");
-    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
-    expect(await within(dlg).findByText("Anda tidak punya izin membuat proyek")).toBeInTheDocument();
-    expect(within(dlg).getByText(/Minta salah satu dari mereka/)).toBeInTheDocument();
-  });
-
-  it("kode sudah dipakai: error ditampilkan di kolom kode", async () => {
-    const user = userEvent.setup();
-    board.createProject.mockRejectedValue({ code: "invalid_input", message: "Kode PA sudah dipakai proyek lain." });
-    await renderBoard();
-    await user.click(screen.getByRole("button", { name: "Proyek baru" }));
-    const dlg = screen.getByRole("dialog", { name: "Proyek baru" });
-    await user.type(within(dlg).getByLabelText("Nama proyek"), "Proyek Anyar");
-    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
-    expect(await within(dlg).findByText("Kode PA sudah dipakai proyek lain.")).toBeInTheDocument();
-    expect(within(dlg).getByLabelText("Kode proyek")).toHaveAttribute("aria-invalid", "true");
   });
 });
 
@@ -744,22 +825,24 @@ describe("Board: muat ulang saat board berubah", () => {
 
   it("proyek yang dibuka hilang dari daftar: keadaan kosong menjelaskan penyebabnya", async () => {
     const user = userEvent.setup();
-    const teamProject = project(P1, "PA", "Proyek Alfa", { teamId: TEAM_1, teamName: "Keuangan" });
-    board.listProjects.mockResolvedValue([teamProject, PROJECTS[1]]);
-    current = view({ project: teamProject });
+    const deptProject = project(P1, "PA", "Proyek Alfa", { teamId: DEPT, teamName: "Keuangan" });
+    board.listProjects.mockResolvedValue([deptProject, PROJECTS[1]]);
+    current = view({ project: deptProject });
     await renderBoard();
 
     board.listProjects.mockResolvedValue([PROJECTS[1]]);
     await boardEvent();
 
     expect(await screen.findByRole("heading", { name: "Proyek PA Proyek Alfa tidak tersedia lagi" })).toBeInTheDocument();
-    expect(screen.getByText(/milik Tim Keuangan/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Anda tidak lagi menjadi anggota proyek ini. Pengelola proyek mengeluarkan Anda, atau Anda keluar sendiri."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Kalau masih perlu, minta pengelola proyek menambahkan Anda lagi.")).toBeInTheDocument();
     // Diumumkan ke pembaca layar, dan fokus yang tertinggal di board pindah ke penjelasannya.
     expect(screen.getAllByRole("status").map((s) => s.textContent)).toContain("Proyek PA Proyek Alfa tidak tersedia lagi.");
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "Proyek PA Proyek Alfa tidak tersedia lagi" })).toHaveFocus(),
     );
-    expect(screen.getByText(/dikeluarkan dari tim itu/)).toBeInTheDocument();
     // Board proyek lain tidak dibuka diam-diam.
     expect(screen.queryByRole("heading", { level: 2, name: /^KB/ })).not.toBeInTheDocument();
 
@@ -767,9 +850,53 @@ describe("Board: muat ulang saat board berubah", () => {
     expect(await screen.findByRole("heading", { level: 2, name: /Kantor Baru/ })).toBeInTheDocument();
   });
 
-  it("menampilkan siapa yang melihat board: tim atau seluruh organisasi", async () => {
+  it("dikeluarkan saat board terbuka: penolakan inti Rust diganti penjelasan", async () => {
     await renderBoard();
-    expect(screen.getByText("Seluruh organisasi")).toBeInTheDocument();
+    act(() => screen.getByRole("button", { name: "Task nomor 1" }).focus());
+    // Daftar proyek belum ikut berubah (sinkron belum selesai), tapi board sudah ditolak.
+    board.getBoard.mockRejectedValue({
+      code: "forbidden",
+      message: "Anda bukan anggota proyek ini. Minta pengelola proyek menambahkan Anda.",
+    });
+    await boardEvent();
+
+    const heading = await screen.findByRole("heading", { name: "Proyek PA Proyek Alfa tidak tersedia lagi" });
+    expect(screen.queryByText("Board belum terbaca")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Minta pengelola proyek menambahkan Anda\./)).not.toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Task saya dan proyek" });
+    expect(within(nav).queryByRole("button", { name: /Proyek Alfa/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(heading).toHaveFocus());
+
+    // Daftar baru dari inti Rust tetap memuatnya: tetap disembunyikan, tidak berkedip.
+    await boardEvent();
+    expect(within(nav).queryByRole("button", { name: /Proyek Alfa/ })).not.toBeInTheDocument();
+  });
+
+  it("board ditolak sejak dibuka: penjelasan, bukan error", async () => {
+    board.getBoard.mockImplementation(async (id: string) => {
+      if (id === P1) throw { code: "forbidden", message: "Anda bukan anggota proyek ini." };
+      return emptyBoard();
+    });
+    render(<BoardScreen />);
+    expect(await screen.findByRole("heading", { name: "Proyek PA Proyek Alfa tidak tersedia lagi" })).toBeInTheDocument();
+    expect(screen.queryByText("Board belum terbaca")).not.toBeInTheDocument();
+  });
+
+  it("keluar sendiri lewat panel Anggota: penjelasannya menyebut Anda keluar", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    await user.click(await screen.findByRole("button", { name: "Anggota, 2 orang" }));
+    const panel = screen.getByRole("dialog", { name: "Anggota proyek" });
+    await user.click(await within(panel).findByRole("button", { name: "Keluar dari proyek" }));
+    const confirm = screen.getByRole("dialog", { name: "Keluar dari proyek ini?" });
+    board.listProjects.mockResolvedValue([PROJECTS[1]]);
+    await user.click(within(confirm).getByRole("button", { name: "Keluar dari proyek" }));
+
+    expect(org.removeProjectMember).toHaveBeenCalledWith(P1, ME);
+    const heading = await screen.findByRole("heading", { name: "Anda sudah keluar dari proyek PA Proyek Alfa" });
+    expect(screen.getByText(/laptop ini berhenti menerima data baru proyek ini/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(heading).toHaveFocus());
   });
 });
 
@@ -851,105 +978,182 @@ describe("Board: ubah nama proyek", () => {
   });
 });
 
-describe("Board: proyek baru dan tim", () => {
-  async function openNewProject(user: ReturnType<typeof userEvent.setup>) {
+describe("Board: siapa yang boleh membuat proyek", () => {
+  const memberOnly = () => {
+    org.overview.mockResolvedValue(overview({ isSuperadmin: false, manageOrg: false }));
+    org.people.mockResolvedValue([person(ME, "Rekan Uji")]);
+  };
+
+  it("superadmin: tombol Proyek baru ada, tanpa catatan", async () => {
     await renderBoard();
-    await user.click(screen.getByRole("button", { name: "Proyek baru" }));
-    return screen.getByRole("dialog", { name: "Proyek baru" });
-  }
-
-  it("superadmin di satu tim: tim itu jadi bawaan, tanpa tim tetap bisa dipilih", async () => {
-    const user = userEvent.setup();
-    const created = project("3".repeat(32), "RO", "Rencana Organisasi");
-    board.createProject.mockResolvedValue(created);
-    const dlg = await openNewProject(user);
-    const team = await within(dlg).findByRole("combobox", { name: "Tim" });
-    expect(team).toHaveValue(TEAM_1);
-    expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "Tim Uji",
-      "Tanpa tim (seluruh organisasi)",
-    ]);
-    expect(within(dlg).getByText(/hanya terlihat dan tersinkron ke anggota Tim Uji dan Tamu yang diundang/)).toBeInTheDocument();
-
-    await user.selectOptions(team, "");
-    expect(within(dlg).getByText(/semua anggota organisasi, kecuali Tamu/)).toBeInTheDocument();
-    await user.type(within(dlg).getByLabelText("Nama proyek"), "Rencana Organisasi");
-    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
-    expect(board.createProject).toHaveBeenCalledWith("Rencana Organisasi", "RO", null);
+    const nav = screen.getByRole("navigation", { name: "Task saya dan proyek" });
+    expect(await within(nav).findByRole("button", { name: "Proyek baru" })).toBeInTheDocument();
+    expect(within(nav).queryByText(CREATE_NOTE)).not.toBeInTheDocument();
   });
 
-  it("superadmin yang belum masuk tim: hanya tanpa tim, dengan petunjuk", async () => {
-    const user = userEvent.setup();
-    org.getDirectory.mockResolvedValue(
-      directory({ teams: [{ id: TEAM_1, name: "Tim Uji", createdAt: "2026-11-22T03:00:00Z", members: [] }] }),
-    );
-    const dlg = await openNewProject(user);
-    const team = await within(dlg).findByRole("combobox", { name: "Tim" });
-    expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual(["Tanpa tim (seluruh organisasi)"]);
-    expect(within(dlg).getByText(NO_TEAM_HINT)).toBeInTheDocument();
+  it("admin departemen: tombol Proyek baru ada", async () => {
+    org.overview.mockResolvedValue(overview({ isSuperadmin: false, manageOrg: false }));
+    org.people.mockResolvedValue([person(ME, "Rekan Uji", { departmentRole: "admin", role: "team_admin" })]);
+    await renderBoard();
+    await waitFor(() => expect(org.people).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByRole("button", { name: "Proyek baru" })).toBeInTheDocument();
   });
 
-  it("admin tim bukan superadmin: tim yang dia kelola saja", async () => {
-    const user = userEvent.setup();
-    const TEAM_2 = "2".repeat(32);
-    org.getDirectory.mockResolvedValue(
-      directory({
-        me: { publicKey: "a".repeat(64), isSuperadmin: false },
-        teams: [
-          { id: TEAM_1, name: "Tim Uji", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: "a".repeat(64), role: "admin" }] },
-          { id: TEAM_2, name: "Gudang", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: "a".repeat(64), role: "member" }] },
-        ],
-      }),
-    );
-    const dlg = await openNewProject(user);
-    const team = await within(dlg).findByRole("combobox", { name: "Tim" });
-    expect(within(team).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "Tim Uji",
-      "Tanpa tim (seluruh organisasi)",
-    ]);
+  it("anggota biasa: tombol tidak ada, navigasi menjelaskan siapa yang membuat proyek", async () => {
+    memberOnly();
+    await renderBoard();
+    const nav = screen.getByRole("navigation", { name: "Task saya dan proyek" });
+    expect(await within(nav).findByText(CREATE_NOTE)).toBeInTheDocument();
+    expect(within(nav).queryByRole("button", { name: "Proyek baru" })).not.toBeInTheDocument();
   });
 
-  const memberOnly = () =>
-    directory({
-      me: { publicKey: "a".repeat(64), isSuperadmin: false },
-      members: [member("a".repeat(64), "Penguji", { teams: [{ teamId: TEAM_1, role: "member" }] })],
-      teams: [
-        { id: TEAM_1, name: "Tim Uji", createdAt: "2026-11-22T03:00:00Z", members: [{ publicKey: "a".repeat(64), role: "member" }] },
-      ],
-    });
-
-  it("anggota biasa: tombol Proyek baru tidak ada, keadaan kosong menjelaskan siapa yang membuat proyek", async () => {
-    org.getDirectory.mockResolvedValue(memberOnly());
+  it("anggota biasa tanpa proyek: keadaan kosong menjelaskan", async () => {
+    memberOnly();
     board.listProjects.mockResolvedValue([]);
     render(<BoardScreen />);
     expect(await screen.findByRole("heading", { name: "Belum ada proyek yang bisa Anda lihat" })).toBeInTheDocument();
-    expect(screen.getByText(/Proyek dibuat oleh superadmin atau admin tim/)).toBeInTheDocument();
+    expect(screen.getByText(/Proyek dibuat oleh superadmin atau admin departemen\. Board proyek muncul di sini/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Proyek baru" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Buat proyek pertama" })).not.toBeInTheDocument();
   });
 
-  it("dialog dibuka saat ternyata tidak berhak: dijelaskan dan tombol buat mati", async () => {
-    org.getDirectory.mockResolvedValue(memberOnly());
-    render(<NewProjectDialog open onOpenChange={() => {}} onCreated={() => {}} />);
-    const dlg = screen.getByRole("dialog", { name: "Proyek baru" });
-    expect(await within(dlg).findByText(/Hanya superadmin atau admin tim yang bisa membuat proyek/)).toBeInTheDocument();
-    expect(within(dlg).getByRole("button", { name: "Buat proyek" })).toBeDisabled();
+  it("data organisasi belum terbaca: tombol tetap tampil, dialognya yang menjelaskan", async () => {
+    org.overview.mockRejectedValue({ code: "database", message: "Database terkunci." });
+    await renderBoard();
+    await waitFor(() => expect(org.overview).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Proyek baru" })).toBeInTheDocument();
   });
 
-  it("daftar tim gagal dibaca: Buat proyek mati sampai daftar tim terbaca", async () => {
-    const user = userEvent.setup();
-    org.getDirectory.mockRejectedValue({ code: "database", message: "Database terkunci." });
-    board.createProject.mockResolvedValue(project("3".repeat(32), "RIS", "Riset"));
-    const dlg = await openNewProject(user);
-    expect(await within(dlg).findByText(/Daftar tim belum terbaca \(Database terkunci\.\)/)).toBeInTheDocument();
-    await user.type(within(dlg).getByLabelText("Nama proyek"), "Riset");
-    expect(within(dlg).getByRole("button", { name: "Buat proyek" })).toBeDisabled();
+  it("peran berubah: tombol muncul setelah data organisasi berubah", async () => {
+    memberOnly();
+    await renderBoard();
+    expect(await screen.findByText(CREATE_NOTE)).toBeInTheDocument();
+    org.people.mockResolvedValue([person(ME, "Rekan Uji", { departmentRole: "admin", role: "team_admin" })]);
+    await orgEvent();
+    expect(await screen.findByRole("button", { name: "Proyek baru" })).toBeInTheDocument();
+    expect(screen.queryByText(CREATE_NOTE)).not.toBeInTheDocument();
+  });
+});
 
-    org.getDirectory.mockResolvedValue(directory());
-    await user.click(within(dlg).getByRole("button", { name: "Coba baca lagi" }));
-    expect(await within(dlg).findByRole("combobox", { name: "Tim" })).toHaveValue(TEAM_1);
-    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
-    expect(board.createProject).toHaveBeenCalledWith("Riset", "RIS", TEAM_1);
+describe("Board: anggota proyek", () => {
+  it("tombol Anggota menyebut jumlah orang dan membuka panel", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    await user.click(await screen.findByRole("button", { name: "Anggota, 2 orang" }));
+    const panel = screen.getByRole("dialog", { name: "Anggota proyek" });
+    expect(await within(panel).findByText("Hanya 2 orang ini yang melihat board, chat, dan dokumen proyek ini.")).toBeInTheDocument();
+    expect(org.projectMembers).toHaveBeenCalledWith(P1);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Anggota, 2 orang" })).toHaveFocus();
+  });
+
+  it("jumlah di tombol ikut berubah saat anggota berubah", async () => {
+    await renderBoard();
+    expect(await screen.findByRole("button", { name: "Anggota, 2 orang" })).toBeInTheDocument();
+    org.projectMembers.mockResolvedValue(membersView({ members: membersView().members.slice(0, 1) }));
+    await orgEvent();
+    expect(await screen.findByRole("button", { name: "Anggota, 1 orang" })).toBeInTheDocument();
+  });
+
+  it("daftar anggota belum terbaca: tombol tetap ada tanpa angka", async () => {
+    org.projectMembers.mockRejectedValue({ code: "database", message: "Database terkunci." });
+    await renderBoard();
+    await waitFor(() => expect(org.projectMembers).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Anggota" })).toBeInTheDocument();
+  });
+});
+
+describe("Board: angka task tenggat", () => {
+  function mine(projectId: string, n: number, due: string | null, columnId: ColumnId = "todo"): MyTask {
+    return {
+      projectId,
+      projectCode: projectId === P1 ? "PA" : "KB",
+      projectName: projectId === P1 ? "Proyek Alfa" : "Kantor Baru",
+      task: card(n, columnId, { due, assignee: { publicKey: ME, name: "Rekan Uji" } }),
+    };
+  }
+
+  it("per proyek dan totalnya di Task saya: hanya tenggat hari ini atau lewat yang belum selesai", async () => {
+    board.myTasks.mockResolvedValue([
+      mine(P1, 1, isoDaysFromToday(-2)),
+      mine(P1, 2, isoDaysFromToday(0), "doing"),
+      mine(P1, 3, isoDaysFromToday(-1), "done"),
+      mine(P1, 4, isoDaysFromToday(3)),
+      mine(P1, 5, null),
+    ]);
+    await renderBoard();
+    const nav = screen.getByRole("navigation", { name: "Task saya dan proyek" });
+    expect(
+      await within(nav).findByRole("button", {
+        name: /^PA\s*Proyek Alfa,\s*2\s*task belum selesai\s*,\s*2 task tenggat hari ini atau lewat$/,
+      }),
+    ).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: /^Task saya\s*,\s*2 task tenggat hari ini atau lewat$/ })).toBeInTheDocument();
+    // Kantor Baru tidak punya task tenggat: tidak ada angka.
+    expect(within(nav).getByRole("button", { name: /^KB\s*Kantor Baru,\s*0\s*task belum selesai$/ })).toBeInTheDocument();
+    expect(nav.querySelectorAll(".bd-link-due")).toHaveLength(2);
+  });
+
+  it("dihitung ulang saat board berubah", async () => {
+    await renderBoard();
+    const nav = screen.getByRole("navigation", { name: "Task saya dan proyek" });
+    expect(nav.querySelector(".bd-link-due")).toBeNull();
+    board.myTasks.mockResolvedValue([mine(P2, 7, isoDaysFromToday(-4))]);
+    await boardEvent();
+    expect(
+      await within(nav).findByRole("button", { name: /^KB\s*Kantor Baru,.*1 task tenggat hari ini atau lewat$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("gagal dibaca: tanpa angka, daftar proyek tetap jalan", async () => {
+    board.myTasks.mockRejectedValue({ code: "database", message: "Database terkunci." });
+    await renderBoard();
+    await waitFor(() => expect(board.myTasks).toHaveBeenCalled());
+    expect(document.querySelector(".bd-link-due")).toBeNull();
+  });
+});
+
+describe("Board: Proyek lain untuk superadmin", () => {
+  const P3 = "3".repeat(32);
+  const other: OutsideProject = {
+    id: P3,
+    code: "GD",
+    name: "Gudang Baru",
+    teamId: DEPT,
+    teamName: "Keuangan",
+    creatorName: "Budi Uji",
+    memberCount: 2,
+    createdAt: "2026-11-22T03:00:00Z",
+  };
+
+  it("bergabung sendiri lalu board proyeknya dibuka", async () => {
+    const user = userEvent.setup();
+    const joined = project(P3, "GD", "Gudang Baru");
+    board.outsideProjects.mockResolvedValue([other]);
+    board.getBoard.mockImplementation(async (id: string) => (id === P3 ? view({ project: joined }) : current));
+    await renderBoard();
+    const section = await screen.findByRole("region", { name: "Proyek lain" });
+    await user.click(within(section).getByRole("button", { name: /^Gabung ke proyek ini/ }));
+    board.listProjects.mockResolvedValue([...PROJECTS, joined]);
+    board.outsideProjects.mockResolvedValue([]);
+    await user.click(within(screen.getByRole("dialog", { name: "Gabung ke GD Gudang Baru?" })).getByRole("button", { name: "Gabung" }));
+
+    expect(org.addProjectMember).toHaveBeenCalledWith(P3, ME);
+    expect(await screen.findByRole("heading", { level: 2, name: /Gudang Baru/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Gudang Baru/ })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: /Gudang Baru/ })).toHaveFocus());
+  });
+
+  it("bukan superadmin: bagian ini tidak dimuat", async () => {
+    org.overview.mockResolvedValue(overview({ isSuperadmin: false }));
+    board.outsideProjects.mockResolvedValue([other]);
+    await renderBoard();
+    await waitFor(() => expect(org.overview).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(board.outsideProjects).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "Proyek lain" })).not.toBeInTheDocument();
   });
 });
 
@@ -995,13 +1199,19 @@ describe("Board: nama proyek diubah rekan saat dialog terbuka", () => {
   });
 });
 
-describe("Board: proyek tim", () => {
-  it("chip menunjukkan tim pemilik proyek", async () => {
-    const teamProject = project(P1, "PA", "Proyek Alfa", { teamId: TEAM_1, teamName: "Keuangan" });
-    board.listProjects.mockResolvedValue([teamProject, PROJECTS[1]]);
-    current = view({ project: teamProject });
+describe("Board: departemen proyek", () => {
+  it("chip menunjukkan departemen proyek", async () => {
+    const deptProject = project(P1, "PA", "Proyek Alfa", { teamId: DEPT, teamName: "Keuangan" });
+    board.listProjects.mockResolvedValue([deptProject, PROJECTS[1]]);
+    current = view({ project: deptProject });
     await renderBoard();
-    expect(screen.getByText("Tim Keuangan")).toBeInTheDocument();
-    expect(screen.queryByText("Seluruh organisasi")).not.toBeInTheDocument();
+    const chip = screen.getByText("Departemen Keuangan").closest(".pb-team");
+    expect(chip).toHaveTextContent("Departemen proyek: Departemen Keuangan");
+    expect(screen.queryByText("Tanpa departemen")).not.toBeInTheDocument();
+  });
+
+  it("proyek tanpa departemen", async () => {
+    await renderBoard();
+    expect(screen.getByText("Tanpa departemen")).toBeInTheDocument();
   });
 });

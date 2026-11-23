@@ -5,7 +5,7 @@ import { subscribeDocuments } from "../../api/documents";
 export type Loaded<T> = {
   data: T | null;
   error: AppError | null;
-  loading: boolean; // true sampai muatan pertama selesai
+  loading: boolean; // true sampai muatan pertama untuk kunci ini selesai
   reload: () => Promise<void>;
 };
 
@@ -13,12 +13,18 @@ export type Loaded<T> = {
 // "mira://feature" bertopik docs datang, atau saat
 // jendela Mira kembali fokus (misalnya setelah menutup Word). Kalau muat ulang
 // gagal, data terakhir tetap ditampilkan bersama error-nya. `load` null = tidak memuat.
+//
+// Hasil dicatat bersama kuncinya. Begitu kunci berganti (file atau lokasi
+// lain), data dan error kunci lama tidak dikembalikan lagi, bahkan untuk satu
+// render, dan `loading` langsung true sampai kunci baru selesai dimuat.
 export function useReload<T>(load: (() => Promise<T>) | null, key: string): Loaded<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<AppError | null>(null);
-  const [loading, setLoading] = useState(load !== null);
+  const [loaded, setLoaded] = useState<{ key: string; data: T } | null>(null);
+  const [failed, setFailed] = useState<{ key: string; error: AppError } | null>(null);
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const loadRef = useRef(load);
   loadRef.current = load;
+  const keyRef = useRef(key);
+  keyRef.current = key;
   const alive = useRef(true);
   const seq = useRef(0);
 
@@ -26,16 +32,17 @@ export function useReload<T>(load: (() => Promise<T>) | null, key: string): Load
     const run = loadRef.current;
     if (!run) return;
     const mine = ++seq.current;
+    const forKey = keyRef.current;
     try {
       const next = await run();
       if (!alive.current || mine !== seq.current) return;
-      setData(next);
-      setError(null);
+      setLoaded({ key: forKey, data: next });
+      setFailed(null);
     } catch (err) {
       if (!alive.current || mine !== seq.current) return;
-      setError(toAppError(err));
+      setFailed({ key: forKey, error: toAppError(err) });
     } finally {
-      if (alive.current && mine === seq.current) setLoading(false);
+      if (alive.current && mine === seq.current) setSettledKey(forKey);
     }
   }, []);
 
@@ -43,16 +50,10 @@ export function useReload<T>(load: (() => Promise<T>) | null, key: string): Load
   useEffect(() => {
     alive.current = true;
     if (!enabled) {
+      // Muatan yang masih berjalan untuk kunci lama diabaikan.
       seq.current++;
-      setData(null);
-      setError(null);
-      setLoading(false);
       return;
     }
-    // Ganti kunci (file lain dipilih): data lama tidak ditampilkan untuk file baru.
-    setData(null);
-    setError(null);
-    setLoading(true);
     void reload();
     const stop = subscribeDocuments(() => void reload());
     // Dokumen, versi, atau tanda edit baru dari laptop rekan.
@@ -67,5 +68,11 @@ export function useReload<T>(load: (() => Promise<T>) | null, key: string): Load
     };
   }, [key, enabled, reload]);
 
-  return { data, error, loading, reload };
+  if (!enabled) return { data: null, error: null, loading: false, reload };
+  return {
+    data: loaded?.key === key ? loaded.data : null,
+    error: failed?.key === key ? failed.error : null,
+    loading: settledKey !== key,
+    reload,
+  };
 }

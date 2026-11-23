@@ -1,12 +1,14 @@
 // Uji ujung ke ujung fondasi sinkron board di satu laptop.
 //
 // Menjalankan mira.exe dengan folder data baru, lalu lewat DevTools Protocol:
-// isi nama, buat organisasi, buat tim "Desain" dan masukkan superadmin ke tim
-// itu, buat proyek tim "Proyek Klien" (kode PK), tambah dua task, ubah judul
-// task di inti Rust sementara deskripsinya sedang diketik (draf dan fokus harus
-// tetap), pancarkan event mira://feature topik "board" dan "chat", ubah nama
-// proyek, buat kode undangan Tamu untuk proyek itu, ambil screenshot terang dan
-// gelap, restart, dan pastikan proyek, tim, dan nama baru tetap tersimpan.
+// isi nama, buat organisasi, buat departemen "Desain" dan pindahkan superadmin
+// ke sana (lewat IPC, bukan halaman Organisasi), buat proyek departemen "Proyek
+// Klien" (kode PK) lewat dialog, buka panel Anggota proyek, tambah dua task,
+// ubah judul task di inti Rust sementara deskripsinya sedang diketik (draf dan
+// fokus harus tetap), pancarkan event mira://feature topik "board" dan "chat",
+// ubah nama proyek, buat kode undangan Tamu untuk proyek itu (IPC), ambil
+// screenshot terang dan gelap, restart, dan pastikan proyek, departemen, dan
+// nama baru tetap tersimpan.
 //
 // Pakai:  node scripts/board-sync-e2e.mjs <path mira.exe> <folder screenshot> [folder induk data]
 // Folder data dibuat di bawah folder induk (bawaan: folder temp) dan dihapus di akhir.
@@ -29,7 +31,7 @@ const PROJECT = "Proyek Klien";
 // Nama baru tetap mengandung nama lama, jadi pencarian /Proyek Klien/ tetap cocok setelah diubah.
 const PROJECT_RENAMED = "Proyek Klien Utama";
 const TEAM = "Desain";
-const TEAM_CHIP = "Tim Desain"; // teamLabel("Desain") di src/screens/board/format.ts
+const TEAM_CHIP = "Departemen Desain"; // teamLabel("Desain") di src/screens/board/format.ts
 const TASKS = ["Siapkan moodboard klien", "Kirim penawaran harga"];
 const TITLE_FROM_CORE = "Siapkan moodboard klien versi 2";
 const DRAFT = "Catatan belum disimpan: palet bata dan krem, contoh dari klien lama.";
@@ -144,17 +146,15 @@ const emitFeature = (page, topic) =>
 
 // Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi"
 // (tautan undangan saat belum ada rekan), jadi pencarian dibatasi ke nav ini.
+// Nama tombol bisa membawa angka ("Board, 2 ..."), jadi dicocokkan sebagai awalan.
+const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(,|$)");
 const mainNav = (page, name) =>
-  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name, exact: true });
+  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const projectNav = (page) => page.getByRole("navigation", { name: "Task saya dan proyek" });
 const card = (page, title) => page.locator("[data-open-task]", { hasText: title });
 
 async function goBoard(page) {
   await mainNav(page, "Board").click();
-}
-async function goOrg(page) {
-  await mainNav(page, "Organisasi").click();
-  await page.getByRole("navigation", { name: "Bagian organisasi" }).waitFor({ timeout: 10000 });
 }
 async function setTheme(page, label) {
   await mainNav(page, "Pengaturan").click();
@@ -172,8 +172,23 @@ async function openTask(page, title) {
   await dlg.getByLabel("Penanggung jawab").waitFor({ timeout: 10000 });
   return dlg;
 }
+// Panel "Anggota proyek" dari tombol berawalan "Anggota" di kepala board.
+async function openMembers(page) {
+  await page.locator(".pb-head").getByRole("button", { name: /^Anggota/ }).click();
+  const dlg = page.getByRole("dialog").filter({ hasText: "Anggota proyek" });
+  await dlg.waitFor({ timeout: 10000 });
+  return dlg;
+}
+async function closeDialog(page, dlg) {
+  await page.keyboard.press("Escape");
+  await dlg.waitFor({ state: "detached", timeout: 3000 }).catch(async () => {
+    await dlg.getByRole("button", { name: /^(Tutup|Selesai|Batal)/ }).first().click().catch(() => {});
+  });
+  await page.waitForTimeout(300);
+}
 
 let app = null;
+let desainId = null;
 try {
   app = await launch();
   let { page } = app;
@@ -201,41 +216,68 @@ try {
     console.log("Catatan: request IPC tidak terlihat lewat CDP; pemeriksaan muat ulang karena event hanya lewat tampilan.");
   }
 
-  // 2. Organisasi: tim Desain, superadmin menambahkan dirinya sendiri.
-  await goOrg(page);
-  await page.getByRole("button", { name: "Buat tim" }).first().click();
-  let dlg = page.getByRole("dialog");
-  await dlg.getByLabel("Nama tim").fill(TEAM);
-  await dlg.getByRole("button", { name: "Buat tim" }).click();
-  // Setelah dibuat, detail tim langsung terbuka (TeamsPanel.onCreated).
-  await page.getByRole("heading", { name: TEAM, exact: true }).waitFor({ timeout: 10000 });
-  const addSelect = page.getByLabel("Tambah anggota organisasi ke tim");
-  const myOption = await addSelect.locator("option", { hasText: "Rina Uji" }).getAttribute("value");
-  await addSelect.selectOption(myOption);
-  await page.getByRole("button", { name: "Tambahkan", exact: true }).click();
-  await page.getByText("Anggota tim (1)").waitFor({ timeout: 10000 });
-  const teamText = await page.locator(".org-body").innerText();
-  check("Tim Desain dibuat dan superadmin masuk sebagai anggotanya", teamText.includes("(Anda)"), teamText.slice(0, 200));
-  await page.screenshot({ path: join(shots, "sb-01-tim-desain-terang.png") });
+  // 2. Organisasi lewat IPC (halaman Organisasi sedang ditulis ulang): departemen
+  // Desain, superadmin memindahkan dirinya sendiri ke sana.
+  const me = (await must(page, "org_overview")).publicKey;
+  const dept = await must(page, "org_create_department", { name: TEAM });
+  desainId = dept.id;
+  await must(page, "org_move_member", { publicKey: me, teamId: desainId });
+  const people = await must(page, "org_people");
+  const mine = people.find((p) => p.publicKey === me);
+  const overview = await must(page, "org_overview");
+  check(
+    "Departemen Desain dibuat dan superadmin masuk ke sana",
+    mine?.departmentId === desainId && mine?.departmentName === TEAM && overview.departmentId === desainId,
+    JSON.stringify({ mine, departmentId: overview.departmentId }).slice(0, 300),
+  );
 
-  // 3. Proyek tim.
+  // 3. Proyek departemen lewat dialog.
   await goBoard(page);
   await page.getByRole("button", { name: "Buat proyek pertama" }).click({ timeout: 10000 });
-  dlg = page.getByRole("dialog");
+  let dlg = page.getByRole("dialog");
   await dlg.getByLabel("Nama proyek").fill(PROJECT);
   await dlg.getByLabel("Kode proyek").fill("PK");
-  // Label "Tim" baru muncul setelah daftar tim terbaca; selectOption menunggu opsinya ada.
-  await dlg.getByLabel("Tim", { exact: true }).selectOption({ label: TEAM });
-  const hint = await dlg.innerText();
-  check("Dialog proyek baru menjelaskan proyek tim", hint.includes(`anggota ${TEAM_CHIP}`), hint.slice(-300));
+  // Label "Departemen" baru terhubung setelah data organisasi terbaca; selectOption menunggu opsinya ada.
+  const deptSelect = dlg.getByLabel("Departemen", { exact: true });
+  await deptSelect.selectOption({ label: TEAM });
+  const deptOptions = (await deptSelect.locator("option").allInnerTexts()).map((s) => s.trim());
+  check(
+    "Pilihan Departemen di dialog: Desain dan Tanpa departemen",
+    deptOptions.includes(TEAM) && deptOptions.includes("Tanpa departemen"),
+    deptOptions.join(" | "),
+  );
+  // Satu-satunya orang di organisasi ini adalah pembuatnya: pemilih menampilkan baris
+  // "Anda, pengelola" dan penjelasan bahwa belum ada orang lain untuk dipilih.
+  const dlgText = await dlg.innerText();
+  check(
+    "Dialog proyek baru punya pemilih anggota (Anda sebagai pengelola, belum ada orang lain)",
+    dlgText.includes("Anda, pengelola") && dlgText.includes("Belum ada orang lain yang bisa dipilih"),
+  );
   await page.screenshot({ path: join(shots, "sb-02-proyek-baru-tim-terang.png") });
-  await dlg.getByRole("button", { name: "Buat proyek" }).click();
+  await dlg.getByRole("button", { name: "Buat proyek", exact: true }).click();
   await page.getByRole("button", { name: "Task baru" }).waitFor({ timeout: 10000 });
   const chip = await page.locator(".pb-head .pb-team").innerText();
-  check("Header board menampilkan nama tim", chip.includes(TEAM_CHIP), chip);
+  check("Header board menampilkan nama departemen", chip.includes(TEAM_CHIP), chip);
   const listed = await must(page, "board_list_projects");
   const project = listed.find((p) => p.code === "PK");
-  check("Proyek PK tercatat milik tim Desain", project?.teamName === TEAM, JSON.stringify(project ?? listed));
+  check("Proyek PK tercatat milik departemen Desain", project?.teamName === TEAM, JSON.stringify(project ?? listed));
+  const pm = await must(page, "org_project_members", { projectId: project.id });
+  check(
+    "Proyek PK terdaftar dengan pembuat sebagai satu-satunya anggota dan pengelola",
+    pm.registered && pm.members.length === 1 && pm.members[0].publicKey === me && pm.members[0].role === "manager" && pm.canManage,
+    JSON.stringify(pm).slice(0, 300),
+  );
+
+  // Panel Anggota proyek.
+  const membersDlg = await openMembers(page);
+  const membersText = await membersDlg.innerText();
+  check(
+    "Panel Anggota proyek terbuka dan memuat pembuat",
+    membersText.includes("Rina Uji") && (await membersDlg.getByRole("button", { name: "Tambah anggota" }).count()) === 1,
+    membersText.replace(/\s+/g, " ").slice(0, 200),
+  );
+  await page.screenshot({ path: join(shots, "sb-01-anggota-proyek-terang.png") });
+  await closeDialog(page, membersDlg);
 
   // 4. Dua task, lalu judul diubah di inti sementara deskripsi sedang diketik.
   const todo = page.locator("section.pb-col").filter({ has: page.getByRole("heading", { name: "To do" }) });
@@ -323,27 +365,18 @@ try {
   check("Nama baru tampil di daftar proyek", navText.includes(PROJECT_RENAMED), navText.replace(/\s+/g, " ").slice(0, 200));
   check("Nama baru tampil di header board", headText.includes(PROJECT_RENAMED), headText);
 
-  // 6. Kode undangan Tamu untuk proyek ini.
-  await goOrg(page);
-  await page.getByRole("navigation", { name: "Bagian organisasi" }).getByRole("button", { name: "Tim", exact: true }).click();
-  await page.locator("button.team-row", { hasText: TEAM }).click();
-  await page.getByRole("button", { name: "Undang ke tim" }).click();
-  dlg = page.getByRole("dialog");
-  await dlg.locator('input[name="invite-role"][value="guest"]').check();
-  const projectBox = dlg.getByRole("checkbox", { name: new RegExp(PROJECT_RENAMED) });
-  await projectBox.check({ timeout: 10000 });
-  await page.screenshot({ path: join(shots, "sb-06-undangan-tamu-pilih-proyek-terang.png") });
-  await dlg.getByRole("button", { name: "Buat kode undangan" }).click();
-  await dlg.getByText("Kode undangan siap").waitFor({ timeout: 10000 });
-  const inviteText = await dlg.innerText();
+  // 6. Kode undangan Tamu untuk proyek ini, lewat IPC (halaman Organisasi sedang ditulis ulang).
+  const created = await must(page, "create_invite", {
+    teamId: desainId,
+    role: "guest",
+    validity: "7d",
+    projectIds: [project.id],
+  });
   check(
-    "Hasil undangan Tamu menyebut nama proyek",
-    inviteText.includes(`PK ${PROJECT_RENAMED}`) && inviteText.includes(`Tamu di ${TEAM}`),
-    inviteText.replace(/\s+/g, " ").slice(0, 300),
+    "Undangan Tamu ke departemen Desain memuat proyek PK",
+    !!created.code && created.invite.role === "guest" && created.invite.teamId === desainId && created.invite.projectIds.includes(project.id),
+    JSON.stringify(created.invite).slice(0, 300),
   );
-  await page.screenshot({ path: join(shots, "sb-07-undangan-tamu-kode-terang.png") });
-  await dlg.getByRole("button", { name: "Selesai" }).click();
-  await page.waitForTimeout(300);
 
   // 7. Board dan detail task, terang lalu gelap.
   await goBoard(page);
@@ -362,14 +395,10 @@ try {
   await page.screenshot({ path: join(shots, "sb-11-detail-task-gelap.png") });
   await dlg.getByRole("button", { name: "Tutup detail task" }).click();
   await page.waitForTimeout(300);
-  await goOrg(page);
-  await page.locator("button.team-row", { hasText: TEAM }).click();
-  await page.getByRole("button", { name: "Undang ke tim" }).click();
-  dlg = page.getByRole("dialog");
-  await dlg.locator('input[name="invite-role"][value="guest"]').check();
-  await dlg.getByRole("checkbox", { name: new RegExp(PROJECT_RENAMED) }).waitFor({ timeout: 10000 });
-  await page.screenshot({ path: join(shots, "sb-12-undangan-tamu-gelap.png") });
-  await dlg.getByRole("button", { name: "Batal" }).click();
+  const membersDark = await openMembers(page);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: join(shots, "sb-12-anggota-proyek-gelap.png") });
+  await closeDialog(page, membersDark);
   await stop(app);
   app = null;
 
@@ -382,7 +411,7 @@ try {
   const chipAfter = await page.locator(".pb-head .pb-team").innerText();
   const headAfter = await page.locator(".pb-head .pb-title").innerText();
   check(
-    "Setelah restart proyek tetap dengan nama baru dan tim Desain",
+    "Setelah restart proyek tetap dengan nama baru dan departemen Desain",
     headAfter.includes(PROJECT_RENAMED) && chipAfter.includes(TEAM_CHIP),
     `${headAfter} | ${chipAfter}`,
   );
@@ -391,10 +420,12 @@ try {
     (await card(page, TITLE_FROM_CORE).count()) === 1 && (await card(page, TASKS[1]).count()) === 1,
   );
   await page.screenshot({ path: join(shots, "sb-13-setelah-restart-gelap.png") });
-  await goOrg(page);
-  const teamRow = page.locator("button.team-row", { hasText: TEAM });
-  const teamRowText = (await teamRow.count()) ? await teamRow.first().innerText() : "";
-  check("Setelah restart tim Desain tetap dan saya anggotanya", /Anda:/.test(teamRowText), teamRowText.replace(/\s+/g, " "));
+  const overviewAfter = await must(page, "org_overview");
+  check(
+    "Setelah restart departemen Desain tetap dan saya anggotanya",
+    overviewAfter.departmentId === desainId,
+    `${overviewAfter.departmentId} vs ${desainId}`,
+  );
   await stop(app);
   app = null;
 } catch (err) {

@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { ROLE_LABELS, subscribe, type AppState, type OrgInfo } from "../../api";
 import { initials } from "../../components/initials";
 import { Logo } from "../../components/Logo";
+import { SidebarCount } from "../../components/SidebarCount";
 import { BoardScreen } from "../board/BoardScreen";
 import { ChatScreen } from "../chat/ChatScreen";
 import { DocsScreen } from "../docs/DocsScreen";
@@ -20,6 +21,7 @@ import { SignScreen } from "../sign/SignScreen";
 import { UpdateDot } from "../../updates/UpdateDot";
 import { NetworkPanel } from "./NetworkPanel";
 import { NetworkProvider } from "./NetworkContext";
+import { useNavCounts, type NavCounts } from "./useNavCounts";
 import "./shell.css";
 
 export type Section = "chat" | "board" | "docs" | "sign" | "org" | "settings";
@@ -33,6 +35,18 @@ const NAV: { id: Section; label: string; icon: Icon }[] = [
   { id: "settings", label: "Pengaturan", icon: IconSettings },
 ];
 
+// Arti angka di menu, dibacakan setelah labelnya: "Chat, 3 belum dibaca".
+const COUNT_MEANING: Record<keyof NavCounts, string> = {
+  chat: "belum dibaca",
+  board: "task tenggat hari ini atau lewat",
+  sign: "menunggu tanda tangan Anda",
+  org: "permintaan bergabung menunggu",
+};
+
+function isCounted(id: Section): id is keyof NavCounts {
+  return id in COUNT_MEANING;
+}
+
 type Props = {
   state: AppState & { organization: OrgInfo };
   // Memuat ulang AppState tanpa layar memuat (peran berubah, laptop dikeluarkan).
@@ -44,6 +58,7 @@ export function Shell({ state, onRefresh }: Props) {
   const [settingsPart, setSettingsPart] = useState<SettingsPart>("appearance");
   const name = state.identity.displayName ?? "";
   const org = state.organization;
+  const counts = useNavCounts();
 
   // Perubahan direktori bisa mengubah peran laptop ini atau mengeluarkannya.
   useEffect(() => subscribe("mira://directory", onRefresh), [onRefresh]);
@@ -68,6 +83,7 @@ export function Shell({ state, onRefresh }: Props) {
                   >
                     <NavIcon size={18} aria-hidden="true" />
                     {label}
+                    {isCounted(id) && <SidebarCount count={counts[id]} meaning={COUNT_MEANING[id]} />}
                     {id === "settings" && <UpdateDot />}
                   </button>
                 </li>

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
+use super::access::Rights;
 use super::assignees::{AssigneeDirectory, LocalMembers};
 use super::doc::{Stamp, TaskChanges, TaskInit};
 use super::model::{
@@ -21,6 +22,7 @@ use super::sync::{BoardSyncHook, NoopSync};
 use super::view::Ctx;
 use crate::clock;
 use crate::error::{AppError, AppResult};
+use crate::net_backend::{self, AppNet};
 use crate::state::{Core, MiraState};
 
 pub const BOARD_EVENT: &str = "mira://board";
@@ -107,6 +109,51 @@ pub fn create_project(
     code: &str,
     team_id: Option<&str>,
 ) -> AppResult<ProjectSummary> {
+    create_project_with_members(state, hook, name, code, team_id, &[])
+}
+
+/// Most people a new project may start with besides its creator (the log
+/// accepts 200 members in `project_create`).
+pub const MAX_INITIAL_MEMBERS: usize = 199;
+
+/// Checks the people picked in the "Proyek baru" dialog: active members of
+/// the organization (guests too), at most `MAX_INITIAL_MEMBERS`. The
+/// creator is always a member and may appear in the list.
+fn check_initial_members(core: &Core, members: &[String]) -> AppResult<Vec<String>> {
+    let me = core.identity.public_key_hex();
+    let mut out: Vec<String> = members
+        .iter()
+        .map(|m| m.trim().to_ascii_lowercase())
+        .filter(|m| m != me)
+        .collect();
+    out.sort();
+    out.dedup();
+    if out.len() > MAX_INITIAL_MEMBERS {
+        return Err(AppError::InvalidInput(format!(
+            "Proyek baru bisa dimulai dengan paling banyak {MAX_INITIAL_MEMBERS} anggota selain Anda. Tambahkan sisanya dari panel Anggota proyek."
+        )));
+    }
+    let rights = Rights::load(&core.db)?;
+    if out.iter().any(|pk| !rights.is_active(pk)) {
+        return Err(AppError::InvalidInput(
+            "Ada orang yang dipilih yang bukan anggota aktif organisasi lagi. Muat ulang daftar orang, lalu pilih lagi."
+                .into(),
+        ));
+    }
+    Ok(out)
+}
+
+/// "Proyek baru" with its first members (v0.3): the project is registered in
+/// the membership log with the creator and `members`, in the same
+/// transaction as the board document.
+pub fn create_project_with_members(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    name: &str,
+    code: &str,
+    team_id: Option<&str>,
+    members: &[String],
+) -> AppResult<ProjectSummary> {
     let team_id = model::normalize_team_id(team_id);
     let (summary, project_id, changes) = with_ctx(state, |core, policy, dir| {
         let me = core.identity.public_key_hex().to_owned();
@@ -117,11 +164,19 @@ pub fn create_project(
                 team_id: team_id.map(str::to_owned),
             },
         )?;
+        let members = check_initial_members(core, members)?;
         let Committed {
             value: row,
             changes,
             ..
-        } = store::create_project(&mut core.db, &core.identity, name, code, team_id)?;
+        } = store::create_project_with_members(
+            &mut core.db,
+            &core.identity,
+            name,
+            code,
+            team_id,
+            &members,
+        )?;
         let summary = ctx(core, policy, dir).summary(&row)?;
         Ok((summary, row.id, changes))
     })?;
@@ -431,23 +486,30 @@ pub async fn board_list_projects(state: State<'_, MiraState>) -> AppResult<Vec<P
     list_projects(&state)
 }
 
+/// `members`: the people picked in the dialog besides the creator. The new
+/// `project_create` op is synced right away (`after_change`, which also
+/// emits `mira://directory`), so members' laptops accept the board.
 #[tauri::command]
 pub async fn board_create_project(
     app: AppHandle,
     state: State<'_, MiraState>,
     board: State<'_, BoardRuntime>,
+    net: State<'_, AppNet>,
     name: String,
     code: String,
     team_id: Option<String>,
+    members: Option<Vec<String>>,
 ) -> AppResult<ProjectSummary> {
-    let out = create_project(
+    let out = create_project_with_members(
         &state,
         board.hook.as_ref(),
         &name,
         &code,
         team_id.as_deref(),
+        members.as_deref().unwrap_or(&[]),
     )?;
     emit(&app);
+    net_backend::after_change(&net, &app).await;
     Ok(out)
 }
 

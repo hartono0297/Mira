@@ -3,7 +3,42 @@ import type { AppError } from "../../api";
 import { formatDate, relativeTime } from "../../api/format";
 import type { DocumentKind, DocumentSummary, DocumentVersion, PersonRef } from "../../api/documents";
 
-export const LIBRARY_LABEL = "Umum";
+// Lokasi dokumen: Pustaka Umum (projectId null) atau satu proyek. Label proyek
+// "<KODE> <nama>", sama dengan opsi di select Lokasi. null = Pustaka Umum.
+export const LIBRARY_LABEL = "Pustaka Umum";
+
+export function projectLabel(p: { code: string; name: string }): string {
+  return `${p.code} ${p.name}`;
+}
+
+// Lokasi di tengah kalimat: "Pustaka Umum" atau "proyek PA Gudang".
+export function placeText(label: string | null): string {
+  return label === null ? LIBRARY_LABEL : `proyek ${label}`;
+}
+
+export function addedText(added: { name: string }[], label: string | null): string {
+  const what = added.length === 1 ? added[0].name : `${added.length} file`;
+  return `${what} ditambahkan ke ${placeText(label)}.`;
+}
+
+export function emptyTitle(label: string | null): string {
+  return label === null ? `${LIBRARY_LABEL} masih kosong` : `Belum ada file di proyek ${label}`;
+}
+
+// Sesuai documents::scope::may_view: Pustaka Umum untuk semua anggota aktif
+// bukan Tamu; file proyek hanya untuk anggota proyek itu (termasuk Tamu yang
+// diundang ke proyek itu, yang juga anggota proyek di board).
+export function visibilityHint(label: string | null): string {
+  return label === null
+    ? `File di ${LIBRARY_LABEL} terlihat oleh semua anggota organisasi, kecuali Tamu.`
+    : `File di proyek ${label} hanya terlihat oleh anggota proyek itu.`;
+}
+
+// Proyek yang diingat tidak ada lagi di daftar proyek saya (dikeluarkan, atau
+// proyeknya hilang dari laptop ini).
+export function goneNote(label: string): string {
+  return `Proyek ${label} tidak tersedia lagi untuk Anda. Menampilkan ${LIBRARY_LABEL}.`;
+}
 
 export function person(p: PersonRef): string {
   return p.isMe ? "Anda" : p.displayName;

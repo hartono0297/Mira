@@ -361,7 +361,7 @@ fn create_project_inner(
         && !team_exists(&tx, team)?
     {
         return Err(AppError::InvalidInput(
-            "Tim yang dipilih tidak ditemukan. Pilih tim lain atau buat proyek tanpa tim.".into(),
+            "Departemen yang dipilih tidak ditemukan. Pilih departemen lain atau buat proyek tanpa departemen.".into(),
         ));
     }
     let nonce = random_id();

@@ -1,22 +1,27 @@
 import { IconListCheck, IconPlus } from "@tabler/icons-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../../api";
-import { boardApi, type ProjectSummary } from "../../api/board";
-import { useLive } from "../../api/useLive";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { boardApi, subscribeBoard, type ProjectSummary } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { teamLabel } from "./format";
+import { SidebarCount } from "../../components/SidebarCount";
+import { useCreateOptions } from "./createOptions";
+import { dueSummary, type DueSummary } from "./dueCounts";
+import { todayIso } from "./format";
 import { MyTasks } from "./MyTasks";
-import { NewProjectDialog, teamChoices } from "./NewProjectDialog";
+import { NewProjectDialog } from "./NewProjectDialog";
+import { OutsideProjects } from "./OutsideProjects";
 import { ProjectBoard, type ProjectBoardHandle } from "./ProjectBoard";
 import { TaskDetail } from "./TaskDetail";
 import { useBoardLive } from "./useBoardLive";
 import "./board.css";
+import "./members.css";
 
 // Pilihan terakhir di sub-menu Board, per laptop.
 export const BOARD_SELECTION_KEY = "mira.board.selection";
 export const MY_TASKS = "__mine__";
-// Direktori organisasi (siapa admin tim mana) dibaca ulang lewat event; polling hanya cadangan.
-const DIRECTORY_POLL_MS = 30000;
+// Angka tenggat dihitung ulang tiap menit juga, supaya pergantian hari ikut terhitung.
+export const DUE_POLL_MS = 60000;
+export const CREATE_NOTE = "Proyek dibuat oleh superadmin atau admin departemen.";
+const DUE_MEANING = "task tenggat hari ini atau lewat";
 
 function readSelection(): string | null {
   try {
@@ -40,10 +45,49 @@ function validProjects(data: unknown): ProjectSummary[] | null {
 
 type OpenTask = { projectId: string; taskId: string };
 
+// Task yang ditugaskan ke saya, belum Selesai, tenggat hari ini atau lewat (D1, D5).
+// Kalau gagal dibaca, angkanya tidak tampil; daftar proyek tetap jalan.
+function useDueSummary(): DueSummary | null {
+  const [summary, setSummary] = useState<DueSummary | null>(null);
+  const seq = useRef(0);
+  useEffect(() => {
+    const load = () => {
+      const mine = ++seq.current;
+      boardApi
+        .myTasks()
+        .then((tasks) => {
+          if (mine === seq.current) setSummary(dueSummary(Array.isArray(tasks) ? tasks : [], todayIso()));
+        })
+        .catch(() => {});
+    };
+    load();
+    const stop = subscribeBoard(load);
+    const timer = window.setInterval(load, DUE_POLL_MS);
+    return () => {
+      seq.current++;
+      stop();
+      window.clearInterval(timer);
+    };
+  }, []);
+  return summary;
+}
+
 export function BoardScreen() {
   const live = useBoardLive(boardApi.listProjects, "projects");
-  const dirLive = useLive(api.getDirectory, "mira://directory", DIRECTORY_POLL_MS);
-  const projects = validProjects(live.data);
+  const createOpts = useCreateOptions();
+  const due = useDueSummary();
+  // Proyek yang board-nya ditolak inti Rust (saya dikeluarkan) atau yang baru saja
+  // saya tinggalkan. Disembunyikan sampai daftar proyek dari inti Rust ikut membuangnya.
+  const [revoked, setRevoked] = useState<ReadonlySet<string>>(() => new Set());
+  const listed = validProjects(live.data);
+  const projects = useMemo(
+    () => (listed && revoked.size > 0 ? listed.filter((p) => !revoked.has(p.id)) : listed),
+    [listed, revoked],
+  );
+  // Proyek yang baru saya tinggalkan lewat panel Anggota: penjelasannya berbeda.
+  const [leftId, setLeftId] = useState<string | null>(null);
+  // Proyek yang baru saya ikuti dari Proyek lain: dibuka begitu muncul di daftar.
+  const [joinedId, setJoinedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(readSelection);
   const [creating, setCreating] = useState(false);
   const [openTask, setOpenTask] = useState<OpenTask | null>(null);
@@ -55,10 +99,22 @@ export function BoardScreen() {
   const { reload, setData } = live;
 
   // Proyek yang sedang dibuka lalu hilang dari daftar setelah muat ulang
-  // (misalnya saya dikeluarkan dari timnya). Dicek saat daftar berganti,
+  // (misalnya saya dikeluarkan dari proyeknya). Dicek saat daftar berganti,
   // sebelum render, supaya board proyek lain tidak tampil sekejap.
   const [lost, setLost] = useState<ProjectSummary | null>(null);
   const [seen, setSeen] = useState<ProjectSummary[] | null>(null);
+  const [seenListed, setSeenListed] = useState<ProjectSummary[] | null>(null);
+  if (listed !== seenListed) {
+    setSeenListed(listed);
+    // Daftar baru dari inti Rust: yang sudah tidak ada di sana tidak perlu disembunyikan lagi.
+    if (listed && revoked.size > 0) {
+      const still = new Set([...revoked].filter((id) => listed.some((p) => p.id === id)));
+      if (still.size !== revoked.size) setRevoked(still);
+    }
+    // Proyek yang pernah saya tinggalkan muncul lagi (saya ditambahkan kembali):
+    // kalau nanti hilang lagi, penyebabnya belum tentu saya keluar sendiri.
+    if (listed && leftId && !revoked.has(leftId) && listed.some((p) => p.id === leftId)) setLeftId(null);
+  }
   if (projects !== seen) {
     setSeen(projects);
     if (seen && projects && selected !== MY_TASKS) {
@@ -83,6 +139,8 @@ export function BoardScreen() {
   const select = useCallback((value: string) => {
     setSelected(value);
     writeSelection(value);
+    // Pilihan sendiri menang atas pembukaan otomatis proyek yang baru diikuti.
+    setJoinedId(null);
   }, []);
 
   const changed = useCallback(() => {
@@ -92,6 +150,37 @@ export function BoardScreen() {
 
   const projectsChanged = useCallback(() => void reload(), [reload]);
   const headingFocused = useCallback(() => setFocusProject(null), []);
+
+  const projectLost = useCallback(
+    (projectId: string, reason: "left" | "forbidden") => {
+      if (reason === "left") setLeftId(projectId);
+      setRevoked((prev) => (prev.has(projectId) ? prev : new Set(prev).add(projectId)));
+      void reload();
+    },
+    [reload],
+  );
+
+  const joined = useCallback(
+    (projectId: string) => {
+      setJoinedId(projectId);
+      setRevoked((prev) => {
+        if (!prev.has(projectId)) return prev;
+        const next = new Set(prev);
+        next.delete(projectId);
+        return next;
+      });
+      setLeftId((prev) => (prev === projectId ? null : prev));
+      void reload();
+    },
+    [reload],
+  );
+
+  useEffect(() => {
+    if (!joinedId || !projects?.some((p) => p.id === joinedId)) return;
+    setLost(null);
+    select(joinedId);
+    setFocusProject(joinedId);
+  }, [joinedId, projects, select]);
 
   const currentProject = projects?.find((p) => p.id === current) ?? null;
   const lostShown = projects && lost && current === lost.id && !currentProject ? lost : null;
@@ -110,10 +199,11 @@ export function BoardScreen() {
     return () => window.clearTimeout(timer);
   }, [lostShown, taskIsOpen]);
 
-  // Tombol Proyek baru hanya untuk yang bisa membuat proyek di tim mana pun atau
-  // tanpa tim. Selama direktori belum terbaca, tombol tetap tampil; dialognya menjelaskan.
-  const choices = dirLive.data ? teamChoices(dirLive.data) : null;
-  const canCreateProject = !choices || choices.teams.length > 0 || choices.allowOrg;
+  // Tombol Proyek baru hanya untuk superadmin dan admin departemen. Selama data
+  // organisasi belum terbaca (atau gagal dibaca), tombol tetap tampil; dialognya menjelaskan.
+  const canCreateProject = createOpts.status !== "ready" || createOpts.options.canCreate;
+  const overview = createOpts.status === "ready" ? createOpts.data.overview : null;
+  const leftSelf = !!lostShown && leftId === lostShown.id;
 
   return (
     <main className="bd" aria-labelledby="page-title">
@@ -131,6 +221,7 @@ export function BoardScreen() {
             >
               <IconListCheck size={18} aria-hidden="true" />
               <span className="bd-link-name">Task saya</span>
+              <SidebarCount count={due?.total ?? 0} meaning={DUE_MEANING} className="bd-link-due" />
             </button>
           </li>
         </ul>
@@ -160,6 +251,7 @@ export function BoardScreen() {
                     {p.openCount}
                     <span className="sr-only"> task belum selesai</span>
                   </span>
+                  <SidebarCount count={due?.byProject[p.id] ?? 0} meaning={DUE_MEANING} className="bd-link-due" />
                 </button>
               </li>
             ))}
@@ -171,11 +263,17 @@ export function BoardScreen() {
             Proyek baru
           </button>
         )}
+        {projects && projects.length > 0 && !canCreateProject && <p className="bd-nav-note">{CREATE_NOTE}</p>}
+        {overview?.isSuperadmin && <OutsideProjects myKey={overview.publicKey} onJoined={joined} />}
       </nav>
 
       <div className="bd-main">
         <div className="sr-only" role="status">
-          {lostShown ? `Proyek ${lostShown.code} ${lostShown.name} tidak tersedia lagi.` : ""}
+          {lostShown
+            ? leftSelf
+              ? `Anda sudah keluar dari proyek ${lostShown.code} ${lostShown.name}.`
+              : `Proyek ${lostShown.code} ${lostShown.name} tidak tersedia lagi.`
+            : ""}
         </div>
         {!projects && !live.loading && (
           <div className="bd-pad bd-narrow" role="alert">
@@ -207,23 +305,22 @@ export function BoardScreen() {
             onHeadingFocused={headingFocused}
             onOpenTask={(taskId) => setOpenTask({ projectId: currentProject.id, taskId })}
             onProjectsChanged={projectsChanged}
+            onLost={projectLost}
           />
         )}
         {lostShown && (
           <div className="bd-empty">
             <h2 className="bd-empty-title" ref={lostHeadingRef} tabIndex={-1}>
-              Proyek {lostShown.code} {lostShown.name} tidak tersedia lagi
+              {leftSelf
+                ? `Anda sudah keluar dari proyek ${lostShown.code} ${lostShown.name}`
+                : `Proyek ${lostShown.code} ${lostShown.name} tidak tersedia lagi`}
             </h2>
             <p>
-              {lostShown.teamName
-                ? `Proyek ini milik ${teamLabel(lostShown.teamName)} dan tidak ada lagi di daftar Anda. Biasanya karena Anda dikeluarkan dari tim itu, atau akses Tamu Anda ke proyek ini dicabut.`
-                : "Proyek ini tidak ada lagi di daftar Anda. Biasanya karena peran Anda di organisasi berubah, misalnya menjadi Tamu."}
+              {leftSelf
+                ? "Proyek ini tidak tampil lagi di board Anda, dan laptop ini berhenti menerima data baru proyek ini."
+                : "Anda tidak bisa membuka proyek ini lagi. Biasanya karena pengelola proyek mengeluarkan Anda dari anggotanya."}
             </p>
-            <p>
-              {lostShown.teamName
-                ? "Kalau masih perlu, minta admin tim itu menambahkan Anda lagi."
-                : "Kalau masih perlu, tanyakan ke superadmin organisasi."}
-            </p>
+            <p>Kalau masih perlu, minta pengelola proyek menambahkan Anda lagi.</p>
             {nextProject && (
               <button type="button" className="btn" onClick={() => select(nextProject.id)}>
                 Buka {nextProject.code} {nextProject.name}
@@ -245,8 +342,7 @@ export function BoardScreen() {
               </button>
             ) : (
               <p>
-                Proyek dibuat oleh superadmin atau admin tim. Board proyek tim Anda muncul di sini setelah proyeknya
-                dibuat.
+                {CREATE_NOTE} Board proyek muncul di sini setelah pengelolanya menambahkan Anda sebagai anggota.
               </p>
             )}
           </div>

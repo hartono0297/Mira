@@ -166,8 +166,10 @@ const onlineNames = async (id) =>
   (await must(id, "get_network_status")).peers.filter((p) => p.online).map((p) => p.displayName).sort();
 
 // ---- Selektor layar (sama dengan chat-e2e.mjs dan board-e2e.mjs) ----
+// Nama tombol menu bisa membawa angka ("Chat, 3 belum dibaca"), jadi dicocokkan sebagai awalan.
+const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(,|$)");
 const mainNav = (p, name) =>
-  p.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name, exact: true });
+  p.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const sel = {
   list: (p) => p.getByRole("navigation", { name: /Daftar percakapan/i }),
   channelRow: (p, name) => sel.list(p).getByRole("button", { name: new RegExp(`^Channel ${name}\\b`) }),
@@ -518,8 +520,12 @@ try {
     const dlg = pa.getByRole("dialog");
     await dlg.getByLabel("Nama proyek").fill(PROJECT);
     await dlg.getByLabel("Kode proyek").fill(PROJECT_CODE);
-    await dlg.getByLabel("Tim", { exact: true }).selectOption({ label: "Tim Desain" });
-    await dlg.getByRole("button", { name: "Buat proyek" }).click();
+    await dlg.getByLabel("Departemen", { exact: true }).selectOption({ label: "Tim Desain" });
+    // v0.3: proyek hanya terlihat anggotanya, jadi B dicentang di pemilih orang.
+    await dlg.getByLabel("Cari nama").fill(NODES.B.name);
+    await dlg.getByRole("checkbox", { name: NODES.B.name, exact: true }).check({ timeout: 15000 });
+    await dlg.getByLabel("Cari nama").fill("");
+    await dlg.getByRole("button", { name: "Buat proyek", exact: true }).click();
     await pa.getByRole("button", { name: "Task baru" }).waitFor({ timeout: 15000 });
     const todo = column(pa, "To do");
     await todo.getByRole("button", { name: "Tambah task" }).click();
@@ -539,10 +545,12 @@ try {
     const project = (await must("A", "board_list_projects")).find((p) => p.code === PROJECT_CODE);
     const board = await must("A", "board_get_board", { projectId: project.id });
     const taskA = board.columns.flatMap((c) => c.tasks).find((t) => t.title === TASK);
+    const pm = await must("A", "org_project_members", { projectId: project.id });
+    const pmKeys = pm.members.map((m) => m.publicKey);
     check(
-      "6. A membuat proyek Tim Desain dan task untuk B",
-      project?.teamId === desain.id && taskA?.assignee?.publicKey === pk.B,
-      `${project?.code} tim=${project?.teamName}, ${taskA?.code} -> ${taskA?.assignee?.name}`,
+      "6. A membuat proyek Tim Desain dengan anggota B, dan task untuk B",
+      project?.teamId === desain.id && taskA?.assignee?.publicKey === pk.B && pmKeys.includes(pk.B) && !pmKeys.includes(pk.C),
+      `${project?.code} tim=${project?.teamName}, anggota=${pmKeys.length}, ${taskA?.code} -> ${taskA?.assignee?.name}`,
     );
     await shot("A", "fm-06-board-a.png");
 
@@ -586,7 +594,7 @@ try {
     const cNav = (await projectNav(pc).count()) ? await projectNav(pc).innerText() : "";
     const cBoard = await call("C", "board_get_board", { projectId: project.id });
     check(
-      "6. C (tim lain) tidak melihat proyek Tim Desain",
+      "6. C (departemen lain, bukan anggota proyek) tidak melihat proyek Tim Desain",
       !cProjects.some((p) => p.id === project.id) && !cNav.includes(PROJECT) && !cBoard.ok,
       `daftar=${cProjects.map((p) => p.code).join(",") || "kosong"}, board_get_board=${cBoard.ok ? "terbuka" : cBoard.error?.code}`,
     );

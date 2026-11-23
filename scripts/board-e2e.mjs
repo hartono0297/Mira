@@ -94,9 +94,11 @@ async function stop({ child, browser }) {
 }
 
 // Tombol menu utama. Panel jaringan di sidebar juga punya tombol "Organisasi",
-// jadi tombol menu dicari di dalam nav "Menu utama".
+// jadi tombol menu dicari di dalam nav "Menu utama". Nama tombol bisa membawa
+// angka ("Chat, 3 belum dibaca"), jadi dicocokkan sebagai awalan.
+const menuName = (name) => new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(,|$)");
 const mainNav = (page, name) =>
-  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name, exact: true });
+  page.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name: menuName(name) });
 const column = (page, name) => page.locator("section.pb-col").filter({ has: page.getByRole("heading", { name }) });
 const cardTitles = async (page, name) =>
   (await column(page, name).locator("[data-open-task]").allInnerTexts()).map((s) => s.trim());
@@ -238,19 +240,19 @@ try {
   await page.getByLabel("Nama proyek").fill("Proyek A");
   const code = await page.getByLabel("Kode proyek").inputValue();
   check("Kode proyek diusulkan dari nama", code === "PA", code);
-  // Pendiri belum punya tim: satu-satunya pilihan Tim adalah proyek seluruh organisasi.
-  // Label "Tim" baru terhubung ke select setelah daftar tim terbaca.
-  const teamSelect = page.getByRole("dialog").getByLabel("Tim", { exact: true });
+  // Organisasi baru belum punya departemen: satu-satunya pilihan Departemen adalah
+  // proyek tanpa departemen. Label baru terhubung ke select setelah data organisasi terbaca.
+  const teamSelect = page.getByRole("dialog").getByLabel("Departemen", { exact: true });
   await teamSelect.waitFor({ timeout: 10000 });
   const teamOptions = (await teamSelect.locator("option").allInnerTexts()).map((s) => s.trim());
-  await teamSelect.selectOption({ label: "Tanpa tim (seluruh organisasi)" });
+  await teamSelect.selectOption({ label: "Tanpa departemen" });
   check(
-    "Pilihan Tim untuk pendiri tanpa tim hanya Tanpa tim",
-    teamOptions.length === 1 && teamOptions[0] === "Tanpa tim (seluruh organisasi)",
+    "Pilihan Departemen untuk pendiri tanpa departemen hanya Tanpa departemen",
+    teamOptions.length === 1 && teamOptions[0] === "Tanpa departemen",
     teamOptions.join(" | "),
   );
   await page.screenshot({ path: join(shots, "t3-02-proyek-baru-terang.png") });
-  await page.getByRole("button", { name: "Buat proyek" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Buat proyek", exact: true }).click();
   await page.getByRole("button", { name: "Task baru" }).waitFor({ timeout: 10000 });
   check("Proyek PA dibuat dan board terbuka", true);
 

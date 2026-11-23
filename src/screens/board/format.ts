@@ -93,7 +93,10 @@ export function projectNameProblem(clean: string): string | null {
   return length < 2 || length > 80 ? NAME_RULE : null;
 }
 
-// Nama tim untuk kalimat: "Tim Keuangan". Nama yang sudah diawali "Tim" tidak diberi awalan lagi.
+// Nama departemen untuk kalimat: "Departemen Keuangan". Nama yang sudah diawali
+// "Departemen" tidak diberi awalan lagi. ("team" di inti Rust = departemen.)
 export function teamLabel(name: string): string {
-  return /^tim\b/i.test(name.trim()) ? name.trim() : `Tim ${name.trim()}`;
+  return /^departemen\b/i.test(name.trim()) ? name.trim() : `Departemen ${name.trim()}`;
 }
+
+export const NO_DEPARTMENT = "Tanpa departemen";

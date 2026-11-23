@@ -157,7 +157,7 @@ try {
   await page.getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Terang").check();
-  await page.getByRole("button", { name: "Dokumen", exact: true }).click();
+  await page.getByRole("button", { name: /^Dokumen(,|$)/ }).click();
   await page.getByText(/masih kosong/).waitFor({ timeout: 10000 });
   check("Layar Dokumen kosong tampil", true);
   await page.screenshot({ path: join(shots, "12-dokumen-kosong-terang.png") });
@@ -302,7 +302,7 @@ try {
   await page.getByRole("button", { name: "Pengaturan", exact: true }).click();
   await page.getByLabel("Gelap").check();
   await page.waitForTimeout(300);
-  await page.getByRole("button", { name: "Dokumen", exact: true }).click();
+  await page.getByRole("button", { name: /^Dokumen(,|$)/ }).click();
   await page.locator("li", { hasText: XLSX }).first().click();
   await page.getByText(/Dipulihkan dari versi 1/).first().waitFor({ timeout: 10000 });
   await page.screenshot({ path: join(shots, "17-dokumen-riwayat-gelap.png") });
@@ -328,7 +328,7 @@ try {
     "pemulihan sesi saat start",
   );
   check("Simpanan saat Mira tertutup menjadi versi 4 setelah start", recovered.current.number === 4);
-  await page.getByRole("button", { name: "Dokumen", exact: true }).click();
+  await page.getByRole("button", { name: /^Dokumen(,|$)/ }).click();
   await page.locator("li", { hasText: XLSX }).first().click();
   await page.getByText(/Versi 4/).first().waitFor({ timeout: 10000 });
   check("Riwayat versi tetap ada setelah restart", true);

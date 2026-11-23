@@ -209,7 +209,9 @@ async function refocus(id) {
 }
 
 async function nav(id, label) {
-  await page(id).getByRole("button", { name: label, exact: true }).first().click();
+  // Nama tombol menu bisa membawa angka ("Tanda tangan, 1 menunggu tanda tangan Anda").
+  const name = new RegExp("^" + label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(,|$)");
+  await page(id).getByRole("button", { name }).first().click();
   await sleep(600);
 }
 

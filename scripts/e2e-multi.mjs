@@ -194,7 +194,7 @@ try {
   // Screenshot layar Tahap 1 untuk laporan (tidak dihitung sebagai pemeriksaan).
   try {
     const pa = running.A.page;
-    await pa.getByRole("button", { name: "Organisasi", exact: true }).click();
+    await pa.getByRole("button", { name: /^Organisasi(,|$)/ }).click();
     await sleep(1500);
     await pa.screenshot({ path: join(shots, "organisasi-a.png") });
     await pa.getByRole("button", { name: /Tim Desain/ }).first().click();

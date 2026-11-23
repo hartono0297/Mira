@@ -1,0 +1,166 @@
+/* Anggota proyek, Proyek lain (superadmin), dan angka tenggat di daftar proyek.
+   Warna hanya lewat token peran; pola baris mengikuti .bd-link dan .chip. */
+
+/* Tombol Anggota di kepala board: angkanya tebal dan berangka rata seperti .pb-count. */
+.pb-members-n {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Panel Anggota proyek */
+
+.pm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pm-notice:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pm-note {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.pm-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pm-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.pm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 0;
+}
+
+.pm-row + .pm-row {
+  border-top: 1px solid var(--border);
+}
+
+/* Inisial, sama dengan .avatar di sidebar tapi lebih kecil. */
+.pm-av {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pm-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pm-name {
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pm-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.pm-remove {
+  flex: none;
+}
+
+/* Keluar dari proyek berdiri di kiri, jauh dari Tutup, supaya tidak tertekan tanpa sengaja. */
+.pm-actions .pm-leave {
+  margin-right: auto;
+}
+
+.pm-confirm-p {
+  margin-top: 8px;
+}
+
+.pm-add {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pm-fail {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+/* Proyek lain (superadmin) di navigasi board */
+
+.op-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.op-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.op-title {
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.op-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.op-msg:empty {
+  display: none;
+}
+
+/* Angka task tenggat hari ini atau lewat di daftar proyek: satu-satunya aksen
+   di baris, supaya beda dari jumlah task terbuka yang abu-abu. */
+.bd-link-due {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
