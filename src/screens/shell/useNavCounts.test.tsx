@@ -35,7 +35,7 @@ const myTasks = (dues: string[]) =>
     projectId: "p1",
     projectCode: "PRJ",
     projectName: "Proyek Uji",
-    task: { id: `t${i}`, code: `PRJ-${i}`, title: "Task", columnId: "todo", assignee: null, due, priority: "none", labels: [], commentCount: 0, merged: false },
+    task: { id: `t${i}`, code: `PRJ-${i}`, title: "Task", columnId: "todo", assignee: null, due, priority: "none", labels: [], commentCount: 0, merged: false, subtaskDone: 0, subtaskTotal: 0, trackedSecs: 0, timersRunningSince: [] },
   }));
 const org = (pending: number, decide: string[] = ["t1"]) => ({ pendingJoinCount: pending, decideJoinTeamIds: decide });
 

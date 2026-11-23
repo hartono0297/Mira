@@ -1,6 +1,24 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
-import { IconAlertTriangle, IconGitMerge, IconTrash, IconX } from "@tabler/icons-react";
-import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import {
+  IconAlertTriangle,
+  IconCircle,
+  IconCircleCheck,
+  IconGitMerge,
+  IconProgress,
+  IconUserOff,
+  IconX,
+} from "@tabler/icons-react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { toAppError, type AppError } from "../../api";
 import {
   boardApi,
@@ -15,28 +33,43 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { initials } from "../../components/initials";
-import { COLUMN_NAMES, COLUMN_ORDER, daysUntil, dueLabel, formatDateTime, formatDue, PRIORITY_LABELS } from "./format";
+import { DetailTabs } from "./DetailTabs";
+import { DuePicker } from "./DuePicker";
+import { dueParts, parseDueInput } from "./dueText";
+import { COLUMN_NAMES, COLUMN_ORDER, formatDateTime, PRIORITY_LABELS } from "./format";
+import { LabelPicker } from "./LabelPicker";
+import { PropertyRow } from "./PropertyRow";
+import { Subtasks } from "./Subtasks";
 import { activitySentence } from "./taskActivity";
+import { TaskMoreMenu } from "./TaskMoreMenu";
+import { MenuList, type MenuItem } from "./TaskPopover";
+import { MAX_LABEL_LEN, MAX_LABELS, TEKS_DIALOG as T, teksDialog } from "./teksDialog";
+import { TimeSection } from "./TimeSection";
+import { TimerMini } from "./TimerMini";
 import { useHeld } from "./useHeld";
 import "./task.css";
 
 type Field = "title" | "description" | "status" | "assignee" | "due" | "priority" | "labels" | "comment";
 
 const FIELD_NAMES: Record<Field, string> = {
-  title: "Judul",
-  description: "Deskripsi",
-  status: "Status",
-  assignee: "Penanggung jawab",
-  due: "Tenggat",
-  priority: "Prioritas",
-  labels: "Label",
-  comment: "Komentar",
+  title: T.judul,
+  description: T.deskripsi,
+  status: T.status,
+  assignee: T.penanggungJawab,
+  due: T.tenggat,
+  priority: T.prioritas,
+  labels: T.label,
+  comment: T.komentar,
 };
 
 const PRIORITIES: Priority[] = ["none", "low", "medium", "high"];
-const MAX_LABELS = 10;
-const MAX_LABEL_LEN = 30;
 const ACTIVITY_PREVIEW = 6;
+
+const STATUS_ICON: Record<ColumnId, typeof IconCircle> = {
+  todo: IconCircle,
+  doing: IconProgress,
+  done: IconCircleCheck,
+};
 
 type Props = {
   projectId: string;
@@ -47,55 +80,94 @@ type Props = {
   onDeleted?: (taskId: string, code: string) => void;
 };
 
-type SelectField = "status" | "assignee" | "priority";
+// Nilai properti yang sedang disimpan, tampil lebih dulu (optimistis). "" = dikosongkan.
+type PickField = "status" | "assignee" | "priority" | "due";
+// Pilihan kecil yang sedang terbuka.
+type PopKey = PickField | "labels" | "more";
+// Bagian dari komponen lain (subtask, waktu, timer di kepala) yang melapor error lewat onError.
+type Section = "subtasks" | "time" | "timer";
+type Tab = "comments" | "activity";
 
 // Task atau proyeknya hilang saat muat ulang, biasanya karena perubahan dari laptop lain.
 // "revoked": izin mengubah dicabut saat masih ada draf yang belum tersimpan.
 type Gone = "task" | "project" | "revoked";
 
 const GONE_TITLE: Record<Gone, string> = {
-  task: "Task ini dihapus di laptop lain.",
-  project: "Proyek task ini tidak bisa dibuka lagi.",
-  revoked: "Izin mengubah task ini baru dicabut.",
+  task: T.goneTask,
+  project: T.goneProject,
+  revoked: T.goneRevoked,
+};
+
+// Pemberitahuan saat menutup dengan isian yang belum tersimpan. "Lanjut mengedit"
+// memindah fokus ke tempat yang perlu diurus.
+type Unsaved = { message: string; focus: "failed" | "comment" | "draft" };
+
+const SECTION_TITLE: Record<Section, string> = {
+  subtasks: T.subtaskBelumTersimpan,
+  time: T.waktuBelumTersimpan,
+  timer: T.timerBelumTersimpan,
 };
 
 function errorTitle(field: Field, error: AppError): string {
-  if (error.code === "forbidden") return "Anda tidak punya izin untuk ini";
-  if (error.code === "not_found") return "Task ini tidak ada lagi";
-  if (field === "comment") return "Komentar belum terkirim";
-  return `${FIELD_NAMES[field]} belum tersimpan`;
+  if (error.code === "forbidden") return T.tidakBerizin;
+  if (error.code === "not_found") return T.taskTidakAdaLagi;
+  if (field === "comment") return T.komentarBelumTerkirim;
+  return teksDialog.belumTersimpan(FIELD_NAMES[field]);
+}
+
+// Ketikan yang belum terkirim di subtask, catatan waktu, dan timer ditandai
+// data-unsaved="true" oleh komponennya sendiri.
+function findUnsaved(root: HTMLElement | null): HTMLElement | null {
+  return root?.querySelector<HTMLElement>('[data-unsaved="true"]') ?? null;
+}
+
+// WebView2 (Chromium) mendukung field-sizing. Selain itu tinggi diatur lewat skrip.
+const FIELD_SIZING =
+  typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("field-sizing", "content");
+
+function useAutoHeight(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || FIELD_SIZING) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [ref, value]);
 }
 
 export function PriorityChip({ priority }: { priority: Priority }) {
   return <span className={`td-prio td-prio-${priority}`}>{PRIORITY_LABELS[priority]}</span>;
 }
 
-// Detail task sebagai dialog modal. Selalu terbuka selama dipasang; pemanggil
-// melepasnya lewat onClose. Fokus terkunci di dalam, Escape menutup (kecuali
-// sedang membatalkan ketikan judul atau label), fokus kembali ke pembuka.
+// Detail task sebagai dialog modal, satu kolom seperti dokumen (arah A di
+// design/v04-detail-task.html). Selalu terbuka selama dipasang; pemanggil
+// melepasnya lewat onClose. Fokus terkunci di dalam, fokus kembali ke pembuka.
+// Urutan Escape: pulihkan isian yang sedang diubah, tutup pilihan kecil, lalu tutup dialog.
 export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }: Props) {
   const [task, setTask] = useState<Task | null>(null);
   const [board, setBoard] = useState<BoardView | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<AppError | null>(null);
   const [errors, setErrors] = useState<Partial<Record<Field, AppError>>>({});
+  const [sectionErr, setSectionErr] = useState<Partial<Record<Section, string>>>({});
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState<Field | null>(null);
 
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [titleProblem, setTitleProblem] = useState<string | null>(null);
   const [descDraft, setDescDraft] = useState<string | null>(null);
-  const [dueDraft, setDueDraft] = useState<string | null>(null);
+  const [dueDraft, setDueDraft] = useState("");
   const [dueProblem, setDueProblem] = useState<string | null>(null);
   const [labelDraft, setLabelDraft] = useState("");
   const [labelProblem, setLabelProblem] = useState<string | null>(null);
   const [comment, setComment] = useState("");
-  const [unsaved, setUnsaved] = useState<string | null>(null);
+  const [unsaved, setUnsaved] = useState<Unsaved | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [allActivity, setAllActivity] = useState(false);
-  const [selDraft, setSelDraft] = useState<Partial<Record<SelectField, string>>>({});
+  const [picked, setPicked] = useState<Partial<Record<PickField, string>>>({});
+  const [pop, setPop] = useState<PopKey | null>(null);
+  const [tab, setTab] = useState<Tab>("comments");
   const [gone, setGone] = useState<Gone | null>(null);
   // Nilai server saat ketikan dimulai. Kalau server berubah selama draf belum
   // disimpan, pengguna diberi tahu sebelum ketikannya menimpa perubahan rekan.
@@ -103,18 +175,26 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   const [descBase, setDescBase] = useState<string | null>(null);
   const titleHeld = useHeld(task?.title ?? "");
   const descHeld = useHeld(task?.description ?? "");
-  const dueHeld = useHeld(task?.due ?? "");
 
   const ids = useId();
-  // Pilihan lewat mouse langsung disimpan. Lewat keyboard, panah di select yang
-  // tertutup memicu change per langkah, jadi baru disimpan saat Enter atau blur.
-  const pointerPick = useRef(false);
   const deleted = useRef(false);
-  const titleRef = useRef<HTMLInputElement>(null);
-  const dueRef = useRef<HTMLInputElement>(null);
-  const labelRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+  const descRef = useRef<HTMLTextAreaElement>(null);
+  const dueInputRef = useRef<HTMLInputElement>(null);
+  const labelInputRef = useRef<HTMLInputElement>(null);
+  const commentRef = useRef<HTMLTextAreaElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  // Fokus yang dipindah setelah render berikutnya, saat elemen tujuannya sudah ada.
+  const focusNext = useRef<(() => HTMLElement | null) | null>(null);
   const goneCloseRef = useRef<HTMLButtonElement>(null);
+  const anchors: Record<PopKey, RefObject<HTMLButtonElement | null>> = {
+    status: useRef<HTMLButtonElement>(null),
+    assignee: useRef<HTMLButtonElement>(null),
+    priority: useRef<HTMLButtonElement>(null),
+    due: useRef<HTMLButtonElement>(null),
+    labels: useRef<HTMLButtonElement>(null),
+    more: useRef<HTMLButtonElement>(null),
+  };
   const hasTask = useRef(false);
   hasTask.current = task !== null;
   const wasEditable = useRef(false);
@@ -123,10 +203,9 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   hasDrafts.current =
     titleDraft !== null ||
     descDraft !== null ||
-    dueDraft !== null ||
+    dueDraft.trim() !== "" ||
     labelDraft.trim() !== "" ||
-    comment.trim() !== "" ||
-    Object.values(selDraft).some((v) => v !== undefined);
+    comment.trim() !== "";
   const alive = useRef(true);
   const seq = useRef(0);
   const applied = useRef(0);
@@ -145,7 +224,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     setTask(next);
   }, []);
 
-  // Muat ulang tidak menyentuh draf (judul, deskripsi, label, komentar):
+  // Muat ulang tidak menyentuh draf (judul, deskripsi, tenggat, label, komentar):
   // semuanya state terpisah yang hanya dikosongkan setelah disimpan atau dibatalkan.
   const load = useCallback(async () => {
     const mine = ++seq.current;
@@ -159,7 +238,8 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       // Izin mengubah dicabut (misalnya jadi Tamu) saat masih ada draf: draf
       // ditampilkan untuk disalin, sama seperti saat task hilang.
       const canEditNow = t.value.canEdit;
-      const revokedNow = wasEditable.current && !canEditNow && hasDrafts.current;
+      const revokedNow =
+        wasEditable.current && !canEditNow && (hasDrafts.current || findUnsaved(contentRef.current) !== null);
       setGone((prev) => (revokedNow || (prev === "revoked" && !canEditNow) ? "revoked" : null));
       setLoadError(null);
     } else if (hasTask.current && boardErr && (boardErr.code === "not_found" || boardErr.code === "forbidden")) {
@@ -182,10 +262,29 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     };
   }, [load]);
 
+  useAutoHeight(titleRef, titleDraft ?? titleHeld.value);
+  useAutoHeight(descRef, descDraft ?? descHeld.value);
+
+  useLayoutEffect(() => {
+    const target = focusNext.current;
+    if (!target) return;
+    focusNext.current = null;
+    target()?.focus();
+  });
+
+  // Pilihan kecil ditutup saat tampilan berganti ke hanya-baca atau task hilang.
+  const editable = !!task && task.canEdit && !gone;
+  useEffect(() => {
+    if (gone) setPop(null);
+    else if (!editable) setPop((p) => (p === "more" ? p : null));
+  }, [editable, gone]);
+
   async function run(field: Field, work: () => Promise<Task>, done: string): Promise<boolean> {
     const mine = ++seq.current;
     setPending(field);
-    setStatus("Menyimpan...");
+    // Kepala hanya mengumumkan hasil. Dikosongkan dulu supaya hasil yang sama
+    // ("Prioritas tersimpan.") dibacakan lagi pada simpan berikutnya.
+    setStatus("");
     setErrors((e) => ({ ...e, [field]: undefined }));
     try {
       const next = await work();
@@ -216,12 +315,13 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   }
 
   const update = (field: Field, patch: Parameters<typeof boardApi.updateTask>[2]) =>
-    run(field, () => boardApi.updateTask(projectId, taskId, patch), `${FIELD_NAMES[field]} tersimpan.`);
+    run(field, () => boardApi.updateTask(projectId, taskId, patch), teksDialog.tersimpan(FIELD_NAMES[field]));
 
   function commitTitle(closing = false): Promise<boolean> {
     return once("title", async () => {
       if (!task || titleDraft === null) return true;
-      const value = titleDraft.trim();
+      const submitted = titleDraft;
+      const value = submitted.trim();
       if (value === task.title) {
         setTitleDraft(null);
         titleHeld.settle(task.title);
@@ -234,13 +334,14 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
           setTitleProblem(null);
           return true;
         }
-        setTitleProblem("Judul tidak boleh kosong. Tekan Escape untuk kembali ke judul sebelumnya.");
+        setTitleProblem(T.judulKosong);
         return false;
       }
       setTitleProblem(null);
       const ok = await update("title", { title: value });
       if (ok && alive.current) {
-        setTitleDraft(null);
+        // Ketikan yang masuk selama menyimpan tetap ada sebagai draf baru.
+        setTitleDraft((d) => (d === submitted ? null : d));
         titleHeld.settle(value);
       }
       return ok;
@@ -250,41 +351,24 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   function commitDescription(): Promise<boolean> {
     return once("description", async () => {
       if (!task || descDraft === null) return true;
-      if (descDraft === task.description) {
-        setDescDraft(null);
+      const submitted = descDraft;
+      if (submitted === task.description) {
+        setDescDraft((d) => (d === submitted ? null : d));
         descHeld.settle(task.description);
         return true;
       }
-      const ok = await update("description", { description: descDraft });
+      const ok = await update("description", { description: submitted });
       if (ok && alive.current) {
-        setDescDraft(null);
-        descHeld.settle(descDraft);
+        setDescDraft((d) => (d === submitted ? null : d));
+        descHeld.settle(submitted);
       }
       return ok;
     });
   }
 
-  function commitDue(): Promise<boolean> {
-    return once("due", async () => {
-      if (!task || dueDraft === null) return true;
-      if (dueRef.current?.validity.badInput) {
-        setDueProblem("Tanggal belum lengkap. Isi hari, bulan, dan tahun, atau pilih dari kalender.");
-        return false;
-      }
-      setDueProblem(null);
-      const value = dueDraft === "" ? null : dueDraft;
-      if (value === task.due) {
-        setDueDraft(null);
-        dueHeld.settle(task.due ?? "");
-        return true;
-      }
-      const ok = await update("due", { due: value });
-      if (ok && alive.current) {
-        setDueDraft(null);
-        dueHeld.settle(value ?? "");
-      }
-      return ok;
-    });
+  function restoreDescription() {
+    setDescDraft(null);
+    descHeld.settle(task?.description ?? "");
   }
 
   // Elemen yang difokus bisa lepas saat tampilan berganti ke mode hilang.
@@ -309,82 +393,75 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       onClose();
       return;
     }
-    const ok =
-      (await commitTitle(true)) &&
-      (await commitDescription()) &&
-      (await commitDue()) &&
-      (await commitSelect("status")) &&
-      (await commitSelect("assignee")) &&
-      (await commitSelect("priority"));
+    const ok = (await commitTitle(true)) && (await commitDescription());
     if (!alive.current) return;
     if (!ok) {
-      setUnsaved("Ada perubahan yang belum tersimpan. Lihat pesan di bawah, lalu coba simpan lagi.");
+      setUnsaved({ message: T.adaYangGagal, focus: "failed" });
       return;
     }
     if (comment.trim()) {
-      setUnsaved("Komentar Anda belum dikirim.");
+      setUnsaved({ message: T.komentarBelumDikirim, focus: "comment" });
+      return;
+    }
+    if (findUnsaved(contentRef.current)) {
+      setUnsaved({ message: T.ketikanBelumDisimpan, focus: "draft" });
       return;
     }
     onClose();
   }
 
-  function savedSelect(t: Task, field: SelectField): string {
+  // "Lanjut mengedit": pemberitahuan ditutup dan fokus pindah ke isian yang
+  // belum tersimpan, supaya fokus tidak hilang bersama tombolnya.
+  function keepEditing() {
+    const kind = unsaved?.focus;
+    setUnsaved(null);
+    if (kind === "comment") {
+      setTab("comments");
+      focusNext.current = () => commentRef.current;
+    } else if (kind === "draft") {
+      focusNext.current = () => findUnsaved(contentRef.current) ?? commentRef.current ?? descRef.current;
+    } else {
+      focusNext.current = () =>
+        (titleDraft !== null ? titleRef.current : null) ??
+        (descDraft !== null ? descRef.current : null) ??
+        descRef.current;
+    }
+  }
+
+  function savedPick(t: Task, field: PickField): string {
     if (field === "status") return t.columnId;
     if (field === "assignee") return t.assignee?.publicKey ?? "";
+    if (field === "due") return t.due ?? "";
     return t.priority;
   }
 
-  // Menyimpan pilihan select yang belum tersimpan. Nilai tujuan tetap tampil
-  // selama menyimpan; kalau gagal, select kembali ke nilai tersimpan.
-  function commitSelect(field: SelectField, picked?: string): Promise<boolean> {
+  function openPop(key: PopKey) {
+    setPop(key);
+    if (key === "labels") setLabelProblem(null);
+  }
+
+  function closePop(refocus: boolean) {
+    const key = pop;
+    setPop(null);
+    if (refocus && key) anchors[key].current?.focus();
+  }
+
+  // Menyimpan pilihan dari daftar. Nilai tujuan tampil selama menyimpan;
+  // kalau gagal, baris kembali ke nilai tersimpan dan error tampil di bawahnya.
+  function pick(field: PickField, value: string): Promise<boolean> {
+    closePop(true);
     return once(field, async () => {
-      const value = picked ?? selDraft[field];
-      if (!task || value === undefined) return true;
-      if (value === savedSelect(task, field)) {
-        setSelDraft((d) => ({ ...d, [field]: undefined }));
-        return true;
-      }
-      setSelDraft((d) => ({ ...d, [field]: value }));
+      if (!task) return true;
+      if (value === savedPick(task, field)) return true;
+      setPicked((d) => ({ ...d, [field]: value }));
       let ok: boolean;
       if (field === "status") ok = await changeStatus(value as ColumnId);
       else if (field === "assignee") ok = await update("assignee", { assignee: value || null });
+      else if (field === "due") ok = await update("due", { due: value || null });
       else ok = await update("priority", { priority: value as Priority });
-      if (alive.current) setSelDraft((d) => ({ ...d, [field]: undefined }));
+      if (alive.current) setPicked((d) => ({ ...d, [field]: undefined }));
       return ok;
     });
-  }
-
-  function selectProps(field: SelectField, t: Task) {
-    return {
-      "data-field": field,
-      value: selDraft[field] ?? savedSelect(t, field),
-      onPointerDown: () => {
-        pointerPick.current = true;
-      },
-      onMouseDown: () => {
-        pointerPick.current = true;
-      },
-      onKeyDown: (e: KeyboardEvent<HTMLSelectElement>) => {
-        pointerPick.current = false;
-        if (e.key === "Enter") {
-          e.preventDefault();
-          void commitSelect(field);
-        }
-      },
-      onChange: (e: ChangeEvent<HTMLSelectElement>) => {
-        const value = e.target.value;
-        if (pointerPick.current) {
-          pointerPick.current = false;
-          void commitSelect(field, value);
-        } else {
-          setSelDraft((d) => ({ ...d, [field]: value }));
-        }
-      },
-      onBlur: () => {
-        pointerPick.current = false;
-        void commitSelect(field);
-      },
-    };
   }
 
   function changeStatus(columnId: ColumnId): Promise<boolean> {
@@ -395,8 +472,20 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
         if (alive.current) setBoard(view);
         return boardApi.getTask(projectId, taskId);
       },
-      `Status tersimpan: ${COLUMN_NAMES[columnId]}.`,
+      teksDialog.statusTersimpan(COLUMN_NAMES[columnId]),
     );
+  }
+
+  async function submitDue() {
+    const parsed = parseDueInput(dueDraft);
+    if (parsed.iso === null) {
+      setDueProblem(parsed.problem);
+      dueInputRef.current?.focus();
+      return;
+    }
+    setDueProblem(null);
+    const ok = await pick("due", parsed.iso);
+    if (ok && alive.current) setDueDraft("");
   }
 
   async function addLabel() {
@@ -404,15 +493,15 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     const value = labelDraft.trim();
     if (!value) return;
     if (value.length > MAX_LABEL_LEN) {
-      setLabelProblem(`Label paling panjang ${MAX_LABEL_LEN} karakter.`);
+      setLabelProblem(teksDialog.labelTerlaluPanjang());
       return;
     }
     if (task.labels.length >= MAX_LABELS) {
-      setLabelProblem(`Sudah ${MAX_LABELS} label. Hapus satu dulu untuk menambah yang baru.`);
+      setLabelProblem(teksDialog.sudahBanyakLabel());
       return;
     }
     if (task.labels.some((l) => l.toLowerCase() === value.toLowerCase())) {
-      setLabelProblem(`Label "${value}" sudah ada.`);
+      setLabelProblem(teksDialog.labelSudahAda(value));
       return;
     }
     setLabelProblem(null);
@@ -420,19 +509,23 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     if (ok && alive.current) setLabelDraft("");
   }
 
-  async function removeLabel(label: string) {
+  async function toggleLabel(label: string, on: boolean) {
     if (!task) return;
-    labelRef.current?.focus();
     setLabelProblem(null);
-    await update("labels", { labels: task.labels.filter((l) => l !== label) });
+    if (on && task.labels.length >= MAX_LABELS) {
+      setLabelProblem(teksDialog.sudahBanyakLabel());
+      return;
+    }
+    const next = on ? [...task.labels, label] : task.labels.filter((l) => l !== label);
+    await update("labels", { labels: next });
   }
 
   async function sendComment() {
     const body = comment.trim();
     if (!body || pending === "comment") return;
-    const ok = await run("comment", () => boardApi.addComment(projectId, taskId, body), "Komentar terkirim.");
+    const ok = await run("comment", () => boardApi.addComment(projectId, taskId, body), T.komentarTerkirim);
     if (ok && alive.current) {
-      setComment("");
+      setComment((c) => (c.trim() === body ? "" : c));
       setUnsaved(null);
     }
   }
@@ -453,6 +546,22 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     }
   }
 
+  // Subtask, waktu, dan timer menyimpan sendiri lalu mengirim TaskDetail baru dari inti.
+  // Draf di dialog ini tidak disentuh.
+  function childChange(section: Section) {
+    return (next: Task) => {
+      apply(++seq.current, next);
+      setSectionErr((s) => ({ ...s, [section]: undefined }));
+      onChangedRef.current();
+    };
+  }
+
+  function childError(section: Section) {
+    return (message: string) => {
+      if (alive.current) setSectionErr((s) => ({ ...s, [section]: message }));
+    };
+  }
+
   // Wilayah aria-live selalu dipasang supaya error yang muncul belakangan ikut dibacakan.
   function fieldError(field: Field, keepsInput = false) {
     const err = errors[field];
@@ -461,9 +570,20 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
         {err && (
           <ErrorAlert title={errorTitle(field, err)}>
             <p>{err.message}</p>
-            {keepsInput && err.code !== "forbidden" && err.code !== "not_found" && (
-              <p>Isian Anda masih ada. Coba lagi.</p>
-            )}
+            {keepsInput && err.code !== "forbidden" && err.code !== "not_found" && <p>{T.isianMasihAda}</p>}
+          </ErrorAlert>
+        )}
+      </div>
+    );
+  }
+
+  function sectionAlert(section: Section) {
+    const message = sectionErr[section];
+    return (
+      <div className="td-live" aria-live="polite">
+        {message && (
+          <ErrorAlert title={SECTION_TITLE[section]}>
+            <p>{message}</p>
           </ErrorAlert>
         )}
       </div>
@@ -480,37 +600,38 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
 
   const me = board?.me ?? "";
   const people: Person[] = board?.assignees ?? [];
-  const nameOf = (p: Person) => (p.publicKey === me ? `${p.name} (Anda)` : p.name);
+  const nameOf = (p: Person) => teksDialog.namaOrang(p.name, p.publicKey === me);
   // Penanggung jawab yang sudah bukan anggota proyek (misalnya dikeluarkan dari
   // proyek) tetap tampil dengan keterangan, supaya tidak hilang diam-diam.
   const isFormer = (p: Person | null) => !!p && !!board && !people.some((x) => x.publicKey === p.publicKey);
   // Satu pasang kurung saja: "Budi (bukan anggota proyek lagi)", "Budi (Anda, bukan anggota proyek lagi)".
-  const assigneeName = (p: Person) => {
-    if (!isFormer(p)) return nameOf(p);
-    return p.publicKey === me ? `${p.name} (Anda, bukan anggota proyek lagi)` : `${p.name} (bukan anggota proyek lagi)`;
-  };
+  const assigneeName = (p: Person) => teksDialog.namaOrang(p.name, p.publicKey === me, isFormer(p));
+
+  function avatar(p: Person, small = false) {
+    return (
+      <span className={`td-av${small ? " td-av-sm" : ""}`} aria-hidden="true">
+        {initials(p.name)}
+      </span>
+    );
+  }
 
   function body() {
     if (loading && !task) {
       return (
-        <p className="td-pad hint" role="status">
-          Memuat task...
+        <p className="hint" role="status">
+          {T.memuatTask}
         </p>
       );
     }
     if (!task) {
-      const gone = loadError?.code === "not_found";
+      const isGone = loadError?.code === "not_found";
       return (
-        <div className="td-pad" role="alert">
-          <ErrorAlert title={gone ? "Task ini tidak ada lagi" : "Task belum terbaca"}>
-            <p>{loadError?.message ?? "Inti Mira tidak mengirim data task."}</p>
-            <p>
-              {gone
-                ? "Mungkin sudah dihapus. Tutup dialog ini; board sudah memuat daftar terbaru."
-                : "Coba baca lagi. Kalau tetap gagal, tutup Mira lalu buka lagi."}
-            </p>
+        <div role="alert">
+          <ErrorAlert title={isGone ? T.taskTidakAdaLagi : T.taskBelumTerbaca}>
+            <p>{loadError?.message ?? T.intiTidakMengirim}</p>
+            <p>{isGone ? T.mungkinSudahDihapus : T.cobaBacaLagi}</p>
             <div className="td-row-actions">
-              {!gone && (
+              {!isGone && (
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
@@ -519,19 +640,18 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                     void load();
                   }}
                 >
-                  Coba lagi
+                  {T.cobaLagi}
                 </button>
               )}
               <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
-                Tutup
+                {T.tutupSingkat}
               </button>
             </div>
           </ErrorAlert>
         </div>
       );
     }
-    if (gone) return readOnly(task, true);
-    return task.canEdit ? editable(task) : readOnly(task);
+    return doc(task, gone ? "gone" : task.canEdit ? "edit" : "read");
   }
 
   function topNotes(t: Task) {
@@ -541,295 +661,12 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
           <p className="td-merged">
             <IconGitMerge size={16} aria-hidden="true" />
             <span>
-              <strong>Sudah digabung.</strong> Task ini juga diubah di laptop lain, dan perubahannya sudah digabung
-              otomatis.
+              <strong>{T.sudahDigabung}</strong> {T.sudahDigabungIsi}
             </span>
           </p>
         )}
-        {loadError && (
-          <p className="hint">Data terbaru belum terbaca ({loadError.message}). Yang tampil adalah data terakhir.</p>
-        )}
+        {loadError && <p className="hint">{teksDialog.dataLama(loadError.message)}</p>}
       </>
-    );
-  }
-
-  function dueHint(due: string | null) {
-    if (!due) return null;
-    const n = daysUntil(due);
-    const label = dueLabel(due);
-    if (label === formatDue(due)) return null;
-    return <span className={`td-due-hint${n !== null && n < 0 ? " td-late" : ""}`}>{label}</span>;
-  }
-
-  function editable(t: Task) {
-    const titleValue = titleDraft ?? titleHeld.value;
-    const descValue = descDraft ?? descHeld.value;
-    const descDirty = descDraft !== null && descDraft !== t.description;
-    const dueValue = dueDraft ?? dueHeld.value;
-    const assigneeListed = t.assignee === null || people.some((p) => p.publicKey === t.assignee?.publicKey);
-    const titleMoved = titleDraft !== null && titleBase !== null && t.title !== titleBase && titleDraft.trim() !== t.title;
-    const descMoved = descDirty && descBase !== null && t.description !== descBase;
-    return (
-      <div className="td-grid">
-        <div className="td-top">
-          {topNotes(t)}
-          <div className="td-field">
-            <label htmlFor={`${ids}-title`} className="sr-only">
-              Judul task
-            </label>
-            <input
-              id={`${ids}-title`}
-              ref={titleRef}
-              className="td-title-input"
-              value={titleValue}
-              maxLength={200}
-              aria-invalid={titleProblem ? true : undefined}
-              aria-describedby={titleProblem ? `${ids}-title-err` : undefined}
-              onFocus={titleHeld.hold}
-              onChange={(e) => {
-                if (titleDraft === null) setTitleBase(titleValue);
-                setTitleDraft(e.target.value);
-                setTitleProblem(null);
-              }}
-              onBlur={() => {
-                titleHeld.release();
-                void commitTitle();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void commitTitle();
-                }
-              }}
-            />
-            {problem(`${ids}-title-err`, titleProblem)}
-            <div className="td-live" aria-live="polite">
-              {titleMoved && (
-                <p className="td-moved">
-                  Judul ini baru diubah di laptop lain menjadi "{t.title}". Ketikan Anda menggantinya kalau Anda menekan
-                  Enter, pindah dari kolom ini, atau menutup dialog. Tekan Escape untuk memakai judul itu.
-                </p>
-              )}
-            </div>
-            {fieldError("title", true)}
-          </div>
-
-          <div className="td-field">
-            <label htmlFor={`${ids}-desc`} className="td-label">
-              Deskripsi
-            </label>
-            <textarea
-              id={`${ids}-desc`}
-              className="td-textarea"
-              rows={5}
-              value={descValue}
-              placeholder="Apa yang perlu dikerjakan, dan seperti apa hasilnya"
-              onFocus={descHeld.hold}
-              onBlur={descHeld.release}
-              onChange={(e) => {
-                if (descDraft === null) setDescBase(descValue);
-                setDescDraft(e.target.value);
-              }}
-              onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
-                if (e.key === "Enter" && e.ctrlKey) {
-                  e.preventDefault();
-                  void commitDescription();
-                }
-              }}
-            />
-            <div className="td-live" aria-live="polite">
-              {descMoved && (
-                <p className="td-moved">
-                  Deskripsi ini baru diubah di laptop lain. Ketikan Anda menggantinya kalau Anda menekan Simpan deskripsi
-                  atau menutup dialog. Pilih Batalkan perubahan untuk memakai versi terbaru.
-                </p>
-              )}
-            </div>
-            {descDirty && (
-              <div className="td-row-actions">
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={pending === "description"}
-                  aria-busy={pending === "description" || undefined}
-                  onClick={() => void commitDescription()}
-                >
-                  {pending === "description" ? "Menyimpan..." : "Simpan deskripsi"}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={pending === "description"}
-                  onClick={() => {
-                    setDescDraft(null);
-                    descHeld.settle(t.description);
-                  }}
-                >
-                  Batalkan perubahan
-                </button>
-                <span className="hint">Ctrl+Enter juga menyimpan.</span>
-              </div>
-            )}
-            {fieldError("description", true)}
-          </div>
-        </div>
-
-        <aside className="td-side" aria-label="Rincian task">
-          <div className="td-field">
-            <label htmlFor={`${ids}-status`} className="td-label">
-              Status
-            </label>
-            <select id={`${ids}-status`} className="td-input" {...selectProps("status", t)}>
-              {(board?.columns.map((c) => ({ id: c.id, name: c.name })) ??
-                COLUMN_ORDER.map((id) => ({ id, name: COLUMN_NAMES[id] }))
-              ).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            {fieldError("status")}
-          </div>
-
-          <div className="td-field">
-            <label htmlFor={`${ids}-assignee`} className="td-label">
-              Penanggung jawab
-            </label>
-            <select id={`${ids}-assignee`} className="td-input" {...selectProps("assignee", t)}>
-              <option value="">Belum ada</option>
-              {!assigneeListed && t.assignee && <option value={t.assignee.publicKey}>{assigneeName(t.assignee)}</option>}
-              {people.map((p) => (
-                <option key={p.publicKey} value={p.publicKey}>
-                  {nameOf(p)}
-                </option>
-              ))}
-            </select>
-            {fieldError("assignee")}
-          </div>
-
-          <div className="td-field">
-            <label htmlFor={`${ids}-due`} className="td-label">
-              Tenggat
-            </label>
-            <input
-              id={`${ids}-due`}
-              ref={dueRef}
-              type="date"
-              className="td-input"
-              value={dueValue}
-              aria-invalid={dueProblem ? true : undefined}
-              aria-describedby={dueProblem ? `${ids}-due-err` : undefined}
-              onFocus={dueHeld.hold}
-              onChange={(e) => {
-                setDueDraft(e.target.value);
-                setDueProblem(null);
-              }}
-              onBlur={() => {
-                dueHeld.release();
-                void commitDue();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void commitDue();
-                }
-              }}
-            />
-            {dueDraft === null && dueHint(t.due)}
-            {problem(`${ids}-due-err`, dueProblem)}
-            {t.due && dueDraft === null && (
-              <button type="button" className="link-btn td-link" onClick={() => void update("due", { due: null })}>
-                Hapus tenggat
-              </button>
-            )}
-            {fieldError("due")}
-          </div>
-
-          <div className="td-field">
-            <label htmlFor={`${ids}-prio`} className="td-label">
-              Prioritas
-            </label>
-            <select id={`${ids}-prio`} className="td-input" {...selectProps("priority", t)}>
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {PRIORITY_LABELS[p]}
-                </option>
-              ))}
-            </select>
-            {fieldError("priority")}
-          </div>
-
-          <div className="td-field">
-            <span className="td-label" id={`${ids}-labels`}>
-              Label
-            </span>
-            {t.labels.length > 0 ? (
-              <ul className="td-labels" aria-labelledby={`${ids}-labels`}>
-                {t.labels.map((l) => (
-                  <li key={l} className="td-label-chip">
-                    <span>{l}</span>
-                    <button
-                      type="button"
-                      className="td-chip-x"
-                      aria-label={`Hapus label ${l}`}
-                      onClick={() => void removeLabel(l)}
-                    >
-                      <IconX size={14} aria-hidden="true" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="hint">Belum ada label.</p>
-            )}
-            {t.labels.length < MAX_LABELS ? (
-              <div className="td-label-add">
-                <input
-                  ref={labelRef}
-                  className="td-input"
-                  value={labelDraft}
-                  maxLength={MAX_LABEL_LEN}
-                  aria-label="Label baru"
-                  aria-describedby={`${ids}-labels-hint ${ids}-label-err`}
-                  placeholder="Label baru"
-                  onChange={(e) => {
-                    setLabelDraft(e.target.value);
-                    setLabelProblem(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void addLabel();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={!labelDraft.trim()}
-                  onClick={() => void addLabel()}
-                >
-                  Tambah
-                </button>
-              </div>
-            ) : null}
-            <span className="hint" id={`${ids}-labels-hint`}>
-              {t.labels.length >= MAX_LABELS
-                ? `Sudah ${MAX_LABELS} label, batas per task. Hapus satu untuk menambah yang baru.`
-                : `Tekan Enter untuk menambah. Paling banyak ${MAX_LABELS} label, masing-masing ${MAX_LABEL_LEN} karakter.`}
-            </span>
-            {problem(`${ids}-label-err`, labelProblem)}
-            {fieldError("labels", true)}
-          </div>
-
-          {sideFooter(t)}
-        </aside>
-
-        <div className="td-bottom">
-          {comments(t)}
-          {activity(t)}
-        </div>
-      </div>
     );
   }
 
@@ -837,33 +674,44 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   // bisa dipilih dan disalin, karena tidak ada lagi tempat untuk menyimpannya.
   function keptDrafts(t: Task): { key: string; label: string; text: string }[] {
     const list = [
-      { key: "title", label: "Judul", text: titleDraft !== null && titleDraft.trim() !== t.title ? titleDraft : "" },
-      { key: "desc", label: "Deskripsi", text: descDraft !== null && descDraft !== t.description ? descDraft : "" },
-      { key: "label", label: "Label baru", text: labelDraft.trim() },
-      { key: "comment", label: "Komentar", text: comment.trim() ? comment : "" },
+      {
+        key: "title",
+        label: T.judul,
+        text: titleDraft !== null && titleDraft.trim() !== t.title ? titleDraft : "",
+      },
+      {
+        key: "desc",
+        label: T.deskripsi,
+        text: descDraft !== null && descDraft !== t.description ? descDraft : "",
+      },
+      { key: "label", label: T.labelBaru, text: labelDraft.trim() },
+      {
+        key: "comment",
+        label: T.komentar,
+        text: comment.trim() ? comment : "",
+      },
     ];
     return list.filter((d) => d.text !== "");
   }
 
   function readOnlyNote(t: Task) {
-    if (t.canComment)
-      return "Anda bisa membaca dan mengomentari task ini, tapi tidak bisa mengubah isinya.";
-    return "Anda hanya bisa melihat task ini. Mengubah dan mengomentari task tidak tersedia untuk peran Anda di proyek ini.";
+    return t.canComment ? T.bisaKomentarSaja : T.lihatSaja;
   }
 
-  function readOnly(t: Task, isGone = false) {
-    const kept = isGone ? keptDrafts(t) : [];
+  function doc(t: Task, mode: "edit" | "read" | "gone") {
+    const edit = mode === "edit";
+    const kept = mode === "gone" ? keptDrafts(t) : [];
     return (
-      <div className="td-grid">
+      <>
         <div className="td-top">
-          {!isGone && topNotes(t)}
-          {!isGone && <p className="td-readonly-note">{readOnlyNote(t)}</p>}
+          {mode !== "gone" && topNotes(t)}
+          {mode === "read" && <p className="td-readonly-note">{readOnlyNote(t)}</p>}
           {kept.length > 0 && (
             <section className="td-kept" aria-labelledby={`${ids}-kept`}>
               <h3 id={`${ids}-kept`} className="td-sh">
-                Isian Anda yang belum tersimpan
+                {T.drafJudul}
               </h3>
-              <p className="hint">Isian ini hilang setelah dialog ditutup. Salin dulu kalau masih perlu.</p>
+              <p className="hint">{T.drafPetunjuk}</p>
               {kept.map((d) => (
                 <div key={d.key} className="td-field">
                   <label htmlFor={`${ids}-kept-${d.key}`} className="td-label">
@@ -880,108 +728,408 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               ))}
             </section>
           )}
-          <p className="td-title-text">{t.title}</p>
-          <div className="td-field">
-            <span className="td-label">Deskripsi</span>
-            {t.description ? <p className="td-pre">{t.description}</p> : <p className="hint">Belum ada deskripsi.</p>}
-          </div>
+          {edit ? titleEditor(t) : <p className="td-title-text">{t.title}</p>}
+          {properties(t, edit)}
+          <p className="hint">
+            {teksDialog.dibuatOleh(
+              t.createdBy.publicKey === me ? T.anda : t.createdBy.name,
+              formatDateTime(t.createdAt),
+            )}
+          </p>
         </div>
-        <aside className="td-side" aria-label="Rincian task">
-          <dl className="td-dl">
-            <div>
-              <dt>Status</dt>
-              <dd>{COLUMN_NAMES[t.columnId] ?? t.columnId}</dd>
-            </div>
-            <div>
-              <dt>Penanggung jawab</dt>
-              <dd>{t.assignee ? assigneeName(t.assignee) : "Belum ada"}</dd>
-            </div>
-            <div>
-              <dt>Tenggat</dt>
-              <dd>
-                {t.due ? (
-                  <>
-                    {formatDue(t.due)} {dueHint(t.due)}
-                  </>
-                ) : (
-                  "Tanpa tenggat"
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>Prioritas</dt>
-              <dd>
-                <PriorityChip priority={t.priority} />
-              </dd>
-            </div>
-            <div>
-              <dt>Label</dt>
-              <dd>
-                {t.labels.length > 0 ? (
-                  <ul className="td-labels">
-                    {t.labels.map((l) => (
-                      <li key={l} className="td-label-chip">
-                        {l}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  "Tidak ada"
-                )}
-              </dd>
-            </div>
-          </dl>
-          {sideFooter(t, !isGone)}
-        </aside>
-        <div className="td-bottom">
-          {comments(t, !isGone)}
-          {activity(t)}
+        <div className="td-slot">
+          <Subtasks
+            task={t}
+            me={me}
+            assignees={people}
+            canEdit={edit}
+            onChange={childChange("subtasks")}
+            onError={childError("subtasks")}
+          />
+          {sectionAlert("subtasks")}
         </div>
+        {description(t, edit)}
+        <div className="td-slot">
+          <TimeSection task={t} me={me} canEdit={edit} onChange={childChange("time")} onError={childError("time")} />
+          {sectionAlert("time")}
+        </div>
+        {talk(t, mode !== "gone")}
+      </>
+    );
+  }
+
+  function titleEditor(t: Task) {
+    const titleValue = titleDraft ?? titleHeld.value;
+    const titleMoved =
+      titleDraft !== null && titleBase !== null && t.title !== titleBase && titleDraft.trim() !== t.title;
+    return (
+      <div className="td-field">
+        <textarea
+          ref={titleRef}
+          className="td-title"
+          rows={1}
+          value={titleValue}
+          maxLength={200}
+          aria-label={T.judulTask}
+          aria-invalid={titleProblem ? true : undefined}
+          aria-describedby={titleProblem ? `${ids}-title-err` : undefined}
+          onFocus={titleHeld.hold}
+          onChange={(e) => {
+            if (titleDraft === null) setTitleBase(titleValue);
+            // Judul satu baris: baris baru dari tempelan diganti spasi.
+            setTitleDraft(e.target.value.replace(/\r?\n/g, " "));
+            setTitleProblem(null);
+          }}
+          onBlur={() => {
+            titleHeld.release();
+            void commitTitle();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void commitTitle();
+            }
+          }}
+        />
+        {problem(`${ids}-title-err`, titleProblem)}
+        <div className="td-live" aria-live="polite">
+          {titleMoved && <p className="td-moved">{teksDialog.judulDiubahRekan(t.title)}</p>}
+        </div>
+        {fieldError("title", true)}
       </div>
     );
   }
 
-  function sideFooter(t: Task, live = true) {
+  // Label lain yang sudah dipakai di proyek ini, untuk dicentang tanpa mengetik ulang.
+  function projectLabels(): string[] {
+    const seen = new Map<string, string>();
+    for (const c of board?.columns ?? []) {
+      for (const card of c.tasks) {
+        for (const l of card.labels) if (!seen.has(l.toLowerCase())) seen.set(l.toLowerCase(), l);
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, "id"));
+  }
+
+  function properties(t: Task, edit: boolean) {
+    const now = new Date();
+    const shown = (field: PickField) => picked[field] ?? savedPick(t, field);
+    const columnId = shown("status") as ColumnId;
+    const priority = shown("priority") as Priority;
+    const dueIso = shown("due");
+    const assigneeKey = shown("assignee");
+    const assignee =
+      assigneeKey === ""
+        ? null
+        : (people.find((p) => p.publicKey === assigneeKey) ??
+          (t.assignee?.publicKey === assigneeKey ? t.assignee : { publicKey: assigneeKey, name: T.anggotaLain }));
+    const columns =
+      board?.columns.map((c) => ({ id: c.id, name: c.name })) ??
+      COLUMN_ORDER.map((id) => ({ id, name: COLUMN_NAMES[id] }));
+    const columnName = columns.find((c) => c.id === columnId)?.name ?? COLUMN_NAMES[columnId] ?? columnId;
+    const StatusIcon = STATUS_ICON[columnId] ?? IconCircle;
+
+    const editor = (key: PopKey, popup: "menu" | "dialog", content: () => ReactNode) =>
+      edit
+        ? {
+            popup,
+            open: pop === key,
+            buttonRef: anchors[key],
+            onOpen: () => openPop(key),
+            onClose: () => setPop((p) => (p === key ? null : p)),
+            content: pop === key ? content() : null,
+          }
+        : undefined;
+
+    const empty = (text: string) => <span className="td-pv-empty">{text}</span>;
+
+    const statusValue = (
+      <>
+        <StatusIcon size={17} className="td-pv-ic" aria-hidden="true" />
+        <span>{columnName}</span>
+      </>
+    );
+    const priorityValue =
+      edit && priority === "none" ? empty(PRIORITY_LABELS.none) : <PriorityChip priority={priority} />;
+    const assigneeValue = assignee ? (
+      <>
+        {avatar(assignee, true)}
+        <span>{assigneeName(assignee)}</span>
+      </>
+    ) : (
+      empty(T.belumAda)
+    );
+    let dueValue = empty(edit ? T.belumAda : T.tanpaTenggat);
+    if (dueIso) {
+      const d = dueParts(dueIso, now);
+      dueValue = (
+        <>
+          <span>{d.date}</span>
+          {d.rel && (
+            <>
+              <span className="td-pv-sub" aria-hidden="true">
+                ·
+              </span>
+              <span className={`td-pv-sub${d.late ? " td-late" : ""}`}>{d.rel}</span>
+            </>
+          )}
+        </>
+      );
+    }
+    const labelsValue =
+      t.labels.length > 0 ? (
+        <span className="td-chips">
+          {/* Koma tersembunyi dan spasi: nama tombol terbaca "kontrak, legal", bukan "kontraklegal". */}
+          {t.labels.map((l, i) => (
+            <Fragment key={l}>
+              {i > 0 && (
+                <>
+                  <span className="sr-only">,</span>{" "}
+                </>
+              )}
+              <span className="td-lbl">{l}</span>
+            </Fragment>
+          ))}
+        </span>
+      ) : (
+        empty(edit ? T.belumAda : T.tidakAdaLabel)
+      );
+
+    const assigneeItems = (): MenuItem[] => {
+      const items: MenuItem[] = people.map((p) => ({
+        value: p.publicKey,
+        label: nameOf(p),
+        icon: avatar(p, true),
+      }));
+      if (t.assignee && isFormer(t.assignee)) {
+        items.unshift({
+          value: t.assignee.publicKey,
+          label: assigneeName(t.assignee),
+          icon: avatar(t.assignee, true),
+        });
+      }
+      items.push({
+        value: "",
+        label: T.tanpaPenanggungJawab,
+        icon: <IconUserOff size={17} aria-hidden="true" />,
+      });
+      return items;
+    };
+
     return (
-      <div className="td-side-foot">
-        <p className="hint">
-          Dibuat oleh {t.createdBy.publicKey === me ? "Anda" : t.createdBy.name}, {formatDateTime(t.createdAt)}
-        </p>
-        {live && t.canDelete && (
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm td-delete"
-            onClick={() => {
-              setDeleteError(null);
-              setConfirmDelete(true);
-            }}
-          >
-            <IconTrash size={16} aria-hidden="true" />
-            Hapus task
-          </button>
+      <div role="group" aria-label={T.rincianTask}>
+        <dl className="td-props">
+          <PropertyRow
+            label={T.status}
+            value={statusValue}
+            editor={editor("status", "menu", () => (
+              <MenuList
+                label={T.status}
+                checked={columnId}
+                items={columns.map((c) => {
+                  const Icon = STATUS_ICON[c.id] ?? IconCircle;
+                  return {
+                    value: c.id,
+                    label: c.name,
+                    icon: <Icon size={17} aria-hidden="true" />,
+                  };
+                })}
+                onPick={(v) => void pick("status", v)}
+              />
+            ))}
+          />
+          <PropertyRow
+            label={T.prioritas}
+            value={priorityValue}
+            editor={editor("priority", "menu", () => (
+              <MenuList
+                label={T.prioritas}
+                checked={priority}
+                items={PRIORITIES.map((p) => ({
+                  value: p,
+                  label: PRIORITY_LABELS[p],
+                }))}
+                onPick={(v) => void pick("priority", v)}
+              />
+            ))}
+          />
+          <PropertyRow
+            label={T.penanggungJawab}
+            value={assigneeValue}
+            editor={editor("assignee", "menu", () => (
+              <MenuList
+                label={T.penanggungJawab}
+                checked={assigneeKey}
+                items={assigneeItems()}
+                onPick={(v) => void pick("assignee", v)}
+              />
+            ))}
+          />
+          <PropertyRow
+            label={T.tenggat}
+            value={dueValue}
+            editor={editor("due", "dialog", () => (
+              <DuePicker
+                value={dueIso || null}
+                draft={dueDraft}
+                problem={dueProblem}
+                inputRef={dueInputRef}
+                now={now}
+                onDraft={(text) => {
+                  setDueDraft(text);
+                  setDueProblem(null);
+                }}
+                onPick={(iso) => {
+                  setDueDraft("");
+                  setDueProblem(null);
+                  void pick("due", iso ?? "");
+                }}
+                onSubmitDraft={() => void submitDue()}
+              />
+            ))}
+          />
+          <PropertyRow
+            label={T.label}
+            wide
+            value={labelsValue}
+            editor={editor("labels", "dialog", () => (
+              <LabelPicker
+                current={t.labels}
+                known={projectLabels()}
+                draft={labelDraft}
+                problem={labelProblem}
+                busy={pending === "labels"}
+                inputRef={labelInputRef}
+                onToggle={(l, on) => void toggleLabel(l, on)}
+                onDraft={(text) => {
+                  setLabelDraft(text);
+                  setLabelProblem(null);
+                }}
+                onAdd={() => void addLabel()}
+              />
+            ))}
+          />
+        </dl>
+        {edit && (
+          <>
+            {fieldError("status")}
+            {fieldError("priority")}
+            {fieldError("assignee")}
+            {fieldError("due")}
+            {fieldError("labels", true)}
+          </>
         )}
       </div>
     );
   }
 
-  function avatar(p: Person) {
+  function description(t: Task, edit: boolean) {
+    const headId = `${ids}-desc-h`;
+    if (!edit) {
+      return (
+        <section className="td-sec">
+          <h3 className="td-sh" id={headId}>
+            {T.deskripsi}
+          </h3>
+          {t.description ? (
+            <p className="td-pre">{t.description}</p>
+          ) : (
+            <p className="td-empty">{T.belumAdaDeskripsi}</p>
+          )}
+        </section>
+      );
+    }
+    const descValue = descDraft ?? descHeld.value;
+    const descDirty = descDraft !== null && descDraft !== t.description;
+    const descMoved = descDirty && descBase !== null && t.description !== descBase;
     return (
-      <span className="td-av" aria-hidden="true">
-        {initials(p.name)}
-      </span>
+      <section className="td-sec">
+        <h3 className="td-sh" id={headId}>
+          {T.deskripsi}
+        </h3>
+        <textarea
+          ref={descRef}
+          className="td-desc"
+          aria-labelledby={headId}
+          value={descValue}
+          placeholder={T.deskripsiPlaceholder}
+          onFocus={descHeld.hold}
+          onBlur={descHeld.release}
+          onChange={(e) => {
+            if (descDraft === null) setDescBase(descValue);
+            setDescDraft(e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.ctrlKey) {
+              e.preventDefault();
+              void commitDescription();
+            }
+          }}
+        />
+        <div className="td-live" aria-live="polite">
+          {descMoved && <p className="td-moved">{T.deskripsiDiubahRekan}</p>}
+        </div>
+        {descDirty && (
+          <div className="td-row-actions">
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={pending === "description"}
+              aria-busy={pending === "description" || undefined}
+              onClick={() => {
+                // Tombol ini hilang setelah tersimpan, jadi fokus pindah ke deskripsi lebih dulu.
+                descRef.current?.focus();
+                void commitDescription();
+              }}
+            >
+              {pending === "description" ? T.menyimpan : T.simpanDeskripsi}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={pending === "description"}
+              onClick={() => {
+                descRef.current?.focus();
+                restoreDescription();
+              }}
+            >
+              {T.batalkanPerubahan}
+            </button>
+            <span className="hint">{T.ctrlEnterMenyimpan}</span>
+          </div>
+        )}
+        {fieldError("description", true)}
+      </section>
     );
   }
 
-  function comments(t: Task, live = true) {
+  function talk(t: Task, live: boolean) {
+    const entries = t.activity
+      .filter((a) => a.kind !== "commented")
+      .map((a, i) => ({ a, i }))
+      .sort((x, y) => (x.a.at === y.a.at ? y.i - x.i : x.a.at < y.a.at ? 1 : -1));
+    return (
+      <DetailTabs
+        label={T.komentarDanAktivitas}
+        tabs={[
+          { id: "comments", label: T.tabKomentar, count: t.comments.length },
+          { id: "activity", label: T.tabAktivitas, count: entries.length },
+        ]}
+        active={tab}
+        onChange={(id) => setTab(id as Tab)}
+      >
+        {tab === "comments" ? comments(t, live) : activity(entries)}
+      </DetailTabs>
+    );
+  }
+
+  function comments(t: Task, live: boolean) {
     const sending = pending === "comment";
     const canWrite = live && t.canComment === true;
     return (
-      <section className="td-section" aria-labelledby={`${ids}-comments`}>
-        <h3 id={`${ids}-comments`} className="td-sh">
-          Komentar {t.comments.length > 0 && <span className="td-count">{t.comments.length}</span>}
-        </h3>
+      <>
         {t.comments.length === 0 ? (
-          <p className="hint">{canWrite ? "Belum ada komentar. Tulis yang pertama di bawah." : "Belum ada komentar."}</p>
+          <p className="td-empty">{canWrite ? T.belumAdaKomentarTulis : T.belumAdaKomentar}</p>
         ) : (
           <ul className="td-list">
             {t.comments.map((c) => (
@@ -989,10 +1137,10 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                 {avatar(c.author)}
                 <div className="td-entry">
                   <p className="td-entry-head">
-                    <strong>{c.author.publicKey === me ? `${c.author.name} (Anda)` : c.author.name}</strong>
+                    <strong>{nameOf(c.author)}</strong>
                     <span className="td-time">{formatDateTime(c.at)}</span>
                   </p>
-                  <p className="td-pre">{c.body}</p>
+                  <p className="td-pre td-ctext">{c.body}</p>
                 </div>
               </li>
             ))}
@@ -1001,13 +1149,14 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
         {canWrite && (
           <div className="td-composer">
             <label htmlFor={`${ids}-comment`} className="sr-only">
-              Tulis komentar
+              {T.tulisKomentar}
             </label>
             <textarea
+              ref={commentRef}
               id={`${ids}-comment`}
               className="td-textarea"
-              rows={3}
-              placeholder="Tulis komentar"
+              rows={2}
+              placeholder={T.tulisKomentar}
               aria-describedby={`${ids}-comment-hint`}
               value={comment}
               onChange={(e) => {
@@ -1021,9 +1170,9 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                 }
               }}
             />
-            <div className="td-row-actions">
+            <div className="td-row-actions td-composer-row">
               <span className="hint" id={`${ids}-comment-hint`}>
-                Ctrl+Enter untuk mengirim.
+                {T.ctrlEnterMengirim}
               </span>
               <button
                 type="button"
@@ -1032,34 +1181,27 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                 aria-busy={sending || undefined}
                 onClick={() => void sendComment()}
               >
-                {sending ? "Mengirim..." : "Kirim"}
+                {sending ? T.mengirim : T.kirim}
               </button>
             </div>
             {fieldError("comment", true)}
           </div>
         )}
-      </section>
+      </>
     );
   }
 
-  function activity(t: Task) {
-    const entries = t.activity
-      .filter((a) => a.kind !== "commented")
-      .map((a, i) => ({ a, i }))
-      .sort((x, y) => (x.a.at === y.a.at ? y.i - x.i : x.a.at < y.a.at ? 1 : -1));
+  function activity(entries: { a: Task["activity"][number]; i: number }[]) {
     const shown = allActivity ? entries : entries.slice(0, ACTIVITY_PREVIEW);
     return (
-      <section className="td-section" aria-labelledby={`${ids}-activity`}>
-        <h3 id={`${ids}-activity`} className="td-sh">
-          Aktivitas
-        </h3>
+      <>
         {entries.length === 0 ? (
-          <p className="hint">Belum ada aktivitas.</p>
+          <p className="td-empty">{T.belumAdaAktivitas}</p>
         ) : (
-          <ul className="td-list">
+          <ul className="td-list td-acts">
             {shown.map(({ a, i }) => (
               <li key={`${a.at}-${i}`} className="td-log">
-                {avatar(a.actor)}
+                {avatar(a.actor, true)}
                 <p>
                   {activitySentence(a, me, people)}
                   <span className="td-time">{formatDateTime(a.at)}</span>
@@ -1070,10 +1212,10 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
         )}
         {entries.length > ACTIVITY_PREVIEW && (
           <button type="button" className="link-btn td-link" onClick={() => setAllActivity((v) => !v)}>
-            {allActivity ? "Tampilkan yang terbaru saja" : `Tampilkan semua aktivitas (${entries.length})`}
+            {allActivity ? T.aktivitasTerbaru : teksDialog.semuaAktivitas(entries.length)}
           </button>
         )}
-      </section>
+      </>
     );
   }
 
@@ -1085,30 +1227,52 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       }}
     >
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="dlg-overlay" />
+        {/* Overlay sendiri (z-index 49) supaya konfirmasi hapus (.dlg-overlay 50) menutupi dialog ini. */}
+        <RadixDialog.Overlay className="td-overlay" />
         <RadixDialog.Content
           ref={contentRef}
           className="td-dlg"
           aria-describedby={undefined}
           onEscapeKeyDown={(e) => {
-            const active = document.activeElement;
-            if (active === titleRef.current && titleDraft !== null && titleDraft !== task?.title) {
+            const active = document.activeElement as HTMLElement | null;
+            // 1. Bagian yang menangani Escape-nya sendiri, misalnya judul subtask yang sedang
+            //    diubah atau menu di dalam bagian Subtask. Radix mendengar Escape lebih dulu
+            //    (fase capture), jadi atributnya masih terpasang saat diperiksa di sini.
+            if (active?.closest("[data-escape-local]")) {
+              e.preventDefault();
+              return;
+            }
+            // 2. Pulihkan isian yang sedang diubah.
+            if (active && active === titleRef.current && titleDraft !== null && titleDraft !== task?.title) {
               e.preventDefault();
               setTitleDraft(null);
               titleHeld.settle(task?.title ?? "");
               setTitleProblem(null);
-            } else if (active === labelRef.current && labelDraft) {
+              return;
+            }
+            if (active && active === descRef.current && descDraft !== null && descDraft !== task?.description) {
+              e.preventDefault();
+              restoreDescription();
+              return;
+            }
+            if (active && active === labelInputRef.current && labelDraft) {
               e.preventDefault();
               setLabelDraft("");
               setLabelProblem(null);
-            } else if (active instanceof HTMLSelectElement && active.dataset.field) {
-              // Pilihan lewat panah yang belum disimpan: Escape membatalkannya dulu.
-              const field = active.dataset.field as SelectField;
-              if (selDraft[field] !== undefined && !inflight.current[field]) {
-                e.preventDefault();
-                setSelDraft((d) => ({ ...d, [field]: undefined }));
-              }
+              return;
             }
+            if (active && active === dueInputRef.current && dueDraft) {
+              e.preventDefault();
+              setDueDraft("");
+              setDueProblem(null);
+              return;
+            }
+            // 3. Tutup pilihan kecil, fokus kembali ke tombolnya.
+            if (pop) {
+              e.preventDefault();
+              closePop(true);
+            }
+            // 4. Selain itu Radix menutup dialog (lewat requestClose).
           }}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
@@ -1127,66 +1291,90 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               {board && (
                 <>
                   <span className="td-project">{board.project.name}</span>
-                  <span className="td-sep" aria-hidden="true">
-                    /
-                  </span>
+                  <span aria-hidden="true">/</span>
                 </>
               )}
-              <span className="td-code">{task?.code ?? "Detail task"}</span>
+              <span className="td-code">{task?.code ?? T.judulDialogCadangan}</span>
               {task && <span className="sr-only">: {task.title}</span>}
             </RadixDialog.Title>
             <p className="td-status" aria-live="polite">
               {status}
             </p>
-            <button type="button" className="td-close" aria-label="Tutup detail task" onClick={() => void requestClose()}>
+            {task && !gone && (
+              <TimerMini
+                task={task}
+                me={me}
+                canEdit={task.canEdit}
+                onChange={childChange("timer")}
+                onError={childError("timer")}
+              />
+            )}
+            {task && !gone && task.canDelete && (
+              <TaskMoreMenu
+                open={pop === "more"}
+                buttonRef={anchors.more}
+                onOpenChange={(open) => setPop(open ? "more" : null)}
+                onDelete={() => {
+                  // Fokus ke Lainnya dulu, supaya konfirmasi mengembalikan fokus ke sana saat Batal.
+                  setPop(null);
+                  anchors.more.current?.focus();
+                  setDeleteError(null);
+                  setConfirmDelete(true);
+                }}
+              />
+            )}
+            <button type="button" className="td-icon-btn" aria-label={T.tutup} onClick={() => void requestClose()}>
               <IconX size={20} aria-hidden="true" />
             </button>
           </div>
 
-          <div aria-live="polite">
-            {gone && task && (
-              <div className="notice td-gone">
-                <IconAlertTriangle size={18} aria-hidden="true" />
-                <div>
-                  <strong>
-                    {GONE_TITLE[gone]}
-                  </strong>
-                  {gone === "project" && (
-                    <p>Anda tidak punya akses lagi ke proyek ini, misalnya karena dikeluarkan dari proyek ini.</p>
-                  )}
-                  <p>
-                    {keptDrafts(task).length > 0
-                      ? "Isian Anda yang belum tersimpan masih ada di bawah. Salin dulu kalau masih perlu."
-                      : gone === "revoked"
-                        ? "Task tetap bisa dibaca, tapi perubahan tidak bisa disimpan lagi."
-                        : "Yang tampil di bawah adalah isi terakhirnya. Perubahan tidak bisa disimpan lagi."}
-                  </p>
-                  <div className="td-row-actions">
-                    <button ref={goneCloseRef} type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
-                      Tutup
-                    </button>
+          {/* Satu wilayah aria-live untuk keterangan task hilang dan isian belum tersimpan.
+              Pesan timer punya wilayahnya sendiri (sectionAlert), jadi tidak dibungkus live lagi. */}
+          <div className="td-notices">
+            <div className="td-live" aria-live="polite">
+              {gone && task && (
+                <div className="notice td-gone">
+                  <IconAlertTriangle size={18} aria-hidden="true" />
+                  <div>
+                    <strong>{GONE_TITLE[gone]}</strong>
+                    {gone === "project" && <p>{T.goneProjectSebab}</p>}
+                    <p>
+                      {keptDrafts(task).length > 0
+                        ? T.goneAdaDraf
+                        : gone === "revoked"
+                          ? T.goneRevokedIsi
+                          : T.goneIsiTerakhir}
+                    </p>
+                    <div className="td-row-actions">
+                      <button ref={goneCloseRef} type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+                        {T.tutupSingkat}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-            {unsaved && !gone && (
-              <div className="notice td-unsaved">
-                <div>
-                  <strong>{unsaved}</strong>
-                  <div className="td-row-actions">
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setUnsaved(null)}>
-                      Lanjut mengedit
-                    </button>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
-                      Tutup tanpa menyimpan
-                    </button>
+              )}
+              {unsaved && !gone && (
+                <div className="notice td-unsaved">
+                  <div>
+                    <strong>{unsaved.message}</strong>
+                    <div className="td-row-actions">
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={keepEditing}>
+                        {T.lanjutMengedit}
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+                        {T.tutupTanpaMenyimpan}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+            {!gone && sectionAlert("timer")}
           </div>
 
-          {body()}
+          <div className="td-body">
+            <div className="td-doc">{body()}</div>
+          </div>
 
           {task && (
             <ConfirmDialog
@@ -1194,9 +1382,9 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               onOpenChange={(open) => {
                 if (!open) setConfirmDelete(false);
               }}
-              title={`Hapus task ${task.code}?`}
-              confirmLabel={`Hapus ${task.code}`}
-              busyLabel="Menghapus..."
+              title={teksDialog.hapusJudul(task.code)}
+              confirmLabel={teksDialog.hapusTombol(task.code)}
+              busyLabel={T.menghapus}
               busy={deleting}
               onConfirm={() => void deleteTask()}
               error={
@@ -1205,7 +1393,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                     title={
                       deleteError.code === "forbidden" || deleteError.code === "not_found"
                         ? errorTitle("title", deleteError)
-                        : "Task belum terhapus"
+                        : T.taskBelumTerhapus
                     }
                   >
                     <p>{deleteError.message}</p>
@@ -1214,8 +1402,12 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
               }
             >
               <p>
-                "{task.title}" hilang dari board proyek dan dari Task saya. Setelah board tersambung ke laptop rekan,
-                task ini juga hilang di board mereka. Mira belum punya cara mengembalikannya.
+                {teksDialog.hapusIsi(
+                  task.title,
+                  task.subtasks?.length ?? 0,
+                  task.comments.length,
+                  task.timeEntries?.length ?? 0,
+                )}
               </p>
             </ConfirmDialog>
           )}

@@ -386,10 +386,36 @@
 }
 
 .tc-due,
-.tc-comments {
+.tc-comments,
+.tc-sub,
+.tc-time {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+}
+
+.tc-sub,
+.tc-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Semua subtask selesai: warna teks aksen (5,89:1 terang, 9,33:1 gelap di atas --card).
+   Angka "5/5" tetap yang membawa artinya. */
+.tc-sub-done {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+/* Timer berjalan: titik statis yang sama dengan .td-run di dialog detail task.
+   --online di atas --card 4,93:1 terang dan 7,49:1 gelap (cukup untuk 3:1 non-teks).
+   Pembaca layar mendapat ", timer berjalan". */
+.tc-running {
+  width: 8px;
+  height: 8px;
+  margin-left: 3px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--online);
 }
 
 /* Terlambat: warna status "menunggu Anda" ditambah teks "Terlambat n hari". */

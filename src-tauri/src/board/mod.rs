@@ -24,6 +24,7 @@ pub mod schema;
 pub mod sign;
 pub mod store;
 pub mod sync;
+pub mod timing;
 pub mod view;
 
 #[cfg(test)]

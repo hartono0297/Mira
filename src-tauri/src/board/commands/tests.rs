@@ -372,3 +372,205 @@ fn initial_members_must_be_active_members() {
     assert_eq!(members.members.len(), 1);
     assert_eq!(members.members[0].public_key, me);
 }
+
+#[test]
+fn subtasks_and_timers_through_the_commands() {
+    let (_t, state) = app();
+    crate::commands::organization(&state, "CV Maju Jaya").unwrap();
+    let hook = Recorder::default();
+    let me = me(&state);
+    let project = create_project(&state, &hook, "Situs Web", "WEB", None).unwrap();
+    let pid = project.id.clone();
+    let input: NewTask = serde_json::from_value(serde_json::json!({ "title": "Spanduk" })).unwrap();
+    let task = create_task(&state, &hook, &pid, input).unwrap();
+    let tid = task.card.id.clone();
+    let json = serde_json::to_value(&task).unwrap();
+    assert_eq!(json["subtaskDone"], 0);
+    assert_eq!(json["subtaskTotal"], 0);
+    assert_eq!(json["trackedSecs"], 0);
+    assert_eq!(json["timersRunningSince"], serde_json::json!([]));
+    assert_eq!(json["subtasks"], serde_json::json!([]));
+    assert_eq!(json["timeEntries"], serde_json::json!([]));
+    assert_eq!(json["timeTotals"], serde_json::json!([]));
+    assert_eq!(json["myRunningEntry"], serde_json::Value::Null);
+    assert_eq!(json["statusTime"]["currentColumn"], "todo");
+    assert_eq!(
+        json["statusTime"]["closedSecs"],
+        serde_json::json!({ "todo": 0, "doing": 0, "done": 0 })
+    );
+    assert_eq!(json["statusTime"]["currentSince"], json["createdAt"]);
+    assert_eq!(json["statusTime"]["cycleSecs"], serde_json::Value::Null);
+    assert_eq!(json["statusTime"]["clockWarning"], false);
+    let n = hook.count();
+
+    // Subtasks.
+    let d = add_subtask(&state, &hook, &pid, &tid, " Cek warna ", Some(&me)).unwrap();
+    assert_eq!(d.subtasks.len(), 1);
+    let json = serde_json::to_value(&d).unwrap();
+    let s = &json["subtasks"][0];
+    assert_eq!(s["title"], "Cek warna");
+    assert_eq!(s["done"], false);
+    assert_eq!(s["assignee"]["name"], "Sari");
+    assert_eq!(s["doneBy"], serde_json::Value::Null);
+    assert_eq!(s["doneAt"], serde_json::Value::Null);
+    assert_eq!(s["createdBy"]["publicKey"], me);
+    assert_eq!(json["subtaskTotal"], 1);
+    assert_eq!(json["activity"].as_array().unwrap().last().unwrap()["kind"], "subtask_added");
+    for (title, assignee) in [("", None), ("a\nb", None), ("x", Some("ab".repeat(32)))] {
+        assert_eq!(
+            add_subtask(&state, &hook, &pid, &tid, title, assignee.as_deref())
+                .unwrap_err()
+                .code(),
+            "invalid_input",
+            "{title:?}"
+        );
+    }
+    let first = d.subtasks[0].id.clone();
+    let d = add_subtask(&state, &hook, &pid, &tid, "Cetak", Some("")).unwrap();
+    assert_eq!(d.subtasks[1].assignee, None, "empty assignee means none");
+    let second = d.subtasks[1].id.clone();
+
+    let patch: SubtaskPatch = serde_json::from_value(serde_json::json!({ "done": true })).unwrap();
+    let d = update_subtask(&state, &hook, &pid, &tid, &first, patch).unwrap();
+    assert!(d.subtasks[0].done);
+    assert_eq!(d.subtasks[0].done_by.as_ref().unwrap().name, "Sari");
+    assert!(d.subtasks[0].done_at.is_some());
+    assert_eq!((d.card.subtask_done, d.card.subtask_total), (1, 2));
+    let patch: SubtaskPatch =
+        serde_json::from_value(serde_json::json!({ "assignee": null, "title": " Cek warna akhir " }))
+            .unwrap();
+    let d = update_subtask(&state, &hook, &pid, &tid, &first, patch).unwrap();
+    assert_eq!(d.subtasks[0].assignee, None);
+    assert_eq!(d.subtasks[0].title, "Cek warna akhir");
+    assert!(d.subtasks[0].done, "absent field stays");
+    let bad: SubtaskPatch =
+        serde_json::from_value(serde_json::json!({ "assignee": "ab".repeat(32) })).unwrap();
+    assert_eq!(
+        update_subtask(&state, &hook, &pid, &tid, &first, bad).unwrap_err().code(),
+        "invalid_input"
+    );
+
+    let d = move_subtask(&state, &hook, &pid, &tid, &second, 0).unwrap();
+    let order: Vec<&str> = d.subtasks.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(order, [second.as_str(), first.as_str()]);
+    let d = delete_subtask(&state, &hook, &pid, &tid, &second).unwrap();
+    assert_eq!(d.subtasks.len(), 1);
+    assert_eq!((d.card.subtask_done, d.card.subtask_total), (1, 1));
+    assert_eq!(
+        delete_subtask(&state, &hook, &pid, &tid, &second).unwrap_err().code(),
+        "not_found"
+    );
+
+    // Timers.
+    let d = start_timer(&state, &hook, &pid, &tid).unwrap();
+    let running = d.my_running_entry.clone().unwrap();
+    assert_eq!(d.card.timers_running_since.len(), 1);
+    let json = serde_json::to_value(&d).unwrap();
+    let e = &json["timeEntries"][0];
+    assert_eq!(e["id"], running.as_str());
+    assert_eq!(e["end"], serde_json::Value::Null);
+    assert_eq!(e["mine"], true);
+    assert_eq!(e["manual"], false);
+    assert_eq!(e["secs"], 0);
+    assert_eq!(e["person"]["name"], "Sari");
+    assert_eq!(json["timeTotals"][0]["runningSince"], e["start"]);
+    assert_eq!(json["timeTotals"][0]["secs"], 0);
+    assert_eq!(
+        stop_timer(&state, &hook, &pid, &tid, Some("a\nb")).unwrap_err().code(),
+        "invalid_input"
+    );
+    let d = stop_timer(&state, &hook, &pid, &tid, Some(" rapat ")).unwrap();
+    assert_eq!(d.my_running_entry, None);
+    assert_eq!(d.time_entries[0].note, "rapat");
+    assert!(d.time_entries[0].end.is_some());
+    assert!(d.card.timers_running_since.is_empty());
+    assert_eq!(d.activity.last().unwrap().kind, "time_logged");
+    assert_eq!(
+        stop_timer(&state, &hook, &pid, &tid, None).unwrap_err().code(),
+        "invalid_input"
+    );
+
+    for bad in [0.0, 1441.0, 2.5] {
+        assert_eq!(
+            log_time(&state, &hook, &pid, &tid, bad, None).unwrap_err().code(),
+            "invalid_input",
+            "{bad}"
+        );
+    }
+    let d = log_time(&state, &hook, &pid, &tid, 30.0, Some("manual")).unwrap();
+    let manual = d.time_entries.iter().find(|e| e.manual).unwrap().clone();
+    assert_eq!(manual.secs, 1800);
+    assert_eq!(manual.note, "manual");
+    assert!(d.card.tracked_secs >= 1800);
+    assert_eq!(d.time_totals.len(), 1);
+    assert_eq!(d.time_totals[0].secs, d.card.tracked_secs);
+    assert_eq!(d.activity.last().unwrap().detail, "1800");
+    let d = delete_time_entry(&state, &hook, &pid, &tid, &manual.id).unwrap();
+    assert!(d.time_entries.iter().all(|e| e.id != manual.id));
+    assert!(d.card.tracked_secs < 1800);
+
+    // The board card carries the same numbers.
+    let board = get_board(&state, &pid).unwrap();
+    let card = serde_json::to_value(&board.columns[0].tasks[0]).unwrap();
+    assert_eq!(card["subtaskDone"], 1);
+    assert_eq!(card["subtaskTotal"], 1);
+    assert_eq!(card["timersRunningSince"], serde_json::json!([]));
+
+    // Failed calls sign nothing; every stored change verifies.
+    assert_eq!(hook.count(), n + 10);
+    let stored = state
+        .with_core(|c| store::stored_changes(&c.db, &pid))
+        .unwrap();
+    assert_eq!(stored.len(), hook.count());
+    for sc in &stored {
+        crate::board::sign::verify_change(sc).unwrap();
+    }
+
+    // Guests read the task but cannot change subtasks or time.
+    state
+        .with_core(|c| {
+            c.db.execute(
+                "UPDATE members SET role = 'guest', kind = 'guest', is_superadmin = 0",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let errs = [
+        add_subtask(&state, &hook, &pid, &tid, "x", None).unwrap_err(),
+        start_timer(&state, &hook, &pid, &tid).unwrap_err(),
+        log_time(&state, &hook, &pid, &tid, 5.0, None).unwrap_err(),
+        delete_subtask(&state, &hook, &pid, &tid, &first).unwrap_err(),
+    ];
+    for e in errs {
+        assert_eq!(e.code(), "forbidden", "{e}");
+    }
+}
+
+#[test]
+fn starting_a_timer_stops_my_timer_on_another_task() {
+    let (_t, state) = app();
+    crate::commands::organization(&state, "CV Maju Jaya").unwrap();
+    let project = create_project(&state, &NoopSync, "Situs Web", "WEB", None).unwrap();
+    let new = |title: &str| {
+        let input: NewTask = serde_json::from_value(serde_json::json!({ "title": title })).unwrap();
+        create_task(&state, &NoopSync, &project.id, input).unwrap().card.id
+    };
+    let (x, y) = (new("x"), new("y"));
+    let dx = start_timer(&state, &NoopSync, &project.id, &x).unwrap();
+    let again = start_timer(&state, &NoopSync, &project.id, &x).unwrap();
+    assert_eq!(again.my_running_entry, dx.my_running_entry, "one timer per task");
+    assert_eq!(again.time_entries.len(), 1);
+    let dy = start_timer(&state, &NoopSync, &project.id, &y).unwrap();
+    assert!(dy.my_running_entry.is_some());
+    let dx = get_task(&state, &project.id, &x).unwrap();
+    assert_eq!(dx.my_running_entry, None);
+    assert!(dx.time_entries[0].end.is_some());
+    let board = get_board(&state, &project.id).unwrap();
+    let running: Vec<usize> = board.columns[0]
+        .tasks
+        .iter()
+        .map(|t| t.timers_running_since.len())
+        .collect();
+    assert_eq!(running, [0, 1]);
+}

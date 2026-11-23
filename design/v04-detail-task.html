@@ -1,0 +1,1386 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detail task v0.4</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap">
+<style>
+/* Halaman dokumen: gaya sama dengan design/tema-c.html. */
+:root{--doc-text:#1f1e1c;--doc-sec:#5F5E5A;--doc-line:#d6d3cb}
+*{box-sizing:border-box}
+html,body{background:#ffffff;margin:0}
+body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;color:var(--doc-text)}
+.page{max-width:1056px;margin:0 auto;padding:32px 16px 64px}
+.prose{max-width:712px}
+h1{font-size:28px;line-height:1.25;font-weight:600;margin:0 0 6px}
+h2.doc-h{font-size:22px;font-weight:600;margin:0 0 6px}
+h3.doc-h3{font-size:15px;font-weight:600;margin:18px 0 8px}
+p{margin:0 0 10px}
+ul.doc-list,ol.doc-list{margin:0 0 12px;padding-left:20px}
+.doc-list li{margin:0 0 5px}
+.meta{font-size:13px;color:var(--doc-sec);margin:0 0 18px}
+.lead{font-size:16px;margin:0 0 16px}
+.sect{margin-top:48px}
+.sub{font-size:14px;color:var(--doc-sec);margin:0 0 12px}
+.cap{font-size:12px;color:var(--doc-sec);margin:8px 0 0}
+table.tk{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 14px}
+table.tk th{text-align:left;font-weight:600;padding:7px 10px 7px 0;border-bottom:1px solid #8f8d86;vertical-align:bottom}
+table.tk td{padding:6px 10px 6px 0;border-bottom:1px solid var(--doc-line);vertical-align:top}
+table.tk td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto;padding:2px 2px 6px}
+kbd{font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;padding:1px 5px;border:1px solid #8f8d86;border-radius:4px;background:#f6f5f2;white-space:nowrap}
+.rec{padding:14px 16px;border-left:3px solid #B4472A;background:#FFF4EE;margin:0 0 14px}
+.rec p:last-child{margin:0}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin:0 0 12px}
+.ctl{display:flex;align-items:center;gap:8px}
+.ctl-lbl{font-size:13px;font-weight:600}
+.seg{display:inline-flex;border:1px solid #8f8d86;border-radius:10px;overflow:hidden}
+.seg button{min-height:36px;padding:6px 14px;border:0;background:#fff;font:inherit;font-size:13px;font-weight:600;color:var(--doc-text);cursor:pointer}
+.seg button+button{border-left:1px solid #8f8d86}
+.seg button[aria-pressed="true"]{background:#2A1F1A;color:#fff}
+.seg button:focus-visible,.doc-btn:focus-visible{outline:2px solid #B4472A;outline-offset:2px;position:relative;z-index:1}
+.doc-btn{min-height:36px;padding:6px 14px;border:1px solid #8f8d86;border-radius:10px;background:#fff;font:inherit;font-size:13px;font-weight:600;color:var(--doc-text);cursor:pointer}
+.doc-btn:hover,.seg button[aria-pressed="false"]:hover{background:#f6f5f2}
+
+/* Token tema Bata, disalin persis dari src/theme/tokens.ts. */
+.t-light{color-scheme:light;--bg:#FFFFFF;--side:#FFF4EE;--side-text:#2A1F1A;--side-sec:#6E5F57;--text:#2A1F1A;--text-sec:#6E5F57;--border:#F0DDD2;--border-strong:#A88A7C;--hover:#F7E6DC;--card:#FFF9F6;--col:#FFF4EE;--accent:#B4472A;--on-accent:#FFFFFF;--accent-soft:#FBE3D8;--accent-text:#A8401F;--state:#A8401F;--online:#3B7A4F;--focus:#B4472A;--danger:#A3221B;--danger-soft:#FDEDEB;--danger-border:#D9827A;--scrim:rgba(42, 31, 26, 0.5)}
+.t-dark{color-scheme:dark;--bg:#1E1714;--side:#261D19;--side-text:#F5EAE4;--side-sec:#C2B0A6;--text:#F5EAE4;--text-sec:#C2B0A6;--border:#3E302A;--border-strong:#8F766A;--hover:#33271F;--card:#2A201C;--col:#261D19;--accent:#F08A64;--on-accent:#2A1F1A;--accent-soft:#4A2A1E;--accent-text:#FFB59A;--state:#FF9E7A;--online:#6CC48A;--focus:#F08A64;--danger:#FF9A8F;--danger-soft:#3A1F1B;--danger-border:#A8574E;--scrim:rgba(0, 0, 0, 0.6)}
+
+/* Panggung: board yang digelapkan scrim, dialog di atasnya. */
+.stage{position:relative;width:1008px;padding:24px;border-radius:14px;background:var(--col);font-family:Nunito,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.5;color:var(--text);-webkit-font-smoothing:antialiased}
+.stage::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--scrim)}
+.stage [data-host]{position:relative;z-index:1}
+:where(.stage) :where(button,input,textarea){font:inherit;color:inherit}
+.stage :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.stage h2,.stage h3,.stage p{margin:0}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* Komponen dasar dari src/styles/global.css */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 16px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font-weight:700;font-size:14px;cursor:pointer;transition:filter 120ms ease}
+.stage .btn{color:var(--on-accent)}
+.btn:hover{filter:brightness(1.06)}
+.btn .ti{font-size:18px}
+.btn-sm{min-height:34px;padding:5px 12px;font-size:13px;border-radius:10px}
+.btn-sm .ti{font-size:16px}
+.stage .btn-ghost{background:transparent;color:var(--text);border-color:var(--border-strong)}
+.btn-ghost:hover{filter:none;background:var(--hover)}
+.stage .btn-danger{background:var(--danger);border-color:var(--danger);color:var(--bg)}
+.field-error{display:flex;align-items:flex-start;gap:6px;font-size:13px;font-weight:600;color:var(--danger)}
+.field-error .ti{font-size:16px;margin-top:1px}
+.hint{font-size:12px;color:var(--text-sec)}
+.td-input,.td-textarea{width:100%;min-height:38px;padding:7px 10px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg);font-size:14px;color:var(--text)}
+.td-textarea{resize:vertical;line-height:1.55}
+.td-input:focus-visible,.td-textarea:focus-visible{outline:2px solid var(--focus);outline-offset:1px;border-color:var(--focus)}
+.td-input[aria-invalid="true"]{border-color:var(--danger)}
+.stage ::placeholder{color:var(--text-sec);opacity:1}
+
+/* ===== Dialog detail task (kelas yang diusulkan untuk task.css) ===== */
+.td-dlg{width:960px;max-height:var(--dlg-h,820px);display:flex;flex-direction:column;border:1px solid var(--border-strong);border-radius:12px;background:var(--bg);box-shadow:0 12px 32px var(--scrim);overflow:hidden}
+.td-head{flex:none;display:flex;align-items:center;gap:8px;min-height:56px;padding:8px 12px 8px 24px;border-bottom:1px solid var(--border)}
+.td-crumb{display:flex;align-items:baseline;gap:6px;min-width:0;font-size:13px;font-weight:600;color:var(--text-sec)}
+.td-code{font-size:14px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums}
+.td-head-sp{flex:1}
+.td-icon-btn{flex:none;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:transparent;color:var(--text-sec);font-size:20px;cursor:pointer}
+.td-icon-btn:hover,.td-icon-btn[aria-expanded="true"]{background:var(--hover);color:var(--text)}
+.td-icon-sm{width:30px;height:30px;font-size:16px}
+.td-mini{display:flex;align-items:center;gap:10px;margin-right:6px}
+.td-mini-clock{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.td-run{flex:none;width:8px;height:8px;border-radius:50%;background:var(--online)}
+.td-body{flex:1;min-height:0;overflow:auto}
+
+/* Arah A: satu kolom */
+.td-doc{max-width:768px;margin:0 auto;padding:20px 32px 32px;display:flex;flex-direction:column;gap:28px}
+.td-top{display:flex;flex-direction:column;gap:12px}
+/* Arah B: dua kolom */
+.td-split{display:grid;grid-template-columns:minmax(0,1fr) 312px;min-height:100%}
+.td-main{min-width:0;padding:20px 28px 32px 32px;display:flex;flex-direction:column;gap:28px}
+.td-rail{min-width:0;padding:20px 20px 32px;background:var(--card);display:flex;flex-direction:column;gap:24px}
+
+/* Judul: tampak seperti teks, jadi kolom isian saat difokus */
+.td-title{display:block;width:calc(100% + 16px);margin:0 -8px;padding:4px 8px;border:1px solid transparent;border-radius:8px;background:transparent;font-size:24px;line-height:1.3;font-weight:700;color:var(--text);resize:none;overflow:hidden;field-sizing:content;min-height:0}
+.td-title:hover{background:var(--hover)}
+.td-title:focus{background:var(--bg);border-color:var(--border-strong)}
+.td-title:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+
+/* Properti: baris label: nilai */
+.td-props{display:grid;grid-template-columns:1fr 1fr;column-gap:24px;row-gap:2px;margin:0}
+.td-rail .td-props{grid-template-columns:1fr}
+.td-prop{display:grid;grid-template-columns:136px minmax(0,1fr);align-items:center;min-height:38px}
+.td-rail .td-prop{grid-template-columns:112px minmax(0,1fr)}
+.td-prop-wide{grid-column:1/-1}
+.td-prop dt{font-size:13px;font-weight:600;color:var(--text-sec)}
+.td-prop dd{margin:0;min-width:0}
+.td-pv{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 8px;max-width:calc(100% + 8px);min-height:34px;padding:5px 8px;margin-left:-8px;border:0;border-radius:8px;background:transparent;font-size:14px;font-weight:600;color:var(--text);text-align:left;cursor:pointer}
+.td-pv:hover,.td-pv[aria-expanded="true"]{background:var(--hover)}
+.td-pv-ic{font-size:17px;color:var(--text-sec)}
+.td-pv-sub{font-weight:600;color:var(--text-sec)}
+.td-pv-empty{color:var(--text-sec)}
+.td-pv-caret{font-size:14px;color:var(--text-sec);opacity:0}
+.td-pv:hover .td-pv-caret,.td-pv:focus-visible .td-pv-caret,.td-pv[aria-expanded="true"] .td-pv-caret{opacity:1}
+.td-late{color:var(--state)}
+.td-prio{display:inline-flex;align-items:center;padding:1px 9px;border-radius:10px;border:1px solid var(--border-strong);font-size:12px;font-weight:700;color:var(--text-sec);white-space:nowrap}
+.td-prio-medium{border-color:transparent;background:var(--accent-soft);color:var(--accent-text)}
+.td-prio-high{border-color:var(--danger-border);background:var(--danger-soft);color:var(--danger)}
+.td-lbl{display:inline-flex;align-items:center;padding:1px 9px;border-radius:10px;border:1px solid var(--border-strong);font-size:12px;font-weight:700;color:var(--text);white-space:nowrap}
+
+/* Bagian */
+.td-sec{display:flex;flex-direction:column;gap:8px;min-width:0}
+.td-sec-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;min-height:30px}
+.td-sh{font-size:15px;font-weight:700}
+.td-sp{flex:1}
+.td-meta{font-size:13px;font-weight:600;color:var(--text-sec);font-variant-numeric:tabular-nums}
+.td-meta b{color:var(--text);font-weight:800}
+.td-mini-h{font-size:13px;font-weight:700;color:var(--text-sec)}
+.td-progress{display:inline-flex;align-items:center;gap:8px}
+.td-bar{width:96px;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
+.td-bar>i{display:block;height:100%;border-radius:2px;background:var(--accent);transition:width 160ms ease}
+.td-textbtn{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 8px;margin:-4px -8px;border:0;border-radius:8px;background:transparent;font-size:13px;font-weight:700;color:var(--accent-text);cursor:pointer;align-self:flex-start}
+.td-textbtn .ti{font-size:17px}
+.td-textbtn:hover{background:var(--hover)}
+
+/* Subtask */
+.td-subs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.td-sub{display:grid;grid-template-columns:24px 22px minmax(0,1fr) auto 30px;align-items:center;column-gap:6px;min-height:38px;margin-left:-30px;border-radius:8px}
+.td-sub:hover{background:var(--hover)}
+.td-sub.drop-before{box-shadow:inset 0 2px 0 var(--accent)}
+.td-sub.drop-after{box-shadow:inset 0 -2px 0 var(--accent)}
+.td-sub.is-dragging{opacity:.5}
+.td-handle{display:flex;align-items:center;justify-content:center;height:30px;color:var(--text-sec);font-size:16px;cursor:grab}
+.td-handle,.td-sub-del,.td-who-empty{opacity:0}
+.td-sub:hover .td-handle,.td-sub:focus-within .td-handle,.td-sub:hover .td-sub-del,.td-sub:focus-within .td-sub-del,.td-sub:hover .td-who-empty,.td-sub:focus-within .td-who-empty{opacity:1}
+@media (hover:none){.td-handle,.td-sub-del,.td-who-empty{opacity:1}}
+.td-check{appearance:none;flex:none;width:18px;height:18px;margin:0;border:1.5px solid var(--border-strong);border-radius:5px;background:var(--bg);display:grid;place-content:center;cursor:pointer}
+.td-check::before{content:"";width:9px;height:5px;border:2px solid var(--on-accent);border-top:0;border-right:0;transform:translate(0,-1px) rotate(-45deg);opacity:0}
+.td-check:checked{background:var(--accent);border-color:var(--accent)}
+.td-check:checked::before{opacity:1}
+.td-sub-title{width:100%;min-height:32px;padding:5px 8px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:14px;color:var(--text)}
+.td-sub-title:focus{background:var(--bg);border-color:var(--border-strong)}
+.td-sub-title:focus-visible{outline:2px solid var(--focus);outline-offset:0}
+.td-sub.is-done .td-sub-title{color:var(--text-sec);text-decoration:line-through;text-decoration-thickness:1px}
+.td-sub.is-done .td-sub-title:focus{text-decoration:none}
+.td-who{width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.td-who-empty{border:1.5px dashed var(--border-strong);color:var(--text-sec);font-size:14px;width:24px;height:24px;margin:2px}
+.td-who-empty:hover{color:var(--text);border-color:var(--text-sec)}
+.td-sub-del{width:30px;height:30px;font-size:16px}
+.td-sub-add{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:6px 8px;margin-left:-8px;border:0;border-radius:8px;background:transparent;font-size:14px;font-weight:600;color:var(--text-sec);cursor:pointer;align-self:flex-start}
+.td-sub-add .ti{font-size:18px}
+.td-sub-add:hover{background:var(--hover);color:var(--text)}
+.td-sub-new{grid-template-columns:24px 22px minmax(0,1fr)}
+.td-sub-new:hover{background:transparent}
+.td-check-ph{width:18px;height:18px;border:1.5px dashed var(--border-strong);border-radius:5px}
+.td-sub-hint{font-size:12px;color:var(--text-sec);visibility:hidden}
+.td-sec:focus-within>.td-sub-hint{visibility:visible}
+.td-empty{font-size:14px;color:var(--text-sec);padding:4px 0}
+
+/* Avatar inisial */
+.td-av{width:28px;height:28px;flex:none;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent-text);font-size:11px;font-weight:800}
+.td-av-sm{width:22px;height:22px;font-size:10px}
+
+/* Deskripsi */
+.td-desc{display:block;width:calc(100% + 20px);margin:0 -10px;min-height:76px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:transparent;font-size:14px;line-height:1.6;color:var(--text);resize:none;field-sizing:content}
+.td-desc:hover{background:var(--hover)}
+.td-desc:focus{background:var(--bg);border-color:var(--border-strong)}
+.td-desc:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+
+/* Waktu */
+.td-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 40px}
+.td-rail .td-time-grid{grid-template-columns:1fr}
+.td-kv{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column}
+.td-kv li{display:flex;align-items:center;gap:8px;min-height:30px;font-size:14px}
+.td-kv .ti{font-size:17px;color:var(--text-sec)}
+.td-kv .v{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.td-kv .v.muted{font-weight:600;color:var(--text-sec)}
+.td-kv .td-kv-total{margin-top:4px;padding-top:4px;border-top:1px solid var(--border);font-weight:700}
+.td-tag{font-size:12px;font-weight:700;color:var(--text-sec)}
+.td-run-tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-sec)}
+.td-cycle{font-size:13px;color:var(--text-sec);margin-top:6px}
+.td-cycle b{color:var(--text)}
+.td-note{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--text-sec);max-width:640px}
+.td-note .ti{flex:none;font-size:17px;margin-top:1px}
+.td-timer{display:flex;flex-direction:column;gap:8px}
+.td-timer-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.td-clock{font-size:30px;line-height:1.15;font-weight:800;font-variant-numeric:tabular-nums}
+.td-timer .btn{width:100%}
+.td-entries summary{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 8px;margin-left:-8px;border-radius:8px;font-size:13px;font-weight:700;color:var(--text-sec);cursor:pointer;list-style:none}
+.td-entries summary::-webkit-details-marker{display:none}
+.td-entries summary::before{content:"";width:6px;height:6px;margin:0 4px 0 2px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform 120ms ease}
+.td-entries[open] summary::before{transform:rotate(45deg)}
+.td-entries summary:hover{background:var(--hover);color:var(--text)}
+.td-elist{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
+.td-erow{display:flex;align-items:flex-start;gap:10px}
+.td-emain{flex:1;min-width:0;font-size:13px}
+.td-emain b{font-size:14px;font-variant-numeric:tabular-nums}
+.td-emeta{color:var(--text-sec);font-weight:600}
+.td-enote{color:var(--text);overflow-wrap:anywhere}
+.td-log-form{display:flex;flex-direction:column;gap:10px;padding:2px 0 6px}
+.td-log-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end}
+.td-dur{border:0;margin:0;padding:0;min-width:0}
+.td-dur legend,.td-log-note>span,.td-pop-form label{display:block;font-size:13px;font-weight:700;margin-bottom:4px;padding:0}
+.td-dur-in{display:flex;align-items:center;gap:6px;font-weight:700;color:var(--text-sec)}
+.td-num{width:64px;text-align:right;font-variant-numeric:tabular-nums}
+.td-log-note{flex:1;min-width:200px}
+.td-row-end{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+
+/* Tab Komentar dan Aktivitas */
+.td-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border)}
+.td-tab{position:relative;min-height:40px;padding:8px 12px;border:0;border-radius:8px 8px 0 0;background:transparent;font-size:14px;font-weight:600;color:var(--text-sec);cursor:pointer}
+.td-tab:hover{color:var(--text);background:var(--hover)}
+.td-tab[aria-selected="true"]{color:var(--text);font-weight:800}
+.td-tab[aria-selected="true"]::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:2px;background:var(--text)}
+.stage .td-tab:focus-visible{outline-offset:-2px}
+.td-tab .n{margin-left:6px;font-weight:700;color:var(--text-sec);font-variant-numeric:tabular-nums}
+.td-panel{padding-top:16px;display:flex;flex-direction:column;gap:16px}
+.stage .td-panel:focus-visible{outline-offset:4px;border-radius:4px}
+.td-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px}
+.td-comment{display:flex;gap:10px;align-items:flex-start}
+.td-entry{min-width:0;flex:1}
+.td-entry-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:13px}
+.td-time{font-size:12px;font-weight:600;color:var(--text-sec);white-space:nowrap}
+.td-ctext{font-size:14px;overflow-wrap:anywhere;padding-top:2px}
+.td-acts{gap:10px}
+.td-log{display:flex;gap:10px;align-items:flex-start;font-size:13px}
+.td-log p{padding-top:2px;overflow-wrap:anywhere}
+.td-log .td-time{margin-left:6px}
+.td-composer{display:flex;flex-direction:column;gap:8px}
+.td-composer-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+
+/* Pilihan kecil (popover) dan konfirmasi. Satu-satunya elemen yang terangkat
+   di dalam dialog, jadi memakai bayangan. */
+.td-pop{position:absolute;z-index:5;min-width:224px;max-width:300px;padding:6px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg);color:var(--text);box-shadow:0 8px 24px var(--scrim)}
+.td-menu,.td-menu-list{display:flex;flex-direction:column}
+.td-mi{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:6px 10px;border:0;border-radius:6px;background:transparent;font-size:14px;font-weight:600;color:var(--text);text-align:left;cursor:pointer}
+.td-mi .ti{font-size:17px;color:var(--text-sec)}
+.td-mi:hover,.td-mi:focus{background:var(--hover)}
+.stage .td-mi:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.td-mi-check{margin-left:auto}
+.stage .td-mi .td-mi-check{color:var(--accent-text)}
+.td-mi-sub{margin-left:auto;font-size:12px;font-weight:600;color:var(--text-sec)}
+.stage .td-mi-danger,.stage .td-mi-danger .ti{color:var(--danger)}
+.td-mi-checkrow{cursor:pointer}
+.td-pop-checks{border:0;margin:0;padding:0}
+.td-pop-form{display:flex;flex-direction:column;gap:6px;padding:8px 6px 4px;margin-top:4px;border-top:1px solid var(--border)}
+.td-pop-row{display:flex;gap:6px}
+.td-pop-row .td-input{flex:1;min-width:0}
+.td-pop-stop{padding:12px}
+.td-pop-stop .td-pop-form{border-top:0;padding:0;margin:0;gap:8px}
+.td-pop-title{font-size:14px;font-weight:700}
+.td-pop-title span{font-variant-numeric:tabular-nums}
+.td-modal-wrap{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;border-radius:14px}
+.td-modal-scrim{position:absolute;inset:0;border-radius:inherit;background:var(--scrim)}
+.td-modal{position:relative;width:420px;display:flex;flex-direction:column;gap:12px;padding:20px 22px;border:1px solid var(--border-strong);border-radius:12px;background:var(--bg);color:var(--text);box-shadow:0 12px 32px var(--scrim)}
+.td-modal-title{font-size:17px;font-weight:700}
+.td-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.td-closed{min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;border-radius:12px;background:var(--bg);font-size:14px}
+
+/* Contoh keadaan lain (gambar, tidak bisa diklik) */
+.states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.state-card{border-radius:12px;background:var(--bg);border:1px solid var(--border-strong);padding:16px 18px;font-family:Nunito,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;color:var(--text);display:flex;flex-direction:column;gap:8px;min-width:0}
+.state-card p{margin:0}
+.alert{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--danger-border);border-radius:12px;background:var(--danger-soft);font-size:13px}
+.alert .ti{color:var(--danger);font-size:17px;margin-top:1px}
+.alert strong{display:block;color:var(--danger)}
+.fake-btn{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:5px 12px;border-radius:10px;border:1px solid var(--border-strong);font-size:13px;font-weight:700;align-self:flex-start}
+.spin{width:18px;height:18px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:spin 900ms linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@media (max-width:760px){.states{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+@media print{.controls{display:none}.sect{break-before:page}}
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="prose">
+<h1>Detail task v0.4: dua arah tampilan</h1>
+<p class="meta">23 November 2026 · Board v0.4 · Draft untuk dipilih</p>
+<p class="lead">Dialog detail task sekarang penuh kotak bergaris: judul di dalam kolom isian, empat select di kanan, kotak deskripsi, kotak komentar, dan tombol hapus merah di bawah. Dua arah di bawah memakai jarak, ukuran huruf, dan dua garis tipis sebagai pemisah, lalu menambah subtask dan pelacakan waktu.</p>
+
+<h3 class="doc-h3">Yang sama di kedua arah</h3>
+<ul class="doc-list">
+<li>Judul tampil sebagai teks besar. Klik atau Tab membuatnya jadi kolom isian; Enter menyimpan, Escape mengembalikan judul lama.</li>
+<li>Status, Penanggung jawab, Tenggat, Prioritas, dan Label tampil sebagai baris "label: nilai". Klik, Enter, atau panah bawah membuka pilihan kecil. Tenggat memakai nama hari dan tanggal Indonesia ("Jumat, 27 Nov"), bukan kolom tanggal format Amerika.</li>
+<li>Subtask: centang, ubah judul langsung di barisnya, penanggung jawab opsional (avatar inisial), hapus, dan urutkan dengan seret pegangan atau <kbd>Alt</kbd> + panah.</li>
+<li>Hapus task pindah ke menu Lainnya (ikon titik tiga) dan selalu meminta konfirmasi.</li>
+<li>Kotak bergaris hanya tersisa untuk kolom yang memang tempat mengetik panjang: komentar, catatan waktu, dan tanggal lain.</li>
+</ul>
+<p class="sub">Semua isi adalah contoh. Nama Rekan A, B, C dan Proyek A mengikuti mockup sebelumnya; Anda adalah Rekan A. Waktu contoh: Senin, 23 November 2026, pukul 10.05. Timer berjalan sungguhan di halaman ini.</p>
+<p class="sub">Cara mencoba: pilih Terang atau Gelap di atas setiap dialog. Tombol "720 px" mengecilkan dialog ke tinggi maksimumnya di laptop 1366x768 (768 dikurangi jarak 48 px). Semua kontrol bisa dipakai, termasuk dengan keyboard saja.</p>
+</div>
+
+<!-- ============ ARAH A ============ -->
+<section class="sect" aria-labelledby="h-a">
+<div class="prose">
+<h2 class="doc-h" id="h-a">Arah A: satu kolom seperti dokumen</h2>
+<p class="sub">Isi mengalir dari atas ke bawah dalam satu kolom selebar 704 px di tengah dialog: judul, properti dalam dua kolom, subtask, deskripsi, waktu, lalu tab. Timer Anda ada di kepala dialog, jadi tetap terlihat dan bisa dihentikan dari mana saja saat isi digulir.</p>
+</div>
+<div class="controls" data-ctl="A">
+<div class="ctl"><span class="ctl-lbl" id="ctl-a-m">Mode</span><div class="seg" role="group" aria-labelledby="ctl-a-m"><button type="button" data-theme="light" aria-pressed="true">Terang</button><button type="button" data-theme="dark" aria-pressed="false">Gelap</button></div></div>
+<div class="ctl"><span class="ctl-lbl" id="ctl-a-h">Tinggi dialog</span><div class="seg" role="group" aria-labelledby="ctl-a-h"><button type="button" data-h="820" aria-pressed="true">820 px</button><button type="button" data-h="720" aria-pressed="false">720 px (1366x768)</button></div></div>
+<button type="button" class="doc-btn" data-reset>Kembalikan isi contoh</button>
+</div>
+<div class="scroll"><div class="stage t-light" data-mock="A"></div></div>
+<p class="cap">Arah A. Lebar dialog 960 px, tinggi maksimum 820 px.</p>
+</section>
+
+<!-- ============ ARAH B ============ -->
+<section class="sect" aria-labelledby="h-b">
+<div class="prose">
+<h2 class="doc-h" id="h-b">Arah B: dua kolom dengan panel kanan</h2>
+<p class="sub">Kolom kiri untuk isi yang dibaca dan ditulis: judul, subtask, deskripsi, komentar. Panel kanan selebar 312 px memuat properti dan waktu, dengan latar kartu dan tanpa garis tepi. Catatan untuk sesi timer diketik langsung di panel, jadi Berhenti cukup sekali klik.</p>
+</div>
+<div class="controls" data-ctl="B">
+<div class="ctl"><span class="ctl-lbl" id="ctl-b-m">Mode</span><div class="seg" role="group" aria-labelledby="ctl-b-m"><button type="button" data-theme="light" aria-pressed="true">Terang</button><button type="button" data-theme="dark" aria-pressed="false">Gelap</button></div></div>
+<div class="ctl"><span class="ctl-lbl" id="ctl-b-h">Tinggi dialog</span><div class="seg" role="group" aria-labelledby="ctl-b-h"><button type="button" data-h="820" aria-pressed="true">820 px</button><button type="button" data-h="720" aria-pressed="false">720 px (1366x768)</button></div></div>
+<button type="button" class="doc-btn" data-reset>Kembalikan isi contoh</button>
+</div>
+<div class="scroll"><div class="stage t-light" data-mock="B"></div></div>
+<p class="cap">Arah B. Lebar dialog 960 px, tinggi maksimum 820 px.</p>
+</section>
+
+<!-- ============ KEADAAN LAIN ============ -->
+<section class="sect" aria-labelledby="h-st">
+<div class="prose">
+<h2 class="doc-h" id="h-st">Keadaan lain (berlaku untuk kedua arah)</h2>
+<p class="sub">Gambar saja, tidak bisa diklik. Ditampilkan dalam mode terang; mode gelap memakai token yang sama.</p>
+</div>
+<div class="states t-light">
+<div class="state-card"><p class="td-sh">Subtask</p><p class="td-empty">Belum ada subtask. Pecah task ini jadi langkah kecil yang bisa dicentang.</p><span class="td-sub-add" style="pointer-events:none"><i class="ti ti-plus" aria-hidden="true"></i>Tambah subtask</span></div>
+<div class="state-card"><p class="td-code">PA-12</p><p style="display:flex;gap:10px;align-items:center"><span class="spin" aria-hidden="true"></span>Memuat detail task dari penyimpanan laptop ini...</p><p class="hint">Biasanya kurang dari sedetik. Board tetap bisa dipakai di belakang dialog.</p></div>
+<div class="state-card"><p class="td-sh">Subtask</p><div class="alert"><i class="ti ti-alert-circle" aria-hidden="true"></i><div><strong>Subtask belum tersimpan</strong>Penyimpanan di laptop ini menolak perubahan. Judul yang Anda ketik masih ada di kolomnya.</div></div><span class="fake-btn">Coba simpan lagi</span></div>
+</div>
+</section>
+
+<!-- ============ KEYBOARD ============ -->
+<section class="sect prose" aria-labelledby="h-kb">
+<h2 class="doc-h" id="h-kb">Cara kerja keyboard</h2>
+<table class="tk">
+<tr><th>Tombol</th><th>Di mana</th><th>Hasil</th></tr>
+<tr><td><kbd>Tab</kbd> <kbd>Shift+Tab</kbd></td><td>Seluruh dialog</td><td>Pindah antar kontrol. Di arah A urutannya sama dengan urutan baca dari atas ke bawah.</td></tr>
+<tr><td><kbd>Enter</kbd></td><td>Judul, judul subtask</td><td>Simpan. Fokus tetap di tempat.</td></tr>
+<tr><td><kbd>Escape</kbd></td><td>Kolom yang sedang diubah</td><td>Kembalikan isi lama. Tekan sekali lagi untuk menutup dialog.</td></tr>
+<tr><td><kbd>Escape</kbd></td><td>Pilihan kecil, konfirmasi</td><td>Tutup, fokus kembali ke tombol yang membukanya.</td></tr>
+<tr><td><kbd>Enter</kbd> <kbd>Spasi</kbd> <kbd>↓</kbd></td><td>Nilai properti</td><td>Buka pilihan. Fokus langsung di pilihan yang sedang dipakai.</td></tr>
+<tr><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Home</kbd> <kbd>End</kbd></td><td>Di dalam pilihan</td><td>Pindah pilihan. <kbd>Enter</kbd> memilih.</td></tr>
+<tr><td><kbd>Spasi</kbd></td><td>Kotak centang subtask</td><td>Tandai selesai atau buka lagi.</td></tr>
+<tr><td><kbd>Alt+↑</kbd> <kbd>Alt+↓</kbd></td><td>Baris subtask mana pun</td><td>Pindah urutan. Posisi baru diumumkan untuk pembaca layar.</td></tr>
+<tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Tab Komentar dan Aktivitas</td><td>Ganti tab.</td></tr>
+<tr><td><kbd>Ctrl+Enter</kbd></td><td>Kolom komentar</td><td>Kirim komentar.</td></tr>
+</table>
+</section>
+
+<!-- ============ PERBANDINGAN ============ -->
+<section class="sect prose" aria-labelledby="h-cmp">
+<h2 class="doc-h" id="h-cmp">Perbandingan</h2>
+<table class="tk">
+<tr><th></th><th>Arah A: satu kolom</th><th>Arah B: dua kolom</th></tr>
+<tr><td>Keterbacaan</td><td>Satu jalur baca. Baris properti punya ruang lebar (label 136 px), judul subtask panjang tidak terpotong.</td><td>Mata pindah kiri dan kanan. Kolom kiri sekitar 600 px, panel kanan sempit: nama orang dan tanggal panjang lebih cepat terlipat.</td></tr>
+<tr><td>Layar 1366x768 (tinggi 720 px)</td><td data-measure="A">Diukur saat halaman dibuka.</td><td data-measure="B">Diukur saat halaman dibuka.</td></tr>
+<tr><td>Garis</td><td>3 garis: bawah kepala dialog, di atas total waktu, bawah tab. Dialog sekarang punya sekitar 13 kotak dan garis (kolom judul, deskripsi, komentar, empat kolom properti, kolom label dan tombolnya, tombol hapus, tiga garis pemisah).</td><td>3 garis yang sama, ditambah tepi latar panel kanan sebagai pemisah kolom.</td></tr>
+<tr><td>Keyboard</td><td>Urutan Tab sama dengan urutan baca. Status bisa dicapai dengan 4 kali Tab dari awal dialog.</td><td>Urutan Tab menyelesaikan seluruh kolom kiri dulu, termasuk tab komentar, sebelum sampai ke Status. Kalau panel dipindah ke depan dalam urutan, Tab melompat ke kanan sebelum judul.</td></tr>
+<tr><td>Timer</td><td>Di kepala dialog, selalu terlihat. Berhenti membuka kotak kecil untuk catatan (dua langkah: klik, Enter).</td><td>Di panel, terlihat selama panel belum tergulir. Catatan diketik di panel, Berhenti satu klik.</td></tr>
+<tr><td>Jendela sempit</td><td>Tetap satu kolom, tidak perlu tata letak kedua.</td><td>Di bawah 760 px panel harus turun ke bawah, jadi ada dua tata letak yang perlu diuji.</td></tr>
+</table>
+
+<div class="rec">
+<p><b>Rekomendasi: Arah A.</b></p>
+<p>Permintaan user adalah "minimalist, modern, tapi mudah dibaca". Arah A paling dekat: satu jalur baca, urutan sama dengan rencana (judul, properti, subtask, deskripsi, waktu, tab), dan urutan Tab sama dengan urutan baca tanpa trik. Kelemahannya di layar 1366x768: bagian Waktu dan tab komentar ada di bawah lipatan. Itu ditutup dengan timer di kepala dialog, karena timer satu-satunya bagian waktu yang dipakai setiap hari; total dan durasi per status cukup dilihat sesekali. Arah B lebih padat di layar pendek, tetapi panel kanan membuat urutan Tab tidak sesuai tampilan dan butuh tata letak kedua untuk jendela sempit.</p>
+<p>Satu hal dari arah B yang layak diambil: kalau user ingin Berhenti cukup sekali klik, kotak catatan di arah A bisa diganti dengan Berhenti langsung, dan catatan diisi lewat kolom kecil di baris catatan waktu terbaru. Itu butuh command baru untuk mengubah catatan, jadi tidak dimasukkan ke v0.4.</p>
+</div>
+</section>
+
+<!-- ============ KEPUTUSAN ============ -->
+<section class="sect prose" aria-labelledby="h-dec">
+<h2 class="doc-h" id="h-dec">Ukuran dan kelas untuk penerapan (arah A)</h2>
+<table class="tk">
+<tr><th>Bagian</th><th>Kelas</th><th>Ukuran</th></tr>
+<tr><td>Dialog</td><td>.td-dlg, .td-head, .td-body</td><td>Lebar min(960px, 100vw - 32px), tinggi maksimum min(820px, 100vh - 48px). Kepala 56 px, garis bawah token border. Hanya .td-body yang digulir.</td></tr>
+<tr><td>Kolom isi</td><td>.td-doc</td><td>Lebar maksimum 768 px termasuk padding 32 px kiri kanan, padding atas 20 px, jarak antar bagian 28 px.</td></tr>
+<tr><td>Judul</td><td>.td-title (textarea rows=1)</td><td>24 px, tebal 700, tinggi baris 1.3. Garis tepi transparan; hover memakai token hover; fokus memakai border-strong dan cincin fokus 2 px.</td></tr>
+<tr><td>Properti</td><td>.td-props (dl), .td-prop, .td-pv</td><td>Grid 2 kolom, jarak kolom 24 px. Label 136 px, 13 px tebal 600, token text-sec. Nilai berupa tombol 14 px tebal 600, tinggi minimum 34 px, padding 5 px 8 px, radius 8 px. Label memakai baris penuh (.td-prop-wide).</td></tr>
+<tr><td>Judul bagian</td><td>.td-sh</td><td>15 px tebal 700, tidak kapital semua. Angka pendukung 13 px tebal 600 (.td-meta).</td></tr>
+<tr><td>Subtask</td><td>.td-subs, .td-sub, .td-check, .td-sub-title, .td-who, .td-sub-del, .td-handle</td><td>Baris 38 px, grid 24 / 22 / 1fr / auto / 30 px, jarak 6 px. Pegangan menggantung di padding kiri (margin-left -30 px) supaya kotak centang sejajar judul bagian. Pegangan, tombol hapus, dan tombol tetapkan orang muncul saat hover atau fokus di baris. Bar progres 96 x 4 px.</td></tr>
+<tr><td>Deskripsi</td><td>.td-desc</td><td>Textarea tanpa garis tepi, 14 px tinggi baris 1.6, tinggi minimum 76 px, field-sizing: content.</td></tr>
+<tr><td>Waktu</td><td>.td-mini (kepala), .td-time-grid, .td-kv, .td-note, .td-entries</td><td>Jam timer 15 px tebal 800 angka rata (tabular-nums). Grid 2 kolom berjarak 40 px: per orang dan per status. Catatan jam laptop 13 px text-sec dengan ikon. Riwayat catatan waktu dilipat di details.</td></tr>
+<tr><td>Tab</td><td>.td-tabs, .td-tab, .td-panel</td><td>Tab 40 px, 14 px. Tab aktif tebal 800 dengan garis bawah 2 px token text (bukan accent, supaya accent hanya di timer dan progres).</td></tr>
+<tr><td>Pilihan kecil</td><td>.td-pop, .td-mi</td><td>Lebar 224 sampai 300 px, padding 6 px, item 36 px. Satu-satunya elemen dengan bayangan di dalam dialog. Dipasang di portal Radix (Popover atau DropdownMenu) supaya tidak terpotong.</td></tr>
+</table>
+<p class="sub">Teks baru dikumpulkan di <code>src/screens/board/teks.ts</code> sesuai rencana. Durasi ditulis "2h 3j" untuk hari dan jam, "3j 20m" untuk jam dan menit, sama dengan kartu board.</p>
+</section>
+
+<!-- ============ KONTRAS ============ -->
+<section class="sect prose" aria-labelledby="h-ct">
+<h2 class="doc-h" id="h-ct">Kontras yang dicek</h2>
+<p class="sub">Dihitung dengan rumus WCAG 2.x. Teks butuh 4,5:1; garis kolom, kotak centang, bar progres, dan cincin fokus butuh 3:1.</p>
+<table class="tk">
+<tr><th>Pasangan</th><th>Terang</th><th>Gelap</th></tr>
+<tr><td>Teks utama di latar dialog</td><td class="num">16,04</td><td class="num">14,96</td></tr>
+<tr><td>Teks pendukung (label properti) di latar dialog</td><td class="num">6,11</td><td class="num">8,46</td></tr>
+<tr><td>Teks pendukung di latar hover</td><td class="num">5,03</td><td class="num">6,93</td></tr>
+<tr><td>Teks pendukung di latar panel kanan (card, arah B)</td><td class="num">5,86</td><td class="num">lebih dari 6,9</td></tr>
+<tr><td>Teks sorotan (avatar, prioritas Sedang) di sorotan aksi</td><td class="num">5,00</td><td class="num">7,51</td></tr>
+<tr><td>Teks di tombol aksi (Berhenti, Kirim)</td><td class="num">5,42</td><td class="num">6,51</td></tr>
+<tr><td>Tombol teks accent-text di latar dialog</td><td class="num">6,14</td><td class="num">10,38</td></tr>
+<tr><td>Teks bahaya (Hapus task) di latar dialog</td><td class="num">7,49</td><td class="num">8,65</td></tr>
+<tr><td>Teks bahaya di latar bahaya</td><td class="num">6,60</td><td class="num">7,38</td></tr>
+<tr><td>Cincin fokus di latar dialog</td><td class="num">5,42</td><td class="num">7,18</td></tr>
+<tr><td>Garis kolom dan kotak centang (border-strong) di latar dialog</td><td class="num">3,19</td><td class="num">4,18</td></tr>
+<tr><td>border-strong di latar panel kanan (card)</td><td class="num">3,05</td><td class="num">3,76</td></tr>
+<tr><td>Isi bar progres (accent) di jalurnya (border)</td><td class="num">4,12</td><td class="num">5,13</td></tr>
+<tr><td>Titik timer berjalan (online) di latar dialog</td><td class="num">5,14</td><td class="num">8,33</td></tr>
+</table>
+<p class="sub">Yang gagal dan karena itu tidak dipakai: border-strong di atas latar col (#FFF4EE) hanya 2,95:1. Karena itu panel kanan arah B memakai latar card, bukan col.</p>
+</section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var PEOPLE = {
+    ra: { name: "Rekan A", init: "RA", me: true },
+    rb: { name: "Rekan B", init: "RB" },
+    rc: { name: "Rekan C", init: "RC" }
+  };
+  var COLS = { todo: "To do", doing: "Dikerjakan", done: "Selesai" };
+  var COL_ORDER = ["todo", "doing", "done"];
+  var COL_ICON = { todo: "ti-circle", doing: "ti-progress", done: "ti-circle-check" };
+  var PRIO = { none: "Tanpa prioritas", low: "Rendah", medium: "Sedang", high: "Tinggi" };
+  var MON = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  var DAYS = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  var TODAY = new Date(2026, 10, 23);
+  var T0 = performance.now();
+  var BASE_NOW = new Date(2026, 10, 23, 10, 5, 10).getTime();
+
+  function perf() { return performance.now(); }
+  function now() { return new Date(BASE_NOW + (perf() - T0)); }
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function hhmm(d) { return pad(d.getHours()) + "." + pad(d.getMinutes()); }
+  function nowLabel() { var d = now(); return d.getDate() + " " + MON[d.getMonth()] + ", " + hhmm(d); }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function dur(secs) {
+    secs = Math.max(0, Math.floor(secs));
+    var d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
+    if (d) return d + "h " + h + "j";
+    if (h) return m ? h + "j " + m + "m" : h + "j";
+    return m + "m";
+  }
+  function clock(secs) {
+    secs = Math.max(0, Math.floor(secs));
+    return pad(Math.floor(secs / 3600)) + ":" + pad(Math.floor((secs % 3600) / 60)) + ":" + pad(secs % 60);
+  }
+  function parseIso(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function dueInfo(isoStr) {
+    var d = parseIso(isoStr);
+    var n = Math.round((d - TODAY) / 864e5);
+    var base = DAYS[d.getDay()] + ", " + d.getDate() + " " + MON[d.getMonth()] + (d.getFullYear() !== 2026 ? " " + d.getFullYear() : "");
+    var rel = n === 0 ? "hari ini" : n === 1 ? "besok" : n < 0 ? "terlambat " + -n + " hari" : n + " hari lagi";
+    return { base: base, rel: rel, late: n < 0 };
+  }
+  function nameOf(id) { var p = PEOPLE[id]; return p.me ? p.name + " (Anda)" : p.name; }
+  function whoOf(id) { return PEOPLE[id].me ? "Anda" : PEOPLE[id].name; }
+  function av(id, sm) { return '<span class="td-av' + (sm ? " td-av-sm" : "") + '" aria-hidden="true">' + PEOPLE[id].init + "</span>"; }
+  function sel(k) { return '[data-k="' + CSS.escape(k) + '"]'; }
+
+  function fresh() {
+    var p = perf();
+    return {
+      title: "Revisi denah lantai 2",
+      status: "doing",
+      assignee: "ra",
+      due: "2026-11-27",
+      priority: "medium",
+      labels: ["denah", "klien"],
+      allLabels: ["denah", "klien", "lapangan", "revisi"],
+      subtasks: [
+        { id: "s1", title: "Ukur ulang dinding sisi timur", done: true, who: "rb" },
+        { id: "s2", title: "Pindahkan posisi tangga di denah", done: true, who: "ra" },
+        { id: "s3", title: "Perlebar kamar tidur 2 sebesar 50 cm", done: false, who: "ra" },
+        { id: "s4", title: "Sesuaikan jendela kamar mandi dengan dinding baru", done: false, who: null },
+        { id: "s5", title: "Kirim PDF revisi ke klien untuk ditandatangani", done: false, who: "rc" }
+      ],
+      desc: "Klien minta tangga dipindah ke sisi timur dan kamar tidur 2 diperlebar 50 cm. Pakai denah revisi 3 di folder proyek sebagai dasar, lalu kirim PDF-nya lewat chat #proyek-a untuk ditandatangani.",
+      timer: { running: true, start: p - 2530 * 1000, since: "09.23" },
+      entries: [
+        { id: "e1", who: "rb", secs: 4500, manual: false, at: "22 Nov, 16.55", note: "Cek ukuran di lokasi" },
+        { id: "e2", who: "ra", secs: 5400, manual: true, at: "22 Nov, 12.30", note: "Gambar ulang tangga" },
+        { id: "e3", who: "rc", secs: 2700, manual: false, at: "21 Nov, 15.00", note: "Siapkan template PDF" },
+        { id: "e4", who: "ra", secs: 3600, manual: false, at: "21 Nov, 14.20", note: "" },
+        { id: "e5", who: "rb", secs: 3600, manual: false, at: "21 Nov, 13.50", note: "" }
+      ],
+      st: { acc: { todo: 183900, doing: 0, done: 0 }, cur: "doing", since: p - 161100 * 1000, cycle: null },
+      comments: [
+        { who: "rc", at: "21 Nov, 15.05", text: "Template PDF untuk revisi sudah saya taruh di folder proyek, namanya denah-rev4." },
+        { who: "rb", at: "22 Nov, 16.58", text: "Dinding timur sudah saya ukur di lokasi. Panjangnya 7,20 m, sama dengan gambar lama." },
+        { who: "ra", at: "23 Nov, 09.20", text: "Tangga sudah pindah. Sekarang lanjut kamar tidur 2." }
+      ],
+      activity: [
+        { who: "ra", text: "menambahkan komentar", at: "23 Nov, 09.20" },
+        { who: "rb", text: "menambahkan komentar", at: "22 Nov, 16.58" },
+        { who: "rb", text: "mencatat 1j 15m", at: "22 Nov, 16.55" },
+        { who: "rb", text: 'menyelesaikan subtask "Ukur ulang dinding sisi timur"', at: "22 Nov, 16.50" },
+        { who: "ra", text: "mencatat 1j 30m", at: "22 Nov, 12.30" },
+        { who: "ra", text: 'menyelesaikan subtask "Pindahkan posisi tangga di denah"', at: "22 Nov, 12.28" },
+        { who: "rc", text: "menambahkan komentar", at: "21 Nov, 15.05" },
+        { who: "rc", text: "mencatat 45m", at: "21 Nov, 15.00" },
+        { who: "ra", text: "mencatat 1j", at: "21 Nov, 14.20" },
+        { who: "rb", text: "mencatat 1j", at: "21 Nov, 13.50" },
+        { who: "ra", text: "memindahkan task ke Dikerjakan", at: "21 Nov, 13.20" },
+        { who: "rc", text: 'menambahkan subtask "Kirim PDF revisi ke klien untuk ditandatangani"', at: "19 Nov, 10.20" },
+        { who: "rc", text: "membuat task ini", at: "19 Nov, 10.15" }
+      ],
+      tab: "comments",
+      draftComment: "",
+      commentErr: "",
+      stopNote: "",
+      log: { h: "", m: "", note: "" },
+      logOpen: false,
+      logErr: "",
+      addOpen: false,
+      newSub: "",
+      entriesOpen: false,
+      closed: false,
+      deleted: false,
+      nextId: 6
+    };
+  }
+
+  function timerSecs(s) { return s.timer.running ? (perf() - s.timer.start) / 1000 : 0; }
+  function personSecs(s, p) {
+    var t = 0;
+    s.entries.forEach(function (e) { if (e.who === p) t += e.secs; });
+    if (p === "ra") t += timerSecs(s);
+    return t;
+  }
+  function totalSecs(s) { return personSecs(s, "ra") + personSecs(s, "rb") + personSecs(s, "rc"); }
+  function stSecs(s, c) { return s.st.acc[c] + (s.st.cur === c ? (perf() - s.st.since) / 1000 : 0); }
+  function act(inst, text) { inst.s.activity.unshift({ who: "ra", text: text, at: nowLabel() }); }
+  function say(inst, text) {
+    var live = inst.stage.querySelector("[data-live]");
+    live.textContent = "";
+    setTimeout(function () { live.textContent = text; }, 30);
+  }
+
+  /* ---------- Render ---------- */
+
+  function headHtml(inst) {
+    var s = inst.s, mini = "";
+    if (inst.v === "A") {
+      mini = s.timer.running
+        ? '<div class="td-mini" role="group" aria-label="Timer Anda"><span class="td-run" aria-hidden="true"></span><span class="sr-only">Timer Anda berjalan sejak ' + s.timer.since + ".</span>" +
+          '<span class="td-mini-clock" data-clock aria-hidden="true">' + clock(timerSecs(s)) + "</span>" +
+          '<button type="button" class="btn btn-sm" data-act="pop" data-pop="stop" data-k="timer" aria-haspopup="dialog" aria-expanded="false"><i class="ti ti-player-stop" aria-hidden="true"></i>Berhenti</button></div>'
+        : '<div class="td-mini"><button type="button" class="btn btn-ghost btn-sm" data-act="start" data-k="timer"><i class="ti ti-player-play" aria-hidden="true"></i>Mulai timer</button></div>';
+    }
+    return '<header class="td-head"><p class="td-crumb"><span>Proyek A</span><span aria-hidden="true">/</span><span class="td-code">PA-12</span></p><span class="td-head-sp"></span>' + mini +
+      '<button type="button" class="td-icon-btn" data-act="pop" data-pop="more" data-k="more" aria-label="Lainnya" aria-haspopup="menu" aria-expanded="false"><i class="ti ti-dots" aria-hidden="true"></i></button>' +
+      '<button type="button" class="td-icon-btn" data-act="close" data-k="close" aria-label="Tutup detail task"><i class="ti ti-x" aria-hidden="true"></i></button></header>';
+  }
+
+  function prop(inst, key, label, value, wide) {
+    var id = inst.id + "-p-" + key;
+    var pop = key === "due" || key === "labels" ? "dialog" : "menu";
+    return '<div class="td-prop' + (wide ? " td-prop-wide" : "") + '"><dt id="' + id + '-l">' + label + "</dt><dd>" +
+      '<button type="button" class="td-pv" id="' + id + '" data-act="pop" data-pop="' + key + '" data-k="p-' + key + '" aria-haspopup="' + pop + '" aria-expanded="false" aria-labelledby="' + id + "-l " + id + '">' +
+      value + '<i class="ti ti-chevron-down td-pv-caret" aria-hidden="true"></i></button></dd></div>';
+  }
+
+  function propsHtml(inst) {
+    var s = inst.s;
+    var status = '<i class="ti ' + COL_ICON[s.status] + ' td-pv-ic" aria-hidden="true"></i><span>' + COLS[s.status] + "</span>";
+    var who = s.assignee ? av(s.assignee, true) + "<span>" + nameOf(s.assignee) + "</span>" : '<span class="td-pv-empty">Belum ada</span>';
+    var due = '<span class="td-pv-empty">Belum ada</span>';
+    if (s.due) { var di = dueInfo(s.due); due = "<span>" + di.base + '</span><span class="td-pv-sub' + (di.late ? " td-late" : "") + '">' + di.rel + "</span>"; }
+    var prio = s.priority === "none" ? '<span class="td-pv-empty">Tanpa prioritas</span>' : '<span class="td-prio td-prio-' + s.priority + '">' + PRIO[s.priority] + "</span>";
+    var labels = s.labels.length ? s.labels.map(function (l) { return '<span class="td-lbl">' + esc(l) + "</span>"; }).join("") : '<span class="td-pv-empty">Belum ada</span>';
+    if (inst.v === "A") {
+      return '<dl class="td-props">' + prop(inst, "status", "Status", status) + prop(inst, "priority", "Prioritas", prio) +
+        prop(inst, "assignee", "Penanggung jawab", who) + prop(inst, "due", "Tenggat", due) + prop(inst, "labels", "Label", labels, true) + "</dl>";
+    }
+    return '<section class="td-sec" aria-labelledby="' + inst.id + '-props-h"><h3 class="sr-only" id="' + inst.id + '-props-h">Properti</h3><dl class="td-props">' +
+      prop(inst, "status", "Status", status) + prop(inst, "assignee", "Penanggung jawab", who) + prop(inst, "due", "Tenggat", due) +
+      prop(inst, "priority", "Prioritas", prio) + prop(inst, "labels", "Label", labels) + "</dl></section>";
+  }
+
+  function subsHtml(inst) {
+    var s = inst.s, n = s.subtasks.length, done = s.subtasks.filter(function (x) { return x.done; }).length;
+    var hint = inst.id + "-sub-hint";
+    var rows = s.subtasks.map(function (t, i) {
+      var who = t.who
+        ? '<button type="button" class="td-who" data-act="pop" data-pop="sub-who" data-sub="' + t.id + '" data-k="sw-' + t.id + '" aria-haspopup="menu" aria-expanded="false" aria-label="Penanggung jawab subtask: ' + nameOf(t.who) + '. Ganti">' + av(t.who, true) + "</button>"
+        : '<button type="button" class="td-who td-who-empty" data-act="pop" data-pop="sub-who" data-sub="' + t.id + '" data-k="sw-' + t.id + '" aria-haspopup="menu" aria-expanded="false" aria-label="Tetapkan penanggung jawab subtask"><i class="ti ti-user-plus" aria-hidden="true"></i></button>';
+      return '<li class="td-sub' + (t.done ? " is-done" : "") + '" data-id="' + t.id + '">' +
+        '<span class="td-handle" data-handle aria-hidden="true" title="Seret untuk mengurutkan"><i class="ti ti-grip-vertical"></i></span>' +
+        '<input type="checkbox" class="td-check" data-act="sub-toggle" data-sub="' + t.id + '" data-k="sc-' + t.id + '"' + (t.done ? " checked" : "") + ' aria-label="Selesai: ' + esc(t.title) + '">' +
+        '<input type="text" class="td-sub-title" data-commit="sub" data-sub="' + t.id + '" data-k="st-' + t.id + '" value="' + esc(t.title) + '" maxlength="200" aria-label="Subtask ' + (i + 1) + " dari " + n + '" aria-describedby="' + hint + '">' +
+        who +
+        '<button type="button" class="td-icon-btn td-sub-del" data-act="sub-del" data-sub="' + t.id + '" data-k="sd-' + t.id + '" aria-label="Hapus subtask ' + esc(t.title) + '"><i class="ti ti-trash" aria-hidden="true"></i></button></li>';
+    }).join("");
+    var add = s.addOpen
+      ? '<div class="td-sub td-sub-new"><span></span><span class="td-check-ph" aria-hidden="true"></span><input type="text" class="td-sub-title" data-k="sub-new" data-bind="newSub" value="' + esc(s.newSub) + '" maxlength="200" placeholder="Judul subtask, lalu Enter" aria-label="Judul subtask baru" aria-describedby="' + hint + '"></div>'
+      : '<button type="button" class="td-sub-add" data-act="sub-add-open" data-k="sub-add"><i class="ti ti-plus" aria-hidden="true"></i>Tambah subtask</button>';
+    var pct = n ? Math.round((done / n) * 100) : 0;
+    var progress = n
+      ? '<span class="td-progress"><span class="td-bar" role="progressbar" aria-label="Subtask selesai" aria-valuemin="0" aria-valuemax="' + n + '" aria-valuenow="' + done + '" aria-valuetext="' + done + " dari " + n + ' selesai"><i style="width:' + pct + '%"></i></span><span class="td-meta" aria-hidden="true">' + done + "/" + n + "</span></span>"
+      : "";
+    return '<section class="td-sec" aria-labelledby="' + inst.id + '-sub-h"><div class="td-sec-head"><h3 class="td-sh" id="' + inst.id + '-sub-h">Subtask</h3>' + progress + "</div>" +
+      (n ? '<ul class="td-subs">' + rows + "</ul>" : '<p class="td-empty">Belum ada subtask. Pecah task ini jadi langkah kecil yang bisa dicentang.</p>') +
+      add + '<p class="td-sub-hint" id="' + hint + '">Enter menyimpan judul. Alt + panah atas atau bawah memindah subtask.</p></section>';
+  }
+
+  function descHtml(inst) {
+    return '<section class="td-sec" aria-labelledby="' + inst.id + '-desc-h"><h3 class="td-sh" id="' + inst.id + '-desc-h">Deskripsi</h3>' +
+      '<textarea class="td-desc" data-commit="desc" data-k="desc" aria-labelledby="' + inst.id + '-desc-h" placeholder="Tambah deskripsi: apa yang perlu dikerjakan dan seperti apa hasilnya">' + esc(inst.s.desc) + "</textarea></section>";
+  }
+
+  function logFormHtml(inst) {
+    var s = inst.s, id = inst.id, bad = s.logErr ? ' aria-invalid="true" aria-describedby="' + id + '-log-err"' : "";
+    return '<form class="td-log-form" data-form="log" novalidate aria-label="Catat waktu manual">' +
+      '<div class="td-log-row"><fieldset class="td-dur"><legend>Durasi</legend><span class="td-dur-in">' +
+      '<input type="number" class="td-input td-num" min="0" max="24" inputmode="numeric" data-k="log-h" data-bind="log.h" value="' + esc(s.log.h) + '" aria-label="Jam"' + bad + '><span aria-hidden="true">j</span>' +
+      '<input type="number" class="td-input td-num" min="0" max="59" inputmode="numeric" data-k="log-m" data-bind="log.m" value="' + esc(s.log.m) + '" aria-label="Menit"' + bad + '><span aria-hidden="true">m</span></span></fieldset>' +
+      '<label class="td-log-note"><span>Catatan (opsional)</span><input type="text" class="td-input" maxlength="200" data-k="log-note" data-bind="log.note" value="' + esc(s.log.note) + '" placeholder="misalnya: rapat dengan klien"></label></div>' +
+      (s.logErr ? '<p class="field-error" id="' + id + '-log-err" role="alert"><i class="ti ti-alert-circle" aria-hidden="true"></i>' + esc(s.logErr) + "</p>" : "") +
+      '<div class="td-row-end"><button type="button" class="btn btn-ghost btn-sm" data-act="log-cancel">Batal</button><button type="submit" class="btn btn-sm" data-k="log-save">Simpan catatan</button></div></form>';
+  }
+
+  function perPersonHtml(inst) {
+    var s = inst.s;
+    var ids = ["ra", "rb", "rc"].filter(function (p) { return personSecs(s, p) > 0; }).sort(function (a, b) { return personSecs(s, b) - personSecs(s, a); });
+    var rows = ids.map(function (p) {
+      var run = p === "ra" && s.timer.running ? '<span class="td-run-tag"><span class="td-run" aria-hidden="true"></span>berjalan</span>' : "";
+      return "<li>" + av(p, true) + "<span>" + nameOf(p) + "</span>" + run + '<span class="v" data-pt="' + p + '">' + dur(personSecs(s, p)) + "</span></li>";
+    }).join("");
+    if (!rows) rows = '<li class="td-empty">Belum ada waktu tercatat.</li>';
+    return '<div><p class="td-mini-h">Per orang</p><ul class="td-kv">' + rows + '<li class="td-kv-total"><span>Total task</span><span class="v" data-total>' + dur(totalSecs(s)) + "</span></li></ul></div>";
+  }
+
+  function perStatusHtml(inst) {
+    var s = inst.s;
+    var rows = COL_ORDER.map(function (c) {
+      var secs = stSecs(s, c), cur = s.st.cur === c;
+      var v = secs > 0 || cur ? '<span class="v" data-stt="' + c + '">' + dur(secs) + "</span>" : '<span class="v muted">belum pernah</span>';
+      return '<li><i class="ti ' + COL_ICON[c] + '" aria-hidden="true"></i><span>' + COLS[c] + "</span>" + (cur ? '<span class="td-tag">sekarang</span>' : "") + v + "</li>";
+    }).join("");
+    var cycle = s.st.cycle !== null
+      ? '<p class="td-cycle">Waktu siklus <b>' + dur(s.st.cycle) + "</b>, dari dibuat sampai masuk Selesai.</p>"
+      : '<p class="td-cycle">Waktu siklus muncul setelah task masuk Selesai.</p>';
+    return '<div><p class="td-mini-h">Per status</p><ul class="td-kv">' + rows + "</ul>" + cycle + "</div>";
+  }
+
+  function clockNoteHtml() {
+    return '<p class="td-note"><i class="ti ti-clock-exclamation" aria-hidden="true"></i><span>Jam di beberapa laptop tampaknya tidak sama, jadi durasi per status bisa meleset. Timer dan catatan manual tidak terpengaruh, karena mulai dan berhentinya dicatat laptop yang sama.</span></p>';
+  }
+
+  function entriesHtml(inst) {
+    var s = inst.s;
+    var run = s.timer.running
+      ? '<li class="td-erow">' + av("ra", true) + '<div class="td-emain"><p><b data-clock>' + clock(timerSecs(s)) + '</b> <span class="td-emeta">Anda · timer berjalan sejak ' + s.timer.since + "</span></p></div></li>"
+      : "";
+    var rows = s.entries.map(function (e) {
+      var label = dur(e.secs) + ", " + e.at;
+      var del = PEOPLE[e.who].me
+        ? '<button type="button" class="td-icon-btn td-icon-sm" data-act="entry-del" data-id="' + e.id + '" data-k="ed-' + e.id + '" aria-label="Hapus catatan ' + label + '"><i class="ti ti-trash" aria-hidden="true"></i></button>'
+        : "";
+      return '<li class="td-erow">' + av(e.who, true) + '<div class="td-emain"><p><b>' + dur(e.secs) + '</b> <span class="td-emeta">' + whoOf(e.who) + " · " + e.at + (e.manual ? " · dicatat manual" : "") + "</span></p>" +
+        (e.note ? '<p class="td-enote">' + esc(e.note) + "</p>" : "") + "</div>" + del + "</li>";
+    }).join("");
+    var count = s.entries.length + (s.timer.running ? 1 : 0);
+    return '<details class="td-entries"' + (s.entriesOpen ? " open" : "") + '><summary data-k="entries">Riwayat catatan waktu (' + count + ')</summary><ul class="td-elist">' + run + rows + "</ul></details>";
+  }
+
+  function logBtn(inst) {
+    return '<button type="button" class="td-textbtn" data-act="log-open" data-k="log-open" aria-expanded="' + inst.s.logOpen + '"><i class="ti ti-clock-plus" aria-hidden="true"></i>Catat waktu manual</button>';
+  }
+
+  function timeHtmlA(inst) {
+    var s = inst.s;
+    return '<section class="td-sec" aria-labelledby="' + inst.id + '-time-h"><div class="td-sec-head"><h3 class="td-sh" id="' + inst.id + '-time-h">Waktu</h3>' +
+      '<span class="td-meta">Total <b data-total>' + dur(totalSecs(s)) + '</b></span><span class="td-sp"></span>' + logBtn(inst) + "</div>" +
+      (s.logOpen ? logFormHtml(inst) : "") +
+      '<div class="td-time-grid">' + perPersonHtml(inst) + perStatusHtml(inst) + "</div>" + clockNoteHtml() + entriesHtml(inst) + "</section>";
+  }
+
+  function timeHtmlB(inst) {
+    var s = inst.s, id = inst.id;
+    var timer = s.timer.running
+      ? '<div class="td-timer-row"><span class="td-mini-h">Timer Anda</span><span class="td-run-tag"><span class="td-run" aria-hidden="true"></span>Berjalan sejak ' + s.timer.since + "</span></div>" +
+        '<p class="td-clock" data-clock>' + clock(timerSecs(s)) + "</p>" +
+        '<label class="sr-only" for="' + id + '-note">Catatan sesi ini (opsional)</label><input type="text" class="td-input" id="' + id + '-note" maxlength="200" data-k="b-note" data-bind="stopNote" value="' + esc(s.stopNote) + '" placeholder="Catatan sesi ini (opsional)">' +
+        '<button type="button" class="btn" data-act="stop" data-k="timer"><i class="ti ti-player-stop" aria-hidden="true"></i>Berhenti</button>'
+      : '<div class="td-timer-row"><span class="td-mini-h">Timer Anda</span><span class="td-meta">Tidak berjalan</span></div>' +
+        '<button type="button" class="btn" data-act="start" data-k="timer"><i class="ti ti-player-play" aria-hidden="true"></i>Mulai timer</button>';
+    return '<section class="td-sec" aria-labelledby="' + id + '-time-h"><h3 class="td-sh" id="' + id + '-time-h">Waktu</h3><div class="td-timer">' + timer + "</div>" +
+      logBtn(inst) + (s.logOpen ? logFormHtml(inst) : "") +
+      '<div class="td-time-grid">' + perPersonHtml(inst) + perStatusHtml(inst) + "</div>" + clockNoteHtml() + entriesHtml(inst) + "</section>";
+  }
+
+  function talkHtml(inst) {
+    var s = inst.s, id = inst.id, panel;
+    function tab(key, label, n) {
+      var on = s.tab === key;
+      return '<button type="button" role="tab" class="td-tab" id="' + id + "-tab-" + key + '" aria-controls="' + id + '-panel" aria-selected="' + on + '" tabindex="' + (on ? 0 : -1) + '" data-act="tab" data-tab="' + key + '" data-k="tab-' + key + '">' + label + '<span class="n">' + n + "</span></button>";
+    }
+    if (s.tab === "comments") {
+      var list = s.comments.length
+        ? '<ul class="td-list">' + s.comments.map(function (c) {
+            return '<li class="td-comment">' + av(c.who) + '<div class="td-entry"><p class="td-entry-head"><b>' + whoOf(c.who) + '</b><span class="td-time">' + c.at + '</span></p><p class="td-ctext">' + esc(c.text) + "</p></div></li>";
+          }).join("") + "</ul>"
+        : '<p class="td-empty">Belum ada komentar. Tulis yang pertama di bawah.</p>';
+      panel = list + '<div class="td-composer"><label class="sr-only" for="' + id + '-cm">Tulis komentar</label>' +
+        '<textarea class="td-textarea" id="' + id + '-cm" rows="2" data-k="comment" data-bind="draftComment" placeholder="Tulis komentar"' + (s.commentErr ? ' aria-invalid="true" aria-describedby="' + id + '-cm-err"' : "") + ">" + esc(s.draftComment) + "</textarea>" +
+        (s.commentErr ? '<p class="field-error" id="' + id + '-cm-err" role="alert"><i class="ti ti-alert-circle" aria-hidden="true"></i>' + esc(s.commentErr) + "</p>" : "") +
+        '<div class="td-composer-row"><span class="hint">Ctrl + Enter untuk mengirim</span><button type="button" class="btn btn-sm" data-act="send" data-k="send">Kirim</button></div></div>';
+    } else {
+      panel = '<ul class="td-list td-acts">' + s.activity.map(function (a) {
+        return '<li class="td-log">' + av(a.who, true) + "<p>" + whoOf(a.who) + " " + esc(a.text) + '<span class="td-time">' + a.at + "</span></p></li>";
+      }).join("") + "</ul>";
+    }
+    return '<section class="td-sec" aria-label="Komentar dan aktivitas"><div class="td-tabs" role="tablist" aria-label="Komentar dan aktivitas">' +
+      tab("comments", "Komentar", s.comments.length) + tab("activity", "Aktivitas", s.activity.length) + "</div>" +
+      '<div class="td-panel" role="tabpanel" id="' + id + '-panel" aria-labelledby="' + id + "-tab-" + s.tab + '" tabindex="0">' + panel + "</div></section>";
+  }
+
+  function dialogHtml(inst) {
+    var s = inst.s;
+    var title = '<textarea class="td-title" rows="1" data-commit="title" data-k="title" maxlength="200" aria-label="Judul task">' + esc(s.title) + "</textarea>";
+    var open = '<div class="td-dlg" role="dialog" aria-modal="true" aria-label="Detail task PA-12: ' + esc(s.title) + '">' + headHtml(inst) + '<div class="td-body">';
+    if (inst.v === "A") {
+      return open + '<div class="td-doc"><div class="td-top">' + title + propsHtml(inst) + "</div>" + subsHtml(inst) + descHtml(inst) + timeHtmlA(inst) + talkHtml(inst) + "</div></div></div>";
+    }
+    return open + '<div class="td-split"><div class="td-main">' + title + subsHtml(inst) + descHtml(inst) + talkHtml(inst) + '</div><aside class="td-rail" aria-label="Properti dan waktu">' + propsHtml(inst) + timeHtmlB(inst) + "</aside></div></div></div>";
+  }
+
+  function closedHtml(inst) {
+    return inst.s.deleted
+      ? '<div class="td-closed"><p>PA-12 dihapus dari board semua anggota proyek. Ini hanya simulasi.</p><button type="button" class="btn" data-act="reset" data-k="reopen">Kembalikan isi contoh</button></div>'
+      : '<div class="td-closed"><p>Dialog detail task ditutup.</p><button type="button" class="btn" data-act="reopen" data-k="reopen">Buka lagi PA-12</button></div>';
+  }
+
+  function autosize(root) {
+    if (CSS.supports("field-sizing", "content")) return;
+    root.querySelectorAll(".td-title,.td-desc").forEach(function (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + 2 + "px"; });
+  }
+
+  function render(inst) {
+    inst.pending = false;
+    var host = inst.stage.querySelector("[data-host]");
+    var ae = document.activeElement;
+    var k = inst.focusK || (ae && inst.stage.contains(ae) && ae.dataset ? ae.dataset.k : null);
+    inst.focusK = null;
+    var body = host.querySelector(".td-body"), top = body ? body.scrollTop : 0;
+    host.innerHTML = inst.s.closed ? closedHtml(inst) : dialogHtml(inst);
+    var nb = host.querySelector(".td-body");
+    if (nb) nb.scrollTop = top;
+    autosize(host);
+    if (k) {
+      var el = host.querySelector(sel(k));
+      if (el) {
+        el.focus();
+        if ((el.tagName === "TEXTAREA" || el.type === "text") && el.setSelectionRange) el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }
+  }
+  function softRender(inst) {
+    setTimeout(function () { if (inst.pointerDown) inst.pending = true; else render(inst); }, 0);
+  }
+
+  /* ---------- Pilihan kecil ---------- */
+
+  function radioMenu(label, items, cur) {
+    return '<div role="menu" aria-label="' + label + '" class="td-menu">' + items.map(function (it) {
+      var on = it[0] === cur;
+      return '<button type="button" role="menuitemradio" class="td-mi" data-act="mi" data-mi data-val="' + it[0] + '" aria-checked="' + on + '" tabindex="-1">' + (it[2] || "") + "<span>" + it[1] + "</span>" + (on ? '<i class="ti ti-check td-mi-check" aria-hidden="true"></i>' : "") + "</button>";
+    }).join("") + "</div>";
+  }
+  function peopleItems() {
+    return ["ra", "rb", "rc"].map(function (p) { return [p, nameOf(p), av(p, true)]; }).concat([["", "Tanpa penanggung jawab", '<i class="ti ti-user-off" aria-hidden="true"></i>']]);
+  }
+  function addDays(n) { var d = new Date(TODAY); d.setDate(d.getDate() + n); return d; }
+  function popHtml(inst, kind, anchor) {
+    var s = inst.s, id = inst.id;
+    if (kind === "status") return radioMenu("Status", COL_ORDER.map(function (c) { return [c, COLS[c], '<i class="ti ' + COL_ICON[c] + '" aria-hidden="true"></i>']; }), s.status);
+    if (kind === "priority") return radioMenu("Prioritas", ["none", "low", "medium", "high"].map(function (p) { return [p, PRIO[p]]; }), s.priority);
+    if (kind === "assignee") return radioMenu("Penanggung jawab", peopleItems(), s.assignee || "");
+    if (kind === "sub-who") {
+      var t = s.subtasks.filter(function (x) { return x.id === anchor.dataset.sub; })[0];
+      return radioMenu("Penanggung jawab subtask", peopleItems(), (t && t.who) || "");
+    }
+    if (kind === "more") {
+      return '<div role="menu" aria-label="Lainnya" class="td-menu"><button type="button" role="menuitem" class="td-mi td-mi-danger" data-act="mi" data-mi data-val="delete" tabindex="-1"><i class="ti ti-trash" aria-hidden="true"></i><span>Hapus task</span></button></div>';
+    }
+    if (kind === "due") {
+      var opts = [["Hari ini", TODAY], ["Besok", addDays(1)], ["Jumat ini", addDays(4)], ["Senin depan", addDays(7)]];
+      var list = opts.map(function (o) {
+        var v = iso(o[1]), on = v === s.due;
+        return '<button type="button" class="td-mi" data-act="mi" data-mi data-val="' + v + '" aria-pressed="' + on + '"><span>' + o[0] + '</span><span class="td-mi-sub">' + DAYS[o[1].getDay()].slice(0, 3) + ", " + o[1].getDate() + " " + MON[o[1].getMonth()] + "</span>" + (on ? '<i class="ti ti-check td-mi-check" aria-hidden="true"></i>' : "") + "</button>";
+      }).join("") + '<button type="button" class="td-mi" data-act="mi" data-mi data-val=""><i class="ti ti-calendar-off" aria-hidden="true"></i><span>Tanpa tenggat</span></button>';
+      return '<div role="dialog" aria-label="Tenggat"><div class="td-menu-list">' + list + '</div><form class="td-pop-form" data-form="due" novalidate><label for="' + id + '-due">Tanggal lain</label><div class="td-pop-row"><input type="text" class="td-input" id="' + id + '-due" data-k="due-input" inputmode="numeric" autocomplete="off" placeholder="hh/bb/tttt" aria-describedby="' + id + '-due-err"><button type="submit" class="btn btn-ghost btn-sm">Pakai</button></div><p class="field-error" id="' + id + '-due-err" data-err hidden></p></form></div>';
+    }
+    if (kind === "labels") {
+      var checks = s.allLabels.map(function (l, i) {
+        return '<label class="td-mi td-mi-checkrow"><input type="checkbox" class="td-check" data-label="' + esc(l) + '" data-k="lb-' + esc(l) + '"' + (s.labels.indexOf(l) >= 0 ? " checked" : "") + ">" + esc(l) + "</label>";
+      }).join("");
+      return '<div role="dialog" aria-label="Label"><fieldset class="td-pop-checks"><legend class="sr-only">Label task</legend>' + checks + '</fieldset><form class="td-pop-form" data-form="label" novalidate><label for="' + id + '-lbl">Label baru</label><div class="td-pop-row"><input type="text" class="td-input" id="' + id + '-lbl" data-k="label-new" maxlength="30" autocomplete="off" placeholder="misalnya: struktur" aria-describedby="' + id + '-lbl-hint"><button type="submit" class="btn btn-ghost btn-sm">Tambah</button></div><p class="hint" id="' + id + '-lbl-hint" data-err>Paling banyak 10 label per task.</p></form></div>';
+    }
+    if (kind === "stop") {
+      return '<div role="dialog" aria-label="Hentikan timer"><form class="td-pop-form" data-form="stop" novalidate><p class="td-pop-title">Hentikan di <span data-clock>' + clock(timerSecs(s)) + '</span></p><label for="' + id + '-stop">Catatan sesi ini (opsional)</label><input type="text" class="td-input" id="' + id + '-stop" data-k="stop-note" data-bind="stopNote" maxlength="200" value="' + esc(s.stopNote) + '" placeholder="misalnya: gambar ulang kamar tidur 2"><div class="td-row-end"><button type="button" class="btn btn-ghost btn-sm" data-act="pop-cancel">Batal</button><button type="submit" class="btn btn-sm">Berhenti</button></div></form></div>';
+    }
+    return "";
+  }
+
+  function openPop(inst, kind, anchor, focusK) {
+    if (inst.pop) {
+      var same = inst.pop.kind === kind && inst.pop.anchorK === anchor.dataset.k;
+      closePop(inst, false);
+      if (same && !focusK) return;
+    }
+    var layer = inst.stage.querySelector("[data-layer]");
+    var el = document.createElement("div");
+    el.className = "td-pop" + (kind === "stop" ? " td-pop-stop" : "");
+    el.innerHTML = popHtml(inst, kind, anchor);
+    layer.appendChild(el);
+    var sr = inst.stage.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
+    var left = Math.min(ar.left - sr.left, sr.width - el.offsetWidth - 8);
+    if (kind === "more" || kind === "stop") left = ar.right - sr.left - el.offsetWidth;
+    var top = ar.bottom - sr.top + 4;
+    if (top + el.offsetHeight > sr.height - 8) top = Math.max(8, ar.top - sr.top - el.offsetHeight - 4);
+    el.style.left = Math.max(8, left) + "px";
+    el.style.top = top + "px";
+    anchor.setAttribute("aria-expanded", "true");
+    inst.pop = { kind: kind, el: el, anchorK: anchor.dataset.k, sub: anchor.dataset.sub };
+    var f = (focusK && el.querySelector(sel(focusK))) || el.querySelector('[aria-checked="true"],[aria-pressed="true"]') || el.querySelector("[data-mi],input,button");
+    if (f) f.focus();
+  }
+  function closePop(inst, refocus) {
+    if (!inst.pop) return;
+    var p = inst.pop;
+    inst.pop = null;
+    p.el.remove();
+    var a = inst.stage.querySelector(sel(p.anchorK));
+    if (a) { a.setAttribute("aria-expanded", "false"); if (refocus) a.focus(); }
+  }
+  function reopenPop(inst, kind, anchorK, focusK) {
+    closePop(inst, false);
+    inst.focusK = anchorK;
+    render(inst);
+    var a = inst.stage.querySelector(sel(anchorK));
+    if (a) openPop(inst, kind, a, focusK);
+  }
+
+  function setStatus(inst, c) {
+    var st = inst.s.st, p = perf();
+    st.acc[st.cur] += (p - st.since) / 1000;
+    st.cur = c;
+    st.since = p;
+    if (c === "done") st.cycle = st.acc.todo + st.acc.doing + st.acc.done;
+    else st.cycle = null;
+    inst.s.status = c;
+    act(inst, "memindahkan task ke " + COLS[c]);
+  }
+
+  function pick(inst, val) {
+    var p = inst.pop, s = inst.s, kind = p.kind, anchorK = p.anchorK;
+    closePop(inst, false);
+    if (kind === "status" && val !== s.status) { setStatus(inst, val); say(inst, "Status: " + COLS[val]); }
+    if (kind === "priority" && val !== s.priority) { s.priority = val; act(inst, "mengubah prioritas menjadi " + PRIO[val]); }
+    if (kind === "assignee" && (val || null) !== s.assignee) {
+      s.assignee = val || null;
+      act(inst, val ? "menugaskan task ke " + whoOf(val) : "mengosongkan penanggung jawab");
+    }
+    if (kind === "sub-who") {
+      s.subtasks.forEach(function (t) { if (t.id === p.sub) t.who = val || null; });
+    }
+    if (kind === "due" && (val || null) !== s.due) {
+      s.due = val || null;
+      act(inst, val ? "mengubah tenggat menjadi " + dueInfo(val).base : "menghapus tenggat");
+    }
+    if (kind === "more" && val === "delete") { openDeleteConfirm(inst, anchorK); return; }
+    inst.focusK = anchorK;
+    render(inst);
+  }
+
+  /* ---------- Konfirmasi ---------- */
+
+  function openConfirm(inst, o) {
+    var layer = inst.stage.querySelector("[data-layer]"), id = inst.id;
+    var el = document.createElement("div");
+    el.className = "td-modal-wrap";
+    el.innerHTML = '<div class="td-modal-scrim"></div><div class="td-modal" role="alertdialog" aria-modal="true" aria-labelledby="' + id + '-cf-t" aria-describedby="' + id + '-cf-d">' +
+      '<h2 class="td-modal-title" id="' + id + '-cf-t">' + esc(o.title) + '</h2><p id="' + id + '-cf-d">' + esc(o.body) + "</p>" +
+      '<div class="td-modal-actions"><button type="button" class="btn btn-ghost" data-act="cf-cancel">Batal</button><button type="button" class="btn btn-danger" data-act="cf-ok">' + esc(o.ok) + "</button></div></div>";
+    layer.appendChild(el);
+    inst.stage.querySelector("[data-host]").inert = true;
+    inst.confirm = { el: el, onOk: o.onOk, returnK: o.returnK };
+    el.querySelector('[data-act="cf-cancel"]').focus();
+  }
+  function closeConfirm(inst, ok) {
+    var c = inst.confirm;
+    if (!c) return;
+    inst.confirm = null;
+    c.el.remove();
+    inst.stage.querySelector("[data-host]").inert = false;
+    if (ok) { c.onOk(); return; }
+    var a = inst.stage.querySelector(sel(c.returnK));
+    if (a) a.focus();
+  }
+  function openDeleteConfirm(inst, returnK) {
+    var s = inst.s;
+    openConfirm(inst, {
+      title: "Hapus task PA-12?",
+      body: '"' + s.title + '" beserta ' + s.subtasks.length + " subtask, " + s.comments.length + " komentar, dan " + s.entries.length + " catatan waktunya hilang dari board semua anggota proyek. Tindakan ini tidak bisa dibatalkan.",
+      ok: "Hapus PA-12",
+      returnK: returnK,
+      onOk: function () { s.deleted = true; s.closed = true; inst.focusK = "reopen"; render(inst); say(inst, "PA-12 dihapus."); }
+    });
+  }
+
+  /* ---------- Aksi ---------- */
+
+  function findSub(s, id) { return s.subtasks.filter(function (t) { return t.id === id; })[0]; }
+
+  function stopTimer(inst) {
+    var s = inst.s, secs = Math.round(timerSecs(s)), note = s.stopNote.trim();
+    s.timer.running = false;
+    s.entries.unshift({ id: "e" + s.nextId++, who: "ra", secs: secs, manual: false, at: nowLabel(), note: note });
+    s.stopNote = "";
+    act(inst, "mencatat " + dur(secs));
+    say(inst, "Timer berhenti. Tercatat " + dur(secs) + ".");
+  }
+  function startTimer(inst) {
+    var s = inst.s;
+    s.timer = { running: true, start: perf(), since: hhmm(now()) };
+    say(inst, "Timer berjalan.");
+  }
+
+  function moveSub(inst, id, delta) {
+    var list = inst.s.subtasks, i = list.findIndex(function (t) { return t.id === id; }), j = i + delta;
+    if (i < 0 || j < 0 || j >= list.length) return false;
+    var t = list.splice(i, 1)[0];
+    list.splice(j, 0, t);
+    say(inst, '"' + t.title + '" dipindah ke posisi ' + (j + 1) + " dari " + list.length + ".");
+    return true;
+  }
+
+  function commit(inst, el) {
+    var s = inst.s, kind = el.dataset.commit, v = el.value;
+    if (kind === "title") {
+      v = v.replace(/\s+/g, " ").trim();
+      if (!v) { el.value = s.title; say(inst, "Judul tidak boleh kosong. Judul lama dipakai lagi."); return false; }
+      if (v === s.title) return false;
+      s.title = v; act(inst, 'mengubah judul menjadi "' + v + '"'); return true;
+    }
+    if (kind === "sub") {
+      var t = findSub(s, el.dataset.sub);
+      if (!t) return false;
+      v = v.trim();
+      if (!v) { el.value = t.title; say(inst, "Judul subtask tidak boleh kosong. Judul lama dipakai lagi."); return false; }
+      if (v === t.title) return false;
+      t.title = v; return true;
+    }
+    if (kind === "desc") {
+      if (v === s.desc) return false;
+      s.desc = v; act(inst, "mengubah deskripsi"); return true;
+    }
+    return false;
+  }
+  function isDirty(inst, el) {
+    var s = inst.s, kind = el.dataset.commit;
+    if (kind === "title") return el.value !== s.title;
+    if (kind === "desc") return el.value !== s.desc;
+    if (kind === "sub") { var t = findSub(s, el.dataset.sub); return t && el.value !== t.title; }
+    return false;
+  }
+  function revert(inst, el) {
+    var s = inst.s, kind = el.dataset.commit;
+    if (kind === "title") el.value = s.title;
+    if (kind === "desc") el.value = s.desc;
+    if (kind === "sub") el.value = findSub(s, el.dataset.sub).title;
+    autosize(inst.stage);
+    say(inst, "Perubahan dibatalkan.");
+  }
+
+  function addSub(inst) {
+    var s = inst.s, v = s.newSub.trim();
+    if (!v) return;
+    var t = { id: "s" + s.nextId++, title: v, done: false, who: null };
+    s.subtasks.push(t);
+    s.newSub = "";
+    act(inst, 'menambahkan subtask "' + v + '"');
+    say(inst, "Subtask ditambahkan.");
+    inst.focusK = "sub-new";
+    render(inst);
+  }
+
+  function onClick(inst, e) {
+    var b = e.target.closest("[data-act]");
+    if (!b || !inst.stage.contains(b)) return;
+    var s = inst.s, a = b.dataset.act;
+    if (a === "sub-toggle") return;
+    if (a === "close") { s.closed = true; inst.focusK = "reopen"; render(inst); return; }
+    if (a === "reopen") { s.closed = false; inst.focusK = "title"; render(inst); return; }
+    if (a === "reset") { resetInst(inst); return; }
+    if (a === "pop") { openPop(inst, b.dataset.pop, b); return; }
+    if (a === "mi") { if (inst.pop) pick(inst, b.dataset.val); return; }
+    if (a === "pop-cancel") { closePop(inst, true); return; }
+    if (a === "start") { startTimer(inst); inst.focusK = "timer"; render(inst); return; }
+    if (a === "stop") { stopTimer(inst); inst.focusK = "timer"; render(inst); return; }
+    if (a === "sub-del") {
+      var i = s.subtasks.findIndex(function (t) { return t.id === b.dataset.sub; });
+      var t = s.subtasks.splice(i, 1)[0];
+      act(inst, 'menghapus subtask "' + t.title + '"');
+      say(inst, 'Subtask "' + t.title + '" dihapus.');
+      var next = s.subtasks[i] || s.subtasks[i - 1];
+      inst.focusK = next ? "st-" + next.id : "sub-add";
+      render(inst);
+      return;
+    }
+    if (a === "sub-add-open") { s.addOpen = true; inst.focusK = "sub-new"; render(inst); return; }
+    if (a === "log-open") { s.logOpen = !s.logOpen; s.logErr = ""; inst.focusK = s.logOpen ? "log-h" : "log-open"; render(inst); return; }
+    if (a === "log-cancel") { s.logOpen = false; s.logErr = ""; s.log = { h: "", m: "", note: "" }; inst.focusK = "log-open"; render(inst); return; }
+    if (a === "tab") { s.tab = b.dataset.tab; inst.focusK = "tab-" + s.tab; render(inst); return; }
+    if (a === "send") { sendComment(inst); return; }
+    if (a === "entry-del") {
+      var en = s.entries.filter(function (x) { return x.id === b.dataset.id; })[0];
+      openConfirm(inst, {
+        title: "Hapus catatan waktu ini?",
+        body: "Catatan " + dur(en.secs) + " dari " + en.at + " dihapus dan tidak lagi dihitung di total task. Tindakan ini tidak bisa dibatalkan.",
+        ok: "Hapus catatan",
+        returnK: b.dataset.k,
+        onOk: function () {
+          s.entries = s.entries.filter(function (x) { return x.id !== en.id; });
+          say(inst, "Catatan waktu dihapus.");
+          inst.focusK = "entries";
+          render(inst);
+        }
+      });
+      return;
+    }
+    if (a === "cf-cancel") { closeConfirm(inst, false); return; }
+    if (a === "cf-ok") { closeConfirm(inst, true); return; }
+  }
+
+  function sendComment(inst) {
+    var s = inst.s, v = s.draftComment.trim();
+    if (!v) { s.commentErr = "Tulis isi komentarnya dulu."; inst.focusK = "comment"; render(inst); return; }
+    s.comments.push({ who: "ra", at: nowLabel(), text: v });
+    s.draftComment = "";
+    s.commentErr = "";
+    act(inst, "menambahkan komentar");
+    say(inst, "Komentar terkirim.");
+    inst.focusK = "comment";
+    render(inst);
+  }
+
+  function onSubmit(inst, e) {
+    var f = e.target, s = inst.s, kind = f.dataset.form;
+    e.preventDefault();
+    if (kind === "log") {
+      var h = s.log.h === "" ? 0 : Number(s.log.h), m = s.log.m === "" ? 0 : Number(s.log.m);
+      var total = h * 60 + m;
+      if (!Number.isInteger(h) || !Number.isInteger(m) || h < 0 || m < 0 || m > 59 || total < 1 || total > 1440) {
+        s.logErr = "Isi durasi antara 1 menit dan 24 jam, misalnya 1 j 30 m.";
+        inst.focusK = "log-h";
+        render(inst);
+        return;
+      }
+      s.entries.unshift({ id: "e" + s.nextId++, who: "ra", secs: total * 60, manual: true, at: nowLabel(), note: s.log.note.trim() });
+      act(inst, "mencatat " + dur(total * 60));
+      say(inst, "Tercatat " + dur(total * 60) + ". Total task sekarang " + dur(totalSecs(s)) + ".");
+      s.log = { h: "", m: "", note: "" };
+      s.logErr = "";
+      s.logOpen = false;
+      inst.focusK = "log-open";
+      render(inst);
+      return;
+    }
+    if (kind === "stop") {
+      var anchorK = inst.pop.anchorK;
+      closePop(inst, false);
+      stopTimer(inst);
+      inst.focusK = anchorK;
+      render(inst);
+      return;
+    }
+    if (kind === "due") {
+      var input = f.querySelector("input"), err = f.querySelector("[data-err]");
+      var mt = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(input.value.trim());
+      var d = mt ? new Date(+mt[3], +mt[2] - 1, +mt[1]) : null;
+      if (!d || d.getDate() !== +mt[1] || d.getMonth() !== +mt[2] - 1) {
+        err.hidden = false;
+        err.innerHTML = '<i class="ti ti-alert-circle" aria-hidden="true"></i>Tulis tanggal sebagai hari/bulan/tahun, misalnya 4/12/2026.';
+        input.setAttribute("aria-invalid", "true");
+        input.focus();
+        return;
+      }
+      pick(inst, iso(d));
+      return;
+    }
+    if (kind === "label") {
+      var li = f.querySelector("input"), hint = f.querySelector("[data-err]"), v = li.value.trim().toLowerCase();
+      if (!v) { li.focus(); return; }
+      if (s.labels.length >= 10) { hint.textContent = "Sudah 10 label. Lepas satu dulu untuk menambah yang baru."; return; }
+      if (s.allLabels.indexOf(v) < 0) s.allLabels.push(v);
+      if (s.labels.indexOf(v) < 0) { s.labels.push(v); act(inst, "mengubah label menjadi " + s.labels.join(", ")); }
+      reopenPop(inst, "labels", inst.pop.anchorK, "label-new");
+      say(inst, "Label " + v + " dipasang.");
+    }
+  }
+
+  function onChange(inst, e) {
+    var t = e.target, s = inst.s;
+    if (t.dataset.act === "sub-toggle") {
+      var st = findSub(s, t.dataset.sub);
+      st.done = t.checked;
+      act(inst, (st.done ? "menyelesaikan" : "membuka lagi") + ' subtask "' + st.title + '"');
+      var done = s.subtasks.filter(function (x) { return x.done; }).length;
+      say(inst, (st.done ? "Selesai. " : "Dibuka lagi. ") + done + " dari " + s.subtasks.length + " subtask selesai.");
+      inst.focusK = t.dataset.k;
+      render(inst);
+      return;
+    }
+    if (t.dataset.label !== undefined && inst.pop) {
+      var l = t.dataset.label;
+      if (t.checked) {
+        if (s.labels.length >= 10) { t.checked = false; return; }
+        s.labels.push(l);
+      } else s.labels = s.labels.filter(function (x) { return x !== l; });
+      act(inst, s.labels.length ? "mengubah label menjadi " + s.labels.join(", ") : "menghapus semua label");
+      reopenPop(inst, "labels", inst.pop.anchorK, t.dataset.k);
+    }
+  }
+
+  function onInput(inst, e) {
+    var t = e.target, b = t.dataset.bind;
+    if (b) {
+      var parts = b.split("."), o = inst.s;
+      while (parts.length > 1) o = o[parts.shift()];
+      o[parts[0]] = t.value;
+    }
+    if (t.matches(".td-title,.td-desc")) autosize(inst.stage);
+  }
+
+  function onFocusOut(inst, e) {
+    var t = e.target, s = inst.s;
+    if (inst.pop && inst.pop.el.contains(t) && e.relatedTarget && !inst.pop.el.contains(e.relatedTarget)) closePop(inst, false);
+    if (t.dataset && t.dataset.commit && commit(inst, t)) softRender(inst);
+    if (t.dataset && t.dataset.k === "sub-new" && !t.value.trim()) { s.addOpen = false; softRender(inst); }
+  }
+
+  function menuNav(inst, e) {
+    var items = Array.prototype.slice.call(inst.pop.el.querySelectorAll("[data-mi]"));
+    var i = items.indexOf(document.activeElement);
+    if (i < 0) return false;
+    var j = -1;
+    if (e.key === "ArrowDown") j = (i + 1) % items.length;
+    else if (e.key === "ArrowUp") j = (i - 1 + items.length) % items.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = items.length - 1;
+    if (j < 0) return false;
+    e.preventDefault();
+    items[j].focus();
+    return true;
+  }
+
+  function onKey(inst, e) {
+    var t = e.target, s = inst.s;
+    if (e.key === "Escape") {
+      if (inst.confirm) { e.preventDefault(); closeConfirm(inst, false); return; }
+      if (inst.pop) { e.preventDefault(); closePop(inst, true); return; }
+      if (t.dataset.commit && isDirty(inst, t)) { e.preventDefault(); revert(inst, t); return; }
+      if (t.dataset.k === "sub-new") { e.preventDefault(); s.addOpen = false; s.newSub = ""; inst.focusK = "sub-add"; render(inst); return; }
+      if (s.logOpen && t.closest(".td-log-form")) { e.preventDefault(); s.logOpen = false; s.logErr = ""; inst.focusK = "log-open"; render(inst); return; }
+      if (!s.closed) { e.preventDefault(); s.closed = true; inst.focusK = "reopen"; render(inst); }
+      return;
+    }
+    if (inst.confirm && e.key === "Tab") {
+      var bs = inst.confirm.el.querySelectorAll("button"), first = bs[0], last = bs[bs.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      return;
+    }
+    if (inst.pop && inst.pop.el.contains(t)) { menuNav(inst, e); return; }
+    if (t.dataset.act === "pop" && e.key === "ArrowDown") { e.preventDefault(); openPop(inst, t.dataset.pop, t); return; }
+    if (e.key === "Enter" && !e.shiftKey && t.dataset.commit && t.dataset.commit !== "desc") {
+      e.preventDefault();
+      if (commit(inst, t)) { say(inst, "Tersimpan."); render(inst); }
+      return;
+    }
+    if (e.key === "Enter" && t.dataset.k === "sub-new") { e.preventDefault(); addSub(inst); return; }
+    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      var row = t.closest(".td-sub[data-id]");
+      if (row) {
+        e.preventDefault();
+        if (t.dataset.commit) commit(inst, t);
+        if (moveSub(inst, row.dataset.id, e.key === "ArrowUp" ? -1 : 1)) { inst.focusK = t.dataset.k; render(inst); }
+      }
+      return;
+    }
+    if (e.key === "Enter" && e.ctrlKey && t.dataset.k === "comment") { e.preventDefault(); sendComment(inst); return; }
+    if (t.getAttribute("role") === "tab" && ["ArrowLeft", "ArrowRight", "Home", "End"].indexOf(e.key) >= 0) {
+      e.preventDefault();
+      var order = ["comments", "activity"], i = order.indexOf(s.tab);
+      var j = e.key === "Home" ? 0 : e.key === "End" ? 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + 2) % 2;
+      s.tab = order[j];
+      inst.focusK = "tab-" + s.tab;
+      render(inst);
+    }
+  }
+
+  function bindDrag(inst) {
+    var st = inst.stage;
+    function clear() { st.querySelectorAll(".td-sub").forEach(function (r) { r.classList.remove("drop-before", "drop-after", "is-dragging"); r.draggable = false; }); }
+    st.addEventListener("pointerdown", function (e) { var h = e.target.closest("[data-handle]"); if (h) h.closest(".td-sub").draggable = true; });
+    st.addEventListener("dragstart", function (e) {
+      var li = e.target.closest && e.target.closest(".td-sub[data-id]");
+      if (!li || !li.draggable) return;
+      inst.dragId = li.dataset.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", li.dataset.id);
+      li.classList.add("is-dragging");
+    });
+    st.addEventListener("dragover", function (e) {
+      if (!inst.dragId) return;
+      var li = e.target.closest(".td-sub[data-id]");
+      if (!li) return;
+      e.preventDefault();
+      var r = li.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+      st.querySelectorAll(".td-sub").forEach(function (x) { x.classList.remove("drop-before", "drop-after"); });
+      li.classList.add(after ? "drop-after" : "drop-before");
+    });
+    st.addEventListener("drop", function (e) {
+      if (!inst.dragId) return;
+      var li = e.target.closest(".td-sub[data-id]");
+      e.preventDefault();
+      if (li && li.dataset.id !== inst.dragId) {
+        var list = inst.s.subtasks, from = list.findIndex(function (t) { return t.id === inst.dragId; });
+        var item = list.splice(from, 1)[0];
+        var to = list.findIndex(function (t) { return t.id === li.dataset.id; });
+        if (li.classList.contains("drop-after")) to += 1;
+        list.splice(to, 0, item);
+        say(inst, '"' + item.title + '" dipindah ke posisi ' + (to + 1) + " dari " + list.length + ".");
+      }
+      inst.dragId = null;
+      clear();
+      render(inst);
+    });
+    st.addEventListener("dragend", function () { inst.dragId = null; clear(); });
+  }
+
+  function bind(inst) {
+    var st = inst.stage;
+    st.addEventListener("pointerdown", function () { inst.pointerDown = true; });
+    window.addEventListener("pointerup", function () {
+      inst.pointerDown = false;
+      st.querySelectorAll(".td-sub[draggable=true]").forEach(function (r) { if (!inst.dragId) r.draggable = false; });
+      if (inst.pending) setTimeout(function () { if (inst.pending) render(inst); }, 0);
+    });
+    document.addEventListener("pointerdown", function (e) {
+      if (inst.pop && !inst.pop.el.contains(e.target)) {
+        var a = inst.stage.querySelector(sel(inst.pop.anchorK));
+        if (!a || !a.contains(e.target)) closePop(inst, false);
+      }
+    }, true);
+    st.addEventListener("click", function (e) { onClick(inst, e); });
+    st.addEventListener("keydown", function (e) { onKey(inst, e); });
+    st.addEventListener("input", function (e) { onInput(inst, e); });
+    st.addEventListener("change", function (e) { onChange(inst, e); });
+    st.addEventListener("focusout", function (e) { onFocusOut(inst, e); });
+    st.addEventListener("submit", function (e) { onSubmit(inst, e); });
+    st.addEventListener("toggle", function (e) { if (e.target.classList && e.target.classList.contains("td-entries")) inst.s.entriesOpen = e.target.open; }, true);
+    st.addEventListener("scroll", function (e) { if (inst.pop && !inst.pop.el.contains(e.target)) closePop(inst, false); }, true);
+    bindDrag(inst);
+  }
+
+  function resetInst(inst) {
+    closePop(inst, false);
+    if (inst.confirm) closeConfirm(inst, false);
+    inst.s = fresh();
+    inst.focusK = null;
+    render(inst);
+  }
+
+  function tick(inst) {
+    var s = inst.s, st = inst.stage;
+    if (s.closed) return;
+    st.querySelectorAll("[data-clock]").forEach(function (n) { n.textContent = clock(timerSecs(s)); });
+    st.querySelectorAll("[data-pt]").forEach(function (n) { n.textContent = dur(personSecs(s, n.dataset.pt)); });
+    st.querySelectorAll("[data-total]").forEach(function (n) { n.textContent = dur(totalSecs(s)); });
+    st.querySelectorAll("[data-stt]").forEach(function (n) { n.textContent = dur(stSecs(s, n.dataset.stt)); });
+  }
+
+  var insts = [];
+  document.querySelectorAll("[data-mock]").forEach(function (stage) {
+    var inst = { stage: stage, v: stage.dataset.mock, id: "m" + stage.dataset.mock.toLowerCase(), s: fresh(), pop: null, confirm: null };
+    stage.innerHTML = '<div data-host></div><p class="sr-only" aria-live="polite" data-live></p><div data-layer></div>';
+    insts.push(inst);
+    bind(inst);
+    render(inst);
+  });
+  setInterval(function () { insts.forEach(tick); }, 1000);
+
+  document.querySelectorAll("[data-ctl]").forEach(function (ctl) {
+    var inst = insts.filter(function (i) { return i.v === ctl.dataset.ctl; })[0];
+    ctl.addEventListener("click", function (e) {
+      var b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.theme) {
+        inst.stage.classList.toggle("t-dark", b.dataset.theme === "dark");
+        inst.stage.classList.toggle("t-light", b.dataset.theme !== "dark");
+      }
+      if (b.dataset.h) inst.stage.style.setProperty("--dlg-h", b.dataset.h + "px");
+      if (b.dataset.theme || b.dataset.h) {
+        b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+        closePop(inst, false);
+        if (b.dataset.h) measure();
+      }
+      if (b.hasAttribute("data-reset")) resetInst(inst);
+    });
+  });
+
+  /* Ukur isi yang terlihat tanpa menggulir pada tinggi 720 px (layar 1366x768). */
+  function measure() {
+    insts.forEach(function (inst) {
+      var cell = document.querySelector('[data-measure="' + inst.v + '"]');
+      if (!cell || cell.dataset.done) return;
+      var dlg = inst.stage.querySelector(".td-dlg");
+      if (!dlg) return;
+      var old = inst.stage.style.getPropertyValue("--dlg-h");
+      inst.stage.style.setProperty("--dlg-h", "720px");
+      var body = dlg.querySelector(".td-body"), top = body.scrollTop;
+      body.scrollTop = 0;
+      var limit = body.getBoundingClientRect().bottom;
+      var names = [["Subtask", "-sub-h"], ["Deskripsi", "-desc-h"], ["Waktu", "-time-h"]];
+      var seen = names.map(function (n) {
+        var h = dlg.querySelector("#" + inst.id + n[1]);
+        if (!h) return null;
+        var sec = h.closest(".td-sec"), r = sec.getBoundingClientRect();
+        var state = r.bottom <= limit ? "utuh" : r.top + 30 < limit ? "sebagian" : "di bawah lipatan";
+        return n[0] + " " + state;
+      }).filter(Boolean);
+      var tabs = dlg.querySelector(".td-tabs").getBoundingClientRect();
+      seen.push("tab komentar " + (tabs.bottom <= limit ? "terlihat" : "di bawah lipatan"));
+      seen.push("timer " + (dlg.querySelector('[data-k="timer"]').getBoundingClientRect().bottom <= limit ? "terlihat" : "di bawah lipatan"));
+      var status = dlg.querySelector('[data-k="p-status"]').getBoundingClientRect();
+      seen.push("Status " + (status.bottom <= limit ? "terlihat" : "di bawah lipatan"));
+      body.scrollTop = top;
+      if (old) inst.stage.style.setProperty("--dlg-h", old); else inst.stage.style.removeProperty("--dlg-h");
+      cell.textContent = "Tanpa menggulir: " + seen.join(", ") + ".";
+      cell.dataset.done = "1";
+    });
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure); else measure();
+})();
+</script>
+</body>
+</html>

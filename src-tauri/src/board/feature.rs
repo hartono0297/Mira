@@ -50,10 +50,17 @@
 //!   checks the reminders and offers the new changes to the other peers
 //!   (forwarding).
 //!
+//! - When the change rules grow (v0.4: subtasks and time entries), records
+//!   an older version refused for good may be fine now. [`reset_rejected_once`]
+//!   empties `board_rejected` once per rules version, so peers offer those
+//!   records again and the new rules judge them; changes waiting on them
+//!   follow. Records that are still wrong are refused again.
+//!
 //! [`BoardSyncNotifier`] is the hook for local changes: the reminders plus
 //! `FeatureHub::notify_changed`. [`register`] wires both into the app.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -73,7 +80,31 @@ use crate::network::feature::{
     FeatureHub, FeatureIngest, FeatureRecord, FeatureSync, TOPIC_BOARD, record_id,
 };
 use crate::permissions;
+use crate::settings;
 use crate::state::{Core, MiraState};
+
+/// Setting that records which change rules `board_rejected` was last
+/// emptied for ([`reset_rejected_once`]).
+pub const RULES_VERSION_KEY: &str = "board.rules_version";
+/// Version of `rules.rs`: 2 = v0.4 (subtasks and time entries).
+pub const RULES_VERSION: i64 = 2;
+
+/// Empties `board_rejected` once for [`RULES_VERSION`] and records it in
+/// `settings`; `true` when it did. Records refused under older rules are
+/// then asked for and judged again.
+pub fn reset_rejected_once(conn: &Connection) -> AppResult<bool> {
+    let done = settings::get(conn, RULES_VERSION_KEY)?
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .is_some_and(|v| v >= RULES_VERSION);
+    if done {
+        return Ok(false);
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM board_rejected", [])?;
+    settings::set(&tx, RULES_VERSION_KEY, &RULES_VERSION.to_string())?;
+    tx.commit()?;
+    Ok(true)
+}
 
 /// Most rows in `board_pending`; records beyond it are not kept (peers offer
 /// them again later).
@@ -149,6 +180,9 @@ pub struct BoardFeature {
     hook: Arc<dyn BoardSyncHook>,
     /// Membership log version at the last retry of held changes.
     membership: Mutex<Option<(i64, i64)>>,
+    /// [`reset_rejected_once`] ran (it also runs in [`register`]; this
+    /// covers a start where the database was not ready yet).
+    rules_checked: AtomicBool,
 }
 
 impl BoardFeature {
@@ -160,6 +194,7 @@ impl BoardFeature {
             state,
             hook,
             membership: Mutex::new(None),
+            rules_checked: AtomicBool::new(false),
         }
     }
 
@@ -167,7 +202,13 @@ impl BoardFeature {
     /// the lock, also when `f` failed halfway).
     fn run<T>(&self, f: impl FnOnce(&mut Core, &mut Announce) -> AppResult<T>) -> Result<T, String> {
         let mut announce = Announce::new();
-        let out = self.state.with_core(|core| f(core, &mut announce));
+        let out = self.state.with_core(|core| {
+            if !self.rules_checked.load(Ordering::Relaxed) {
+                reset_rejected_once(&core.db)?;
+                self.rules_checked.store(true, Ordering::Relaxed);
+            }
+            f(core, &mut announce)
+        });
         for (project_id, change) in &announce {
             self.hook.on_local_change(project_id, change);
         }
@@ -828,6 +869,13 @@ pub fn register<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         .try_state::<BoardRuntime>()
         .map(|r| Arc::clone(&r.hook))
         .unwrap_or_else(|| Arc::new(NoopSync));
+    // v0.4: records refused by the older rules are judged again.
+    if let Err(err) = state.with_core(|core| reset_rejected_once(&core.db)) {
+        eprintln!(
+            "Mira: daftar perubahan board yang ditolak belum bisa disegarkan [{}]: {err}",
+            err.code()
+        );
+    }
     hub.register(Arc::new(BoardFeature::new(state.inner().clone(), hook)));
 }
 

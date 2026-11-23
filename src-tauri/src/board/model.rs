@@ -18,6 +18,14 @@ pub const DESCRIPTION_MAX_CHARS: usize = 10_000;
 pub const LABELS_MAX: usize = 10;
 pub const LABEL_MAX_CHARS: usize = 30;
 pub const COMMENT_MAX_CHARS: usize = 5_000;
+pub const SUBTASK_TITLE_MAX_CHARS: usize = 200;
+/// Most live (not deleted) subtasks of one task.
+pub const SUBTASKS_MAX: usize = 100;
+pub const TIME_NOTE_MAX_CHARS: usize = 200;
+/// Most live (not deleted) time entries of one task.
+pub const TIME_ENTRIES_MAX: usize = 2_000;
+/// Longest time logged by hand at once: 24 hours.
+pub const LOG_MINUTES_MAX: i64 = 1_440;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -134,6 +142,13 @@ pub struct TaskCard {
     /// Changes from another laptop were merged automatically (F-TASK-04).
     /// Always false until board sync exists.
     pub merged: bool,
+    /// Live subtasks ticked and in total.
+    pub subtask_done: u32,
+    pub subtask_total: u32,
+    /// Seconds of stopped time entries that are not deleted, everyone's.
+    pub tracked_secs: i64,
+    /// Start (RFC 3339) of every running timer, everyone's.
+    pub timers_running_since: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -172,6 +187,87 @@ pub struct Activity {
     pub detail: String,
 }
 
+/// A live subtask, in list order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subtask {
+    pub id: String,
+    pub title: String,
+    pub done: bool,
+    pub assignee: Option<Person>,
+    pub done_by: Option<Person>,
+    pub done_at: Option<String>,
+    pub created_by: Person,
+}
+
+/// One time entry; `end` is `None` while the timer runs (then `secs` is 0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeEntry {
+    pub id: String,
+    pub person: Person,
+    pub start: String,
+    pub end: Option<String>,
+    pub manual: bool,
+    pub note: String,
+    pub secs: i64,
+    pub mine: bool,
+}
+
+/// Time per person: `secs` of stopped entries, `running_since` the start
+/// of a running timer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeTotal {
+    pub person: Person,
+    pub secs: i64,
+    pub running_since: Option<String>,
+}
+
+/// Seconds per column (`Record<ColumnId, number>` in TypeScript).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct ColumnSecs {
+    pub todo: i64,
+    pub doing: i64,
+    pub done: i64,
+}
+
+impl ColumnSecs {
+    pub fn get(&self, c: ColumnId) -> i64 {
+        match c {
+            ColumnId::Todo => self.todo,
+            ColumnId::Doing => self.doing,
+            ColumnId::Done => self.done,
+        }
+    }
+
+    pub fn add(&mut self, c: ColumnId, secs: i64) {
+        let slot = match c {
+            ColumnId::Todo => &mut self.todo,
+            ColumnId::Doing => &mut self.doing,
+            ColumnId::Done => &mut self.done,
+        };
+        *slot = slot.saturating_add(secs);
+    }
+}
+
+/// Time per column from the move history (`timing::status_time`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusTime {
+    /// Closed intervals only; the open one runs from `current_since` in
+    /// `current_column`.
+    pub closed_secs: ColumnSecs,
+    pub current_column: ColumnId,
+    pub current_since: String,
+    /// From created to the last move into Selesai; `None` unless the task
+    /// is in Selesai now.
+    pub cycle_secs: Option<i64>,
+    /// A time in the future or a history whose order disagrees with its
+    /// times: laptop clocks may differ.
+    pub clock_warning: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDetail {
@@ -188,6 +284,14 @@ pub struct TaskDetail {
     pub can_delete: bool,
     /// Guests read comments but cannot write them.
     pub can_comment: bool,
+    pub subtasks: Vec<Subtask>,
+    /// Newest first, deleted ones left out.
+    pub time_entries: Vec<TimeEntry>,
+    /// Per person, by name.
+    pub time_totals: Vec<TimeTotal>,
+    /// Id of the viewer's running timer on this task.
+    pub my_running_entry: Option<String>,
+    pub status_time: StatusTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -229,6 +333,19 @@ pub struct TaskPatch {
     pub priority: Option<Priority>,
     #[serde(default)]
     pub labels: Option<Vec<String>>,
+}
+
+/// Input of `board_update_subtask`. A missing field is left unchanged;
+/// `assignee: null` clears it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtaskPatch {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub done: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    pub assignee: Option<Option<String>>,
 }
 
 /// Called only when the field is present, so `null` becomes `Some(None)`.
@@ -383,6 +500,55 @@ pub fn validate_comment(body: &str) -> AppResult<String> {
     Ok(body.to_owned())
 }
 
+/// Trimmed subtask title, 1 to 200 characters, one line.
+pub fn validate_subtask_title(title: &str) -> AppResult<String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(invalid("Judul subtask masih kosong. Tulis langkah kecilnya dulu."));
+    }
+    if title.chars().count() > SUBTASK_TITLE_MAX_CHARS {
+        return Err(invalid(format!(
+            "Judul subtask paling banyak {SUBTASK_TITLE_MAX_CHARS} karakter. Singkat judulnya, rinciannya bisa ditulis di deskripsi task."
+        )));
+    }
+    if identity::has_forbidden_chars(title) {
+        return Err(invalid(
+            "Judul subtask berisi karakter yang tidak diizinkan, misalnya baris baru atau tab. Tulis dalam satu baris.",
+        ));
+    }
+    Ok(title.to_owned())
+}
+
+/// Trimmed note of a time entry, at most 200 characters, one line; absent
+/// or blank gives an empty note.
+pub fn validate_time_note(note: Option<&str>) -> AppResult<String> {
+    let note = note.unwrap_or("").trim();
+    if note.chars().count() > TIME_NOTE_MAX_CHARS {
+        return Err(invalid(format!(
+            "Catatan waktu paling banyak {TIME_NOTE_MAX_CHARS} karakter. Singkat catatannya, rinciannya bisa ditulis di komentar."
+        )));
+    }
+    if identity::has_forbidden_chars(note) {
+        return Err(invalid(
+            "Catatan waktu berisi karakter yang tidak diizinkan, misalnya baris baru atau tab. Tulis dalam satu baris.",
+        ));
+    }
+    Ok(note.to_owned())
+}
+
+/// Whole minutes logged by hand, 1 to 1440; returns them as an integer.
+pub fn validate_minutes(minutes: f64) -> AppResult<i64> {
+    let ok = minutes.is_finite()
+        && minutes.fract() == 0.0
+        && (1.0..=LOG_MINUTES_MAX as f64).contains(&minutes);
+    if !ok {
+        return Err(invalid(format!(
+            "Durasi harus 1 sampai {LOG_MINUTES_MAX} menit (24 jam) dalam menit bulat. Untuk lebih dari 24 jam, catat beberapa kali."
+        )));
+    }
+    Ok(minutes as i64)
+}
+
 /// Due date as `YYYY-MM-DD`, a real calendar date.
 pub fn validate_due(due: &str) -> AppResult<String> {
     let due = due.trim();
@@ -530,6 +696,49 @@ mod tests {
     }
 
     #[test]
+    fn subtask_title_bounds() {
+        assert_eq!(validate_subtask_title("  Cek warna  ").unwrap(), "Cek warna");
+        assert!(validate_subtask_title(&"ü".repeat(200)).is_ok());
+        for bad in ["", "  ", &"x".repeat(201), "a\nb", "a\tb", "\u{200B}"] {
+            assert_eq!(code(validate_subtask_title(bad)), "invalid_input", "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn time_note_bounds() {
+        assert_eq!(validate_time_note(None).unwrap(), "");
+        assert_eq!(validate_time_note(Some("   ")).unwrap(), "");
+        assert_eq!(validate_time_note(Some(" rapat ")).unwrap(), "rapat");
+        assert!(validate_time_note(Some(&"x".repeat(200))).is_ok());
+        for bad in [&"x".repeat(201), "a\nb", "a\u{202E}b"] {
+            assert_eq!(code(validate_time_note(Some(bad))), "invalid_input", "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn minutes_bounds() {
+        assert_eq!(validate_minutes(1.0).unwrap(), 1);
+        assert_eq!(validate_minutes(1440.0).unwrap(), 1440);
+        for bad in [0.0, -5.0, 1441.0, 1.5, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                validate_minutes(bad).unwrap_err().code(),
+                "invalid_input",
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn subtask_patch_distinguishes_absent_from_null() {
+        let p: SubtaskPatch = serde_json::from_str(r#"{"done":true}"#).unwrap();
+        assert_eq!(p.done, Some(true));
+        assert_eq!(p.assignee, None);
+        let p: SubtaskPatch = serde_json::from_str(r#"{"assignee":null,"title":"A"}"#).unwrap();
+        assert_eq!(p.assignee, Some(None));
+        assert_eq!(p.title.as_deref(), Some("A"));
+    }
+
+    #[test]
     fn messages_have_no_em_dash() {
         let errs = [
             validate_project_name(""),
@@ -538,6 +747,9 @@ mod tests {
             validate_description(&"x".repeat(10_001)),
             validate_comment(""),
             validate_due("x"),
+            validate_subtask_title(""),
+            validate_time_note(Some(&"x".repeat(201))),
+            validate_minutes(0.0).map(|m| m.to_string()),
         ];
         for e in errs {
             assert!(!e.unwrap_err().to_string().contains('\u{2014}'));

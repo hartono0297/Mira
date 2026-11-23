@@ -11,9 +11,10 @@ use tauri::{AppHandle, Emitter, State};
 
 use super::access::Rights;
 use super::assignees::{AssigneeDirectory, LocalMembers};
-use super::doc::{Stamp, TaskChanges, TaskInit};
+use super::doc::{BoardDoc, Stamp, SubtaskChanges, TaskChanges, TaskInit};
 use super::model::{
-    self, BoardView, ColumnId, MyTask, NewTask, ProjectSummary, TaskDetail, TaskPatch,
+    self, BoardView, ColumnId, MyTask, NewTask, ProjectSummary, SubtaskPatch, TaskDetail,
+    TaskPatch,
 };
 use super::policy::{BoardAction, BoardPolicy, LocalRolePolicy};
 use super::sign::SignedChange;
@@ -469,6 +470,173 @@ pub fn add_comment(
     Ok(detail)
 }
 
+/// An edit of a task's subtasks or time entries by the viewer, as one signed
+/// change: checks the edit right (guests have none) and the subtask
+/// assignee `assignee`, runs `f` with the viewer's stamp and returns the
+/// task as it is afterwards.
+fn edit_task_parts(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    assignee: Option<&str>,
+    f: impl FnOnce(&mut BoardDoc, Stamp<'_>) -> AppResult<()>,
+) -> AppResult<TaskDetail> {
+    let (detail, changes) = with_ctx(state, |core, policy, dir| {
+        let me = core.identity.public_key_hex().to_owned();
+        let row = store::project(&core.db, project_id)?;
+        policy.check(
+            &core.db,
+            &me,
+            &BoardAction::EditTask {
+                project_id: row.id.clone(),
+                task_id: task_id.to_owned(),
+            },
+        )?;
+        check_assignee(core, dir, &row, assignee)?;
+        let at = clock::now_rfc3339();
+        let c = store::commit_local(&mut core.db, &core.identity, project_id, |doc| {
+            f(
+                doc,
+                Stamp {
+                    actor: &me,
+                    at: &at,
+                },
+            )
+        })?;
+        let task = c.doc.live_task(task_id)?;
+        Ok((ctx(core, policy, dir).detail(&row, &task), c.changes))
+    })?;
+    notify(hook, project_id, &changes);
+    Ok(detail)
+}
+
+/// Adds a subtask at the bottom of the task's list.
+pub fn add_subtask(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    title: &str,
+    assignee: Option<&str>,
+) -> AppResult<TaskDetail> {
+    let title = model::validate_subtask_title(title)?;
+    let assignee = assignee.filter(|a| !a.is_empty());
+    edit_task_parts(state, hook, project_id, task_id, assignee, |doc, stamp| {
+        doc.add_subtask(stamp, task_id, &title, assignee).map(|_| ())
+    })
+}
+
+/// Changes a subtask's title, ticks or unticks it, or sets its assignee
+/// (`null` clears it). Fields that are absent stay.
+pub fn update_subtask(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    subtask_id: &str,
+    patch: SubtaskPatch,
+) -> AppResult<TaskDetail> {
+    let changes = SubtaskChanges {
+        title: patch
+            .title
+            .as_deref()
+            .map(model::validate_subtask_title)
+            .transpose()?,
+        done: patch.done,
+        assignee: patch.assignee.map(|a| a.filter(|a| !a.is_empty())),
+    };
+    let check = match &changes.assignee {
+        Some(Some(pk)) => Some(pk.clone()),
+        _ => None,
+    };
+    edit_task_parts(state, hook, project_id, task_id, check.as_deref(), |doc, stamp| {
+        doc.update_subtask(stamp, task_id, subtask_id, &changes)
+    })
+}
+
+/// Moves a subtask to `index` (position after the move, 0 = top).
+pub fn move_subtask(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    subtask_id: &str,
+    index: usize,
+) -> AppResult<TaskDetail> {
+    edit_task_parts(state, hook, project_id, task_id, None, |doc, stamp| {
+        doc.move_subtask(stamp, task_id, subtask_id, index)
+    })
+}
+
+pub fn delete_subtask(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    subtask_id: &str,
+) -> AppResult<TaskDetail> {
+    edit_task_parts(state, hook, project_id, task_id, None, |doc, stamp| {
+        doc.delete_subtask(stamp, task_id, subtask_id)
+    })
+}
+
+/// Starts the viewer's timer on the task; a timer of theirs still running
+/// on another task of the project stops in the same change.
+pub fn start_timer(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+) -> AppResult<TaskDetail> {
+    edit_task_parts(state, hook, project_id, task_id, None, |doc, stamp| {
+        doc.start_timer(stamp, task_id).map(|_| ())
+    })
+}
+
+/// Stops the viewer's running timer on the task, with an optional note.
+pub fn stop_timer(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    note: Option<&str>,
+) -> AppResult<TaskDetail> {
+    let note = model::validate_time_note(note)?;
+    edit_task_parts(state, hook, project_id, task_id, None, |doc, stamp| {
+        doc.stop_timer(stamp, task_id, &note)
+    })
+}
+
+/// Logs `minutes` (1 to 1440) of work by hand, ending now.
+pub fn log_time(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    minutes: f64,
+    note: Option<&str>,
+) -> AppResult<TaskDetail> {
+    let minutes = model::validate_minutes(minutes)?;
+    let note = model::validate_time_note(note)?;
+    edit_task_parts(state, hook, project_id, task_id, None, |doc, stamp| {
+        doc.log_time(stamp, task_id, minutes * 60, &note).map(|_| ())
+    })
+}
+
+/// Deletes one of the viewer's own time entries.
+pub fn delete_time_entry(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    entry_id: &str,
+) -> AppResult<TaskDetail> {
+    edit_task_parts(state, hook, project_id, task_id, None, |doc, stamp| {
+        doc.delete_time_entry(stamp, task_id, entry_id)
+    })
+}
+
 pub fn my_tasks(state: &MiraState) -> AppResult<Vec<MyTask>> {
     with_ctx(state, |core, policy, dir| {
         ctx(core, policy, dir).my_tasks(&store::actor_of(&core.identity))
@@ -617,6 +785,157 @@ pub async fn board_add_comment(
     body: String,
 ) -> AppResult<TaskDetail> {
     let out = add_comment(&state, board.hook.as_ref(), &project_id, &task_id, &body)?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_add_subtask(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+    title: String,
+    assignee: Option<String>,
+) -> AppResult<TaskDetail> {
+    let out = add_subtask(
+        &state,
+        board.hook.as_ref(),
+        &project_id,
+        &task_id,
+        &title,
+        assignee.as_deref(),
+    )?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_update_subtask(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+    subtask_id: String,
+    patch: SubtaskPatch,
+) -> AppResult<TaskDetail> {
+    let out = update_subtask(
+        &state,
+        board.hook.as_ref(),
+        &project_id,
+        &task_id,
+        &subtask_id,
+        patch,
+    )?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_move_subtask(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+    subtask_id: String,
+    index: usize,
+) -> AppResult<TaskDetail> {
+    let out = move_subtask(
+        &state,
+        board.hook.as_ref(),
+        &project_id,
+        &task_id,
+        &subtask_id,
+        index,
+    )?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_delete_subtask(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+    subtask_id: String,
+) -> AppResult<TaskDetail> {
+    let out = delete_subtask(&state, board.hook.as_ref(), &project_id, &task_id, &subtask_id)?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_start_timer(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+) -> AppResult<TaskDetail> {
+    let out = start_timer(&state, board.hook.as_ref(), &project_id, &task_id)?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_stop_timer(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+    note: Option<String>,
+) -> AppResult<TaskDetail> {
+    let out = stop_timer(
+        &state,
+        board.hook.as_ref(),
+        &project_id,
+        &task_id,
+        note.as_deref(),
+    )?;
+    emit(&app);
+    Ok(out)
+}
+
+/// `minutes` is a JavaScript number; anything but a whole 1 to 1440 is
+/// refused with a message (`model::validate_minutes`).
+#[tauri::command]
+pub async fn board_log_time(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+    minutes: f64,
+    note: Option<String>,
+) -> AppResult<TaskDetail> {
+    let out = log_time(
+        &state,
+        board.hook.as_ref(),
+        &project_id,
+        &task_id,
+        minutes,
+        note.as_deref(),
+    )?;
+    emit(&app);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn board_delete_time_entry(
+    app: AppHandle,
+    state: State<'_, MiraState>,
+    board: State<'_, BoardRuntime>,
+    project_id: String,
+    task_id: String,
+    entry_id: String,
+) -> AppResult<TaskDetail> {
+    let out = delete_time_entry(&state, board.hook.as_ref(), &project_id, &task_id, &entry_id)?;
     emit(&app);
     Ok(out)
 }

@@ -412,7 +412,9 @@ pub fn import_project(
         }
         let mut probe = BoardDoc::empty(&MERGE_ACTOR);
         let time = change.timestamp();
-        let probe_ok = probe.apply_remote(change, &creator).is_ok();
+        // The first change is not judged by `rules`: every task it holds is
+        // checked.
+        let probe_ok = probe.apply_first_remote(change, &creator).is_ok();
         let meta = probe.project();
         let meta_ok = probe_ok
             && meta.id == project_id
@@ -719,10 +721,15 @@ fn ingest(
             );
             continue;
         }
-        let backup = (is_root || !needs.new_comments.is_empty() || !needs.new_activity.is_empty() || !needs.new_tasks.is_empty())
+        let backup = (is_root || needs.creates())
             .then(|| doc.fork());
         let applied_hash = change.hash();
-        if let Err((code, detail)) = doc.apply_remote(change, &sc.author) {
+        let applied = if is_root {
+            doc.apply_first_remote(change, &sc.author)
+        } else {
+            doc.apply_remote(change, &sc.author, &needs.touched_tasks)
+        };
+        if let Err((code, detail)) = applied {
             reject(tx, report, row, &sc, from_peer, ChangeRejection::new(code, detail), now)?;
             continue;
         }

@@ -5,10 +5,13 @@ use rusqlite::Connection;
 use super::assignees::AssigneeDirectory;
 use super::doc::{BoardDoc, TaskData};
 use super::model::{
-    Activity, BoardView, Column, ColumnId, Comment, MyTask, ProjectSummary, TaskCard, TaskDetail,
+    Activity, BoardView, Column, ColumnId, Comment, MyTask, ProjectSummary, Subtask, TaskCard,
+    TaskDetail, TimeEntry, TimeTotal,
 };
 use super::policy::{BoardAction, BoardPolicy};
 use super::store::{self, ProjectRow, task_code};
+use super::timing;
+use crate::clock;
 use crate::error::AppResult;
 
 /// What every view needs: the database, the viewer and the two seams.
@@ -48,6 +51,8 @@ impl Ctx<'_> {
     }
 
     pub fn card(&self, project: &ProjectRow, t: &TaskData) -> TaskCard {
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        let live = t.subtasks.iter().filter(|s| !s.deleted);
         TaskCard {
             id: t.id.clone(),
             code: task_code(&project.code, t.number),
@@ -60,8 +65,12 @@ impl Ctx<'_> {
             due: t.due.clone(),
             priority: t.priority,
             labels: t.labels.clone(),
-            comment_count: u32::try_from(t.comments.len()).unwrap_or(u32::MAX),
+            comment_count: count(t.comments.len()),
             merged: false,
+            subtask_done: count(live.clone().filter(|s| s.done).count()),
+            subtask_total: count(live.count()),
+            tracked_secs: timing::tracked_secs(&t.time),
+            timers_running_since: timing::running_since(&t.time),
         }
     }
 
@@ -92,6 +101,36 @@ impl Ctx<'_> {
     }
 
     pub fn detail(&self, project: &ProjectRow, t: &TaskData) -> TaskDetail {
+        let person = |pk: &str| self.dir.person(self.conn, pk);
+        let mut time_entries: Vec<TimeEntry> = t
+            .time
+            .iter()
+            .filter(|e| !e.deleted)
+            .map(|e| TimeEntry {
+                id: e.id.clone(),
+                person: person(&e.by),
+                start: e.start.clone(),
+                end: e.end.clone(),
+                manual: e.manual,
+                note: e.note.clone(),
+                secs: timing::entry_secs(&e.start, e.end.as_deref()),
+                mine: e.by == self.me,
+            })
+            .collect();
+        // `t.time` is sorted by (start, id); newest first here.
+        time_entries.reverse();
+        let mut time_totals: Vec<TimeTotal> = timing::totals_by_person(&t.time)
+            .into_iter()
+            .map(|p| TimeTotal {
+                person: person(&p.by),
+                secs: p.secs,
+                running_since: p.running_since,
+            })
+            .collect();
+        time_totals.sort_by(|a, b| {
+            (a.person.name.to_lowercase(), &a.person.public_key)
+                .cmp(&(b.person.name.to_lowercase(), &b.person.public_key))
+        });
         TaskDetail {
             card: self.card(project, t),
             project_id: project.id.clone(),
@@ -132,6 +171,28 @@ impl Ctx<'_> {
                 project_id: project.id.clone(),
                 task_id: t.id.clone(),
             }),
+            subtasks: t
+                .subtasks
+                .iter()
+                .filter(|s| !s.deleted)
+                .map(|s| Subtask {
+                    id: s.id.clone(),
+                    title: s.title.clone(),
+                    done: s.done,
+                    assignee: s.assignee.as_deref().map(person),
+                    done_by: s.done_by.as_deref().map(person),
+                    done_at: s.done_at.clone(),
+                    created_by: person(&s.created_by),
+                })
+                .collect(),
+            time_entries,
+            time_totals,
+            my_running_entry: t
+                .time
+                .iter()
+                .find(|e| e.by == self.me && e.is_running())
+                .map(|e| e.id.clone()),
+            status_time: timing::status_time(&t.created_at, &t.activity, t.column, clock::now()),
         }
     }
 

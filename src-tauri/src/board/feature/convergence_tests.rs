@@ -1231,3 +1231,235 @@ fn concurrent_task_with_the_same_id_does_not_split_the_laptops() {
     );
     assert_eq!(dewi.task(&pid, &x).title, "Asli dari Budi");
 }
+
+// ---------------------------------------------------------------------------
+// v0.4: subtasks and time entries.
+
+/// A task without `subtasks` and `time`, as made before v0.4, by `l`.
+fn old_task(l: &Lap, pid: &str, title: &str) -> String {
+    l.core(|c| {
+        let me = c.identity.public_key_hex().to_owned();
+        let at = clock::now_rfc3339();
+        let done = store::commit_local(&mut c.db, &c.identity, pid, |d| {
+            let id = d.create_task(Stamp { actor: &me, at: &at }, TaskInit {
+                title: title.into(),
+                ..TaskInit::default()
+            })?;
+            let am = d.raw();
+            let tasks = obj(am, &ROOT, "tasks");
+            let t = obj(am, &tasks, &id);
+            am.delete(&t, "subtasks").unwrap();
+            am.delete(&t, "time").unwrap();
+            Ok(id)
+        })?;
+        Ok(done.value)
+    })
+}
+
+fn sorted_titles(t: &TaskData) -> Vec<String> {
+    let mut out: Vec<String> = t
+        .subtasks
+        .iter()
+        .filter(|s| !s.deleted)
+        .map(|s| s.title.clone())
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn subtasks_and_time_made_offline_on_an_old_task_reach_everyone() {
+    let o = office();
+    let pid = shared_project(&o, &o.budi, "Peluncuran produk", "PL");
+    let task = old_task(&o.budi, &pid, "Spanduk");
+    sync_all(&o.all()).unwrap();
+    assert!(o.citra.task(&pid, &task).subtasks.is_empty());
+
+    // Offline: Citra and Sari both make the first subtask and time entry.
+    commands::add_subtask(&o.citra.state, &NoopSync, &pid, &task, "Dari Citra", None).unwrap();
+    commands::log_time(&o.citra.state, &NoopSync, &pid, &task, 15.0, Some("desain")).unwrap();
+    commands::add_subtask(&o.sari.state, &NoopSync, &pid, &task, "Dari Sari", None).unwrap();
+    commands::start_timer(&o.sari.state, &NoopSync, &pid, &task).unwrap();
+    sync_all(&o.all()).unwrap();
+    assert_converged(&o.laps(), &pid, "PL");
+    for l in o.laps() {
+        let t = l.task(&pid, &task);
+        assert_eq!(sorted_titles(&t), ["Dari Citra", "Dari Sari"]);
+        assert_eq!(t.time.len(), 2);
+    }
+
+    // Budi ticks both, Citra deletes hers, Sari stops her timer.
+    let detail = commands::get_task(&o.budi.state, &pid, &task).unwrap();
+    assert_eq!(detail.subtasks.len(), 2);
+    for s in &detail.subtasks {
+        let patch = crate::board::model::SubtaskPatch {
+            done: Some(true),
+            ..Default::default()
+        };
+        commands::update_subtask(&o.budi.state, &NoopSync, &pid, &task, &s.id, patch).unwrap();
+    }
+    let mine = detail.subtasks.iter().find(|s| s.title == "Dari Citra").unwrap();
+    commands::delete_subtask(&o.citra.state, &NoopSync, &pid, &task, &mine.id).unwrap();
+    commands::stop_timer(&o.sari.state, &NoopSync, &pid, &task, None).unwrap();
+    sync_all(&o.all()).unwrap();
+    assert_converged(&o.laps(), &pid, "PL");
+    for l in o.laps() {
+        let d = commands::get_task(&l.state, &pid, &task).unwrap();
+        assert_eq!(d.subtasks.len(), 1);
+        assert!(d.subtasks[0].done);
+        assert_eq!(d.subtasks[0].done_by.as_ref().unwrap().public_key, o.budi.pk);
+        assert_eq!(d.time_entries.len(), 2);
+        assert!(d.time_entries.iter().all(|e| e.end.is_some()));
+        assert_eq!(d.time_totals.len(), 2);
+    }
+
+    // Citra's forged edit of Sari's time entry is refused for good.
+    let entry = o.sari.task(&pid, &task).time.into_iter().find(|e| e.by == o.sari.pk).unwrap();
+    let task_id = task.clone();
+    let forged = forge(&o.citra, &o.sari, &pid, move |am, _| {
+        let tasks = obj(am, &ROOT, "tasks");
+        let t = obj(am, &tasks, &task_id);
+        let e = am
+            .get_all(&t, "time")
+            .unwrap()
+            .into_iter()
+            .find_map(|(_, m)| am.get(&m, entry.id.as_str()).unwrap().map(|(_, e)| e))
+            .unwrap();
+        am.put(&e, "note", "palsu").unwrap();
+    });
+    let heads = o.budi.heads(&pid);
+    let got = ingest(&o.budi, &o.citra, vec![record(&forged)]);
+    assert_eq!(got.rejected, 1);
+    assert!(o.budi.is_refused(&forged.record_id()));
+    assert_eq!(o.budi.heads(&pid), heads);
+}
+
+#[test]
+fn rejected_records_are_cleared_once_for_the_new_rules() {
+    let tmp = tempfile::tempdir().unwrap();
+    let conn = crate::db::open(tmp.path()).unwrap();
+    let add = |id: &str| {
+        conn.execute(
+            "INSERT INTO board_rejected (record_id, at) VALUES (?1, 't')",
+            [id],
+        )
+        .unwrap();
+    };
+    let count = || -> i64 {
+        conn.query_row("SELECT count(*) FROM board_rejected", [], |r| r.get(0))
+            .unwrap()
+    };
+    add(&"a".repeat(64));
+    add(&"b".repeat(64));
+    assert!(reset_rejected_once(&conn).unwrap());
+    assert_eq!(count(), 0);
+    assert_eq!(
+        settings::get(&conn, RULES_VERSION_KEY).unwrap().as_deref(),
+        Some("2")
+    );
+    // Refused again under the new rules: stays refused.
+    add(&"c".repeat(64));
+    assert!(!reset_rejected_once(&conn).unwrap());
+    assert_eq!(count(), 1);
+}
+
+#[test]
+fn a_record_refused_by_the_old_rules_is_asked_for_again_after_the_update() {
+    let o = office();
+    let pid = shared_project(&o, &o.budi, "Peluncuran produk", "PL");
+    let task = old_task(&o.budi, &pid, "Spanduk");
+    sync_all(&o.all()).unwrap();
+    // Before the update Citra's laptop refused Sari's first subtask (v0.3
+    // rules) and kept waiting on her later changes.
+    commands::add_subtask(&o.sari.state, &NoopSync, &pid, &task, "Dari Sari", None).unwrap();
+    let first = o.sari.core(|c| store::stored_changes(&c.db, &pid)).last().unwrap().record_id();
+    o.citra.core(|c| {
+        c.db.execute(
+            "INSERT INTO board_rejected (record_id, at) VALUES (?1, 't')",
+            [&first],
+        )?;
+        c.db.execute("DELETE FROM settings WHERE key = ?1", [RULES_VERSION_KEY])?;
+        Ok(())
+    });
+    // Citra's app starts as v0.4: a new board feature on the same data.
+    let updated = BoardFeature::new(o.citra.state.clone(), Arc::new(NoopSync));
+    assert_eq!(updated.unknown_ids(std::slice::from_ref(&first)).unwrap(), std::slice::from_ref(&first));
+    let set = [o.sari.me(), o.budi.me(), (o.citra.pk.as_str(), &updated as &dyn FeatureSync)];
+    sync_all(&set).unwrap();
+    assert_eq!(sorted_titles(&o.citra.task(&pid, &task)), ["Dari Sari"]);
+    assert!(!o.citra.is_refused(&first));
+}
+
+/// The heads of `l`'s copy of project `pid`.
+fn doc_heads(l: &Lap, pid: &str) -> Vec<automerge::ChangeHash> {
+    l.core(|c| {
+        let mut d = store::load_doc(&c.db, pid, &store::actor_of(&c.identity))?;
+        Ok(d.heads())
+    })
+}
+
+/// Like [`forge`], but the change claims `deps` as its dependencies: what a
+/// modified app could send to make a change look older than it is.
+fn forge_with_deps(
+    author: &Lap,
+    source: &Lap,
+    pid: &str,
+    deps: Vec<automerge::ChangeHash>,
+    f: impl FnOnce(&mut AutoCommit, &str),
+) -> SignedChange {
+    let real = forge(author, source, pid, f);
+    let change = automerge::Change::try_from(real.bytes.as_slice()).unwrap();
+    let mut e = change.decode();
+    e.hash = None;
+    e.deps = deps;
+    let change = automerge::Change::from(e);
+    author.core(|c| Ok(sign_change(&c.identity, pid, &change)))
+}
+
+#[test]
+fn an_edit_of_a_subtask_missing_from_its_dependencies_is_refused_everywhere() {
+    let o = office();
+    let pid = shared_project(&o, &o.budi, "Peluncuran produk", "PL");
+    let task = new_task(&o.budi, &pid, "Spanduk");
+    let dewi = o.member("Dewi");
+    o.add_to_project(&pid, &dewi);
+    sync_all(&o.all()).unwrap();
+    pull(o.budi.me(), dewi.me()).unwrap();
+    let before_subtask = doc_heads(&o.citra, &pid);
+
+    // Sari adds a subtask; only Budi gets it for now.
+    commands::add_subtask(&o.sari.state, &NoopSync, &pid, &task, "Dari Sari", None).unwrap();
+    pull(o.sari.me(), o.budi.me()).unwrap();
+    let sid = o.budi.task(&pid, &task).subtasks[0].id.clone();
+    assert!(dewi.task(&pid, &task).subtasks.is_empty());
+
+    // Citra renames it on a copy of Budi's document, but the change claims
+    // only the heads from before the subtask existed.
+    let (task_id, sub_id) = (task.clone(), sid.clone());
+    let forged = forge_with_deps(&o.citra, &o.budi, &pid, before_subtask, move |am, _| {
+        let tasks = obj(am, &ROOT, "tasks");
+        let t = obj(am, &tasks, &task_id);
+        let subtasks = obj(am, &t, "subtasks");
+        let s = obj(am, &subtasks, &sub_id);
+        am.put(&s, "title", "Diganti Citra").unwrap();
+    });
+
+    // Budi holds the subtask, Dewi does not: both refuse it for good.
+    for l in [&o.budi, &dewi] {
+        let heads = l.heads(&pid);
+        let got = ingest(l, &o.citra, vec![record(&forged)]);
+        assert_eq!(got.rejected, 1, "{}", l.pk);
+        assert!(l.is_refused(&forged.record_id()));
+        assert_eq!(l.heads(&pid), heads);
+    }
+
+    // After everyone syncs, every laptop holds the same document.
+    let four = [o.sari.me(), o.budi.me(), o.citra.me(), dewi.me()];
+    sync_all(&four).unwrap();
+    for l in [&o.sari, &o.citra, &dewi] {
+        assert_eq!(l.heads(&pid), o.budi.heads(&pid));
+        let t = l.task(&pid, &task);
+        assert_eq!(t.subtasks.len(), 1);
+        assert_eq!(t.subtasks[0].title, "Dari Sari");
+    }
+}
