@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "../../api";
@@ -94,13 +94,23 @@ describe("Onboarding: melanjutkan permintaan yang tersimpan", () => {
     expect(screen.getByText("7KQ2-M9XD")).toBeInTheDocument();
     expect(await screen.findByText("LAPTOP-DESAIN-03")).toBeInTheDocument();
     expect(screen.getByText(/admin departemen Desain/)).toBeInTheDocument();
-    expect(screen.getByText("Yang dilihat admin")).toBeInTheDocument();
-    expect(screen.getByText("Keterangan")).toBeInTheDocument();
-    expect(screen.getByText("Staf desain, NIK 1042")).toBeInTheDocument();
-    expect(screen.getByText("Akun login")).toBeInTheDocument();
-    expect(screen.getByText("desain03")).toBeInTheDocument();
+    const box = screen.getByText("Yang dilihat admin").closest(".onb-box") as HTMLElement;
+    expect(within(box).getByText("Keterangan")).toBeInTheDocument();
+    expect(within(box).getByText("Staf desain, NIK 1042")).toBeInTheDocument();
+    expect(within(box).getByText("Akun login")).toBeInTheDocument();
+    expect(within(box).getByText("desain03")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Siapa nama Anda?" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).not.toBeInTheDocument();
+  });
+
+  it("tanpa keterangan (bisa jadi bentuk v0.3): akun login tampil sebagai fakta laptop, di luar kotak admin", async () => {
+    commands({ join_outgoing: outgoing(), join_poll: { status: "pending", request: outgoing() } });
+    setup();
+    expect(await screen.findByText("desain03")).toBeInTheDocument();
+    const box = screen.getByText("Yang dilihat admin").closest(".onb-box") as HTMLElement;
+    expect(within(box).queryByText("desain03")).not.toBeInTheDocument();
+    expect(within(box).queryByText("Keterangan")).not.toBeInTheDocument();
+    expect(screen.getByText("Akun login laptop ini")).toBeInTheDocument();
   });
 
   it("tanpa keterangan dan akun tidak terbaca: barisnya tidak tampil", async () => {
@@ -115,6 +125,7 @@ describe("Onboarding: melanjutkan permintaan yang tersimpan", () => {
     expect(await screen.findByText("LAPTOP-DESAIN-03")).toBeInTheDocument();
     expect(screen.queryByText("Keterangan")).not.toBeInTheDocument();
     expect(screen.queryByText("Akun login")).not.toBeInTheDocument();
+    expect(screen.queryByText("Akun login laptop ini")).not.toBeInTheDocument();
   });
 
   it("permintaan ditolak: nama penolak dan waktunya", async () => {
@@ -214,6 +225,34 @@ describe("Onboarding: langkah nama", () => {
     expect(calls("join_search")).toHaveLength(searches);
   });
 
+  it("Ubah nama tidak menghapus isian kantor, departemen, keterangan, dan centang sidik", async () => {
+    const u = user();
+    commands({
+      join_search: searchResult({
+        offices: [
+          office({ key: "a", fingerprint: "AAAA-1111", conflict: true }),
+          office({ key: "b", fingerprint: "BBBB-2222", conflict: true }),
+        ],
+      }),
+    });
+    setup();
+    await searchUntilFound(u, "Beberapa kantor ditemukan");
+    await u.click(screen.getAllByRole("radio")[1]);
+    await u.selectOptions(screen.getByLabelText("Departemen"), "Desain");
+    await u.type(screen.getByLabelText(NOTE), "Staf gudang");
+    await u.click(screen.getByRole("checkbox", { name: /BBBB-2222/ }));
+
+    await u.click(screen.getByRole("button", { name: "Ubah nama" }));
+    await screen.findByRole("heading", { name: "Siapa nama Anda?" });
+    await u.click(screen.getByRole("button", { name: "Lanjut" }));
+
+    await screen.findByRole("heading", { name: "Beberapa kantor ditemukan" });
+    expect(screen.getAllByRole("radio")[1]).toBeChecked();
+    expect(screen.getByLabelText("Departemen")).toHaveValue("t-des");
+    expect(screen.getByLabelText(NOTE)).toHaveValue("Staf gudang");
+    expect(screen.getByRole("checkbox", { name: /BBBB-2222/ })).toBeChecked();
+  });
+
   it("mode --siapkan-kantor: setelah nama langsung ke kantor baru, Kembali ke cara lain", async () => {
     const u = user();
     commands({ join_setup_mode: true, join_search: searchResult() });
@@ -222,11 +261,40 @@ describe("Onboarding: langkah nama", () => {
 
     expect(await screen.findByRole("heading", { name: "Siapkan Mira untuk kantor baru" })).toHaveFocus();
     expect(calls("join_search")).toHaveLength(0);
-    expect(calls("get_firewall_status")).toHaveLength(0);
+    expect(calls("get_firewall_status")).toHaveLength(1);
     expect(screen.getByLabelText("Nama Anda")).toHaveValue("Penguji");
 
     await u.click(screen.getByRole("button", { name: "Kembali" }));
     expect(await screen.findByRole("heading", { name: "Cari kantor dengan cara lain" })).toHaveFocus();
+  });
+
+  it("mode --siapkan-kantor dengan aturan firewall belum ada: langkah firewall dulu, lalu kantor baru", async () => {
+    const u = user();
+    commands({ join_setup_mode: true, get_firewall_status: firewall({ rule: "missing" }), join_search: searchResult() });
+    setup();
+    await passName(u);
+
+    expect(await screen.findByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).toHaveFocus();
+    await u.click(await screen.findByRole("button", { name: "Lewati, atur nanti" }));
+    expect(await screen.findByRole("heading", { name: "Siapkan Mira untuk kantor baru" })).toHaveFocus();
+    expect(calls("join_search")).toHaveLength(0);
+  });
+
+  it("Lanjut ditekan dua kali selagi mode siapkan kantor belum terjawab: lanjut sekali saja", async () => {
+    const u = user();
+    let answer: (v: boolean) => void = () => {};
+    commands({
+      join_setup_mode: () => new Promise<boolean>((r) => (answer = r)),
+      join_search: searchResult(),
+    });
+    setup();
+    await screen.findByRole("heading", { name: "Siapa nama Anda?" });
+    const next = screen.getByRole("button", { name: "Lanjut" });
+    await u.click(next);
+    await u.click(next);
+    await act(async () => answer(false));
+    await screen.findByRole("heading", { name: "Mencari kantor di jaringan..." });
+    expect(calls("get_firewall_status")).toHaveLength(1);
   });
 
   it("mode --siapkan-kantor gagal dibaca: alur biasa", async () => {
@@ -285,6 +353,10 @@ describe("Onboarding: kantor ditemukan", () => {
 
     const note = screen.getByLabelText(NOTE);
     expect(note).toHaveAttribute("maxLength", "80");
+    expect(document.getElementById(note.getAttribute("aria-describedby")!.split(" ")[1])).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
     expect(screen.getByText(/Misalnya jabatan atau nomor karyawan/)).toBeInTheDocument();
     await u.type(note, "a".repeat(90));
     expect(note).toHaveValue("a".repeat(80));
@@ -303,6 +375,30 @@ describe("Onboarding: kantor ditemukan", () => {
         note: "Staf desain, NIK 1042",
       }),
     );
+  });
+
+  it("hitungan keterangan memakai panjang yang sama dengan batas isian (emoji dihitung dua)", async () => {
+    const u = user();
+    commands({ join_search: searchResult({ offices: [office()] }) });
+    setup();
+    await searchUntilFound(u);
+    await u.type(screen.getByLabelText(NOTE), "\u{1F600}".repeat(33));
+    expect(screen.getByText("66 dari 80 karakter")).toBeInTheDocument();
+  });
+
+  it("keterangan dengan karakter kontrol atau bidi: ditolak sebelum dikirim", async () => {
+    const u = user();
+    commands({ join_search: searchResult({ offices: [office()] }), join_send_request: outgoing() });
+    setup();
+    await searchUntilFound(u);
+    const note = screen.getByLabelText(NOTE);
+    await u.type(note, "Staf\u202Edesain");
+    await u.selectOptions(screen.getByLabelText("Departemen"), "Desain");
+    await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
+    expect(await screen.findByText("Keterangan berisi karakter yang tidak diizinkan.")).toBeInTheDocument();
+    expect(note).toHaveFocus();
+    expect(note).toHaveAttribute("aria-invalid", "true");
+    expect(calls("join_send_request")).toHaveLength(0);
   });
 
   it("keterangan berisi spasi saja dikirim sebagai null", async () => {
@@ -510,14 +606,15 @@ describe("Onboarding: kantor ditemukan", () => {
     expect(screen.getByRole("button", { name: "Kirim permintaan" })).toBeDisabled();
     expect(screen.getByText(/minta ia membacakan sidik organisasi/)).toBeInTheDocument();
 
-    await u.click(screen.getByRole("checkbox", { name: /Sidik dari superadmin sama dengan AAAA-1111/ }));
+    await u.click(screen.getByRole("checkbox", { name: /Sidik dari admin kantor sama dengan AAAA-1111/ }));
     // Pindah kantor membatalkan centang.
     await u.click(screen.getAllByRole("radio")[1]);
     expect(screen.getByRole("checkbox", { name: /BBBB-2222/ })).not.toBeChecked();
     await u.click(screen.getAllByRole("radio")[0]);
     await u.selectOptions(screen.getByLabelText("Departemen"), "Administrasi");
-    await u.click(screen.getByRole("checkbox", { name: /Sidik dari superadmin sama dengan AAAA-1111/ }));
+    await u.click(screen.getByRole("checkbox", { name: /Sidik dari admin kantor sama dengan AAAA-1111/ }));
     await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
+    expect(document.body.textContent).not.toMatch(/superadmin/);
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("join_send_request", {
         officeKey: "a",
@@ -608,6 +705,8 @@ describe("Onboarding: kantor belum ditemukan", () => {
 
     expect(await screen.findByRole("heading", { name: "Kantor belum ditemukan" })).toHaveFocus();
     expect(screen.getByText(/lewat VPN/)).toBeInTheDocument();
+    expect(screen.getByText(/Tidak ada kantor Mira yang terlihat/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/superadmin/);
     expect(screen.getByRole("button", { name: /Pakai kode undangan/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cari lagi" })).toBeInTheDocument();
     expect(screen.queryByText(/Langkah \d dari 3/)).not.toBeInTheDocument();
@@ -690,6 +789,30 @@ describe("Onboarding: kantor belum ditemukan", () => {
     const before = calls("join_search").length;
     await advance(5_000);
     expect(calls("join_search")).toHaveLength(before);
+  });
+
+  it("Batal saat masa tunggu: kantor yang sudah menjawab tetap ditampilkan", async () => {
+    const u = user();
+    commands({ join_search: searchResult({ offices: [office()] }) });
+    setup();
+    await startSearch(u);
+    await screen.findByText("Kantor ditemukan, memeriksa kantor lain...");
+    await u.click(screen.getByRole("button", { name: "Batal" }));
+    expect(await screen.findByRole("heading", { name: "Kantor ditemukan: Biro Contoh" })).toHaveFocus();
+  });
+
+  it("Batal setelah ada pengumuman organisasi: bagian admin IT tidak menawarkan kantor baru", async () => {
+    const u = user();
+    commands({ join_search: searchResult({ orgSeen: true }) });
+    setup();
+    await startSearch(u);
+    await waitFor(() => expect(calls("join_search").length).toBeGreaterThan(0));
+    await advance(100);
+    await u.click(screen.getByRole("button", { name: "Batal" }));
+    await screen.findByRole("heading", { name: "Cari kantor dengan cara lain" });
+    await u.click(screen.getByText("Untuk admin IT"));
+    expect(screen.queryByRole("button", { name: NEW_OFFICE })).toBeNull();
+    expect(screen.getByText(/sudah ada kantor Mira/)).toBeVisible();
   });
 
   it("alamat manual: kantor dari alamat itu tampil di layar kantor ditemukan", async () => {

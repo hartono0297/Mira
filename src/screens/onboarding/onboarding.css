@@ -507,18 +507,13 @@
 }
 
 .onb-summary-btn {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 6px;
   border-radius: 8px;
 }
 
 .onb-summary-btn:hover:not(:disabled) {
   background: var(--hover);
-}
-
-/* Hitungan karakter keterangan, baru terisi mendekati batas. */
-.onb-count:empty {
-  display: none;
 }
 
 /* (d) Bagian lipat "Untuk admin IT": jarang dipakai, jadi tenang dan di paling bawah. */

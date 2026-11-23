@@ -20,11 +20,13 @@ export function NameStep({ identity, onDone }: Props) {
   const [serverError, setServerError] = useState<AppError | null>(null);
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Nama sudah diteruskan: tekan Lanjut lagi selagi langkah berikutnya bersiap tidak berbuat apa-apa.
+  const done = useRef(false);
   const ids = { input: useId(), hint: useId(), err: useId() };
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (saving) return;
+    if (saving || done.current) return;
     const problem = validateDisplayName(name);
     if (problem) {
       setFieldError(problem);
@@ -36,12 +38,14 @@ export function NameStep({ identity, onDone }: Props) {
     setServerError(null);
     const trimmed = name.trim();
     if (trimmed === identity.displayName) {
+      done.current = true;
       onDone(identity);
       return;
     }
     setSaving(true);
     try {
       const saved = await api.saveDisplayName(trimmed);
+      done.current = true;
       onDone(saved && typeof saved === "object" ? saved : { ...identity, displayName: trimmed });
     } catch (err) {
       const error = toAppError(err);

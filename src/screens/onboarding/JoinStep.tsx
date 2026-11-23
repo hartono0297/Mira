@@ -112,7 +112,7 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
     <form className="onb-form" onSubmit={submit} noValidate aria-busy={searching || undefined}>
       <StepHeading>Gabung dengan kode undangan</StepHeading>
       <p className="onb-lead">
-        Minta kode undangan ke superadmin atau admin departemen Anda. Kode berisi 20 huruf dan angka, misalnya
+        Minta kode undangan ke admin kantor atau admin departemen Anda. Kode berisi 20 huruf dan angka, misalnya
         ABCD-EFGH-JKMN-PQRS-TVWX.
       </p>
 

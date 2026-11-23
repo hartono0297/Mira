@@ -10,7 +10,7 @@ import { ADMIN_IT } from "./texts";
 
 type Props = {
   end: SearchEnd;
-  // Di sesi ini pernah terlihat kantor atau pengumuman organisasi. Tombol
+  // Di sesi ini pernah terlihat kantor atau pengumuman kantor. Tombol
   // kantor baru di bagian "Untuk admin IT" diganti penjelasan.
   officeSeen: boolean;
   onOffices: (offices: FoundOffice[]) => void;
@@ -77,7 +77,7 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
       <StepHeading>{searched ? "Kantor belum ditemukan" : "Cari kantor dengan cara lain"}</StepHeading>
       {searched ? (
         <p className="onb-lead">
-          Tidak ada organisasi Mira yang terlihat di jaringan ini. Ini biasa terjadi kalau Anda tersambung lewat VPN,
+          Tidak ada kantor Mira yang terlihat di jaringan ini. Ini biasa terjadi kalau Anda tersambung lewat VPN,
           atau memakai Wi-Fi tamu yang terpisah dari jaringan kantor.
         </p>
       ) : (
@@ -143,7 +143,7 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
         <IconKey size={22} aria-hidden="true" />
         <span>
           <span className="onb-choice-title">Pakai kode undangan</span>
-          <span className="onb-choice-desc">Kode dari superadmin atau admin departemen.</span>
+          <span className="onb-choice-desc">Kode dari admin kantor atau admin departemen.</span>
         </span>
       </button>
 

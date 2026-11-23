@@ -7,31 +7,48 @@ import { FieldError } from "../../components/FieldError";
 import { StepHeading } from "./StepHeading";
 import { NOTE_COUNT_FROM, OFFICE_STEP } from "./texts";
 
+// Isian formulir yang disimpan Onboarding saat orangnya kembali ke langkah nama,
+// supaya pilihan kantor, departemen, keterangan, dan centang sidik tidak hilang.
+export type OfficeDraft = {
+  officeKey: string | null;
+  teamId: string;
+  note: string;
+  confirmedKey: string | null;
+};
+
+// Karakter yang ditolak inti Rust (identity::has_forbidden_chars): kontrol,
+// bidi, dan karakter tak terlihat.
+const FORBIDDEN_CHARS = /[\p{Cc}\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF\uFFF9-\uFFFB]/u;
+
 type Props = {
   offices: FoundOffice[];
   // Nama tampilan dari langkah 1, sudah tersimpan.
   displayName: string;
-  onEditName: () => void;
+  draft?: OfficeDraft | null;
+  onEditName: (draft: OfficeDraft) => void;
   onSent: (request: OutgoingJoinRequest) => void;
   onOther: () => void;
 };
 
-type Errors = { office: string | null; team: string | null; server: AppError | null };
-const NO_ERRORS: Errors = { office: null, team: null, server: null };
+type Errors = { office: string | null; team: string | null; note: string | null; server: AppError | null };
+const NO_ERRORS: Errors = { office: null, team: null, note: null, server: null };
 
 // (b) Kantor ditemukan, dalam satu formulir: nama (ringkasan), kantor,
 // departemen, keterangan untuk admin, lalu kirim permintaan.
-export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }: Props) {
+export function OfficeStep({ offices, displayName, draft, onEditName, onSent, onOther }: Props) {
   const single = offices.length === 1;
-  const [officeKey, setOfficeKey] = useState<string | null>(single ? offices[0].key : null);
-  const [teamId, setTeamId] = useState("");
-  const [note, setNote] = useState("");
+  const [officeKey, setOfficeKey] = useState<string | null>(
+    draft && offices.some((o) => o.key === draft.officeKey) ? draft.officeKey : single ? offices[0].key : null,
+  );
+  const [teamId, setTeamId] = useState(draft?.teamId ?? "");
+  const [note, setNote] = useState(draft?.note ?? "");
   const [errors, setErrors] = useState<Errors>(NO_ERRORS);
   const [sending, setSending] = useState(false);
   // Kantor yang bentrok (id sama, sidik beda) baru bisa dikirimi setelah orangnya
-  // mencocokkan sidik dengan superadmin lewat telepon atau datang ke mejanya.
-  const [confirmedKey, setConfirmedKey] = useState<string | null>(null);
+  // mencocokkan sidik dengan admin kantor lewat telepon atau datang ke mejanya.
+  const [confirmedKey, setConfirmedKey] = useState<string | null>(draft?.confirmedKey ?? null);
   const teamRef = useRef<HTMLSelectElement>(null);
+  const noteRef = useRef<HTMLInputElement>(null);
   const firstRadioRef = useRef<HTMLInputElement>(null);
   const ids = {
     officeErr: useId(),
@@ -41,6 +58,7 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
     note: useId(),
     noteHint: useId(),
     noteCount: useId(),
+    noteErr: useId(),
     blocked: useId(),
     confirm: useId(),
     empty: useId(),
@@ -53,7 +71,9 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
   const blocked = office !== null && ((office.conflict && !confirmed) || departments.length === 0);
   // Kantor dengan laptop anggota v0.3 menolak permintaan yang membawa keterangan.
   const acceptsNote = office?.acceptsNote === true;
-  const noteLength = Array.from(note).length;
+  // Panjang UTF-16, sama dengan cara maxLength menghitung, supaya hitungan dan
+  // batas isian selalu cocok. Satu emoji terhitung dua.
+  const noteLength = note.length;
 
   function pickOffice(key: string) {
     setOfficeKey(key);
@@ -76,9 +96,14 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
       teamRef.current?.focus();
       return;
     }
+    const trimmedNote = acceptsNote ? note.trim() : "";
+    if (FORBIDDEN_CHARS.test(trimmedNote)) {
+      setErrors({ ...NO_ERRORS, note: OFFICE_STEP.noteForbidden });
+      noteRef.current?.focus();
+      return;
+    }
     setErrors(NO_ERRORS);
     setSending(true);
-    const trimmedNote = acceptsNote ? note.trim() : "";
     try {
       const request = await joinApi.sendRequest(
         office.key,
@@ -99,11 +124,11 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
     <form className="onb-form" onSubmit={submit} noValidate aria-busy={sending || undefined}>
       <StepHeading>{heading}</StepHeading>
       {single ? (
-        <p className="hint onb-sub">Organisasi ini dipakai di jaringan yang sama dengan laptop Anda.</p>
+        <p className="hint onb-sub">Kantor ini memakai Mira di jaringan yang sama dengan laptop Anda.</p>
       ) : (
         <p className="onb-lead">
-          Ada {offices.length} organisasi Mira di jaringan ini. Pilih kantor Anda. Kalau ragu, tanyakan sidik
-          organisasinya ke superadmin.
+          Ada {offices.length} kantor yang memakai Mira di jaringan ini. Pilih kantor Anda. Kalau ragu, tanyakan sidik
+          organisasinya ke admin kantor.
         </p>
       )}
 
@@ -115,7 +140,7 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
           type="button"
           className="link-btn onb-summary-btn"
           aria-label={OFFICE_STEP.editNameLabel}
-          onClick={onEditName}
+          onClick={() => onEditName({ officeKey, teamId, note, confirmedKey })}
           disabled={sending}
         >
           {OFFICE_STEP.editName}
@@ -128,7 +153,7 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
           <div>
             <strong>Ada dua kantor dengan nama atau identitas yang sama</strong>
             <p>
-              Salah satunya bisa jadi tiruan. Telepon superadmin dan cocokkan sidik organisasi di layar ini dengan
+              Salah satunya bisa jadi tiruan. Telepon admin kantor dan cocokkan sidik organisasi di layar ini dengan
               sidik di menu Organisasi miliknya sebelum meminta bergabung.
             </p>
           </div>
@@ -175,7 +200,7 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
         <div className="onb-note" id={ids.empty}>
           <strong>Kantor ini belum punya departemen</strong>
           <p>
-            Setiap orang masuk ke satu departemen. Minta superadmin membuat departemen dulu di menu Organisasi, lalu cari
+            Setiap orang masuk ke satu departemen. Minta admin kantor membuat departemen dulu di menu Organisasi, lalu cari
             lagi.
           </p>
         </div>
@@ -201,7 +226,7 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
             ))}
           </select>
           <p id={ids.teamHint} className="hint">
-            Daftar ini dibuat superadmin. Pilihan departemen tidak bisa Anda ubah sendiri nanti.
+            Daftar ini dibuat admin kantor. Pilihan departemen tidak bisa Anda ubah sendiri nanti.
           </p>
           <div id={ids.teamErr} aria-live="polite">
             {errors.team && <FieldError text={errors.team} />}
@@ -213,28 +238,36 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
         <div className="field">
           <label htmlFor={ids.note}>{OFFICE_STEP.noteLabel}</label>
           <input
+            ref={noteRef}
             id={ids.note}
             name="note"
             autoComplete="off"
             maxLength={JOIN_NOTE_MAX_CHARS}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            aria-describedby={`${ids.noteHint} ${ids.noteCount}`}
+            aria-invalid={errors.note ? true : undefined}
+            aria-describedby={`${ids.noteHint} ${ids.noteCount} ${ids.noteErr}`}
             disabled={sending}
           />
-          <p id={ids.noteHint} className="hint">
-            {OFFICE_STEP.noteHint}
-          </p>
-          <p id={ids.noteCount} className="hint onb-count">
-            {noteLength >= NOTE_COUNT_FROM ? OFFICE_STEP.noteCount(noteLength) : null}
-          </p>
+          <div>
+            <p id={ids.noteHint} className="hint">
+              {OFFICE_STEP.noteHint}
+            </p>
+            {/* Selalu ada di halaman supaya pembaca layar mengumumkan hitungannya. */}
+            <p id={ids.noteCount} className="hint" aria-live="polite">
+              {noteLength >= NOTE_COUNT_FROM ? OFFICE_STEP.noteCount(noteLength) : null}
+            </p>
+          </div>
+          <div id={ids.noteErr} aria-live="polite">
+            {errors.note && <FieldError text={errors.note} />}
+          </div>
         </div>
       )}
 
       {office?.conflict && (
         <div className="onb-blocked" id={ids.blocked}>
           <p>
-            Ada kantor lain dengan identitas yang sama. Telepon superadmin dan minta ia membacakan sidik organisasi di
+            Ada kantor lain dengan identitas yang sama. Telepon admin kantor dan minta ia membacakan sidik organisasi di
             menu Organisasi miliknya. Kirim permintaan hanya kalau sidiknya sama dengan{" "}
             <span className="mono">{office.fingerprint}</span>.
           </p>
@@ -247,7 +280,7 @@ export function OfficeStep({ offices, displayName, onEditName, onSent, onOther }
               disabled={sending}
             />
             <span>
-              Sidik dari superadmin sama dengan <span className="mono">{office.fingerprint}</span>
+              Sidik dari admin kantor sama dengan <span className="mono">{office.fingerprint}</span>
             </span>
           </label>
         </div>

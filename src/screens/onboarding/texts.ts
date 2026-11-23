@@ -23,6 +23,12 @@ export const CHECKING_FIREWALL = (name: string) => `Memeriksa ${name}...`;
 export const FIREWALL_LEAD = (name: string) =>
   `Laptop rekan perlu bisa menyambung ke laptop ini. Untuk itu, ${name} perlu mengizinkan Mira.`;
 
+export const FIREWALL_INVITE_LEAD = (name: string) =>
+  `Kode undangan diperiksa oleh laptop rekan lewat jaringan kantor. Pastikan ${name} mengizinkan Mira.`;
+
+// Tombol lanjut di langkah firewall saat Mira dibuka dengan --siapkan-kantor.
+export const FIREWALL_SETUP_CONTINUE = "Lanjut siapkan kantor";
+
 export const SEARCH_GRACE = {
   title: "Kantor ditemukan, memeriksa kantor lain...",
   hint: "Sebentar, Mira menunggu jawaban dari kantor lain di jaringan yang sama.",
@@ -36,6 +42,7 @@ export const OFFICE_STEP = {
   noteLabel: "Keterangan untuk admin (opsional)",
   noteHint: `Misalnya jabatan atau nomor karyawan, supaya admin yakin ini Anda. Paling banyak ${JOIN_NOTE_MAX_CHARS} karakter.`,
   noteCount: (n: number) => `${n} dari ${JOIN_NOTE_MAX_CHARS} karakter`,
+  noteForbidden: "Keterangan berisi karakter yang tidak diizinkan.",
   submit: "Kirim permintaan",
   sending: "Mengirim permintaan...",
 };
@@ -47,6 +54,9 @@ export const WAITING = {
   adminSees: "Yang dilihat admin",
   note: "Keterangan",
   account: "Akun login",
+  // Di luar kotak admin: permintaan tanpa keterangan bisa berbentuk v0.3,
+  // dan admin tidak melihat akun login pada permintaan seperti itu.
+  accountFact: "Akun login laptop ini",
 };
 
 export const ADMIN_IT = {

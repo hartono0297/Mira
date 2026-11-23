@@ -20,8 +20,8 @@ export type SearchEnd =
   | { kind: "timeout"; orgSeen: boolean; ok: boolean; error: AppError | null }
   // mDNS mati atau gagal: pencarian otomatis tidak bisa jalan.
   | { kind: "mdns"; orgSeen: boolean; error: string | null }
-  // Pengguna menekan Batal.
-  | { kind: "cancelled" }
+  // Pengguna menekan Batal sebelum ada kantor yang menjawab.
+  | { kind: "cancelled"; orgSeen: boolean }
   // Kantor ditemukan, tapi pengguna memilih cara lain.
   | { kind: "other" };
 
@@ -116,7 +116,11 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
       }
     }
 
-    stopRef.current = () => finish(() => handlers.current.onEnd({ kind: "cancelled" }));
+    // Batal saat masa tunggu: kantor yang sudah menjawab tetap dipakai.
+    stopRef.current = () => {
+      if (found.length > 0) settle();
+      else finish(() => handlers.current.onEnd({ kind: "cancelled", orgSeen }));
+    };
     void round();
     return () => {
       done = true;
@@ -129,7 +133,7 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
   return (
     <div className="onb-form">
       <StepHeading>Mencari kantor di jaringan...</StepHeading>
-      <p className="onb-lead">Mira mencari organisasi Mira di Wi-Fi atau LAN yang sedang dipakai laptop ini.</p>
+      <p className="onb-lead">Mira mencari kantor yang memakai Mira di Wi-Fi atau LAN yang sedang dipakai laptop ini.</p>
 
       <div className="onb-search" role="status">
         <IconLoader2 size={28} className="onb-spin" aria-hidden="true" />

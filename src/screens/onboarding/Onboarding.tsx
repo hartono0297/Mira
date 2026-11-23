@@ -8,10 +8,10 @@ import { JoinStep } from "./JoinStep";
 import { NameStep } from "./NameStep";
 import { NewOfficeStep } from "./NewOfficeStep";
 import { NotFoundStep } from "./NotFoundStep";
-import { OfficeStep } from "./OfficeStep";
+import { OfficeStep, type OfficeDraft } from "./OfficeStep";
 import { SearchStep, type SearchEnd } from "./SearchStep";
 import { StepHeading } from "./StepHeading";
-import { CHECKING_FIREWALL, FIREWALL_LEAD, STEP } from "./texts";
+import { CHECKING_FIREWALL, FIREWALL_INVITE_LEAD, FIREWALL_LEAD, FIREWALL_SETUP_CONTINUE, STEP } from "./texts";
 import { RejectedStep, WaitingStep } from "./WaitingStep";
 import "./onboarding.css";
 
@@ -31,9 +31,11 @@ type View =
   | { kind: "name"; back: View | null }
   | { kind: "checking" }
   // invite: dibuka dari kode undangan; lanjutnya kembali ke sana, bukan mencari.
-  | { kind: "firewall"; invite: SearchEnd | null }
+  // setup: Mira dibuka dengan --siapkan-kantor; lanjutnya ke kantor baru.
+  | { kind: "firewall"; invite: SearchEnd | null; setup?: boolean }
   | { kind: "search"; round: number }
-  | { kind: "offices"; offices: FoundOffice[]; round: number }
+  // draft: isian formulir kantor sebelum orangnya kembali mengubah nama.
+  | { kind: "offices"; offices: FoundOffice[]; round: number; draft?: OfficeDraft }
   | { kind: "waiting"; request: OutgoingJoinRequest }
   | { kind: "rejected"; request: OutgoingJoinRequest }
   | { kind: "other"; end: SearchEnd }
@@ -45,7 +47,7 @@ function stepLabel(view: View): string | null {
     case "name":
       return STEP.name;
     case "firewall":
-      return view.invite ? null : STEP.find;
+      return view.invite || view.setup ? null : STEP.find;
     case "checking":
     case "search":
     case "offices":
@@ -76,6 +78,8 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
   // Mira dibuka dengan --siapkan-kantor. Disimpan sebagai janji, supaya langkah
   // nama tidak perlu menunggu jawabannya sebelum tampil.
   const setupMode = useRef<Promise<boolean>>(Promise.resolve(false));
+  // afterName sedang berjalan: Lanjut yang ditekan dua kali tidak menjalankannya lagi.
+  const advancing = useRef(false);
 
   const identity: IdentityInfo = savedName === null ? state.identity : { ...state.identity, displayName: savedName };
   const displayName = identity.displayName?.trim() ? identity.displayName : null;
@@ -120,24 +124,33 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
     setView({ kind: "search", round: rounds.current });
   }
 
-  // Setelah langkah nama: kantor baru (mode --siapkan-kantor), atau firewall
-  // kalau aturan Mira belum ada, atau langsung mencari.
+  function openNewOffice() {
+    setView({ kind: "new-office", end: { kind: "other" } });
+  }
+
+  // Setelah langkah nama: firewall kalau aturan Mira belum ada, lalu mencari,
+  // atau kantor baru kalau Mira dibuka dengan --siapkan-kantor. Laptop admin IT
+  // itu juga perlu firewall: rekan nanti menyambung ke sana untuk bergabung.
   async function afterName() {
-    if (await setupMode.current) {
-      setView({ kind: "new-office", end: { kind: "other" } });
-      return;
-    }
-    setView({ kind: "checking" });
-    let ready = true;
+    if (advancing.current) return;
+    advancing.current = true;
     try {
-      const status = await api.getFirewallStatus();
-      if (status && typeof status === "object") ready = status.rule === "allowed" || !status.supported;
-    } catch {
-      // Status tidak terbaca: jangan menahan orangnya di sini. Panduan firewall
-      // tetap ada di Pengaturan, bagian Jaringan.
+      const setup = await setupMode.current;
+      setView({ kind: "checking" });
+      let ready = true;
+      try {
+        const status = await api.getFirewallStatus();
+        if (status && typeof status === "object") ready = status.rule === "allowed" || !status.supported;
+      } catch {
+        // Status tidak terbaca: jangan menahan orangnya di sini. Panduan firewall
+        // tetap ada di Pengaturan, bagian Jaringan.
+      }
+      if (!ready) setView({ kind: "firewall", invite: null, setup });
+      else if (setup) openNewOffice();
+      else search();
+    } finally {
+      advancing.current = false;
     }
-    if (ready) search();
-    else setView({ kind: "firewall", invite: null });
   }
 
   function nameDone(saved: IdentityInfo, back: View | null) {
@@ -159,11 +172,14 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
   }
 
   function searchEnded(end: SearchEnd) {
-    if ((end.kind === "timeout" || end.kind === "mdns") && end.orgSeen) setOfficeSeen(true);
+    if ((end.kind === "timeout" || end.kind === "mdns" || end.kind === "cancelled") && end.orgSeen) setOfficeSeen(true);
     setView({ kind: "other", end });
   }
 
-  const label = stepLabel(view);
+  // Kantor baru tidak pernah tampil setelah ada kantor di sesi ini: layar cara
+  // lain menggantikannya, bukan kartu kosong.
+  const shown: View = view.kind === "new-office" && officeSeen ? { kind: "other", end: view.end } : view;
+  const label = stepLabel(shown);
 
   return (
     <div className="onb">
@@ -188,12 +204,16 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
           {view.kind === "firewall" && (
             <FirewallStep
               lead={
-                view.invite
-                  ? `Kode undangan diperiksa oleh laptop rekan lewat jaringan kantor. Pastikan ${firewallName()} mengizinkan Mira.`
-                  : FIREWALL_LEAD(firewallName())
+                view.invite ? FIREWALL_INVITE_LEAD(firewallName()) : FIREWALL_LEAD(firewallName())
               }
-              continueLabel={view.invite ? "Kembali ke kode undangan" : "Cari kantor"}
-              onContinue={() => (view.invite ? setView({ kind: "invite", end: view.invite }) : search())}
+              continueLabel={
+                view.invite ? "Kembali ke kode undangan" : view.setup ? FIREWALL_SETUP_CONTINUE : "Cari kantor"
+              }
+              onContinue={() => {
+                if (view.invite) setView({ kind: "invite", end: view.invite });
+                else if (view.setup) openNewOffice();
+                else search();
+              }}
             />
           )}
           {view.kind === "search" && (
@@ -210,7 +230,8 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
               key={view.round}
               offices={view.offices}
               displayName={displayName ?? ""}
-              onEditName={() => setView({ kind: "name", back: view })}
+              draft={view.draft}
+              onEditName={(draft) => setView({ kind: "name", back: { ...view, draft } })}
               onSent={(request) => setView({ kind: "waiting", request })}
               onOther={() => setView({ kind: "other", end: { kind: "other" } })}
             />
@@ -232,14 +253,14 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
               onSearch={search}
             />
           )}
-          {view.kind === "other" && (
+          {shown.kind === "other" && (
             <NotFoundStep
-              end={view.end}
+              end={shown.end}
               officeSeen={officeSeen}
               onOffices={showOffices}
-              onInvite={() => setView({ kind: "invite", end: view.end })}
+              onInvite={() => setView({ kind: "invite", end: shown.end })}
               onSearchAgain={search}
-              onNewOffice={() => setView({ kind: "new-office", end: view.end })}
+              onNewOffice={() => setView({ kind: "new-office", end: shown.end })}
             />
           )}
           {view.kind === "invite" && (
@@ -252,7 +273,7 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
               onReload={onReload}
             />
           )}
-          {view.kind === "new-office" && !officeSeen && (
+          {view.kind === "new-office" && shown === view && (
             <NewOfficeStep
               identity={identity}
               onIdentity={onIdentity}
