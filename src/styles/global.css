@@ -362,11 +362,16 @@ select {
   font-size: 17px;
   font-weight: 700;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .dlg-desc {
   font-size: 14px;
   color: var(--text);
+}
+
+.dlg-desc p + p {
+  margin-top: 8px;
 }
 
 .dlg-actions {

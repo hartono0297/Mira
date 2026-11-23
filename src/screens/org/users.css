@@ -1,0 +1,423 @@
+/* Tab Pengguna (superadmin) dan Anggota. Lebar: tabel tujuh kolom; di
+   container sempit setiap orang menjadi baris bertumpuk tanpa gulir mendatar. */
+
+/* Alat saring: pencarian melebar, dua pilihan, jumlah hasil di ujung. */
+.users-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.users-search {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.users-select {
+  flex: 0 1 210px;
+  min-width: 160px;
+}
+
+.users-tools .field input,
+.users-tools .field select {
+  min-height: 44px;
+  width: 100%;
+}
+
+.users-search-box {
+  position: relative;
+  display: block;
+}
+
+.users-search-box svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-sec);
+  pointer-events: none;
+}
+
+.users-search-box input {
+  padding-left: 36px;
+}
+
+.users-count {
+  margin: 0 0 0 auto;
+  padding-bottom: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.users-none {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 22px 16px;
+}
+
+.users-none .btn {
+  margin-top: 4px;
+}
+
+/* Avatar inisial: penanda baris yang cepat dipindai, bukan foto. */
+.users-av {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Tabel pengguna. Elemen tabel memakai role eksplisit, jadi tetap dibaca
+   sebagai tabel walaupun tampilannya diubah menjadi grid. */
+.ut {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.ut thead,
+.ut tbody {
+  display: block;
+}
+
+.ut tr {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.4fr) minmax(0, 0.95fr) minmax(0, 1.25fr) minmax(0, 1.05fr) minmax(0, 1.3fr)
+    minmax(0, 1.05fr) 48px;
+  align-items: start;
+}
+
+.ut thead tr {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+}
+
+.ut tbody tr + tr {
+  border-top: 1px solid var(--border);
+}
+
+.ut th {
+  padding: 10px 10px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.ut td {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px 10px;
+  overflow-wrap: anywhere;
+}
+
+.ut th:first-child,
+.ut td:first-child {
+  padding-left: 14px;
+}
+
+.ut td.ut-name {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ut-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ut-n {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ut-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+/* Baris orang yang sudah dikeluarkan: nama memakai warna pendukung, status tetap ditulis. */
+.ut-off .ut-n {
+  color: var(--text-sec);
+}
+
+.users-ch {
+  white-space: nowrap;
+}
+
+.ut-mono {
+  font-size: 12.5px;
+}
+
+.ut-mono.ut-sub {
+  color: var(--text-sec);
+}
+
+.ut-muted {
+  color: var(--text-sec);
+}
+
+.ut-os {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ut-os svg {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.ut td.ut-act {
+  align-items: flex-end;
+  padding: 8px 8px 8px 0;
+}
+
+/* Nama kolom di dalam sel hanya tampil di tata letak bertumpuk. */
+.ut-k {
+  display: none;
+}
+
+/* Status: lingkaran penuh untuk online, lingkaran kosong untuk offline, selalu dengan teks. */
+.users-st {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.users-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--online);
+  border: 1.5px solid var(--online);
+  transform: translateY(-1px);
+}
+
+.users-dot-off {
+  background: transparent;
+  border-color: var(--text-sec);
+}
+
+/* Menu aksi per baris (disclosure). */
+.users-menu-wrap {
+  position: relative;
+}
+
+.users-menu-btn {
+  width: 36px;
+  min-height: 36px;
+  height: 36px;
+  padding: 0;
+}
+
+.users-menu-btn[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+/* Bayangan menandai menu yang melayang di atas baris lain. */
+.users-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  width: max-content;
+  min-width: 230px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.users-menu[hidden] {
+  display: none;
+}
+
+.users-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.users-menu-item svg {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.users-menu-item:hover {
+  background: var(--hover);
+}
+
+.users-menu-danger,
+.users-menu-danger svg {
+  color: var(--danger);
+}
+
+.users-menu-sep {
+  margin: 6px 4px;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Dialog Ubah departemen dan Ubah peran */
+.users-kv {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 14px;
+  font-size: 14px;
+}
+
+.users-kv dt {
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.users-kv dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.users-note {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.users-legend {
+  padding: 0;
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.users-sa {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.people-list .row {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.people-list .row-main {
+  min-width: 0;
+}
+
+/* Container sempit: setiap orang menjadi baris bertumpuk. Nama dan menu aksi
+   di atas, fakta lain di bawahnya dengan nama kolom di setiap sel. */
+@container (max-width: 880px) {
+  .ut thead {
+    display: none;
+  }
+
+  .ut tbody tr {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+    grid-template-areas:
+      "name name name act"
+      "dept laptop sys sys"
+      "status status joined joined";
+    gap: 12px 16px;
+    padding: 14px;
+  }
+
+  .ut td,
+  .ut td:first-child {
+    padding: 0;
+  }
+
+  .ut td.ut-name {
+    grid-area: name;
+    align-self: center;
+  }
+
+  .ut td.ut-dept {
+    grid-area: dept;
+  }
+
+  .ut td.ut-laptop {
+    grid-area: laptop;
+  }
+
+  .ut td.ut-sys {
+    grid-area: sys;
+  }
+
+  .ut td.ut-status {
+    grid-area: status;
+  }
+
+  .ut td.ut-joined {
+    grid-area: joined;
+  }
+
+  .ut td.ut-act {
+    grid-area: act;
+    padding: 0;
+  }
+
+  .ut-k {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-sec);
+  }
+
+  .users-menu-btn {
+    width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
+}
+
+@container (max-width: 520px) {
+  .ut tbody tr {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name name act"
+      "dept status status"
+      "laptop sys sys"
+      "joined joined joined";
+  }
+
+  .users-count {
+    margin-left: 0;
+    padding-bottom: 0;
+  }
+}

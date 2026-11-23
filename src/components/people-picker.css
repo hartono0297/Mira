@@ -1,0 +1,93 @@
+/* Pemilih orang (PeoplePicker): pencarian dan saringan departemen di atas,
+   daftar centang yang bergulir sendiri di bawah. */
+
+.ppick {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ppick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.ppick-filters .field {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.ppick-filters input,
+.ppick-filters select {
+  width: 100%;
+  min-width: 0;
+}
+
+.ppick-count {
+  margin: 0;
+}
+
+/* Bergulir sendiri kalau orangnya banyak (kantor sampai 30 orang). */
+.ppick-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: min(320px, 45vh);
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.ppick-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.ppick-row:hover {
+  background: var(--hover);
+}
+
+.ppick-row input {
+  flex: none;
+  margin: 2px 0 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.ppick-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ppick-sub {
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.ppick-note {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.ppick-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  font-size: 14px;
+}

@@ -24,22 +24,22 @@ export function inviteErrorText(error: AppError): ErrorText {
     case "invite_not_found":
       return {
         title: "Kode tidak dikenali",
-        body: "Laptop rekan yang ditemukan tidak mengenal kode ini. Periksa lagi kodenya huruf demi huruf, atau minta kode baru ke admin tim.",
+        body: "Laptop rekan yang ditemukan tidak mengenal kode ini. Periksa lagi kodenya huruf demi huruf, atau minta kode baru ke admin departemen.",
       };
     case "invite_expired":
       return {
         title: "Kode sudah kedaluwarsa",
-        body: "Masa berlaku kode ini sudah habis. Minta kode baru ke admin tim yang mengundang Anda.",
+        body: "Masa berlaku kode ini sudah habis. Minta kode baru ke admin departemen yang mengundang Anda.",
       };
     case "invite_used":
       return {
         title: "Kode sudah dipakai",
-        body: "Kode sekali pakai ini sudah dipakai untuk bergabung. Minta kode baru ke admin tim.",
+        body: "Kode sekali pakai ini sudah dipakai untuk bergabung. Minta kode baru ke admin departemen.",
       };
     case "invite_revoked":
       return {
         title: "Kode sudah dicabut",
-        body: "Admin sudah membatalkan kode ini. Minta kode baru ke admin tim.",
+        body: "Admin sudah membatalkan kode ini. Minta kode baru ke admin departemen.",
       };
     case "no_peer_found":
       return {
@@ -57,7 +57,7 @@ export function inviteErrorText(error: AppError): ErrorText {
     case "peer_unreachable":
       return {
         title: "Laptop rekan tidak bisa memeriksa kode",
-        body: `${error.message} Coba lagi sebentar lagi. Kalau tetap gagal, minta kode baru ke admin tim.`,
+        body: `${error.message} Coba lagi sebentar lagi. Kalau tetap gagal, minta kode baru ke admin departemen.`,
       };
     case "name_required":
       return {

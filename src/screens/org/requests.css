@@ -1,0 +1,188 @@
+/* Tab Permintaan bergabung (usulan v0.3 bagian 1, kartu .req). Satu kartu per
+   permintaan. Kode cocok adalah bagian terpenting kartu: penyetuju membacakannya
+   lewat telepon, jadi huruf rata lebar dan besar. Warna aksen hanya di Setujui. */
+
+.req-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.req {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.req-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.req-who {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.req-who-text {
+  min-width: 0;
+}
+
+/* Inisial saja: Mira tidak punya foto profil. */
+.req-av {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.req-name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.req-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Setujui dan Tolak adalah aksi utama kartu: target sentuh 44px. */
+.req-actions .btn {
+  min-height: 44px;
+}
+
+/* Tolak memakai teks merah dan garis biasa; tombol merah penuh disimpan untuk dialog konfirmasi. */
+.req-reject {
+  color: var(--danger);
+}
+
+.req-reject:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+/* Fakta laptop: dua pasang kolom di kartu lebar, satu pasang di kartu sempit. */
+.req-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 6px 14px;
+  font-size: 14px;
+}
+
+.req-facts > div {
+  display: contents;
+}
+
+.req-facts dt {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.req-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 600px) {
+  .req-facts {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+}
+
+.req-match {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.req-code-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.req-code-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.req-code {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  user-select: all;
+}
+
+.req-match-text {
+  flex: 1;
+  min-width: 200px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.req-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.req-foot .hint {
+  margin: 0;
+}
+
+.req-reject-all {
+  margin-left: auto;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.req-empty-text {
+  margin-top: 4px;
+  color: var(--text-sec);
+  font-size: 13px;
+}
+
+.req-dlg-list {
+  margin: 6px 0 10px;
+  padding-left: 18px;
+}
+
+.req-dlg-list li + li {
+  margin-top: 2px;
+}

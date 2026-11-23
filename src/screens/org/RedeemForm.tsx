@@ -1,13 +1,31 @@
 import { useId, useRef, useState, type FormEvent } from "react";
 import { api, toAppError, type AppError } from "../../api";
 import { checkInviteCode } from "../../api/inviteCode";
-import { inviteErrorText } from "../../api/messages";
+import { inviteErrorText, type ErrorText } from "../../api/messages";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { formatWhileTyping } from "../onboarding/JoinStep";
 import type { OrgCtx } from "./context";
 
-// Anggota yang sudah ada memakai kode undangan untuk masuk ke tim lain.
+// Pesan Rust lama masih bisa menyebut "tim"; di tampilan istilahnya departemen.
+function deTim(message: string): string {
+  return message.replace(/\btim\b/g, "departemen").replace(/\bTim\b/g, "Departemen");
+}
+
+function redeemErrorText(error: AppError): ErrorText {
+  if (error.code === "forbidden") {
+    return {
+      title: "Kode ini tidak bisa Anda pakai",
+      body: "Kode undangan hanya untuk orang yang belum punya departemen. Kalau Anda perlu pindah departemen, minta superadmin memindahkan Anda.",
+    };
+  }
+  return inviteErrorText({ ...error, message: deTim(error.message) });
+}
+
+// Orang yang belum punya departemen memakai kode undangan untuk masuk ke
+// departemen di kode itu. Orang yang sudah di departemen ditolak inti Rust
+// (`already_in_department`) dan Tamu juga ditolak, jadi InvitesPanel hanya
+// menampilkan formulir ini untuk orang tanpa departemen yang bukan Tamu.
 export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
   const [code, setCode] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -34,12 +52,12 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
     try {
       await api.redeemInvite(check.code);
       setCode("");
-      ctx.notify("Kode diterima. Tim baru muncul di daftar tim Anda.");
+      ctx.notify("Kode diterima. Anda sekarang anggota departemen yang tertulis di kode itu.");
       await ctx.reload();
     } catch (err) {
       const error = toAppError(err);
       if (error.code === "invite_invalid") {
-        setFieldError(error.message);
+        setFieldError(deTim(error.message));
         ref.current?.focus();
       } else {
         setServer(error);
@@ -49,12 +67,12 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
     }
   }
 
-  const text = server ? inviteErrorText(server) : null;
+  const text = server ? redeemErrorText(server) : null;
 
   return (
     <form className="redeem" onSubmit={submit} noValidate aria-labelledby={titleId}>
       <h3 id={titleId} className="set-sub">
-        Punya kode undangan untuk tim lain?
+        Belum punya departemen? Pakai kode undangan
       </h3>
       <div className="field">
         <label htmlFor={inputId}>Kode undangan</label>
@@ -76,7 +94,7 @@ export function RedeemForm({ ctx }: { ctx: OrgCtx }) {
           </button>
         </div>
         <p id={hintId} className="hint">
-          Anda tetap anggota tim yang sekarang. Kode ini menambahkan Anda ke tim lain.
+          Kode memasukkan Anda ke departemen yang tertulis di kode itu. Minta kode ke admin departemen atau superadmin.
         </p>
         <div id={errId} aria-live="polite">
           {fieldError && <FieldError text={fieldError} />}

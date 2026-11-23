@@ -1,0 +1,73 @@
+/* Tab Label (superadmin). Setiap baris memakai kotak .lab yang sama dengan
+   label di samping nama, sedikit lebih besar, supaya superadmin melihat persis
+   yang nanti dilihat orang lain. Pemilih orang ada di components/people-picker.css. */
+
+.lbl-hint {
+  max-width: 62ch;
+  margin: 0;
+  font-size: 13px;
+}
+
+.lbl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 14px;
+}
+
+.lbl-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.lbl-lab {
+  font-size: 13px;
+  line-height: 24px;
+  padding: 0 9px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Label yang dihapus: garis putus-putus dan teks sekunder, ditambah judul
+   bagian "Dihapus" sebagai keterangan teksnya. */
+.lbl-lab-gone {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-sec);
+  line-height: 22px;
+}
+
+.lbl-count {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.lbl-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lbl-del {
+  color: var(--danger);
+}
+
+/* Container sempit: aksi pindah ke baris kedua, tidak ada gulir mendatar. */
+@container (max-width: 600px) {
+  .lbl-row {
+    flex-wrap: wrap;
+  }
+
+  .lbl-actions {
+    flex-basis: 100%;
+  }
+}
+
+.lbl-gone-hint {
+  margin: 0 0 8px;
+}

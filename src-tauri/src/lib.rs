@@ -19,6 +19,7 @@ pub mod network;
 pub mod network_commands;
 pub mod org;
 pub mod org_commands;
+pub mod org_screen;
 pub mod paths;
 pub mod peers;
 pub mod permissions;
@@ -128,6 +129,7 @@ pub fn run() {
                 )),
             });
             app.manage(state);
+            org_screen::spawn_join_notifier(app.handle());
             board::feature::register(app.handle());
             // Document library: managed even when the data folder is missing
             // (its commands then return the error). Edit sessions left from
@@ -195,6 +197,7 @@ pub fn run() {
             org_commands::org_rename_label,
             org_commands::org_set_label_archived,
             org_commands::org_set_label_assigned,
+            org_screen::org_fingerprint,
             network_commands::get_network_status,
             network_commands::add_manual_address,
             network_commands::remove_manual_address,
