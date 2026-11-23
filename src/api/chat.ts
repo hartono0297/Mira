@@ -6,42 +6,91 @@ import { isTauri, NO_TAURI_ERROR, toAppError } from ".";
 
 export type Person = { publicKey: string; name: string };
 
-export type ScopeKind = "org" | "team" | "project";
+// "group" untuk grup (v0.3). "team" adalah departemen (nama lama di kode).
+export type ScopeKind = "org" | "team" | "project" | "group";
 
 // Cakupan channel. `id` null untuk org (#umum dan channel seluruh kantor).
 export type ChannelScope = { kind: ScopeKind; id: string | null; name: string };
 
+// Lima bagian daftar chat, urutan tetap seperti di sini.
+export type ChatSection = "umum" | "departemen" | "proyek" | "grup" | "pribadi";
+export const CHAT_SECTIONS: ChatSection[] = ["umum", "departemen", "proyek", "grup", "pribadi"];
+
 export type ConversationSummary = {
-  id: string; // "ch:<32 hex>" atau "dm:<kunci>:<kunci>"
-  kind: "channel" | "dm";
-  name: string; // nama channel tanpa "#", atau nama rekan untuk chat pribadi
+  id: string; // "ch:<32 hex>", "gr:<32 hex>", atau "dm:<kunci>:<kunci>"
+  kind: "channel" | "group" | "dm";
+  section: ChatSection;
+  name: string; // nama channel tanpa "#", nama grup, atau nama rekan untuk chat pribadi
   scope: ChannelScope | null; // null untuk chat pribadi
   peer: Person | null; // rekan di chat pribadi
   isUmum: boolean;
   archived: boolean;
+  // Channel Umum yang hanya bisa ditulis superadmin (ikon gembok).
+  locked: boolean;
+  // Saya sudah bukan anggota (dikeluarkan dari proyek atau grup, pindah departemen).
+  // Pesan lama tetap bisa dibaca di laptop ini, pesan baru tidak sampai lagi.
+  former: boolean;
+  memberCount: number; // jumlah anggota sekarang (untuk "Grup · 5 anggota")
   muted: boolean;
   unread: number;
   mentionUnread: number; // pesan belum dibaca yang menyebut saya
   lastAt: string | null; // RFC 3339
   lastPreview: string | null; // "Nama: teks" maksimal 80 karakter, atau "Pesan dihapus"
   canPost: boolean;
+  // Kalimat untuk kolom pesan kalau canPost false, misalnya "Hanya superadmin yang bisa menulis
+  // di channel ini." null kalau bisa menulis.
+  postBlockedReason: string | null;
   canArchive: boolean;
   canDelete: boolean;
+  canLock: boolean; // superadmin, channel Umum selain #umum
 };
 
 export type NotifyMode = "all" | "mentions" | "off";
 
 export type ChatOverview = {
   me: string;
+  isSuperadmin: boolean;
+  isGuest: boolean;
   canCreateChannel: boolean; // bukan Tamu, dan punya minimal satu cakupan yang boleh
-  canCreateOrgChannel: boolean; // hanya superadmin yang boleh membuat channel "Seluruh kantor"
+  canCreateOrgChannel: boolean; // hanya superadmin yang boleh membuat channel Umum
+  canCreateGroup: boolean; // bukan Tamu
   canDirectMessage: boolean; // bukan Tamu
-  conversations: ConversationSummary[]; // channel aktif, chat pribadi, lalu yang diarsipkan; urut terbaru
-  people: Person[]; // rekan yang bisa diajak chat pribadi (anggota aktif bukan Tamu, tanpa saya)
-  teams: { id: string; name: string }[]; // tim saya, untuk channel baru
+  // Urut: bagian (CHAT_SECTIONS), lalu yang diarsipkan atau bukan anggota lagi di akhir
+  // bagiannya, lalu terbaru.
+  conversations: ConversationSummary[];
+  people: Person[]; // rekan yang bisa diajak chat pribadi atau grup (anggota aktif bukan Tamu, tanpa saya)
+  teams: { id: string; name: string }[]; // departemen saya (paling banyak satu)
+  myDepartment: { id: string; name: string } | null;
   projects: { id: string; name: string; teamId: string | null }[]; // proyek yang saya ikuti
+  otherProjects: number; // proyek terdaftar yang bukan milik saya (untuk catatan di bagian Proyek)
   notify: NotifyMode;
 };
+
+export type GroupMemberView = {
+  person: Person;
+  owner: boolean; // pemilik grup sekarang
+  me: boolean;
+  addedBy: Person | null; // null untuk pembuat grup
+  canRemove: boolean; // saya pemilik dan ini bukan saya
+};
+
+export type GroupView = {
+  conv: string;
+  name: string;
+  owner: Person | null;
+  createdBy: Person;
+  createdAt: string;
+  members: GroupMemberView[]; // urut lama masuk
+  candidates: Person[]; // anggota aktif bukan Tamu yang belum di grup (untuk "Tambah orang")
+  canAdd: boolean;
+  canRename: boolean;
+  canLeave: boolean;
+  former: boolean; // saya bukan anggota lagi
+};
+
+// Kejadian di grup ("Rina membuat grup ini dan menambahkan Dimas dan Sari."), diselipkan
+// di antara pesan menurut waktu.
+export type ConversationEvent = { id: string; at: string; text: string };
 
 export type FileState = "local" | "fetching" | "remote" | "missing";
 
@@ -88,6 +137,9 @@ export type ConversationView = {
   members: Person[]; // untuk saran mention
   messages: MessageView[]; // urut lama ke baru
   hasMore: boolean;
+  // Kejadian grup dalam rentang waktu pesan yang dimuat (semua kejadian kalau !hasMore). Kosong
+  // untuk channel dan chat pribadi.
+  events: ConversationEvent[];
 };
 
 export type ReceiptView = { person: Person; state: DeliveryState };
@@ -135,6 +187,17 @@ export const chatApi = {
   fileDownload: (hash: string) => call<FileView>("chat_file_download", { hash }),
   setNotify: (mode: NotifyMode) => call<null>("chat_set_notify", { mode }),
   setMuted: (conv: string, muted: boolean) => call<null>("chat_set_muted", { conv, muted }),
+  // Superadmin: channel Umum hanya-baca untuk selain superadmin.
+  setLocked: (conv: string, locked: boolean) => call<null>("chat_set_locked", { conv, locked }),
+  // Grup (bukan Tamu). members: kunci publik, tanpa saya.
+  createGroup: (name: string, members: string[]) =>
+    call<ConversationSummary>("chat_create_group", { name, members }),
+  group: (conv: string) => call<GroupView>("chat_group", { conv }),
+  groupAdd: (conv: string, members: string[]) => call<null>("chat_group_add", { conv, members }),
+  // Pemilik grup mengeluarkan orang lain. Untuk keluar sendiri pakai groupLeave.
+  groupRemove: (conv: string, member: string) => call<null>("chat_group_remove", { conv, member }),
+  groupLeave: (conv: string) => call<null>("chat_group_leave", { conv }),
+  groupRename: (conv: string, name: string) => call<null>("chat_group_rename", { conv, name }),
 };
 
 // Berlangganan perubahan chat: event `mira://feature` dengan topik "chat".

@@ -100,7 +100,8 @@
 /* Bayangan hanya untuk lapisan yang melayang: menu, rincian status, saran mention. */
 .conv-menu-list,
 .conv-pop,
-.conv-mentions {
+.conv-mentions,
+.conv-group-pop {
   position: absolute;
   z-index: 5;
   margin: 0;
@@ -815,6 +816,377 @@
 
 .conv-send[aria-busy="true"] {
   cursor: progress;
+}
+
+/* Grup (v0.3): kepala, daftar anggota, kejadian, dialog pilih orang. Semua pasangan warna
+   memakai token tema Bata yang sudah ada; rasio kontras dicatat di laporan v0.3 bagian C. */
+
+.conv-scope:empty {
+  display: none;
+}
+
+.conv-head-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* Nama grup dan tombol anggota satu baris seperti mockup, turun ke baris baru kalau sempit. */
+.conv-head-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.conv-head-group .conv-scope {
+  margin-top: 0;
+}
+
+.conv-add {
+  flex: none;
+}
+
+.conv-group-wrap {
+  position: relative;
+}
+
+.conv-members-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-sec);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conv-members-btn:hover,
+.conv-members-btn[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Panah ikut arah: ke atas saat daftar terbuka. Tanpa animasi (MOTION 1). */
+.conv-members-btn[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.conv-group-pop {
+  top: calc(100% + 4px);
+  left: 0;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.conv-group-pop:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.conv-group-pop .conv-pop-title {
+  margin-bottom: 8px;
+}
+
+.conv-group-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.conv-group-stale {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.conv-members {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conv-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 0;
+}
+
+.conv-member .chip {
+  flex: none;
+}
+
+/* Tindakan merusak di dalam daftar: teks merah bergaris bawah, bukan tombol penuh. */
+.conv-member-remove,
+.conv-leave {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.conv-member-remove:hover,
+.conv-leave:hover {
+  background: var(--hover);
+}
+
+.conv-leave {
+  font-size: 13px;
+  margin-left: -6px;
+}
+
+.conv-group-sep {
+  margin: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Kejadian grup: baris tengah yang tenang, tanpa avatar, beda dari pesan. */
+.conv-event {
+  margin: 10px 0;
+  padding: 0 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.conv-event-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.conv-state-after {
+  padding: 24px 0;
+}
+
+/* Bukan anggota lagi: catatan tenang di tempat kolom pesan. */
+.conv-former {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.conv-former svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-sec);
+}
+
+/* Pemilih orang (Grup baru dan Tambah orang) */
+
+.group-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pick {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pick-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pick-search svg {
+  position: absolute;
+  left: 12px;
+  color: var(--text-sec);
+  pointer-events: none;
+}
+
+.pick-search input {
+  width: 100%;
+  padding-left: 36px;
+}
+
+.pick-depts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pick-dept {
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pick-dept:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+/* Chip aktif: warna tombol aksi, jadi terpilih tidak hanya beda tipis. */
+.pick-dept[aria-pressed="true"],
+.pick-dept[aria-pressed="true"]:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.pick-row:hover {
+  background: var(--hover);
+}
+
+.pick-row input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.pick-av {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pick-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pick-name {
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pick-dept-line {
+  font-size: 12px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+.pick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 2px 2px 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pick-chip-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.pick-chip-x:hover {
+  background: var(--bg);
+}
+
+.pick-note {
+  font-size: 13px;
+  color: var(--text-sec);
 }
 
 @media (max-width: 760px) {

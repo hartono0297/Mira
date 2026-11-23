@@ -305,3 +305,144 @@ pub fn all_bytes_under(dir: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
     }
     out
 }
+
+impl Laptop {
+    /// Stored records of `conv` (with a body), oldest first, as they would
+    /// be sent: `(kind, record)`.
+    pub fn records_of(&self, conv: &str) -> Vec<(String, crate::network::feature::FeatureRecord)> {
+        self.with_conn(|c| {
+            let mut stmt = c
+                .prepare(
+                    "SELECT kind, id, body FROM chat_records
+                     WHERE conv = ?1 AND body IS NOT NULL ORDER BY rowid",
+                )
+                .unwrap();
+            stmt.query_map([conv], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    crate::network::feature::FeatureRecord {
+                        id: r.get(1)?,
+                        body: r.get(2)?,
+                    },
+                ))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+        })
+    }
+
+    /// The stored record of `conv` of this `kind` (the first one).
+    pub fn record_of(&self, conv: &str, kind: &str) -> crate::network::feature::FeatureRecord {
+        self.records_of(conv)
+            .into_iter()
+            .find(|(k, _)| k == kind)
+            .map(|(_, r)| r)
+            .unwrap_or_else(|| panic!("no {kind} record of {conv} on {}", self.name))
+    }
+
+    /// How many records of `conv` this laptop holds (any kind).
+    pub fn conv_records(&self, conv: &str) -> i64 {
+        self.with_conn(|c| {
+            c.query_row(
+                "SELECT count(*) FROM chat_records WHERE conv = ?1",
+                [conv],
+                |r| r.get(0),
+            )
+            .unwrap()
+        })
+    }
+
+    /// Whether the record `id` is stored here.
+    pub fn has_record(&self, id: &str) -> bool {
+        self.with_conn(|c| {
+            c.query_row(
+                "SELECT count(*) FROM chat_records WHERE id = ?1 AND body IS NOT NULL",
+                [id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+                > 0
+        })
+    }
+
+    /// The group `conv` as this laptop folds it (`None`: no `group_create`).
+    pub fn group_state(&self, conv: &str) -> Option<super::groups::GroupState> {
+        self.with_conn(|c| {
+            let ctx = super::audience::Ctx::load(c, &self.pk, &BoardAudience)
+                .unwrap()
+                .unwrap();
+            ctx.group(conv).unwrap().map(|g| (*g).clone())
+        })
+    }
+
+    /// Heads of the group's op graph here (the `deps` a new op would name).
+    pub fn group_heads(&self, conv: &str) -> Vec<String> {
+        self.group_state(conv).expect("group known here").heads()
+    }
+
+    /// Current group members here, sorted.
+    pub fn group_members(&self, conv: &str) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .group_state(conv)
+            .map(|g| g.members.into_iter().map(|m| m.pk).collect())
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    /// Texts of the messages of `conv` stored here, oldest first.
+    pub fn texts(&self, conv: &str) -> Vec<String> {
+        self.with_conn(|c| {
+            let mut stmt = c
+                .prepare(
+                    "SELECT text FROM chat_messages WHERE conv = ?1 AND placeholder = 0
+                     ORDER BY at, rowid",
+                )
+                .unwrap();
+            stmt.query_map([conv], |r| r.get::<_, String>(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        })
+    }
+
+    /// The overview row of `conv`, if listed.
+    pub fn summary(&self, conv: &str) -> Option<super::view::ConversationSummary> {
+        self.chat
+            .overview()
+            .unwrap()
+            .conversations
+            .into_iter()
+            .find(|s| s.id == conv)
+    }
+}
+
+impl Office {
+    /// Every laptop sees every other one online (no envelopes are made).
+    pub fn connect_all(&self) {
+        let keys: Vec<String> = self.l.iter().map(|l| l.pk.clone()).collect();
+        for l in &self.l {
+            let others: Vec<&str> = keys
+                .iter()
+                .filter(|k| **k != l.pk)
+                .map(String::as_str)
+                .collect();
+            l.hooks.set_connected(&others);
+        }
+    }
+
+    pub fn sync_all(&self) {
+        let all: Vec<&Laptop> = self.l.iter().collect();
+        sync(&all);
+    }
+
+    /// Runs `sql` with `params` on every laptop (membership changes the
+    /// fold would make everywhere).
+    pub fn exec(&self, sql: &str, p: &[&str]) {
+        self.each(|c| {
+            c.execute(sql, rusqlite::params_from_iter(p.iter()))
+                .unwrap();
+        });
+    }
+}

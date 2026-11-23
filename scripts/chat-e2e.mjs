@@ -32,11 +32,13 @@ const sel = {
   nav: (page, name) => page.getByRole("button", { name: new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*(,|$)") }),
   themeRadio: (page, label) => page.getByLabel(label, { exact: true }),
   list: (page) => page.getByRole("navigation", { name: /Daftar percakapan/i }),
-  channelSection: (page) => sel.list(page).getByRole("region", { name: /^Channel$/ }),
-  row: (page, name) => sel.list(page).getByRole("button", { name: new RegExp(`^Channel ${name}\\b`) }),
-  newChannelBtn: (page) => sel.list(page).getByRole("button", { name: /Channel baru/i }),
+  // v0.3: channel buatan superadmin ada di bagian Umum (lima bagian, docs/plans/v03-c.md).
+  channelSection: (page) => sel.list(page).getByRole("region", { name: /^(Channel|Umum)$/ }),
+  // "Channel umum" atau "Channel umum, diarsipkan, ...". Diakhiri koma atau akhir teks supaya
+  // tombol "Channel umum baru" tidak ikut cocok.
+  row: (page, name) => sel.list(page).getByRole("button", { name: new RegExp(`^Channel ${name}(,|$)`) }),
+  newChannelBtn: (page) => sel.list(page).getByRole("button", { name: /^Channel (umum )?baru$/i }),
   notifyBtn: (page) => page.getByRole("button", { name: /notifikasi chat/i }),
-  archivedFold: (page) => sel.list(page).getByRole("button", { name: /^Diarsipkan/ }),
   conv: (page, title) => page.getByRole("region", { name: title, exact: true }),
   log: (page) => page.getByRole("region", { name: /^Pesan di/ }),
   emptyConv: (page) => sel.log(page).getByText(/^Belum ada pesan/),
@@ -272,10 +274,17 @@ try {
 
   // 6. Channel baru #proyek-a.
   await sel.newChannelBtn(page).click();
-  const chDlg = sel.dialog(page, /Channel baru/);
+  const chDlg = sel.dialog(page, /Channel (umum )?baru/);
   await chDlg.waitFor({ timeout: 10000 });
-  const scopes = await sel.channelScope(chDlg).locator("option").allInnerTexts();
-  check("Superadmin bisa memilih cakupan Seluruh kantor", scopes.includes("Seluruh kantor"), scopes.join(" | "));
+  // v0.3: dialog ini hanya membuat channel Umum (seluruh kantor), tanpa pilihan cakupan.
+  const scopeSelect = sel.channelScope(chDlg);
+  const scopes = (await scopeSelect.count()) ? await scopeSelect.locator("option").allInnerTexts() : [];
+  const umumOnly = (await chDlg.getByText(/Semua anggota kantor/).count()) > 0;
+  check(
+    "Superadmin membuat channel untuk seluruh kantor",
+    scopes.includes("Seluruh kantor") || umumOnly,
+    scopes.length ? scopes.join(" | ") : `dialog Channel umum baru, keterangan seluruh kantor=${umumOnly}`,
+  );
   await sel.channelName(chDlg).fill("Proyek A");
   const previewOk = await chDlg.getByText("#proyek-a").first().isVisible();
   check("Nama channel dirapikan jadi #proyek-a", previewOk);
@@ -303,20 +312,23 @@ try {
   await sel.headerMenu(page, "#proyek-a").click();
   await sel.menuItem(page, /Arsipkan channel/).click();
   await sel.blockedNote(page).waitFor({ timeout: 10000 });
-  const fold = await sel.archivedFold(page).getAttribute("aria-expanded").catch(() => null);
-  const inChannels = await sel.channelSection(page).getByRole("button", { name: /^Channel proyek-a\b/ }).count();
+  // v0.3: yang diarsipkan tetap di bagiannya (di akhir), diredam dengan tanda Diarsipkan.
+  const archivedRow = await sel
+    .channelSection(page)
+    .getByRole("button", { name: /^Channel proyek-a, (.*, )?diarsipkan(,|$)/ })
+    .count();
   const composerGone = (await sel.composer(page).count()) === 0;
   check(
-    "Channel diarsipkan pindah ke Diarsipkan, kolom pesan dikunci dengan alasan",
-    fold === "true" && inChannels === 0 && composerGone,
-    `Diarsipkan terbuka=${fold}, masih di Channel=${inChannels}, kolom pesan hilang=${composerGone}`,
+    "Channel diarsipkan tetap di bagian Umum dengan tanda Diarsipkan, kolom pesan dikunci dengan alasan",
+    archivedRow === 1 && composerGone,
+    `baris Diarsipkan=${archivedRow}, kolom pesan hilang=${composerGone}`,
   );
   await shot(page, "t2-04-diarsipkan-terang.png");
   await sel.headerMenu(page, "#proyek-a").click();
   await sel.menuItem(page, /Kembalikan dari arsip/).click();
   await sel.composer(page).waitFor({ timeout: 10000 });
-  const backInChannels = await sel.channelSection(page).getByRole("button", { name: /^Channel proyek-a\b/ }).count();
-  check("Channel dikembalikan dari arsip dan bisa menulis lagi", backInChannels === 1, `di Channel=${backInChannels}`);
+  const backInChannels = await sel.channelSection(page).getByRole("button", { name: /^Channel proyek-a$/ }).count();
+  check("Channel dikembalikan dari arsip dan bisa menulis lagi", backInChannels === 1, `di Umum tanpa tanda arsip=${backInChannels}`);
 
   // 9. Pengaturan notifikasi.
   await sel.notifyBtn(page).click();

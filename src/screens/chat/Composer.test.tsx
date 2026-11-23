@@ -184,6 +184,30 @@ describe("Komposer", () => {
     expect(screen.queryByRole("button", { name: "Kirim" })).toBeNull();
   });
 
+  it("alasan dari inti Rust (postBlockedReason) menggantikan kolom pesan", () => {
+    renderComposer({
+      summary: channel({ canPost: false, postBlockedReason: "Hanya superadmin yang bisa menulis di channel ini." }),
+    });
+    expect(screen.getByText("Hanya superadmin yang bisa menulis di channel ini.")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  it("tanpa alasan dari inti Rust memakai kalimat umum", () => {
+    renderComposer({ summary: channel({ canPost: false }) });
+    expect(screen.getByText("Anda tidak bisa mengirim pesan di percakapan ini.")).toBeInTheDocument();
+  });
+
+  it("bukan anggota lagi: catatan proyek, tanpa kolom pesan", () => {
+    renderComposer({ summary: channel({ former: true, canPost: false, postBlockedReason: "x" }) });
+    expect(
+      screen.getByText(
+        "Anda sudah bukan anggota proyek ini. Pesan baru tidak dikirim lagi ke laptop Anda; pesan lama tetap tersimpan di sini.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("x")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
   it("banner offline untuk rekan chat pribadi yang offline", () => {
     net.value = {
       data: {

@@ -12,8 +12,8 @@ use tauri_plugin_opener::OpenerExt;
 use super::runtime::ChatRuntime;
 use super::sync::ChatSync;
 use super::view::{
-    ChatOverview, ConversationSummary, ConversationView, FileView, MessageView, NewChannelScope,
-    NotifyMode, ReceiptView,
+    ChatOverview, ConversationSummary, ConversationView, FileView, GroupView, MessageView,
+    NewChannelScope, NotifyMode, ReceiptView,
 };
 use crate::error::{AppError, AppResult};
 
@@ -260,4 +260,59 @@ pub async fn chat_set_muted(
     muted: bool,
 ) -> AppResult<()> {
     run(&rt, move |c| c.set_muted(&conv, muted)).await
+}
+
+#[tauri::command]
+pub async fn chat_set_locked(
+    rt: State<'_, ChatRuntime>,
+    conv: String,
+    locked: bool,
+) -> AppResult<()> {
+    run(&rt, move |c| c.set_locked(&conv, locked)).await
+}
+
+#[tauri::command]
+pub async fn chat_create_group(
+    rt: State<'_, ChatRuntime>,
+    name: String,
+    members: Vec<String>,
+) -> AppResult<ConversationSummary> {
+    run(&rt, move |c| c.create_group(&name, members)).await
+}
+
+#[tauri::command]
+pub async fn chat_group(rt: State<'_, ChatRuntime>, conv: String) -> AppResult<GroupView> {
+    run(&rt, move |c| c.group(&conv)).await
+}
+
+#[tauri::command]
+pub async fn chat_group_add(
+    rt: State<'_, ChatRuntime>,
+    conv: String,
+    members: Vec<String>,
+) -> AppResult<()> {
+    run(&rt, move |c| c.group_add(&conv, members)).await
+}
+
+#[tauri::command]
+pub async fn chat_group_remove(
+    rt: State<'_, ChatRuntime>,
+    conv: String,
+    member: String,
+) -> AppResult<()> {
+    run(&rt, move |c| c.group_remove(&conv, &member)).await
+}
+
+#[tauri::command]
+pub async fn chat_group_leave(rt: State<'_, ChatRuntime>, conv: String) -> AppResult<()> {
+    run(&rt, move |c| c.group_leave(&conv)).await
+}
+
+#[tauri::command]
+pub async fn chat_group_rename(
+    rt: State<'_, ChatRuntime>,
+    conv: String,
+    name: String,
+) -> AppResult<()> {
+    run(&rt, move |c| c.group_rename(&conv, &name)).await
 }

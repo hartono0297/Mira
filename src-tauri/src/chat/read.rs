@@ -6,13 +6,16 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::audience::{ConvInfo, Ctx, Directory, Scope};
 use super::fetch::{self, FetchKind};
+use super::groups::{EventKind, GroupState};
 use super::store::envelope::ACKED;
 use super::view::{
-    ChannelScopeView, ConversationKind, ConversationSummary, DeliveryState, FileState, FileView,
-    MessageStatus, MessageView, Person, ReceiptView, ReplyPreview, ScopeKind, truncate_chars,
+    ChannelScopeView, ChatSection, ConversationEvent, ConversationKind, ConversationSummary,
+    DeliveryState, FileState, FileView, GroupMemberView, GroupView, MessageStatus, MessageView,
+    Person, ReceiptView, ReplyPreview, ScopeKind, truncate_chars,
 };
 use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
 use crate::error::{AppError, AppResult};
+use crate::permissions::format::format_time;
 
 /// Longest `lastPreview` and reply preview.
 pub const PREVIEW_CHARS: usize = 80;
@@ -30,8 +33,10 @@ pub fn not_found_conv() -> AppError {
     AppError::NotFound("Percakapan ini tidak ditemukan atau sudah dihapus.".into())
 }
 
-/// The conversation if this laptop may read it: a channel it is in, or a chat
-/// pribadi it takes part in (kept readable after the other side left).
+/// The conversation if this laptop may read it: a channel or group it is in,
+/// a chat pribadi it takes part in (kept readable after the other side
+/// left), or a conversation it is no longer in but still holds (`former`:
+/// read-only, the old messages are on this laptop anyway).
 pub fn readable(ctx: &Ctx, conv: &str) -> AppResult<ConvInfo> {
     let info = ctx
         .conv(conv)?
@@ -39,7 +44,7 @@ pub fn readable(ctx: &Ctx, conv: &str) -> AppResult<ConvInfo> {
         .ok_or_else(not_found_conv)?;
     let ok = match &info.scope {
         Scope::Direct(a, b) => a == ctx.me() || b == ctx.me(),
-        _ => ctx.in_audience(&info, ctx.me())?,
+        _ => ctx.in_audience(&info, ctx.me())? || is_former(ctx, &info)?,
     };
     if ok {
         Ok(info)
@@ -58,8 +63,85 @@ pub fn dm_peer<'i>(info: &'i ConvInfo, me: &str) -> Option<&'i str> {
     }
 }
 
+/// Not in the conversation any more but still holding it: a channel with
+/// messages here, or a group this laptop's person was in. Chat pribadi is
+/// never former.
+pub fn is_former(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
+    if info.is_direct() || info.deleted || ctx.in_audience(info, ctx.me())? {
+        return Ok(false);
+    }
+    if info.is_group() {
+        return Ok(ctx
+            .group(&info.conv)?
+            .is_some_and(|g| g.ever_member(ctx.me())));
+    }
+    let held: bool = ctx.conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM chat_messages WHERE conv = ?1 AND placeholder = 0)",
+        [&info.conv],
+        |r| r.get(0),
+    )?;
+    Ok(held)
+}
+
+/// Why this laptop may not write in `info`, or `None` when it may.
+pub fn post_blocked(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
+    let me = ctx.me();
+    if info.deleted {
+        return Ok(Some("Percakapan ini sudah dihapus.".into()));
+    }
+    if !ctx.in_audience(info, me)? {
+        let text = match &info.scope {
+            Scope::Project(_) => {
+                "Anda sudah bukan anggota proyek ini. Pesan baru tidak dikirim lagi ke laptop Anda."
+            }
+            Scope::Group(_) => {
+                "Anda sudah tidak ada di grup ini. Pesan baru tidak dikirim lagi ke laptop Anda."
+            }
+            Scope::Team(_) => {
+                "Anda sudah tidak di departemen ini. Pesan baru tidak dikirim lagi ke laptop Anda."
+            }
+            Scope::Direct(..) => "Rekan ini sudah tidak bisa diajak chat pribadi.",
+            Scope::Umum | Scope::Org => "Anda tidak bisa menulis di channel ini.",
+        };
+        return Ok(Some(text.into()));
+    }
+    if info.archived {
+        return Ok(Some(
+            "Channel ini diarsipkan. Kembalikan dulu sebelum mengirim pesan.".into(),
+        ));
+    }
+    if let Scope::Team(t) = &info.scope
+        && ctx.dir.teams.get(t).is_some_and(|t| t.archived)
+    {
+        return Ok(Some(
+            "Departemen ini diarsipkan, jadi channelnya hanya bisa dibaca.".into(),
+        ));
+    }
+    if info.locked && !ctx.dir.is_superadmin(me) {
+        return Ok(Some(
+            "Hanya superadmin yang bisa menulis di channel ini.".into(),
+        ));
+    }
+    Ok(None)
+}
+
 pub fn can_post(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
-    Ok(!info.archived && !info.deleted && ctx.in_audience(info, ctx.me())?)
+    Ok(post_blocked(ctx, info)?.is_none())
+}
+
+pub fn section_of(info: &ConvInfo) -> ChatSection {
+    match info.scope {
+        Scope::Umum | Scope::Org => ChatSection::Umum,
+        Scope::Team(_) => ChatSection::Departemen,
+        Scope::Project(_) => ChatSection::Proyek,
+        Scope::Group(_) => ChatSection::Grup,
+        Scope::Direct(..) => ChatSection::Pribadi,
+    }
+}
+
+/// Superadmin, Umum channel other than `#umum`.
+pub fn can_lock(ctx: &Ctx, info: &ConvInfo) -> bool {
+    info.scope == Scope::Org && !info.deleted && ctx.dir.is_superadmin(ctx.me())
 }
 
 pub fn can_admin_channel(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
@@ -74,6 +156,7 @@ fn scope_view(info: &ConvInfo) -> Option<ChannelScopeView> {
         Scope::Umum | Scope::Org => (ScopeKind::Org, None),
         Scope::Team(t) => (ScopeKind::Team, Some(t.clone())),
         Scope::Project(p) => (ScopeKind::Project, Some(p.clone())),
+        Scope::Group(g) => (ScopeKind::Group, Some(g.clone())),
         Scope::Direct(..) => return None,
     };
     Some(ChannelScopeView {
@@ -90,13 +173,22 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
     let (unread, mention_unread) = unread_counts(conn, &info.conv, me)?;
     let (last_at, last_preview) = last_message(ctx, &info.conv)?;
     let admin = can_admin_channel(ctx, info)?;
+    let blocked = post_blocked(ctx, info)?;
+    let former = is_former(ctx, info)?;
+    let member_count = u32::try_from(ctx.audience(info)?.len()).unwrap_or(u32::MAX);
     Ok(ConversationSummary {
         id: info.conv.clone(),
-        kind: if info.is_channel() {
+        kind: if info.is_group() {
+            ConversationKind::Group
+        } else if info.is_channel() {
             ConversationKind::Channel
         } else {
             ConversationKind::Dm
         },
+        section: section_of(info),
+        locked: info.locked,
+        former,
+        member_count,
         name: peer
             .as_ref()
             .map_or_else(|| info.name.clone(), |p| p.name.clone()),
@@ -109,9 +201,11 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
         mention_unread,
         last_at,
         last_preview,
-        can_post: can_post(ctx, info)?,
+        can_post: blocked.is_none(),
+        post_blocked_reason: blocked,
         can_archive: admin,
         can_delete: admin,
+        can_lock: can_lock(ctx, info),
     })
 }
 
@@ -431,6 +525,113 @@ pub fn conv_facts(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConvFacts> {
         recipients,
         admin: ctx.is_admin(info, &me)?,
         direct: !info.is_channel(),
+    })
+}
+
+/// "A", "A dan B", "A, B, dan C".
+pub fn join_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [a] => a.clone(),
+        [a, b] => format!("{a} dan {b}"),
+        [rest @ .., last] => format!("{}, dan {last}", rest.join(", ")),
+    }
+}
+
+/// Name in an event line: "Anda" for this laptop's person.
+fn who(ctx: &Ctx, pk: &str) -> String {
+    if pk == ctx.me() {
+        "Anda".to_owned()
+    } else {
+        ctx.dir.name(pk)
+    }
+}
+
+/// The group's events as lines for the conversation, oldest first.
+pub fn group_events(ctx: &Ctx, g: &GroupState) -> Vec<ConversationEvent> {
+    let mut out = Vec::new();
+    for (i, e) in g.events.iter().enumerate() {
+        let author = who(ctx, &e.author);
+        let text = match &e.kind {
+            EventKind::Created { members } => {
+                let others: Vec<String> = members
+                    .iter()
+                    .filter(|m| **m != e.author)
+                    .map(|m| who(ctx, m))
+                    .collect();
+                if others.is_empty() {
+                    format!("{author} membuat grup ini.")
+                } else {
+                    format!(
+                        "{author} membuat grup ini dan menambahkan {}.",
+                        join_names(&others)
+                    )
+                }
+            }
+            EventKind::Added { members } => {
+                let names: Vec<String> = members.iter().map(|m| who(ctx, m)).collect();
+                format!("{author} menambahkan {}.", join_names(&names))
+            }
+            EventKind::Removed { member } => {
+                format!("{author} mengeluarkan {}.", who(ctx, member))
+            }
+            EventKind::Left => format!("{author} keluar dari grup."),
+            EventKind::Renamed { name } => {
+                format!("{author} mengganti nama grup menjadi \"{name}\".")
+            }
+            EventKind::OwnerChanged { owner } => {
+                format!("{} sekarang pemilik grup.", who(ctx, owner))
+            }
+        };
+        out.push(ConversationEvent {
+            id: format!("{}-{i}", e.op),
+            at: format_time(e.at),
+            text,
+        });
+    }
+    out
+}
+
+/// Members, owner and what this laptop's person may do in group `info`.
+pub fn group_view(ctx: &Ctx, info: &ConvInfo) -> AppResult<GroupView> {
+    let g = ctx.group(&info.conv)?.ok_or_else(not_found_conv)?;
+    let me = ctx.me().to_owned();
+    let eligible = ctx.group_eligible_now();
+    let owner = g.effective_owner(&eligible).map(str::to_owned);
+    let in_group = ctx.in_audience(info, &me)?;
+    let mut members = Vec::new();
+    for m in g.members.iter().filter(|m| ctx.dir.is_full_member(&m.pk)) {
+        let is_owner = owner.as_deref() == Some(m.pk.as_str());
+        members.push(GroupMemberView {
+            person: person(&ctx.dir, &m.pk),
+            owner: is_owner,
+            me: m.pk == me,
+            added_by: (m.pk != g.creator || m.added_by != g.creator)
+                .then(|| person(&ctx.dir, &m.added_by)),
+            can_remove: in_group && owner.as_deref() == Some(me.as_str()) && m.pk != me,
+        });
+    }
+    let candidates: Vec<String> = if in_group {
+        ctx.dir
+            .full_members()
+            .into_iter()
+            .filter(|pk| *pk != me && !g.is_member(pk))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(GroupView {
+        conv: info.conv.clone(),
+        name: g.name.clone(),
+        owner: owner.as_deref().map(|o| person(&ctx.dir, o)),
+        created_by: person(&ctx.dir, &g.creator),
+        created_at: format_time(g.created_at),
+        members,
+        candidates: people(&ctx.dir, &candidates),
+        can_add: in_group,
+        can_rename: in_group,
+        can_leave: in_group,
+        former: !in_group,
     })
 }
 

@@ -20,6 +20,12 @@ pub const CHAT_VERSION: u32 = 1;
 
 pub const MAX_TEXT_CHARS: usize = 8000;
 pub const MAX_CHANNEL_NAME_CHARS: usize = 40;
+/// Group names are free text (spaces, capitals), 1 to 50 characters.
+pub const MAX_GROUP_NAME_CHARS: usize = 50;
+/// Most people in a group, creator included.
+pub const MAX_GROUP_MEMBERS: usize = 100;
+/// Most heads a group op names in `deps`.
+pub const MAX_GROUP_DEPS: usize = 32;
 pub const MAX_FILE_NAME_CHARS: usize = 200;
 pub const MAX_MIME_CHARS: usize = 100;
 pub const MAX_FILES: usize = 10;
@@ -144,6 +150,37 @@ pub enum Body {
         #[serde(default, skip_serializing_if = "is_false")]
         failed: bool,
     },
+    /// Superadmin marks an Umum channel read-only for everyone else
+    /// (last writer wins on `(at, id)`, like archive).
+    ChannelLock {
+        conv: String,
+        locked: bool,
+    },
+    /// A new group (v0.3). `group` is derived like a channel id; the author
+    /// is its first member and owner; `members` are the others.
+    GroupCreate {
+        group: String,
+        name: String,
+        members: Vec<String>,
+    },
+    /// Group membership ops. `deps` are the heads of the group's op graph the
+    /// author knew (see `groups.rs`).
+    GroupAdd {
+        conv: String,
+        members: Vec<String>,
+        deps: Vec<String>,
+    },
+    /// Removes `member`; `member == author` means leaving.
+    GroupRemove {
+        conv: String,
+        member: String,
+        deps: Vec<String>,
+    },
+    GroupRename {
+        conv: String,
+        name: String,
+        deps: Vec<String>,
+    },
 }
 
 fn is_false(b: &bool) -> bool {
@@ -161,7 +198,23 @@ impl Body {
             Body::Receipt { .. } => "receipt",
             Body::Envelope { .. } => "envelope",
             Body::EnvelopeAck { .. } => "envelope_ack",
+            Body::ChannelLock { .. } => "channel_lock",
+            Body::GroupCreate { .. } => "group_create",
+            Body::GroupAdd { .. } => "group_add",
+            Body::GroupRemove { .. } => "group_remove",
+            Body::GroupRename { .. } => "group_rename",
         }
+    }
+
+    /// A group membership op (create, add, remove, rename).
+    pub fn is_group_op(&self) -> bool {
+        matches!(
+            self,
+            Body::GroupCreate { .. }
+                | Body::GroupAdd { .. }
+                | Body::GroupRemove { .. }
+                | Body::GroupRename { .. }
+        )
     }
 
     /// The conversation the record belongs to; `None` for envelopes and
@@ -169,7 +222,12 @@ impl Body {
     pub fn conv(&self) -> Option<String> {
         match self {
             Body::ChannelCreate { channel, .. } => Some(channel_conv(channel)),
-            Body::ChannelArchive { conv, .. }
+            Body::GroupCreate { group, .. } => Some(group_conv(group)),
+            Body::ChannelLock { conv, .. }
+            | Body::GroupAdd { conv, .. }
+            | Body::GroupRemove { conv, .. }
+            | Body::GroupRename { conv, .. }
+            | Body::ChannelArchive { conv, .. }
             | Body::ChannelDelete { conv }
             | Body::Message { conv, .. }
             | Body::MessageDelete { conv, .. }
@@ -182,8 +240,13 @@ impl Body {
     /// then content, then the records that point at content.
     pub fn apply_rank(&self) -> u8 {
         match self {
-            Body::ChannelCreate { .. } => 0,
-            Body::ChannelArchive { .. } | Body::ChannelDelete { .. } => 1,
+            Body::ChannelCreate { .. } | Body::GroupCreate { .. } => 0,
+            Body::ChannelArchive { .. }
+            | Body::ChannelDelete { .. }
+            | Body::ChannelLock { .. }
+            | Body::GroupAdd { .. }
+            | Body::GroupRemove { .. }
+            | Body::GroupRename { .. } => 1,
             Body::Message { .. } => 2,
             Body::MessageDelete { .. } | Body::Receipt { .. } => 3,
             Body::Envelope { .. } => 4,
@@ -302,9 +365,17 @@ pub fn derive_channel_id(
     blake3::hash(input.as_bytes()).to_hex()[..32].to_owned()
 }
 
+/// Group id of a `group_create`: first 32 hex of BLAKE3 over
+/// `"mira-chat-group-v1"`, org, author, nonce and `at`, one per line.
+pub fn derive_group_id(org: &str, author: &str, nonce: &str, at: &str) -> String {
+    let input = format!("mira-chat-group-v1\n{org}\n{author}\n{nonce}\n{at}");
+    blake3::hash(input.as_bytes()).to_hex()[..32].to_owned()
+}
+
 /// Signs `body` as `identity` for organization `org` at `at`. For
 /// `channel_create` the `channel` field is replaced by
-/// [`derive_channel_id`]; pass any value.
+/// [`derive_channel_id`], for `group_create` the `group` field by
+/// [`derive_group_id`]; pass any value.
 pub fn sign_record(
     identity: &Identity,
     org: &str,
@@ -319,6 +390,11 @@ pub fn sign_record(
             channel: derive_channel_id(org, &author, &nonce, &at_text, &name, &scope),
             name,
             scope,
+        },
+        Body::GroupCreate { name, members, .. } => Body::GroupCreate {
+            group: derive_group_id(org, &author, &nonce, &at_text),
+            name,
+            members,
         },
         other => other,
     };
@@ -468,9 +544,52 @@ fn validate_body(p: &Payload) -> Result<(), String> {
                 }
             }
         }
-        Body::ChannelArchive { conv, .. } | Body::ChannelDelete { conv } => {
+        Body::ChannelArchive { conv, .. }
+        | Body::ChannelDelete { conv }
+        | Body::ChannelLock { conv, .. } => {
             if !matches!(parse_conv(conv), Some(Conv::Channel(_))) {
-                return Err("arsip dan hapus hanya untuk channel".into());
+                return Err("arsip, hapus, dan kunci hanya untuk channel".into());
+            }
+        }
+        Body::GroupCreate {
+            group,
+            name,
+            members,
+        } => {
+            if *group != derive_group_id(&p.org, author, &p.nonce, &p.at) {
+                return Err("id grup bukan turunan pembuat dan nonce".into());
+            }
+            if !is_group_name(name) {
+                return Err("nama grup tidak sah".into());
+            }
+            if members.len() >= MAX_GROUP_MEMBERS || !is_sorted_keys(members) {
+                return Err("anggota grup tidak sah".into());
+            }
+            if members.iter().any(|m| m == author) {
+                return Err("pembuat tidak perlu ada di daftar anggota".into());
+            }
+        }
+        Body::GroupAdd {
+            conv,
+            members,
+            deps,
+        } => {
+            group_conv_and_deps(conv, deps)?;
+            if members.is_empty() || members.len() >= MAX_GROUP_MEMBERS || !is_sorted_keys(members)
+            {
+                return Err("anggota yang ditambahkan tidak sah".into());
+            }
+        }
+        Body::GroupRemove { conv, member, deps } => {
+            group_conv_and_deps(conv, deps)?;
+            if !is_key(member) {
+                return Err("member harus 64 hex".into());
+            }
+        }
+        Body::GroupRename { conv, name, deps } => {
+            group_conv_and_deps(conv, deps)?;
+            if !is_group_name(name) {
+                return Err("nama grup tidak sah".into());
             }
         }
         Body::Message {
@@ -563,6 +682,39 @@ fn validate_body(p: &Payload) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn group_conv_and_deps(conv: &str, deps: &[String]) -> Result<(), String> {
+    if !matches!(parse_conv(conv), Some(Conv::Group(_))) {
+        return Err("conv grup tidak sah".into());
+    }
+    if deps.is_empty() || deps.len() > MAX_GROUP_DEPS || !is_sorted_keys(deps) {
+        return Err("deps grup tidak sah".into());
+    }
+    Ok(())
+}
+
+/// Keys (64 hex), strictly ascending (so sorted and unique).
+pub fn is_sorted_keys(keys: &[String]) -> bool {
+    keys.iter().all(|k| is_key(k)) && keys.windows(2).all(|w| w[0] < w[1])
+}
+
+/// 1 to 50 characters, already tidied by [`normalize_group_name`].
+pub fn is_group_name(name: &str) -> bool {
+    normalize_group_name(name).as_deref() == Some(name)
+}
+
+/// Trims, collapses runs of whitespace into one space and drops control and
+/// format characters. `None` when nothing is left or it is too long.
+pub fn normalize_group_name(input: &str) -> Option<String> {
+    let cleaned: String = input
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .filter(|c| !c.is_control() && !is_format_char(*c))
+        .collect();
+    let out = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let len = out.chars().count();
+    (1..=MAX_GROUP_NAME_CHARS).contains(&len).then_some(out)
 }
 
 fn validate_file(f: &FileRef) -> Result<(), String> {
@@ -752,7 +904,8 @@ pub fn is_executable_name(name: &str) -> bool {
     ];
     name.rsplit_once('.')
         .map(|(_, ext)| {
-            EXT.contains(&ext.to_ascii_lowercase().as_str()) || crate::runnable::is_macos_runnable(ext)
+            EXT.contains(&ext.to_ascii_lowercase().as_str())
+                || crate::runnable::is_macos_runnable(ext)
         })
         .unwrap_or(false)
 }
@@ -762,12 +915,18 @@ pub fn is_executable_name(name: &str) -> bool {
 pub enum Conv {
     /// `ch:<32 hex>`.
     Channel(String),
+    /// `gr:<32 hex>`.
+    Group(String),
     /// `dm:<key>:<key>`, keys sorted, different.
     Direct(String, String),
 }
 
 pub fn channel_conv(channel_id: &str) -> String {
     format!("ch:{channel_id}")
+}
+
+pub fn group_conv(group_id: &str) -> String {
+    format!("gr:{group_id}")
 }
 
 /// `dm:` id for two different keys, in either order.
@@ -779,6 +938,9 @@ pub fn dm_conv(a: &str, b: &str) -> String {
 pub fn parse_conv(conv: &str) -> Option<Conv> {
     if let Some(id) = conv.strip_prefix("ch:") {
         return is_lower_hex(id, 32).then(|| Conv::Channel(id.to_owned()));
+    }
+    if let Some(id) = conv.strip_prefix("gr:") {
+        return is_lower_hex(id, 32).then(|| Conv::Group(id.to_owned()));
     }
     let rest = conv.strip_prefix("dm:")?;
     let (a, b) = rest.split_once(':')?;

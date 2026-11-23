@@ -6,11 +6,12 @@ import { ConversationList } from "./ConversationList";
 import { defaultConversation, withConversation } from "./ListFormat";
 import { NewChannelDialog } from "./NewChannelDialog";
 import { NewDirectDialog } from "./NewDirectDialog";
+import { NewGroupDialog } from "./NewGroupDialog";
 import { NotifySettings } from "./NotifySettings";
 import { useChatLive } from "./useChatLive";
 import "./chat.css";
 
-type Open = "channel" | "direct" | "notify" | null;
+type Open = "channel" | "group" | "direct" | "notify" | null;
 
 export function ChatScreen() {
   const live = useChatLive<ChatOverview>(chatApi.overview, "overview");
@@ -80,6 +81,7 @@ export function ChatScreen() {
         onSelect={setSelected}
         onRetry={changed}
         onNewChannel={() => setOpen("channel")}
+        onNewGroup={() => setOpen("group")}
         onNewDirect={() => setOpen("direct")}
         onNotify={() => setOpen("notify")}
       />
@@ -88,17 +90,18 @@ export function ChatScreen() {
         {current ? (
           <Conversation key={current.id} summary={current} me={overview.me} onChanged={changed} onGone={gone} />
         ) : (
-          <EmptyChat guest={!overview.canDirectMessage} />
+          <EmptyChat guest={overview.isGuest} />
         )}
       </div>
 
-      {overview.canCreateChannel && (
-        <NewChannelDialog
-          open={open === "channel"}
+      {overview.canCreateOrgChannel && (
+        <NewChannelDialog open={open === "channel"} onOpenChange={closeTo} onCreated={adopt} />
+      )}
+      {overview.canCreateGroup && (
+        <NewGroupDialog
+          open={open === "group"}
           onOpenChange={closeTo}
-          canCreateOrgChannel={overview.canCreateOrgChannel}
-          teams={overview.teams}
-          projects={overview.projects}
+          people={overview.people}
           onCreated={adopt}
         />
       )}
@@ -122,13 +125,13 @@ function EmptyChat({ guest }: { guest: boolean }) {
       {guest ? (
         <p>
           Sebagai Tamu, Anda hanya bisa chat di channel proyek yang Anda diundang ke dalamnya. Channel itu muncul di
-          sini begitu laptop Anda tersambung dengan laptop rekan di kantor. Kalau belum muncul juga, minta admin proyek
-          memeriksa undangan Anda.
+          bagian Proyek begitu laptop Anda tersambung dengan laptop rekan di kantor. Kalau belum muncul juga, minta
+          admin proyek memeriksa undangan Anda.
         </p>
       ) : (
         <p>
-          Channel #umum muncul di sini begitu data kantor tersalin dari laptop rekan. Sementara itu Anda bisa membuat
-          channel baru atau memulai chat pribadi dari daftar di kiri.
+          Channel #umum, channel departemen, dan channel proyek Anda muncul di sini begitu data kantor tersalin dari
+          laptop rekan. Sementara itu Anda bisa membuat grup atau mengirim pesan pribadi dari daftar di kiri.
         </p>
       )}
     </div>

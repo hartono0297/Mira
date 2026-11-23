@@ -16,6 +16,18 @@ pub enum ScopeKind {
     Org,
     Team,
     Project,
+    Group,
+}
+
+/// The five sections of the chat list (v0.3), in display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatSection {
+    Umum,
+    Departemen,
+    Proyek,
+    Grup,
+    Pribadi,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -30,6 +42,7 @@ pub struct ChannelScopeView {
 #[serde(rename_all = "lowercase")]
 pub enum ConversationKind {
     Channel,
+    Group,
     Dm,
 }
 
@@ -38,19 +51,27 @@ pub enum ConversationKind {
 pub struct ConversationSummary {
     pub id: String,
     pub kind: ConversationKind,
+    pub section: ChatSection,
     pub name: String,
     pub scope: Option<ChannelScopeView>,
     pub peer: Option<Person>,
     pub is_umum: bool,
     pub archived: bool,
+    /// Umum channel only superadmins may write in.
+    pub locked: bool,
+    /// This laptop is not in the audience any more; old messages stay.
+    pub former: bool,
+    pub member_count: u32,
     pub muted: bool,
     pub unread: u32,
     pub mention_unread: u32,
     pub last_at: Option<String>,
     pub last_preview: Option<String>,
     pub can_post: bool,
+    pub post_blocked_reason: Option<String>,
     pub can_archive: bool,
     pub can_delete: bool,
+    pub can_lock: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,15 +120,56 @@ pub struct ProjectRef {
 #[serde(rename_all = "camelCase")]
 pub struct ChatOverview {
     pub me: String,
+    pub is_superadmin: bool,
+    pub is_guest: bool,
     pub can_create_channel: bool,
     /// Superadmins only (PRD F-CHAT-01).
     pub can_create_org_channel: bool,
+    pub can_create_group: bool,
     pub can_direct_message: bool,
     pub conversations: Vec<ConversationSummary>,
     pub people: Vec<Person>,
     pub teams: Vec<TeamRef>,
+    pub my_department: Option<TeamRef>,
     pub projects: Vec<ProjectRef>,
+    /// Registered projects this laptop's person is not in.
+    pub other_projects: u32,
     pub notify: NotifyMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMemberView {
+    pub person: Person,
+    pub owner: bool,
+    pub me: bool,
+    pub added_by: Option<Person>,
+    pub can_remove: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupView {
+    pub conv: String,
+    pub name: String,
+    pub owner: Option<Person>,
+    pub created_by: Person,
+    pub created_at: String,
+    pub members: Vec<GroupMemberView>,
+    pub candidates: Vec<Person>,
+    pub can_add: bool,
+    pub can_rename: bool,
+    pub can_leave: bool,
+    pub former: bool,
+}
+
+/// A group event shown between messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationEvent {
+    pub id: String,
+    pub at: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -184,6 +246,7 @@ pub struct ConversationView {
     pub members: Vec<Person>,
     pub messages: Vec<MessageView>,
     pub has_more: bool,
+    pub events: Vec<ConversationEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -226,6 +289,7 @@ mod tests {
         let s = ConversationSummary {
             id: "ch:x".into(),
             kind: ConversationKind::Dm,
+            section: ChatSection::Pribadi,
             name: "Sari".into(),
             scope: Some(ChannelScopeView {
                 kind: ScopeKind::Org,
@@ -235,14 +299,19 @@ mod tests {
             peer: None,
             is_umum: true,
             archived: false,
+            locked: false,
+            former: false,
+            member_count: 2,
             muted: false,
             unread: 2,
             mention_unread: 1,
             last_at: None,
             last_preview: None,
             can_post: true,
+            post_blocked_reason: None,
             can_archive: false,
             can_delete: false,
+            can_lock: false,
         };
         let v = serde_json::to_value(&s).unwrap();
         for key in [
@@ -253,6 +322,12 @@ mod tests {
             "peer",
             "isUmum",
             "archived",
+            "section",
+            "locked",
+            "former",
+            "memberCount",
+            "postBlockedReason",
+            "canLock",
             "muted",
             "unread",
             "mentionUnread",
@@ -265,6 +340,13 @@ mod tests {
             assert!(v.get(key).is_some(), "missing {key}");
         }
         assert_eq!(v["kind"], "dm");
+        assert_eq!(v["section"], "pribadi");
+        assert_eq!(
+            serde_json::to_value(ConversationKind::Group).unwrap(),
+            "group"
+        );
+        assert!(ChatSection::Umum < ChatSection::Departemen);
+        assert!(ChatSection::Grup < ChatSection::Pribadi);
         assert_eq!(v["scope"]["kind"], "org");
         assert!(v["scope"]["id"].is_null());
         assert_eq!(

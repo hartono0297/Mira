@@ -7,7 +7,7 @@
 //! audience; live envelopes and acks go to every active member, guests
 //! included, because their content is sealed; purged rows are never offered.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -31,6 +31,9 @@ use crate::permissions::{
     format::{format_time, parse_time},
 };
 use crate::state::{Core, MiraState};
+
+/// Most passes over the deferred records of one batch.
+const MAX_INGEST_PASSES: usize = 8;
 
 /// Setting key for notifications: `all` (default), `mentions`, `off`.
 pub const NOTIFY_SETTING: &str = "chat.notify";
@@ -164,6 +167,7 @@ fn may_offer(
     row: &Row,
     now: OffsetDateTime,
     seen: &mut HashMap<String, bool>,
+    ops_seen: &mut HashMap<String, HashSet<String>>,
 ) -> AppResult<bool> {
     match row.kind.as_str() {
         "envelope" => Ok(row
@@ -172,6 +176,23 @@ fn may_offer(
             .is_some_and(|r| ctx.dir.is_active(r))
             && parse_time(&row.at).is_some_and(|t| !envelope_expired(t, now))),
         "envelope_ack" => Ok(true),
+        // Group ops: current members get them all; someone who left or was
+        // removed gets that op and what it builds on, so their laptop learns
+        // they are out (plan section 5).
+        "group_create" | "group_add" | "group_remove" | "group_rename" => {
+            let Some(conv) = &row.conv else {
+                return Ok(false);
+            };
+            let key = format!("ops:{conv}");
+            if !ops_seen.contains_key(&key) {
+                let set = match ctx.group(conv)? {
+                    Some(g) if ctx.dir.is_full_member(peer) => g.deliverable_ops(peer),
+                    _ => Default::default(),
+                };
+                ops_seen.insert(key.clone(), set);
+            }
+            Ok(ops_seen.get(&key).is_some_and(|s| s.contains(&row.id)))
+        }
         _ => {
             let Some(conv) = &row.conv else {
                 return Ok(false);
@@ -214,9 +235,10 @@ impl ChatSync {
             sort_rows(&mut rows);
             let now = clock::now();
             let mut seen = HashMap::new();
+            let mut ops_seen = HashMap::new();
             let mut out = Vec::new();
             for row in rows {
-                if may_offer(&ctx, peer, &row, now, &mut seen)? {
+                if may_offer(&ctx, peer, &row, now, &mut seen, &mut ops_seen)? {
                     out.push(row.id);
                 }
             }
@@ -245,9 +267,10 @@ impl ChatSync {
             sort_rows(&mut rows);
             let now = clock::now();
             let mut seen = HashMap::new();
+            let mut ops_seen = HashMap::new();
             let mut out = Vec::new();
             for row in rows {
-                if !may_offer(&ctx, peer, &row, now, &mut seen)? {
+                if !may_offer(&ctx, peer, &row, now, &mut seen, &mut ops_seen)? {
                     continue;
                 }
                 let body: String = core.db.query_row(
@@ -331,18 +354,31 @@ fn ingest_batch(
     }
     // Stable: records of the same rank and second keep the sender's order.
     verified.sort_by_key(|v| (v.body().apply_rank(), v.at));
-    for v in &verified {
-        match judge::judge(ctx, v, now)? {
-            Verdict::Accept => {
-                store::apply(ctx, v, Some(from), now, fx)?;
-                out.accepted += 1;
-            }
-            Verdict::Defer => {}
-            Verdict::Reject(rej) => {
-                log(ctx.conn, from, rej.code, &rej.detail, now)?;
-                out.rejected += 1;
+    // Deferred records get another pass while the batch makes progress: a
+    // group op may come after an op it builds on (clocks differ), and a
+    // message after the op that added its author.
+    let mut pending: Vec<&super::model::VerifiedRecord> = verified.iter().collect();
+    for _ in 0..MAX_INGEST_PASSES {
+        let mut deferred = Vec::new();
+        let mut progress = false;
+        for v in pending {
+            match judge::judge(ctx, v, now)? {
+                Verdict::Accept => {
+                    store::apply(ctx, v, Some(from), now, fx)?;
+                    out.accepted += 1;
+                    progress = true;
+                }
+                Verdict::Defer => deferred.push(v),
+                Verdict::Reject(rej) => {
+                    log(ctx.conn, from, rej.code, &rej.detail, now)?;
+                    out.rejected += 1;
+                }
             }
         }
+        if !progress || deferred.is_empty() {
+            break;
+        }
+        pending = deferred;
     }
     after_batch(ctx, identity, blobs, Some(from), now, fx)?;
     out.changed = fx.visible;
@@ -453,7 +489,7 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
     let mut latest: BTreeMap<String, usize> = BTreeMap::new();
     for (i, m) in fx.new_messages.iter().enumerate() {
         if mode == NotifyMode::Mentions {
-            let direct = ctx.conv(&m.conv)?.is_some_and(|c| !c.is_channel());
+            let direct = ctx.conv(&m.conv)?.is_some_and(|c| c.is_direct());
             if !direct && !m.mentions.contains(&me) {
                 continue;
             }
@@ -472,6 +508,8 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
         let sender = ctx.dir.name(&m.author);
         let title = if info.is_channel() {
             format!("{sender} di #{}", info.name)
+        } else if info.is_group() {
+            format!("{sender} di {}", info.name)
         } else {
             sender
         };

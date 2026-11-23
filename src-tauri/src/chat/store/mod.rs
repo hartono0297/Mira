@@ -187,6 +187,23 @@ pub fn apply(
             insert_record(conn, rec, true, from, now)?;
             envelope::apply_ack(ctx, rec.author(), envelope, *failed, fx)?;
         }
+        // Derived on read from `chat_records` (`audience::Ctx::group`,
+        // `Ctx::locked`): storing the record is the whole effect.
+        Body::ChannelLock { conv, .. } => {
+            insert_record(conn, rec, true, from, now)?;
+            ctx.forget(conv);
+            fx.visible = true;
+        }
+        Body::GroupCreate { .. }
+        | Body::GroupAdd { .. }
+        | Body::GroupRemove { .. }
+        | Body::GroupRename { .. } => {
+            insert_record(conn, rec, true, from, now)?;
+            if let Some(conv) = rec.body().conv() {
+                ctx.forget(&conv);
+            }
+            fx.visible = true;
+        }
     }
     Ok(())
 }

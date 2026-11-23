@@ -1,4 +1,4 @@
-import { IconArrowBackUp, IconLock, IconPaperclip, IconPlugConnectedX, IconSend, IconX } from "@tabler/icons-react";
+import { IconArrowBackUp, IconDoorExit, IconLock, IconPaperclip, IconPlugConnectedX, IconSend, IconX } from "@tabler/icons-react";
 import {
   useEffect,
   useId,
@@ -46,8 +46,19 @@ function usePeerOffline(summary: ConversationSummary): boolean {
 }
 
 function blockedReason(summary: ConversationSummary): string {
+  if (summary.postBlockedReason) return summary.postBlockedReason;
   if (summary.archived) return "Channel ini diarsipkan. Kembalikan dari arsip untuk mengirim pesan.";
   return "Anda tidak bisa mengirim pesan di percakapan ini.";
+}
+
+const KEPT = "Pesan baru tidak dikirim lagi ke laptop Anda; pesan lama tetap tersimpan di sini.";
+
+// Percakapan yang saya sudah bukan anggotanya lagi: alasan menurut bagiannya.
+export function formerText(summary: ConversationSummary): string {
+  if (summary.kind === "group" || summary.section === "grup") return `Anda sudah tidak ada di grup ini. ${KEPT}`;
+  if (summary.section === "proyek") return `Anda sudah bukan anggota proyek ini. ${KEPT}`;
+  if (summary.section === "departemen") return `Anda sudah pindah dari departemen ini. ${KEPT}`;
+  return `Anda sudah bukan anggota channel ini. ${KEPT}`;
 }
 
 export function Composer({ summary, me, members, replyTo, onCancelReply, onSent, inputRef }: Props) {
@@ -96,6 +107,18 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
   const suggestions = mention ? filterMembers(members, mention.query, me) : [];
   const listOpen = suggestions.length > 0;
   const activeIndex = Math.min(active, Math.max(suggestions.length - 1, 0));
+
+  // Bukan anggota lagi: satu catatan tenang menggantikan kolom pesan.
+  if (summary.former) {
+    return (
+      <div className="conv-composer conv-composer-blocked">
+        <p className="conv-former">
+          <IconDoorExit size={16} aria-hidden="true" />
+          {formerText(summary)}
+        </p>
+      </div>
+    );
+  }
 
   if (!summary.canPost) {
     return (
