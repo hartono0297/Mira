@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NetState } from "../../api";
@@ -60,7 +60,8 @@ describe("sidebar status jaringan", () => {
     invoke.mockImplementation(router({ get_network_status: network({ state: "removed" }) }));
     const { onRemoved } = renderPanel();
     expect(await screen.findByText("Laptop ini sudah dikeluarkan dari organisasi")).toBeInTheDocument();
-    expect(onRemoved).toHaveBeenCalled();
+    // onRemoved runs in an effect that can land after the text renders.
+    await waitFor(() => expect(onRemoved).toHaveBeenCalled());
   });
 
   it("error membaca status bisa dicoba lagi", async () => {

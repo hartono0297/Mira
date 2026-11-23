@@ -1296,7 +1296,10 @@ fn a_project_by_an_admin_who_left_the_team_imports_once_a_colleague_built_on_it(
 /// with `doc_id` as its id, signed for `project`, whose hash sorts after
 /// `after` (so `import_project` never tries it as the first change).
 fn second_root(l: &Laptop, project: &str, doc_id: &str, after: &str) -> SignedChange {
-    for i in 0..256 {
+    // Keys are random, so `after` can be close to ffff... and a match rare
+    // (about 1 in 100 tries for an fd.. hash). Search far enough that the
+    // test never fails by chance.
+    for i in 0..1_000_000 {
         let meta = ProjectMeta {
             id: doc_id.into(),
             code: "PX".into(),
