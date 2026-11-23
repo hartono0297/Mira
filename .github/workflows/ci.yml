@@ -52,6 +52,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: npx vitest run --pool=threads
 
+      # Skrip rilis updater (latest.json dan pemeriksa .sig). Node 22 belum menerima folder, jadi pakai glob.
+      - name: Tes skrip rilis
+        if: ${{ !cancelled() }}
+        run: node --test "scripts/release/*.test.mjs"
+
       # tauri::generate_context! mewajibkan folder frontendDist (../dist) ada saat kompilasi.
       - name: Build frontend untuk konteks Tauri
         if: ${{ !cancelled() }}
