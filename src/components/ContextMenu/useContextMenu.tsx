@@ -136,7 +136,9 @@ export function useContextMenu({ label, items }: Options): ContextMenuHandle {
       if (isTextField(e.target)) return;
       const area = e.currentTarget;
       const selected = selectionIn(area);
-      if (Date.now() - keyboardAt.current < 400) {
+      // Hanya event dari keyboard (button bukan 2) yang dianggap susulan
+      // Shift+F10. Klik kanan sungguhan selalu dilayani, secepat apa pun.
+      if (e.button !== 2 && Date.now() - keyboardAt.current < 400) {
         e.preventDefault();
         return;
       }
