@@ -4,6 +4,7 @@ import { formatDateTime } from "../../api/format";
 import { joinApi, type JoinDevice, type OutgoingJoinRequest } from "../../api/join";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { StepHeading } from "./StepHeading";
+import { WAITING } from "./texts";
 
 export const POLL_MS = 5_000;
 
@@ -97,13 +98,26 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
       </p>
 
       <div className="onb-box">
+        <p className="onb-label">{WAITING.adminSees}</p>
         <dl className="onb-kv">
           <dt>Nama</dt>
           <dd>{request.displayName}</dd>
           <dt>Departemen</dt>
           <dd>{request.teamName}</dd>
+          {request.note && (
+            <>
+              <dt>{WAITING.note}</dt>
+              <dd>{request.note}</dd>
+            </>
+          )}
           <dt>Laptop</dt>
           <dd className="mono">{device?.laptop ?? "belum terbaca"}</dd>
+          {device?.account && (
+            <>
+              <dt>{WAITING.account}</dt>
+              <dd className="mono">{device.account}</dd>
+            </>
+          )}
           <dt>Kode cocok</dt>
           <dd>
             <span className="mono onb-match">{request.code}</span>

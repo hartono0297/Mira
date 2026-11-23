@@ -19,7 +19,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
-import { mainNav, reachNotFound } from "./e2e-onboarding.mjs";
+import { mainNav, reachNotFound, waitNameStep } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/tahap-1");
@@ -217,10 +217,10 @@ try {
     await pa.screenshot({ path: join(shots, "pengaturan-jaringan.png") });
     const pd = running.D.page;
     await reload("D");
-    await pd.getByRole("heading", { name: "Izinkan Mira di jaringan kantor" }).waitFor({ timeout: 20000 });
-    await sleep(2000);
-    await pd.screenshot({ path: join(shots, "panduan-firewall.png") });
-    await reachNotFound(pd);
+    await waitNameStep(pd);
+    await sleep(1000);
+    await pd.screenshot({ path: join(shots, "onboarding-nama.png") });
+    await reachNotFound(pd, NODES.D.name);
     await pd.getByRole("button", { name: /Pakai kode undangan/ }).click();
     await pd.getByRole("heading", { name: "Gabung dengan kode undangan" }).waitFor({ timeout: 10000 });
     await pd.screenshot({ path: join(shots, "gabung-dengan-kode.png") });

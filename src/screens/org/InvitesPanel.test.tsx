@@ -198,9 +198,9 @@ describe("Undangan: daftar", () => {
     expect(within(list).getByRole("button", { name: "Buat kode undangan" })).toBeInTheDocument();
   });
 
-  it("anggota biasa tidak melihat tombol buat dan diberi tahu siapa yang membuat kode", async () => {
+  it("anggota tanpa departemen tidak melihat tombol buat dan diberi tahu siapa yang membuat kode", async () => {
     const user = userEvent.setup();
-    answer({ get_directory: dir(memberDir) }, memberOverview());
+    answer({ get_directory: dir(memberDir) }, memberOverview({ departmentId: null }));
     renderOrg();
     const list = await openTab(user);
     expect(within(list).getByText(/Kode undangan dibuat oleh admin departemen dan superadmin/)).toBeInTheDocument();
@@ -538,8 +538,14 @@ describe("Undangan: memakai kode", () => {
     expect(invoke).not.toHaveBeenCalledWith("redeem_invite", expect.anything());
   });
 
-  it("Tamu tidak melihat formulir, karena Rust menolak Tamu memakai kode", async () => {
-    const user = userEvent.setup();
+  it("anggota biasa yang punya departemen tidak melihat tab Undangan", async () => {
+    answer({ get_directory: dir(memberDir) }, memberOverview());
+    renderOrg();
+    expect(await screen.findByRole("button", { name: "Anggota" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undangan" })).not.toBeInTheDocument();
+  });
+
+  it("Tamu tidak melihat tab Undangan, karena Rust menolak Tamu memakai kode", async () => {
     const guestDir: Partial<Directory> = {
       ...memberDir,
       members: [
@@ -549,7 +555,8 @@ describe("Undangan: memakai kode", () => {
     };
     answer({ get_directory: dir(guestDir) }, memberOverview({ isGuest: true, departmentId: null }));
     renderOrg();
-    await openTab(user);
+    expect(await screen.findByRole("button", { name: "Anggota" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undangan" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Kode undangan", { selector: "input" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pakai kode" })).not.toBeInTheDocument();
   });

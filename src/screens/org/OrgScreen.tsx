@@ -115,19 +115,30 @@ export function OrgScreen({ state, onRefresh }: Props) {
     [dir, act, pending, refresh, notify, onRefresh],
   );
 
+  // Hanya orang tanpa departemen yang bukan Tamu yang bisa memakai kode undangan;
+  // yang sudah di departemen ditolak Rust (`already_in_department`).
+  const canRedeem = !!overview && overview.departmentId === null && !overview.isGuest;
+  // Satu aplikasi untuk semua peran: anggota biasa tidak melihat tab yang hanya
+  // berguna bagi pengelola. Membuat kode undangan: superadmin dan admin departemen.
+  // decideJoinTeamIds hanya memuat departemen terbuka; manageTeamIds dari direktori
+  // menutup sisanya (admin departemen yang diarsipkan masih bisa melihat kodenya).
+  const canInvite =
+    !!overview &&
+    (overview.isSuperadmin || overview.decideJoinTeamIds.length > 0 || (dir?.can.manageTeamIds.length ?? 0) > 0);
+
   const parts = useMemo(() => {
     if (!overview) return [];
     const list: { id: Part; label: string; count?: number }[] = [];
     if (overview.manageOrg) list.push({ id: "users", label: "Pengguna" });
     else list.push({ id: "people", label: "Anggota" });
-    list.push({ id: "departments", label: "Departemen" });
+    if (overview.manageOrg) list.push({ id: "departments", label: "Departemen" });
     if (overview.isSuperadmin || overview.decideJoinTeamIds.length > 0) {
       list.push({ id: "requests", label: "Permintaan bergabung", count: overview.pendingJoinCount });
     }
     if (overview.manageOrg) list.push({ id: "labels", label: "Label" });
-    list.push({ id: "invites", label: "Undangan" });
+    if (canInvite || canRedeem) list.push({ id: "invites", label: "Undangan" });
     return list;
-  }, [overview]);
+  }, [overview, canInvite, canRedeem]);
 
   // Tab yang tadi dipilih bisa hilang kalau peran berubah: kembali ke tab pertama.
   const current = parts.find((p) => p.id === part) ?? parts[0];
@@ -245,7 +256,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
             {current.id === "labels" && <LabelsPanel page={page} />}
             {current.id === "invites" &&
               (ctx ? (
-                <InvitesPanel ctx={ctx} canRedeem={overview?.departmentId === null && !overview?.isGuest} />
+                <InvitesPanel ctx={ctx} canRedeem={canRedeem} />
               ) : dirLive.loading ? (
                 <p className="hint" role="status">
                   Memuat kode undangan...

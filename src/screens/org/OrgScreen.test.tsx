@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, Directory, OrgInfo } from "../../api";
@@ -101,21 +101,49 @@ describe("Organisasi: tab per peran", () => {
     expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
   });
 
-  it("admin departemen melihat Anggota, Departemen, Permintaan bergabung, Undangan", async () => {
+  it("admin departemen melihat Anggota, Permintaan bergabung, Undangan", async () => {
     answer({ org_overview: adminOverview() });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Anggota", "Departemen", "Permintaan bergabung", "Undangan"]);
+    expect(tabNames()).toEqual(["Anggota", "Permintaan bergabung", "Undangan"]);
     expect(screen.getByRole("button", { name: "Anggota" })).toHaveAttribute("aria-current", "true");
+    expect(screen.queryByRole("button", { name: "Departemen" })).not.toBeInTheDocument();
   });
 
-  it("anggota biasa melihat Anggota, Departemen, Undangan", async () => {
+  it("anggota biasa di departemen hanya melihat Anggota", async () => {
     answer({ org_overview: memberOverview(), get_directory: directory(plainMember) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Anggota", "Departemen", "Undangan"]);
+    // Direktori lama juga tidak memberi hak mengelola departemen apa pun.
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_directory", undefined));
+    await screen.findByRole("button", { name: "Anggota" });
+    expect(tabNames()).toEqual(["Anggota"]);
+    for (const name of ["Pengguna", "Departemen", "Label", "Undangan"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
     expect(screen.queryByRole("button", { name: /Permintaan bergabung/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Label" })).not.toBeInTheDocument();
+  });
+
+  it("anggota biasa tanpa departemen melihat Anggota dan Undangan untuk memakai kode", async () => {
+    const user = userEvent.setup();
+    answer({ org_overview: memberOverview({ departmentId: null }), get_directory: directory(plainMember) });
+    renderOrg();
+    await screen.findByRole("navigation", { name: "Bagian organisasi" });
+    expect(tabNames()).toEqual(["Anggota", "Undangan"]);
+    await user.click(screen.getByRole("button", { name: "Undangan" }));
+    expect(await screen.findByRole("heading", { name: "Kode undangan" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Buat kode undangan" })).not.toBeInTheDocument();
+  });
+
+  it("Tamu hanya melihat Anggota", async () => {
+    answer({
+      org_overview: memberOverview({ isGuest: true, departmentId: null }),
+      get_directory: directory(plainMember),
+    });
+    renderOrg();
+    await screen.findByRole("navigation", { name: "Bagian organisasi" });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_directory", undefined));
+    expect(tabNames()).toEqual(["Anggota"]);
   });
 
   it("pindah tab memindah aria-current, dan setiap tab terbuka tanpa error", async () => {
@@ -133,16 +161,6 @@ describe("Organisasi: tab per peran", () => {
       others.forEach((b) => expect(b).not.toHaveAttribute("aria-current"));
     }
     expect(screen.queryByText("Data organisasi belum terbaca")).not.toBeInTheDocument();
-  });
-
-  it("anggota biasa membuka tab Anggota dan Departemen tanpa error", async () => {
-    const user = userEvent.setup();
-    answer({ org_overview: memberOverview(), get_directory: directory(plainMember) });
-    renderOrg();
-    await user.click(await screen.findByRole("button", { name: "Departemen" }));
-    expect(screen.getByRole("button", { name: "Departemen" })).toHaveAttribute("aria-current", "true");
-    await user.click(screen.getByRole("button", { name: "Anggota" }));
-    expect(screen.getByRole("button", { name: "Anggota" })).toHaveAttribute("aria-current", "true");
   });
 });
 

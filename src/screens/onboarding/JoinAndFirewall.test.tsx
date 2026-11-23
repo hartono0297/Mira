@@ -35,9 +35,17 @@ function commands(table: Parameters<typeof router>[0]) {
   );
 }
 
+// Langkah nama, lalu Lanjut.
+async function passName(user: ReturnType<typeof userEvent.setup>) {
+  expect(await screen.findByRole("heading", { name: "Siapa nama Anda?" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Lanjut" }));
+}
+
+// Nama, firewall kalau aturannya belum ada, cara lain, lalu kode undangan.
 async function openJoin(user: ReturnType<typeof userEvent.setup>) {
-  expect(await screen.findByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).toBeInTheDocument();
-  await user.click(await screen.findByRole("button", { name: /Lewati, atur nanti|Cari kantor/ }));
+  await passName(user);
+  const next = await screen.findByRole("button", { name: /Lewati, atur nanti|Pakai kode undangan/ });
+  if (next.textContent?.includes("Lewati")) await user.click(next);
   await user.click(await screen.findByRole("button", { name: /Pakai kode undangan/ }));
   expect(await screen.findByRole("heading", { name: "Gabung dengan kode undangan" })).toBeInTheDocument();
 }
@@ -53,9 +61,8 @@ describe("Onboarding gabung dengan kode undangan", () => {
     commands({ get_firewall_status: firewall({ rule: "allowed" }), join_with_code: org });
     const { onOrganization } = setup();
 
-    expect(await screen.findByText(/sudah mengizinkan Mira/)).toBeInTheDocument();
-    expect(screen.getByText("Langkah 1 dari 3")).toBeInTheDocument();
     await openJoin(user);
+    expect(screen.queryByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).not.toBeInTheDocument();
 
     expect(screen.queryByText(/Langkah \d dari 3/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Nama tampilan")).not.toBeInTheDocument();
@@ -68,20 +75,17 @@ describe("Onboarding gabung dengan kode undangan", () => {
     expect(invoke).not.toHaveBeenCalledWith("save_display_name", expect.anything());
   });
 
-  it("nama belum ada: kode undangan menanyakan nama dan menyimpannya dulu", async () => {
+  it("nama belum ada: disimpan di langkah 1, kode undangan tidak menanyakannya lagi", async () => {
     const user = userEvent.setup();
     const saved = { ...named().identity, displayName: "Rina" };
     commands({ get_firewall_status: firewall(), save_display_name: saved, join_with_code: org });
     const { onOrganization, onIdentity } = setup(named(null));
+    await screen.findByRole("heading", { name: "Siapa nama Anda?" });
+    await user.type(screen.getByLabelText("Nama tampilan"), " Rina ");
     await openJoin(user);
 
+    expect(screen.queryByLabelText("Nama tampilan")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Kode undangan"), CODE);
-    await user.click(screen.getByRole("button", { name: "Gabung ke organisasi" }));
-    expect(await screen.findByText("Isi nama tampilan dulu.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Nama tampilan")).toHaveFocus();
-    expect(invoke).not.toHaveBeenCalledWith("join_with_code", expect.anything());
-
-    await user.type(screen.getByLabelText("Nama tampilan"), " Rina ");
     await user.click(screen.getByRole("button", { name: "Gabung ke organisasi" }));
 
     await waitFor(() => expect(onOrganization).toHaveBeenCalledWith(org));
@@ -225,16 +229,59 @@ describe("Onboarding gabung dengan kode undangan", () => {
 });
 
 describe("Onboarding langkah firewall", () => {
-  it("langkah pertama; aturan belum ada, bisa dilewati lalu mulai mencari", async () => {
+  it("aturan belum ada: tampil setelah nama sebagai langkah 2, bisa dilewati lalu mencari", async () => {
     const user = userEvent.setup();
     commands({ get_firewall_status: firewall({ rule: "missing" }), join_search: searchResult() });
     setup();
+    await passName(user);
 
     expect(await screen.findByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).toHaveFocus();
+    expect(screen.getByText("Langkah 2 dari 3")).toBeInTheDocument();
     expect(await screen.findByText(/Belum ada aturan Windows Firewall/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Lewati, atur nanti" }));
     expect(await screen.findByRole("heading", { name: "Mencari kantor di jaringan..." })).toBeInTheDocument();
     expect(screen.getByText("Langkah 2 dari 3")).toBeInTheDocument();
+  });
+
+  it("aturan sudah ada: langkah firewall dilewati, langsung mencari", async () => {
+    const user = userEvent.setup();
+    commands({ get_firewall_status: firewall({ rule: "allowed" }), join_search: searchResult() });
+    setup();
+    await passName(user);
+    expect(await screen.findByRole("heading", { name: "Mencari kantor di jaringan..." })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).not.toBeInTheDocument();
+  });
+
+  it("di luar Windows (tidak didukung): langkah firewall dilewati", async () => {
+    const user = userEvent.setup();
+    commands({
+      get_firewall_status: firewall({ supported: false, rule: "unknown", profiles: [] }),
+      join_search: searchResult(),
+    });
+    setup();
+    await passName(user);
+    expect(await screen.findByRole("heading", { name: "Mencari kantor di jaringan..." })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).not.toBeInTheDocument();
+  });
+
+  it("macOS sudah mengizinkan: langkah firewall dilewati", async () => {
+    const user = userEvent.setup();
+    commands({
+      get_firewall_status: firewall({ platform: "macos", rule: "allowed", profiles: [] }),
+      join_search: searchResult(),
+    });
+    setup();
+    await passName(user);
+    expect(await screen.findByRole("heading", { name: "Mencari kantor di jaringan..." })).toBeInTheDocument();
+  });
+
+  it("status firewall gagal dibaca: langsung mencari", async () => {
+    const user = userEvent.setup();
+    commands({ get_firewall_status: rustError("internal", "PowerShell tidak bisa dijalankan.") });
+    setup();
+    await passName(user);
+    expect(await screen.findByRole("heading", { name: "Kantor belum ditemukan" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).not.toBeInTheDocument();
   });
 
   it("meminta izin administrator dan menyediakan perintah untuk tim IT", async () => {
@@ -246,6 +293,7 @@ describe("Onboarding langkah firewall", () => {
       request_firewall_rule: { started: true },
     });
     setup();
+    await passName(user);
 
     expect(await screen.findByText("VPN Kantor")).toBeInTheDocument();
     expect(screen.getByText("Publik")).toBeInTheDocument();
@@ -269,6 +317,7 @@ describe("Onboarding langkah firewall", () => {
     const user = userEvent.setup();
     commands({ get_firewall_status: firewall({ rule: "blocked" }), request_firewall_rule: { started: false } });
     setup();
+    await passName(user);
 
     expect(await screen.findByText(/memblokir Mira/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Izinkan lewat Windows Firewall" }));
@@ -276,22 +325,17 @@ describe("Onboarding langkah firewall", () => {
   });
 
   it("status tidak diketahui tetap menawarkan izin", async () => {
+    const user = userEvent.setup();
     commands({ get_firewall_status: firewall({ rule: "unknown", detail: "Akses ditolak" }) });
     setup();
+    await passName(user);
     expect(await screen.findByText(/belum bisa membaca aturan Windows Firewall/)).toBeInTheDocument();
     expect(screen.getByText(/Akses ditolak/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Izinkan lewat Windows Firewall" })).toBeInTheDocument();
   });
 
-  it("di luar Windows menjelaskan dan menawarkan lanjut", async () => {
-    commands({ get_firewall_status: firewall({ supported: false, rule: "unknown", profiles: [] }) });
-    setup();
-    expect(await screen.findByText(/hanya ada di Windows/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Izinkan lewat Windows Firewall" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cari kantor" })).toBeInTheDocument();
-  });
-
   it("macOS: tanpa tombol izin Windows, ada langkah Pengaturan Sistem dan perintah Terminal", async () => {
+    const user = userEvent.setup();
     const adminCommand =
       "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add '/Applications/Mira.app' && sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp '/Applications/Mira.app'";
     commands({
@@ -304,6 +348,7 @@ describe("Onboarding langkah firewall", () => {
       }),
     });
     setup();
+    await passName(user);
 
     expect(await screen.findByText(/Mira belum ada di daftarnya/)).toBeInTheDocument();
     expect(screen.getByText(/Pilih Izinkan\./)).toBeInTheDocument();
@@ -316,6 +361,7 @@ describe("Onboarding langkah firewall", () => {
   });
 
   it("macOS: firewall memblokir Mira, keterangan dari inti ikut tampil", async () => {
+    const user = userEvent.setup();
     commands({
       get_firewall_status: firewall({
         platform: "macos",
@@ -325,31 +371,16 @@ describe("Onboarding langkah firewall", () => {
       }),
     });
     setup();
+    await passName(user);
     expect(await screen.findByText(/Firewall macOS memblokir Mira/)).toBeInTheDocument();
     expect(screen.getByText(/memblokir semua sambungan masuk/)).toBeInTheDocument();
     expect(screen.getByText(/Atur Mira ke Izinkan sambungan masuk/)).toBeInTheDocument();
   });
 
-  it("macOS: firewall sudah mengizinkan, tidak ada langkah tambahan", async () => {
-    commands({ get_firewall_status: firewall({ platform: "macos", rule: "allowed", profiles: [] }) });
-    setup();
-    expect(await screen.findByText(/Firewall macOS tidak menghalangi Mira/)).toBeInTheDocument();
-    expect(screen.queryByText(/Pengaturan Sistem/)).not.toBeInTheDocument();
-  });
-
-  it("status firewall gagal dibaca: error jelas dan tetap bisa dilewati", async () => {
-    const user = userEvent.setup();
-    commands({ get_firewall_status: rustError("internal", "PowerShell tidak bisa dijalankan.") });
-    setup();
-    expect(await screen.findByText("Status Windows Firewall belum terbaca")).toBeInTheDocument();
-    expect(screen.getByText("PowerShell tidak bisa dijalankan.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Lewati, atur nanti" }));
-    expect(await screen.findByRole("heading", { name: "Kantor belum ditemukan" })).toBeInTheDocument();
-  });
-
-  it("permintaan lama tidak terbaca: tetap mulai dari langkah firewall", async () => {
+  it("permintaan lama tidak terbaca: tetap mulai dari langkah nama", async () => {
     commands({ get_firewall_status: firewall(), join_outgoing: rustError("database", "Data tidak terbaca.") });
     setup();
-    expect(await screen.findByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Siapa nama Anda?" })).toBeInTheDocument();
+    expect(screen.getByText("Langkah 1 dari 3")).toBeInTheDocument();
   });
 });

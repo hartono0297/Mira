@@ -15,7 +15,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
-import { mainNav, reachNotFound } from "./e2e-onboarding.mjs";
+import { fillNewOffice, mainNav, openAdminIT, reachNotFound, waitNameStep } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -100,11 +100,11 @@ try {
   // Jalankan 1: pertama kali buka (onboarding v0.3).
   let app = await launch();
   let { page } = app;
-  await page.getByRole("heading", { name: "Izinkan Mira di jaringan kantor" }).waitFor({ timeout: 20000 });
-  check("Layar pertama: langkah firewall", (await page.locator("body").innerText()).includes("Langkah 1 dari 3"));
+  await waitNameStep(page);
+  check("Layar pertama: langkah nama", (await page.locator("body").innerText()).includes("Langkah 1 dari 3"));
   const title = windowTitle(app.child.pid);
   check("Judul jendela memuat nama folder data", title.startsWith("Mira ("), title);
-  await page.screenshot({ path: join(shots, "01-firewall.png") });
+  await page.screenshot({ path: join(shots, "01-nama.png") });
 
   await reachNotFound(page);
   check("Tanpa kantor di jaringan: layar Kantor belum ditemukan", true);
@@ -117,19 +117,20 @@ try {
   await page.getByRole("button", { name: /Kembali/ }).first().click();
 
   await page.getByRole("heading", { name: /Kantor belum ditemukan|Cari kantor dengan cara lain/ }).waitFor({ timeout: 20000 });
-  await page.getByRole("button", { name: "Siapkan Mira untuk kantor baru (khusus superadmin)" }).click();
+  const hiddenNewOffice = !(await page.getByRole("button", { name: "Siapkan Mira untuk kantor baru", exact: true }).isVisible());
+  check("Tombol kantor baru tersembunyi sebelum bagian Untuk admin IT dibuka", hiddenNewOffice);
+  await openAdminIT(page);
+  await page.getByRole("button", { name: "Siapkan Mira untuk kantor baru", exact: true }).click();
   await page.getByRole("heading", { name: "Siapkan Mira untuk kantor baru" }).waitFor();
   await page.getByRole("button", { name: "Buat organisasi" }).click();
-  const invalid = await page.getByLabel("Nama organisasi").getAttribute("aria-invalid");
+  const invalid = await page.getByLabel("Nama organisasi", { exact: true }).getAttribute("aria-invalid");
   const describedText = await page.evaluate(() => {
     const el = document.querySelector('input[name="orgName"]');
     const ids = (el?.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
     return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
   });
   check("Isian kosong ditolak dengan pesan", invalid === "true" && describedText.length > 0, describedText.slice(0, 80));
-  await page.getByLabel("Nama organisasi").fill("Kantor Uji");
-  await page.getByLabel("Nama Anda").fill("Rina Uji");
-  await page.getByLabel("Departemen Anda").fill("Desain");
+  await fillNewOffice(page, { name: "Rina Uji", org: "Kantor Uji", dept: "Desain" });
   await page.screenshot({ path: join(shots, "04-buat-organisasi.png") });
   await page.getByRole("button", { name: "Buat organisasi" }).click();
   await mainNav(page, "Pengaturan").waitFor({ timeout: 20000 });

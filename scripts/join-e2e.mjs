@@ -1,16 +1,19 @@
-// Uji ujung ke ujung permintaan bergabung v0.3 (bagian A) di satu PC Windows.
+// Uji ujung ke ujung permintaan bergabung (v0.3 bagian A, diperbarui v0.4) di satu PC Windows.
 //
 // Menjalankan beberapa instance mira.exe, masing-masing dengan folder data
 // (MIRA_DATA_DIR), port QUIC (MIRA_PORT), dan port debug WebView2 sendiri,
 // lalu mengendalikannya lewat Chrome DevTools Protocol. Laptop baru melewati
-// layar onboarding yang asli (firewall, mencari kantor, kantor ditemukan,
-// menunggu persetujuan); laptop superadmin memutuskan lewat command Tauri.
+// layar onboarding yang asli (nama, firewall kalau perlu, mencari kantor,
+// pilih kantor, departemen, keterangan, menunggu persetujuan); laptop
+// superadmin memutuskan lewat kartu Permintaan bergabung atau command Tauri.
 //
 //   A  Ayu    membuat kantor dan departemen, superadmin
 //   B  Budi   bergabung dengan kode undangan lewat layar "Pakai kode undangan"
-//   N  Nina   laptop baru: menemukan kantor lewat mDNS, minta bergabung, disetujui
-//   R  Rudi   laptop baru: minta bergabung, ditolak
-//   X  Xena   laptop baru tanpa mDNS: kantor tidak terlihat, lalu lewat alamat rekan
+//   K  Kiki   membuat kantor kedua, supaya N melihat dua kantor
+//   N  Nina   laptop baru: melihat dua kantor, memilih satu, mengisi keterangan, disetujui
+//   R  Rudi   laptop baru: satu kantor (terpilih otomatis), minta bergabung, ditolak
+//   X  Xena   laptop baru tanpa mDNS: kantor tidak terlihat, tombol kantor baru
+//             hanya di dalam "Untuk admin IT", lalu lewat alamat rekan
 //
 // Semua instance memakai satu IP, jadi batas per IP di laptop A berlaku
 // bersama. Skenario dijalankan berurutan, tidak tumpang tindih.
@@ -23,18 +26,24 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
-import { mainNav } from "./e2e-onboarding.mjs";
+import { mainNav, openAdminIT, passFirewall as passFirewallStep, passName } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
-const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/v03-a");
+const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/v04-onboarding");
 mkdirSync(shots, { recursive: true });
 const root = mkdtempSync(join(tmpdir(), "mira-join-e2e-"));
 
 const ORG = "Kantor Uji Gabung";
 const DEPT = "Keuangan";
+const ORG2 = "Kantor Uji Lain";
+const DEPT2 = "Gudang";
+const NOTE = "Staf keuangan, NIK 4471";
+// Nama akun login Windows yang dibaca Mira dari sistem.
+const ACCOUNT = process.env.USERNAME ?? "";
 const NODES = {
   A: { name: "Ayu Uji", port: 47881, cdp: 9381, dir: join(root, "laptop-a") },
   B: { name: "Budi Uji", port: 47882, cdp: 9382, dir: join(root, "laptop-b") },
+  K: { name: "Kiki Uji", port: 47886, cdp: 9386, dir: join(root, "laptop-k") },
   N: { name: "Nina Uji", port: 47883, cdp: 9383, dir: join(root, "laptop-n") },
   R: { name: "Rudi Uji", port: 47884, cdp: 9384, dir: join(root, "laptop-r") },
   X: { name: "Xena Uji", port: 47885, cdp: 9385, dir: join(root, "laptop-x"), env: { MIRA_DISABLE_MDNS: "1" } },
@@ -166,23 +175,21 @@ async function waitHeading(id, re, timeoutMs = 30000) {
   }, timeoutMs, 300);
 }
 
-// Langkah 1 dari 3: tombol di bawah panduan firewall ("Cari kantor" kalau
-// aturan sudah ada, "Lewati, atur nanti" kalau belum).
-async function passFirewall(id) {
-  await waitHeading(id, /Izinkan Mira di jaringan kantor/);
-  const btn = running[id].page.getByRole("button", { name: /^(Cari kantor|Lewati, atur nanti)$/ });
-  await btn.waitFor({ state: "visible", timeout: 20000 });
-  const label = await btn.innerText();
-  await btn.click();
-  return label;
+// Langkah 1 dari 3 (nama), lalu firewall kalau aturan Mira belum ada.
+// Hasil: teks tombol firewall yang diklik, atau null kalau layar itu dilewati sendiri.
+async function startOnboarding(id) {
+  await passName(running[id].page, NODES[id].name);
+  return passFirewallStep(running[id].page);
 }
 
-// Layar (b): isi nama, pilih departemen, kirim. Hasil: kode cocok di layar menunggu.
-async function requestToJoin(id) {
+// Layar pilih kantor: pilih kantor (kalau ada beberapa), departemen,
+// keterangan opsional, kirim. Hasil: kode cocok di layar menunggu.
+async function requestToJoin(id, { office = null, note = null } = {}) {
   const page = running[id].page;
-  await page.locator('input[name="displayName"]').fill(NODES[id].name);
+  if (office) await page.getByRole("radio", { name: new RegExp("^" + office) }).check();
   await page.locator('select[name="team"]').selectOption({ label: DEPT });
-  await page.getByRole("button", { name: "Minta bergabung" }).click();
+  if (note) await page.getByLabel("Keterangan untuk admin (opsional)", { exact: true }).fill(note);
+  await page.getByRole("button", { name: "Kirim permintaan" }).click();
   await waitHeading(id, /^Menunggu persetujuan$/, 30000);
   return (await page.locator(".onb-match").innerText()).trim();
 }
@@ -228,14 +235,15 @@ try {
   pk.B = (await must("B", "get_app_state")).identity.publicKey;
   let bViaUi = false;
   try {
-    await passFirewall("B");
+    await startOnboarding("B");
     const h = await waitHeading("B", /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/, 25000);
     if (/ditemukan/.test(h) && !/belum/.test(h)) {
       await running.B.page.getByRole("button", { name: "Cari dengan cara lain" }).click();
     }
     await running.B.page.getByRole("button", { name: /Pakai kode undangan/ }).click();
     await waitHeading("B", /^Gabung dengan kode undangan$/);
-    await running.B.page.locator('input[name="displayName"]').fill(NODES.B.name);
+    const bName = running.B.page.locator('input[name="displayName"]');
+    if (await bName.isVisible()) await bName.fill(NODES.B.name);
     await running.B.page.locator('input[name="inviteCode"]').fill(invite.code);
     await shot("B", "j01-b-kode-undangan.png");
     await running.B.page.getByRole("button", { name: "Gabung ke organisasi" }).click();
@@ -258,12 +266,25 @@ try {
   check("B tercatat sebagai anggota aktif di laptop A", Boolean(bOnA));
   await sleep(3000); // B mulai mengiklankan j=1 lewat mDNS.
 
-  // ----- 2. Laptop baru N menemukan kantor lewat mDNS ---------------------------
+  // ----- 2. Kantor kedua K, lalu laptop baru N melihat dua kantor ----------------
+  await launch("K");
+  await must("K", "save_display_name", { name: NODES.K.name });
+  await must("K", "create_organization", { name: ORG2 });
+  const dept2 = await must("K", "org_create_department", { name: DEPT2 });
+  pk.K = (await must("K", "get_app_state")).identity.publicKey;
+  await must("K", "org_move_member", { publicKey: pk.K, teamId: dept2.id });
+  check("K membuat kantor kedua di jaringan yang sama", (await must("K", "get_app_state")).organization?.name === ORG2);
+  await sleep(3000); // K mulai mengiklankan j=1 lewat mDNS.
+
   await launch("N");
   pk.N = (await must("N", "get_app_state")).identity.publicKey;
-  const fwLabel = await passFirewall("N");
-  await shot("N", "j02-n-firewall.png").catch(() => {});
-  check("N: langkah firewall bisa dilewati", true, `tombol "${fwLabel}"`);
+  await waitFor("N menampilkan langkah nama", () => running.N.page.getByRole("button", { name: "Lanjut", exact: true }).isVisible(), 20000, 300);
+  const nFirst = await bodyText("N");
+  await shot("N", "j02-n-nama.png").catch(() => {});
+  check("N: layar pertama meminta nama (Langkah 1 dari 3)", nFirst.includes("Langkah 1 dari 3") && nFirst.includes("Nama tampilan"));
+  check("N: layar pertama tidak menyebut kantor baru atau superadmin", !/kantor baru|superadmin/i.test(nFirst));
+  const fwLabel = await startOnboarding("N");
+  check("N: langkah firewall singkat atau dilewati sendiri", true, fwLabel ? `tombol "${fwLabel}"` : "aturan sudah ada, layar dilewati");
   let searchSeen = false;
   try {
     await waitHeading("N", /^Mencari kantor di jaringan/, 5000);
@@ -274,19 +295,28 @@ try {
   }
   let nHeading = "";
   try {
-    nHeading = await waitHeading("N", /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/, 25000);
+    nHeading = await waitHeading("N", /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/, 30000);
   } catch (e) {
     nHeading = String(e.message);
   }
-  check("N: layar mencari kantor tampil", searchSeen || nHeading.startsWith("Kantor ditemukan"), searchSeen ? "" : "langsung ke hasil");
-  check(`N menemukan kantor lewat mDNS: "Kantor ditemukan: ${ORG}"`, nHeading === `Kantor ditemukan: ${ORG}`, nHeading);
-  await shot("N", "j04-n-kantor-ditemukan.png");
+  check("N: layar mencari kantor tampil", searchSeen || /ditemukan/.test(nHeading), searchSeen ? "" : "langsung ke hasil");
+  check('N melihat dua kantor lewat mDNS: "Beberapa kantor ditemukan"', nHeading === "Beberapa kantor ditemukan", nHeading);
   const nBody = await bodyText("N");
   const fpA = await must("A", "org_fingerprint");
-  check("N: sidik organisasi di layar sama dengan sidik di header Organisasi A", nBody.includes(fpA), fpA);
-  check("N: pilihan \"Siapkan Mira untuk kantor baru\" tidak ada saat kantor terlihat", !nBody.includes("Siapkan Mira untuk kantor baru"));
-  const deptOptions = await running.N.page.locator('select[name="team"] option').allInnerTexts();
-  check("N: departemen kantor muncul di pilihan", deptOptions.includes(DEPT), JSON.stringify(deptOptions));
+  const fpK = await must("K", "org_fingerprint");
+  check("N: kedua kantor tampil dengan nama dan sidiknya", nBody.includes(ORG) && nBody.includes(ORG2) && nBody.includes(fpA) && nBody.includes(fpK), `${fpA} / ${fpK}`);
+  check('N: tidak ada "kantor baru" atau "Untuk admin IT" saat kantor terlihat', !nBody.includes("Siapkan Mira untuk kantor baru") && !nBody.includes("Untuk admin IT"));
+  const teamSelect = running.N.page.locator('select[name="team"]');
+  check("N: departemen belum bisa dipilih sebelum kantor dipilih", await teamSelect.isDisabled());
+  await shot("N", "j04-n-dua-kantor.png");
+  await running.N.page.getByRole("radio", { name: new RegExp("^" + ORG) }).check();
+  const deptOptions = await teamSelect.locator("option").allInnerTexts();
+  check("N: daftar departemen berasal dari kantor yang dipilih", deptOptions.includes(DEPT) && !deptOptions.includes(DEPT2), JSON.stringify(deptOptions));
+  const noteField = running.N.page.getByLabel("Keterangan untuk admin (opsional)", { exact: true });
+  check('N: isian "Keterangan untuk admin" tampil, paling banyak 80 karakter', (await noteField.isVisible()) && (await noteField.getAttribute("maxlength")) === "80");
+  await teamSelect.selectOption({ label: DEPT });
+  await noteField.fill(NOTE);
+  await shot("N", "j04b-n-formulir.png");
   const nCode = await requestToJoin("N");
   await shot("N", "j05-n-menunggu.png");
   check("N: layar menunggu menampilkan kode cocok", /^[0-9A-Z]{4} [0-9A-Z]{4}$/.test(nCode), nCode);
@@ -296,6 +326,9 @@ try {
   check("A melihat permintaan N di org_join_requests", Boolean(nReq?.id), nReq?.error ?? `${nReq.teamName}, ${nReq.laptop}, ip ${nReq.ip}`);
   check("Kode cocok di A sama dengan kode di layar N", nReq?.code === nCode, `A ${nReq?.code} / N ${nCode}`);
   check("Permintaan N tertuju ke departemen yang dipilih", nReq?.teamId === dept.id);
+  check("Permintaan N membawa keterangan dan nama akun login", nReq?.note === NOTE && Boolean(ACCOUNT) && nReq?.account === ACCOUNT, `${JSON.stringify(nReq?.note)} / ${JSON.stringify(nReq?.account)}`);
+  const kReqs = await must("K", "org_join_requests");
+  check("Kantor K tidak menerima permintaan N", !kReqs.some((r) => r.displayName === NODES.N.name));
   // Kartu penyetuju di halaman Organisasi A (bagian B): angka di menu, sidik di header,
   // kode yang sama di kartu, lalu Setujui lewat klik.
   const pa = running.A.page;
@@ -311,6 +344,9 @@ try {
     await pa.locator("nav.org-tabs-wrap").getByRole("button", { name: /^Permintaan bergabung/ }).click({ timeout: 10000 });
     await pa.getByText(nCode, { exact: true }).waitFor({ timeout: 15000 });
     await shot("A", "j06-a-permintaan-bergabung.png");
+    const card = await pa.locator("main.org").innerText();
+    check("Kartu A menampilkan keterangan, akun login, dan laptop N", card.includes(NOTE) && card.includes(ACCOUNT) && card.includes(nReq.laptop), `${ACCOUNT} / ${nReq.laptop}`);
+    check("Kartu A memberi petunjuk mencocokkan kode lewat telepon", /telepon/i.test(card));
     await pa.getByRole("button", { name: `Setujui permintaan ${NODES.N.name}` }).click({ timeout: 10000 });
     approvedByClick = true;
   } catch (e) {
@@ -334,12 +370,18 @@ try {
   check("Permintaan N hilang dari daftar A setelah disetujui", !aLeft.some((r) => r.id === nReq.id));
   await stop("N");
   await stop("B");
+  await stop("K");
+  await sleep(3000); // iklan mDNS K berhenti.
 
   // ----- 4. Laptop R ditolak -------------------------------------------------------
   await launch("R");
-  await passFirewall("R");
-  const rHeading = await waitHeading("R", /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/, 25000).catch((e) => String(e.message));
-  check(`R menemukan kantor lewat mDNS`, rHeading === `Kantor ditemukan: ${ORG}`, rHeading);
+  await startOnboarding("R");
+  const rHeading = await waitHeading("R", /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/, 30000).catch((e) => String(e.message));
+  check(`R menemukan satu kantor lewat mDNS: "Kantor ditemukan: ${ORG}"`, rHeading === `Kantor ditemukan: ${ORG}`, rHeading);
+  const rRadios = await running.R.page.getByRole("radio").count();
+  const rFirst = await bodyText("R");
+  check("R: satu kantor terpilih otomatis, tampil dengan sidiknya", rRadios === 0 && rFirst.includes(fpA) && (await running.R.page.locator('select[name="team"]').isEnabled()), `radio ${rRadios}`);
+  await shot("R", "j07b-r-satu-kantor.png");
   const rCode = await requestToJoin("R");
   const rReq = await requestOnA(NODES.R.name).catch((e) => ({ error: e.message }));
   check("A melihat permintaan R dengan kode yang sama", rReq?.code === rCode, `A ${rReq?.code} / R ${rCode}`);
@@ -357,12 +399,16 @@ try {
 
   // ----- 5. Laptop X tanpa mDNS -------------------------------------------------------
   await launch("X");
-  await passFirewall("X");
+  await startOnboarding("X");
   const xHeading = await waitHeading("X", /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/, 25000).catch((e) => String(e.message));
   check("X tanpa mDNS: layar \"Kantor belum ditemukan\"", xHeading === "Kantor belum ditemukan", xHeading);
-  const newOffice = running.X.page.getByRole("button", { name: "Siapkan Mira untuk kantor baru (khusus superadmin)" });
-  check("X: pilihan \"Siapkan Mira untuk kantor baru\" ada saat kantor tidak terlihat", await newOffice.isVisible());
+  const newOffice = running.X.page.getByRole("button", { name: "Siapkan Mira untuk kantor baru", exact: true });
   await shot("X", "j09-x-belum-ditemukan.png");
+  check('X: tombol kantor baru tidak terlihat tanpa membuka "Untuk admin IT"', !(await newOffice.isVisible()));
+  await openAdminIT(running.X.page);
+  check('X: tombol kantor baru ada di dalam "Untuk admin IT"', await newOffice.isVisible());
+  await shot("X", "j09b-x-admin-it.png");
+  await running.X.page.locator("summary", { hasText: "Untuk admin IT" }).click();
   await running.X.page.locator('input[name="peerAddress"]').fill(addr("A"));
   await running.X.page.getByRole("button", { name: "Hubungkan" }).click();
   const xOffice = await waitHeading("X", /^(Kantor ditemukan|Beberapa kantor ditemukan)/, 20000).catch((e) => String(e.message));

@@ -83,6 +83,35 @@
   background: var(--danger-soft);
 }
 
+/* Keterangan ditulis sendiri oleh peminta (v0.4), jadi tampil sebagai kutipan
+   kata-katanya, terpisah dari fakta yang dicatat Mira. Tanpa garis warna di kiri:
+   bedanya cukup dari latar dan label. Teks panjang tanpa spasi tetap dipatahkan. */
+.req-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--hover);
+}
+
+.req-note-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.req-note-text {
+  margin: 0;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
 /* Fakta laptop: dua pasang kolom di kartu lebar, satu pasang di kartu sempit. */
 .req-facts {
   margin: 0;

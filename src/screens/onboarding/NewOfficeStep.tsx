@@ -6,6 +6,7 @@ import { validateDepartmentName, validateDisplayName, validateOrgName } from "..
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { StepHeading } from "./StepHeading";
+import { NEW_OFFICE } from "./texts";
 
 type Props = {
   identity: IdentityInfo;
@@ -15,19 +16,21 @@ type Props = {
   onReload: () => void;
 };
 
-type Field = "org" | "name" | "dept";
+type Field = "org" | "name" | "dept" | "confirm";
 type Errors = Record<Field, string | null>;
-const NO_ERRORS: Errors = { org: null, name: null, dept: null };
+const NO_ERRORS: Errors = { org: null, name: null, dept: null, confirm: null };
 
 // Organisasi sudah dibuat, tapi departemen pertama belum selesai disiapkan.
 type HalfDone = { org: OrgInfo; dept: string; error: AppError };
 
-// (e) Siapkan Mira untuk kantor baru. Urutan: nama, organisasi, departemen,
-// lalu pindahkan diri sendiri ke departemen itu.
+// (e) Siapkan Mira untuk kantor baru. Nama organisasi diketik dua kali supaya
+// salah ketik tidak menjadi nama kantor. Urutan simpan: nama, organisasi,
+// departemen, lalu pindahkan diri sendiri ke departemen itu.
 export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, onReload }: Props) {
   const [orgName, setOrgName] = useState("");
   const [name, setName] = useState(identity.displayName ?? "");
   const [dept, setDept] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [errors, setErrors] = useState<Errors>(NO_ERRORS);
   const [serverError, setServerError] = useState<AppError | null>(null);
   const [saving, setSaving] = useState(false);
@@ -36,6 +39,7 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
     org: useRef<HTMLInputElement>(null),
     name: useRef<HTMLInputElement>(null),
     dept: useRef<HTMLInputElement>(null),
+    confirm: useRef<HTMLInputElement>(null),
   };
   const ids = {
     org: useId(),
@@ -47,6 +51,9 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
     dept: useId(),
     deptHint: useId(),
     deptErr: useId(),
+    confirm: useId(),
+    confirmHint: useId(),
+    confirmErr: useId(),
   };
 
   async function submit(e: FormEvent) {
@@ -56,8 +63,9 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
       org: validateOrgName(orgName),
       name: validateDisplayName(name),
       dept: validateDepartmentName(dept),
+      confirm: confirm.trim() === orgName.trim() ? null : NEW_OFFICE.confirmMismatch,
     };
-    const first = (["org", "name", "dept"] as Field[]).find((f) => found[f]);
+    const first = (["org", "name", "dept", "confirm"] as Field[]).find((f) => found[f]);
     if (first) {
       setErrors(found);
       setServerError(null);
@@ -197,6 +205,27 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
         </p>
         <div id={ids.deptErr} aria-live="polite">
           {errors.dept && <FieldError text={errors.dept} />}
+        </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor={ids.confirm}>{NEW_OFFICE.confirmLabel}</label>
+        <input
+          ref={refs.confirm}
+          id={ids.confirm}
+          name="orgNameConfirm"
+          autoComplete="off"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          aria-invalid={errors.confirm ? true : undefined}
+          aria-describedby={`${ids.confirmHint} ${ids.confirmErr}`}
+          disabled={saving}
+        />
+        <p id={ids.confirmHint} className="hint">
+          {NEW_OFFICE.confirmHint}
+        </p>
+        <div id={ids.confirmErr} aria-live="polite">
+          {errors.confirm && <FieldError text={errors.confirm} />}
         </div>
       </div>
 
