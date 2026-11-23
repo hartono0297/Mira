@@ -565,22 +565,138 @@ describe("Board: pindah task", () => {
     expect(screen.queryByRole("button", { name: "Task nomor 1" })).not.toBeInTheDocument();
   });
 
-  it("drag-and-drop memanggil moveTask dengan posisi tujuan", async () => {
+});
+
+// Tata letak tiruan untuk seret: jsdom tidak menghitung posisi. Area board
+// 900 x 600, tiga kolom selebar 300, kartu setinggi 50 mulai y = 40 tiap 60.
+function mockLayout() {
+  const COLS: ColumnId[] = ["todo", "doing", "done"];
+  const rect = (left: number, top: number, width: number, height: number) =>
+    ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+  return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.hasAttribute("data-drop-area")) return rect(0, 0, 900, 600);
+    const col = this.closest<HTMLElement>("[data-drop-col]");
+    if (!col) return rect(0, 0, 0, 0);
+    const left = COLS.indexOf(col.dataset.dropCol as ColumnId) * 300;
+    if (this === col) return rect(left, 0, 280, 400);
+    const card = this.closest<HTMLElement>("[data-card]");
+    if (!card) return rect(0, 0, 0, 0);
+    const i = Array.from(col.querySelectorAll("[data-card]")).indexOf(card);
+    return rect(left + 10, 40 + i * 60, 260, 50);
+  });
+}
+
+function cardEl(n: number) {
+  return document.querySelector<HTMLElement>(`[data-card="${taskId(n)}"]`)!;
+}
+
+const MOUSE = { pointerType: "mouse", button: 0, buttons: 1, isPrimary: true };
+
+// Seret dengan mouse: tekan di kartu, gerak bertahap, lepas.
+function dragCard(n: number, to: { x: number; y: number }, opts: { release?: boolean } = {}) {
+  const from = cardEl(n).getBoundingClientRect();
+  const sx = from.left + 20;
+  const sy = from.top + 20;
+  const target = cardEl(n).querySelector<HTMLElement>("[data-open-task]")!;
+  fireEvent.pointerDown(target, { ...MOUSE, pointerId: 1, clientX: sx, clientY: sy });
+  for (let i = 1; i <= 5; i++)
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 1, clientX: sx + ((to.x - sx) * i) / 5, clientY: sy + ((to.y - sy) * i) / 5 });
+  if (opts.release !== false) {
+    fireEvent.pointerUp(window, { ...MOUSE, pointerId: 1, buttons: 0, clientX: to.x, clientY: to.y });
+    fireEvent.click(target);
+  }
+}
+
+describe("Board: seret kartu dengan mouse", () => {
+  let layout: ReturnType<typeof mockLayout>;
+  beforeEach(() => {
+    layout = mockLayout();
+  });
+  afterEach(() => {
+    layout.mockRestore();
+  });
+
+  it("seret ke kolom lain memanggil moveTask dengan posisi tujuan, tanpa membuka detail", async () => {
     await renderBoard();
-    const art = document.querySelector<HTMLElement>(`[data-card="${taskId(2)}"]`)!;
-    const data = new Map<string, string>();
-    const dataTransfer = {
-      setData: (k: string, v: string) => data.set(k, v),
-      getData: (k: string) => data.get(k) ?? "",
-      effectAllowed: "",
-      dropEffect: "",
-    };
-    fireEvent.dragStart(art, { dataTransfer });
-    const done = column("Selesai");
-    fireEvent.dragOver(done, { dataTransfer, clientY: 0 });
-    fireEvent.drop(done, { dataTransfer });
+    // Di bawah PA-4 (y 40 sampai 90) di Selesai: posisi kedua.
+    dragCard(2, { x: 750, y: 200 });
     await waitFor(() => expect(board.moveTask).toHaveBeenCalledWith(P1, taskId(2), "done", 1));
     expect(await screen.findByRole("heading", { name: colName("Selesai", 2) })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Detail task tiruan" })).not.toBeInTheDocument();
+    expect(await screen.findByText("PA-2 dipindah ke Selesai, posisi 2 dari 2.")).toBeInTheDocument();
+  });
+
+  it("selama seret: bayangan kartu, kolom tujuan disorot, dan garis sisip di posisi jatuh", async () => {
+    await renderBoard();
+    dragCard(2, { x: 450, y: 20 }, { release: false });
+    const doing = column("Dikerjakan");
+    expect(doing).toHaveClass("pb-col-over");
+    // Garis sisip di atas PA-3: posisi pertama.
+    expect(doing.querySelector(".pb-list")!.firstElementChild).toHaveClass("pb-drop");
+    expect(cardEl(2)).toHaveClass("tc-dragging");
+    expect(document.documentElement).toHaveClass("card-dragging");
+    const ghost = document.body.querySelector<HTMLElement>(".tc-ghost")!;
+    expect(ghost).toHaveAttribute("aria-hidden", "true");
+    expect(ghost.querySelector("[data-open-task], [id]")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Task nomor 2" })).toHaveLength(1);
+
+    fireEvent.pointerUp(window, { ...MOUSE, pointerId: 1, buttons: 0, clientX: 450, clientY: 20 });
+    await waitFor(() => expect(board.moveTask).toHaveBeenCalledWith(P1, taskId(2), "doing", 0));
+    expect(document.querySelector(".tc-ghost")).toBeNull();
+    expect(document.querySelector(".pb-col-over")).toBeNull();
+    expect(document.documentElement).not.toHaveClass("card-dragging");
+  });
+
+  it("seret di dalam kolom mengubah urutan", async () => {
+    await renderBoard();
+    // PA-1 diseret ke bawah PA-2 di To do.
+    dragCard(1, { x: 150, y: 300 });
+    await waitFor(() => expect(board.moveTask).toHaveBeenCalledWith(P1, taskId(1), "todo", 1));
+    await waitFor(() =>
+      expect(
+        within(column("To do"))
+          .getAllByRole("button", { name: /^Task nomor/ })
+          .map((b) => b.textContent),
+      ).toEqual(["Task nomor 2", "Task nomor 1"]),
+    );
+  });
+
+  it("Escape membatalkan seret, dan gerak kecil tetap klik biasa", async () => {
+    await renderBoard();
+    dragCard(2, { x: 750, y: 200 }, { release: false });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.querySelector(".tc-ghost")).toBeNull();
+    expect(document.querySelector(".pb-col-over")).toBeNull();
+    fireEvent.pointerUp(window, { ...MOUSE, pointerId: 1, buttons: 0, clientX: 750, clientY: 200 });
+    expect(board.moveTask).not.toHaveBeenCalled();
+
+    // Geser 2 piksel lalu lepas: bukan seret, kartu terbuka.
+    await new Promise((r) => setTimeout(r, 0));
+    const btn = screen.getByRole("button", { name: "Task nomor 2" });
+    fireEvent.pointerDown(btn, { ...MOUSE, pointerId: 2, clientX: 30, clientY: 120 });
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 2, clientX: 32, clientY: 120 });
+    fireEvent.pointerUp(window, { ...MOUSE, pointerId: 2, buttons: 0, clientX: 32, clientY: 120 });
+    fireEvent.click(btn);
+    expect(screen.getByRole("dialog", { name: "Detail task tiruan" })).toBeInTheDocument();
+    expect(board.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("lepas di luar board tidak memindah apa pun", async () => {
+    await renderBoard();
+    dragCard(2, { x: 450, y: 800 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(board.moveTask).not.toHaveBeenCalled();
+    expect(document.querySelector(".tc-ghost")).toBeNull();
+  });
+
+  it("menekan tombol Pindahkan tidak memulai seret", async () => {
+    await renderBoard();
+    const menu = screen.getByRole("button", { name: "Pindahkan PA-2" });
+    fireEvent.pointerDown(menu, { ...MOUSE, pointerId: 3, clientX: 250, clientY: 120 });
+    fireEvent.pointerMove(window, { ...MOUSE, pointerId: 3, clientX: 750, clientY: 200 });
+    expect(document.querySelector(".tc-ghost")).toBeNull();
+    fireEvent.pointerUp(window, { ...MOUSE, pointerId: 3, buttons: 0, clientX: 750, clientY: 200 });
+    expect(board.moveTask).not.toHaveBeenCalled();
   });
 });
 
@@ -668,7 +784,12 @@ describe("Board: Tamu hanya melihat", () => {
     expect(screen.queryByRole("button", { name: /^Pindahkan/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ubah nama proyek" })).not.toBeInTheDocument();
     const art = document.querySelector<HTMLElement>(`[data-card="${taskId(1)}"]`)!;
-    expect(art).toHaveAttribute("draggable", "false");
+    expect(art).not.toHaveAttribute("data-movable");
+    const pointer = { pointerId: 1, pointerType: "mouse", button: 0, buttons: 1 };
+    fireEvent.pointerDown(art, { ...pointer, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(window, { ...pointer, clientX: 400, clientY: 200 });
+    fireEvent.pointerUp(window, { ...pointer, clientX: 400, clientY: 200 });
+    expect(document.querySelector(".tc-ghost")).toBeNull();
 
     screen.getByRole("button", { name: "Task nomor 1" }).focus();
     await user.keyboard("{Alt>}{ArrowRight}{/Alt}");

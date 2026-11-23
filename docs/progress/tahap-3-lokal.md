@@ -91,7 +91,7 @@ Semua angka di bawah dari menjalankan ulang di sesi ini setelah perbaikan terakh
   - Board kosong tampil, kode PA diusulkan, dan proyek dibuat.
   - Empat task dibuat lewat "Tambah task".
   - Alt+Panah kanan memindah ke Dikerjakan, dan menu Pindahkan memindah ke Selesai.
-  - Seret mouse sungguhan memindah ke Dikerjakan.
+  - Seret mouse sungguhan memindah ke Dikerjakan. (Koreksi setelah v0.2.0: pemeriksaan ini memakai `locator.dragTo`, yang memalsukan seret HTML5 lewat CDP. Seret dengan mouse sungguhan di Windows ternyata gagal. Lihat "Perbaikan setelah v0.2.0" di akhir dokumen.)
   - Detail task menyimpan deskripsi, penanggung jawab, tenggat, prioritas, label, dan komentar.
   - "Task saya" hanya berisi task milik saya.
   - Setelah restart, proyek, task, dan posisi kolom tetap.
@@ -148,3 +148,29 @@ Semua di `src-tauri/src/board/`:
   - File lain, termasuk `error.rs`, `Cargo.toml`, dan semua file board, tergabung otomatis. Saya tidak menjalankan tes pada hasil gabungan itu, karena keputusan merge ada di user.
 - **Setelah merge.** Hook sinkron jaringan (`AppNet` di `main`) dan `BoardRuntime` di branch ini belum saling kenal. Sambungannya dikerjakan di bagian jaringan Tahap 3, lewat titik sambung di atas.
 - **Di luar repo.** Folder `D:\GitHub\ChatCompany` tidak disentuh. Folder data uji dibuat di folder scratch sesi dan sudah dihapus. Proses aplikasi yang dijalankan uji sudah dihentikan.
+
+## Perbaikan setelah v0.2.0: seret kartu dengan mouse
+
+**Gejala.** Di Mira 0.2.0 (installer Windows), kartu task tidak bisa diseret ke kolom lain. Alt + panah dan menu Pindahkan tetap jalan.
+
+**Penyebab.** Board memakai drag-and-drop HTML5 (`draggable`, `dragover`, `drop`). Tauri 2 memasang penangan seret-lepas berkas miliknya sendiri di setiap webview (`dragDropEnabled`, bawaan aktif). Di Windows, penangan itu menggantikan milik WebView2, jadi event seret HTML5 tidak sampai ke halaman. Dokumentasi Tauri menulisnya langsung: mematikan `dragDropEnabled` wajib kalau frontend memakai drag-and-drop HTML5 di Windows. Uji ujung ke ujung tidak menangkapnya karena `locator.dragTo` di Playwright tidak memakai seret OS: ia mencegat seret lewat CDP (`Input.setInterceptDrags`) lalu mengirim event seret buatan langsung ke halaman.
+
+Bukti: `scripts/board-e2e.mjs` versi baru dijalankan pada `mira.exe` 0.2.0. Seret lewat `page.mouse` masih lulus (seret HTML5 dicegat Playwright), tetapi seret dengan kursor Windows sungguhan (`MIRA_E2E_OS_MOUSE=1`, SetCursorPos dan mouse_event) gagal: kartu tetap di To do.
+
+**Perbaikan.** Seret kartu sekarang memakai pointer event (`src/screens/board/useCardDrag.ts`), bukan HTML5. Pointer event tidak lewat penangan seret OS, jadi jalan sama di WebView2 dan WKWebView.
+- Tekan lalu geser minimal 5 piksel untuk mulai seret. Gerak lebih kecil tetap klik biasa yang membuka detail task. Klik yang menyusul lepas seret ditelan, jadi detail tidak ikut terbuka.
+- Salinan kartu mengikuti pointer (`.tc-ghost`, `aria-hidden` dan `inert`, tanpa id ganda). Kartu asal tetap terlihat samar.
+- Kolom tujuan mendapat garis putus-putus dan garis sisip di posisi jatuh, sama seperti sebelumnya. Kolom dipilih dari posisi mendatar, jadi celah antar kolom dan ruang kosong di bawah kolom pendek tetap dihitung.
+- Seret di dalam kolom mengubah urutan.
+- Escape, pointercancel, atau jendela kehilangan fokus membatalkan seret. Lepas di luar board tidak memindah apa pun.
+- Board menggulir sendiri saat pointer dekat tepi area board.
+- Tombol Pindahkan (`data-no-drag`) tidak memulai seret. Sentuhan layar tidak memulai seret, supaya board tetap bisa digulir dengan jari.
+- Alt + panah, menu Pindahkan, dan pengumuman pembaca layar ("PA-4 dipindah ke Selesai, posisi 1 dari 2.") tidak berubah.
+
+`dragDropEnabled` sengaja tetap aktif. Mira tidak memakai event seret berkas Tauri maupun `dataTransfer.files`: lampiran chat dan dokumen dipilih lewat dialog berkas. Kalau penangan itu dimatikan, berkas yang tidak sengaja dijatuhkan ke jendela bisa dibuka oleh webview dan menggantikan tampilan Mira, kecuali setiap halaman menolak drop sendiri. Perbaikan lewat pointer event tidak butuh perubahan itu.
+
+**Uji.**
+- Vitest: 6 tes seret baru di `BoardScreen.test.tsx` (pindah kolom, sorotan dan bayangan, ubah urutan, Escape dan klik biasa, lepas di luar board, tombol Pindahkan), dan tes Tamu memastikan kartu tidak bisa diseret.
+- `scripts/board-e2e.mjs` pada build rilis (`npx tauri build --no-bundle`): kartu diseret dengan `page.mouse` (tekan, gerak bertahap, lepas) dari To do ke Dikerjakan ke Selesai, lalu diubah urutannya di Selesai. Sorotan kolom dan bayangan diperiksa di tengah seret. Escape di mode gelap membatalkan seret. Setelah restart, task tetap di Selesai di urutan pertama. Dengan `MIRA_E2E_OS_MOUSE=1`, satu kartu juga diseret dengan kursor Windows sungguhan dan berhasil pindah. Hasil: 18 dari 18 pemeriksaan lulus.
+- Screenshot: `t3-10-seret-berjalan-terang.png` dan `t3-11-seret-berjalan-gelap.png` (di tengah seret), `t3-09-seret-selesai-terang.png` (setelah pindah ke Selesai dan ubah urutan).
+- Belum diuji dengan mouse sungguhan di macOS. Pointer event di WKWebView tidak bergantung pada penangan seret Tauri, tapi tetap perlu dicoba sekali di Mac.

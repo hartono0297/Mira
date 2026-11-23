@@ -62,7 +62,7 @@ export function MoveMenu({ code, options }: Props) {
   }
 
   return (
-    <div className="mv">
+    <div className="mv" data-no-drag>
       <button
         ref={buttonRef}
         type="button"
