@@ -131,7 +131,6 @@ pub fn run() {
                 )),
             });
             app.manage(state);
-            org_screen::spawn_join_notifier(app.handle());
             board::feature::register(app.handle());
             // Document library: managed even when the data folder is missing
             // (its commands then return the error). Edit sessions left from
