@@ -11,6 +11,10 @@ export type JoinDevice = {
   laptop: string;
   os: string;
   appVersion: string;
+  // Nama akun login Windows atau macOS (v0.4), dibaca dari sistem dan ikut
+  // permintaan bertanda tangan supaya admin bisa memastikan siapa pemintanya.
+  // null kalau tidak terbaca.
+  account: string | null;
   // Alamat IPv4 laptop ini tanpa port, misalnya "192.168.1.23".
   addresses: string[];
 };
@@ -33,7 +37,13 @@ export type FoundOffice = {
   conflict: boolean;
   // Ada kantor lain dengan nama sama: bandingkan sidiknya.
   sameName: boolean;
+  // Semua laptop anggota yang menjawab sudah v0.4: keterangan dan nama akun
+  // ikut permintaan. false: permintaan berbentuk v0.3 (tanpa keduanya).
+  acceptsNote: boolean;
 };
+
+// Batas keterangan untuk admin, dalam karakter (sama dengan Rust).
+export const JOIN_NOTE_MAX_CHARS = 80;
 
 export type JoinSearch = {
   offices: FoundOffice[];
@@ -55,6 +65,8 @@ export type OutgoingJoinRequest = {
   teamId: string;
   teamName: string;
   displayName: string;
+  // Keterangan untuk admin (v0.4), null kalau dikosongkan atau kantor belum mendukungnya.
+  note: string | null;
   createdAt: string;
   status: "pending" | "rejected";
   decidedByName: string | null;
@@ -88,12 +100,16 @@ export const joinApi = {
   // Menyimpan nama tampilan dulu lewat api.saveDisplayName.
   // confirmFingerprint: sidik pendek yang sudah dicocokkan dengan superadmin.
   // Wajib untuk kantor yang conflict, selain itu null.
-  sendRequest: (officeKey: string, teamId: string, confirmFingerprint: string | null = null) =>
-    call<OutgoingJoinRequest>("join_send_request", { officeKey, teamId, confirmFingerprint }),
+  // note: keterangan untuk admin (v0.4), null atau string kosong kalau tidak diisi.
+  sendRequest: (officeKey: string, teamId: string, confirmFingerprint: string | null = null, note: string | null = null) =>
+    call<OutgoingJoinRequest>("join_send_request", { officeKey, teamId, confirmFingerprint, note }),
   outgoing: () => call<OutgoingJoinRequest | null>("join_outgoing"),
   // Dipanggil tiap 5 detik selama layar menunggu terbuka.
   poll: () => call<JoinPoll>("join_poll"),
   cancel: () => call<null>("join_cancel"),
-  // Setelah ditolak: permintaan baru (id dan kode baru) ke kantor dan departemen yang sama.
+  // Setelah ditolak: permintaan baru (id dan kode baru) ke kantor dan departemen
+  // yang sama, dengan keterangan yang sama.
   resend: () => call<OutgoingJoinRequest>("join_resend"),
+  // Mira dibuka dengan argumen --siapkan-kantor (khusus admin IT, v0.4).
+  setupMode: () => call<boolean>("join_setup_mode"),
 };

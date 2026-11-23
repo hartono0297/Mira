@@ -113,6 +113,11 @@ export type JoinRequestView = {
   // Alamat yang dilihat laptop penerima (seenByName), bukan laporan peminta.
   ip: string | null;
   seenByName: string | null;
+  // v0.4, dari permintaan bertanda tangan. null untuk permintaan dari Mira v0.3.
+  // Keterangan untuk admin yang diketik peminta (jabatan, nomor karyawan).
+  note: string | null;
+  // Nama akun login Windows atau macOS di laptop peminta.
+  account: string | null;
 };
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
