@@ -2,6 +2,7 @@ import { IconCheck, IconX } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import { formatDateTime, relativeTime } from "../../api/format";
+import { actionErrorTitle } from "../../api/messages";
 import { orgApi, type JoinRequestView } from "../../api/org";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -17,10 +18,62 @@ function systemText(r: JoinRequestView): string {
   return parts.length > 0 ? parts.join(", ") : NOT_RECORDED;
 }
 
-// Penolakan beruntun untuk satu alamat IP (kontrak 8.6). Daftarnya diambil saat
-// dialog dibuka, supaya muat ulang di tengah jalan tidak mengubah yang ditolak.
+function isIpv4(s: string): boolean {
+  const parts = s.split(".");
+  return parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255);
+}
+
+// Delapan segmen 16 bit, atau null kalau bukan IPv6 yang sah.
+function parseIpv6(s: string): number[] | null {
+  if (!s.includes(":")) return null;
+  let body = s;
+  let tail: number[] = [];
+  const lastColon = s.lastIndexOf(":");
+  const v4 = s.slice(lastColon + 1);
+  if (v4.includes(".")) {
+    if (!isIpv4(v4)) return null;
+    const b = v4.split(".").map(Number);
+    tail = [(b[0] << 8) | b[1], (b[2] << 8) | b[3]];
+    body = s.slice(0, lastColon + 1);
+    if (!body.endsWith("::")) body = body.slice(0, -1);
+  }
+  const halves = body.split("::");
+  if (halves.length > 2) return null;
+  const read = (h: string) => (h === "" ? [] : h.split(":"));
+  const head = read(halves[0]);
+  const rest = halves.length === 2 ? read(halves[1]) : [];
+  if (![...head, ...rest].every((g) => /^[0-9a-fA-F]{1,4}$/.test(g))) return null;
+  const nums = (g: string[]) => g.map((x) => parseInt(x, 16));
+  const known = head.length + rest.length + tail.length;
+  if (halves.length === 1) return known === 8 ? [...nums(head), ...tail] : null;
+  if (known > 7) return null;
+  return [...nums(head), ...new Array<number>(8 - known).fill(0), ...nums(rest), ...tail];
+}
+
+// Kelompok alamat seperti `ip_group` di src-tauri/src/permissions/join_store.rs
+// (kontrak 8.6): satu IPv4, atau satu IPv6 /64 ditulis "a:b:c:d::/64".
+// IPv4 yang dibungkus IPv6 (::ffff:a.b.c.d) dihitung sebagai IPv4, seperti
+// `to_canonical`. Alamat yang tidak terbaca dikelompokkan dengan tulisan yang persis sama.
+export function ipGroup(raw: string): string {
+  const ip = raw.trim().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+  if (isIpv4(ip)) return ip;
+  const seg = parseIpv6(ip);
+  if (!seg) return raw.trim();
+  if (seg.slice(0, 5).every((x) => x === 0) && seg[5] === 0xffff) {
+    return [seg[6] >> 8, seg[6] & 0xff, seg[7] >> 8, seg[7] & 0xff].join(".");
+  }
+  return `${seg
+    .slice(0, 4)
+    .map((x) => x.toString(16))
+    .join(":")}::/64`;
+}
+
+// Penolakan beruntun untuk satu kelompok alamat (kontrak 8.6). Daftarnya diambil
+// saat dialog dibuka, supaya muat ulang di tengah jalan tidak mengubah yang ditolak.
 type Bulk = {
-  ip: string;
+  group: string;
+  // Kartu tempat tombolnya ditekan, untuk memindahkan fokus sesudahnya.
+  openerId: string;
   items: JoinRequestView[];
   // Urutan permintaan yang sedang ditolak (mulai 0), null kalau belum berjalan.
   current: number | null;
@@ -31,7 +84,16 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
   const live = useOrgLive(() => orgApi.joinRequests(), { version: page.version });
   const requests = useMemo(() => (Array.isArray(live.data) ? live.data : null), [live.data]);
   const [rejecting, setRejecting] = useState<JoinRequestView | null>(null);
+  const [rejectBusy, setRejectBusy] = useState(false);
+  const [rejectError, setRejectError] = useState<{ title: string; error: AppError } | null>(null);
   const [bulk, setBulk] = useState<Bulk | null>(null);
+  // Setelah kartu hilang karena disetujui atau ditolak, fokus pindah ke tombol
+  // Setujui kartu berikutnya, atau ke judul tab kalau daftar sudah kosong.
+  const [focusAfter, setFocusAfter] = useState<{ gone: string[]; next: string[] } | null>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const requestsRef = useRef<JoinRequestView[]>([]);
+  requestsRef.current = requests ?? [];
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -40,31 +102,75 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
     };
   }, []);
 
-  const perIp = useMemo(() => {
+  const perGroup = useMemo(() => {
     const map = new Map<string, JoinRequestView[]>();
     for (const r of requests ?? []) {
       if (!r.ip) continue;
-      map.set(r.ip, [...(map.get(r.ip) ?? []), r]);
+      const g = ipGroup(r.ip);
+      map.set(g, [...(map.get(g) ?? []), r]);
     }
     return map;
   }, [requests]);
 
+  useEffect(() => {
+    if (!focusAfter || !requests) return;
+    if (requests.some((r) => focusAfter.gone.includes(r.id))) return;
+    setFocusAfter(null);
+    const nextId = focusAfter.next.find((id) => requests.some((r) => r.id === id));
+    const target = nextId
+      ? Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>("[data-approve]") ?? []).find(
+          (b) => b.dataset.approve === nextId,
+        )
+      : undefined;
+    (target ?? titleRef.current)?.focus();
+  }, [focusAfter, requests]);
+
+  // Kandidat fokus: kartu sesudah `fromId`, lalu kartu sebelumnya (terdekat dulu).
+  function planFocus(fromId: string, gone: string[]) {
+    const ids = requestsRef.current.map((r) => r.id);
+    const at = Math.max(ids.indexOf(fromId), 0);
+    const next = [...ids.slice(at + 1), ...ids.slice(0, at).reverse()].filter((id) => !gone.includes(id));
+    setFocusAfter({ gone, next });
+  }
+
   const running = bulk?.current != null;
-  const busy = page.pending !== null || running;
+  const busy = page.pending !== null || running || rejectBusy;
   const scoped = !page.overview.isSuperadmin;
 
-  async function rejectOne(r: JoinRequestView) {
-    await page.act(
-      `reject:${r.id}`,
-      () => orgApi.rejectJoin(r.id),
-      `Permintaan ${r.displayName} ditolak. Kalau keliru, ${r.displayName} bisa mengirim permintaan baru.`,
-      "Permintaan belum ditolak",
+  async function approve(r: JoinRequestView) {
+    const ok = await page.act(
+      `approve:${r.id}`,
+      () => orgApi.approveJoin(r.id),
+      `${r.displayName} disetujui dan masuk departemen ${r.teamName}.`,
+      "Permintaan belum disetujui",
     );
-    if (alive.current) setRejecting(null);
+    if (ok && alive.current) planFocus(r.id, [r.id]);
+  }
+
+  // Dipanggil langsung (bukan lewat page.act) supaya error tampil di dialog
+  // dan dialog tetap terbuka kalau gagal.
+  async function rejectOne(r: JoinRequestView) {
+    setRejectBusy(true);
+    setRejectError(null);
+    try {
+      await orgApi.rejectJoin(r.id);
+      if (!alive.current) return;
+      planFocus(r.id, [r.id]);
+      setRejecting(null);
+      page.notify(`Permintaan ${r.displayName} ditolak. Kalau keliru, ${r.displayName} bisa mengirim permintaan baru.`);
+      page.refresh();
+    } catch (err) {
+      if (!alive.current) return;
+      const error = toAppError(err);
+      setRejectError({ title: actionErrorTitle(error, "Permintaan belum ditolak"), error });
+      if (error.code === "not_found" || error.code === "forbidden") page.refresh();
+    } finally {
+      if (alive.current) setRejectBusy(false);
+    }
   }
 
   async function rejectAll(target: Bulk) {
-    const { ip, items } = target;
+    const { group, openerId, items } = target;
     let done = 0;
     let skipped = 0;
     for (let i = 0; i < items.length; i++) {
@@ -80,11 +186,12 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
           continue;
         }
         if (!alive.current) return;
-        const parts = [`Sudah ditolak sebelum berhenti: ${done} dari ${items.length}.`];
+        const parts = [`Sebelum berhenti, ${done} dari ${items.length} permintaan sudah ditolak.`];
         if (skipped > 0) parts.push(`${skipped} sudah diputuskan orang lain lebih dulu.`);
-        parts.push(`Yang tersisa di bawah ini bisa ditolak lagi.`);
+        parts.push("Yang tersisa di bawah ini bisa ditolak lagi.");
         setBulk({
-          ip,
+          group,
+          openerId,
           items: items.slice(i),
           current: null,
           error: { title: `Gagal menolak permintaan ${items[i].displayName}`, error, note: parts.join(" ") },
@@ -94,19 +201,23 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
       }
     }
     if (!alive.current) return;
+    planFocus(
+      openerId,
+      items.map((r) => r.id),
+    );
     setBulk(null);
     page.refresh();
     const skippedText = skipped > 0 ? ` ${skipped} lainnya sudah diputuskan orang lain lebih dulu.` : "";
     page.notify(
       done > 0
-        ? `${done} permintaan dari ${ip} ditolak.${skippedText}`
-        : `Semua permintaan dari ${ip} sudah diputuskan orang lain lebih dulu.`,
+        ? `${done} permintaan dari ${group} ditolak.${skippedText}`
+        : `Semua permintaan dari ${group} sudah diputuskan orang lain lebih dulu.`,
     );
   }
 
   const intro = (
     <div>
-      <h2 id="requests-title" className="set-title">
+      <h2 id="requests-title" className="set-title" tabIndex={-1} ref={titleRef}>
         Permintaan bergabung
       </h2>
       <p className="hint">
@@ -128,7 +239,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
           <div role="alert">
             <ErrorAlert title="Permintaan bergabung belum terbaca">
               <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar permintaan."}</p>
-              <button type="button" className="btn btn-ghost req-retry" onClick={() => void live.reload()}>
+              <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
                 Coba lagi
               </button>
             </ErrorAlert>
@@ -157,9 +268,10 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
           </p>
         </div>
       ) : (
-        <ul className="req-list">
+        <ul className="req-list" ref={listRef}>
           {requests.map((r) => {
-            const sameIp = r.ip ? (perIp.get(r.ip) ?? []) : [];
+            const group = r.ip ? ipGroup(r.ip) : null;
+            const sameGroup = group ? (perGroup.get(group) ?? []) : [];
             const approving = page.pending === `approve:${r.id}`;
             return (
               <li key={r.id} className="req">
@@ -169,9 +281,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                       {initials(r.displayName)}
                     </span>
                     <div className="req-who-text">
-                      <h3 className="req-name">
-                        {r.displayName}
-                      </h3>
+                      <h3 className="req-name">{r.displayName}</h3>
                       <p className="hint">
                         Minta bergabung{" "}
                         <time dateTime={r.requestedAt} title={formatDateTime(r.requestedAt)}>
@@ -186,7 +296,10 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                       className="btn btn-ghost req-reject"
                       disabled={busy}
                       aria-label={`Tolak permintaan ${r.displayName}`}
-                      onClick={() => setRejecting(r)}
+                      onClick={() => {
+                        setRejectError(null);
+                        setRejecting(r);
+                      }}
                     >
                       <IconX size={16} aria-hidden="true" />
                       Tolak
@@ -197,14 +310,8 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                       disabled={busy}
                       aria-busy={approving || undefined}
                       aria-label={approving ? undefined : `Setujui permintaan ${r.displayName}`}
-                      onClick={() =>
-                        void page.act(
-                          `approve:${r.id}`,
-                          () => orgApi.approveJoin(r.id),
-                          `${r.displayName} disetujui dan masuk departemen ${r.teamName}.`,
-                          "Permintaan belum disetujui",
-                        )
-                      }
+                      data-approve={r.id}
+                      onClick={() => void approve(r)}
                     >
                       <IconCheck size={16} aria-hidden="true" />
                       {approving ? "Menyetujui..." : "Setujui"}
@@ -242,17 +349,17 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                   </p>
                 </div>
 
-                {(r.seenByName || sameIp.length >= 2) && (
+                {(r.seenByName || sameGroup.length >= 2) && (
                   <div className="req-foot">
                     {r.seenByName && <p className="hint">Diterima lewat laptop {r.seenByName}</p>}
-                    {r.ip && sameIp.length >= 2 && (
+                    {group && sameGroup.length >= 2 && (
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm req-reject-all"
                         disabled={busy}
-                        onClick={() => setBulk({ ip: r.ip as string, items: sameIp, current: null, error: null })}
+                        onClick={() => setBulk({ group, openerId: r.id, items: sameGroup, current: null, error: null })}
                       >
-                        Tolak semua dari {r.ip} ({sameIp.length})
+                        Tolak semua dari {group} ({sameGroup.length})
                       </button>
                     )}
                   </div>
@@ -271,10 +378,17 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
         title={rejecting ? `Tolak permintaan ${rejecting.displayName}?` : "Tolak permintaan"}
         confirmLabel={rejecting ? `Tolak ${rejecting.displayName}` : "Tolak"}
         busyLabel="Menolak..."
-        busy={rejecting !== null && page.pending === `reject:${rejecting.id}`}
+        busy={rejectBusy}
         onConfirm={() => {
-          if (rejecting) void rejectOne(rejecting);
+          if (rejecting && !rejectBusy) void rejectOne(rejecting);
         }}
+        error={
+          rejectError && (
+            <ErrorAlert title={rejectError.title}>
+              <p>{rejectError.error.message}</p>
+            </ErrorAlert>
+          )
+        }
       >
         {rejecting && (
           <p>
@@ -289,7 +403,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
         onOpenChange={(open) => {
           if (!open) setBulk(null);
         }}
-        title={bulk ? `Tolak ${bulk.items.length} permintaan dari ${bulk.ip}?` : "Tolak semua permintaan"}
+        title={bulk ? `Tolak ${bulk.items.length} permintaan dari ${bulk.group}?` : "Tolak semua permintaan"}
         confirmLabel={bulk ? `Tolak ${bulk.items.length} permintaan` : "Tolak"}
         busyLabel={bulk?.current != null ? `Menolak ${bulk.current + 1} dari ${bulk.items.length}...` : "Menolak..."}
         busy={running}
@@ -307,11 +421,24 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
       >
         {bulk && (
           <>
-            <p>Permintaan berikut dikirim dari alamat yang sama:</p>
+            <p>
+              {bulk.group.endsWith("/64")
+                ? "Permintaan berikut dikirim dari jaringan IPv6 yang sama (satu /64). Periksa namanya dulu: laptop rekan di jaringan kantor bisa berada di /64 yang sama."
+                : "Permintaan berikut dikirim dari alamat yang sama:"}
+            </p>
             <ul className="req-dlg-list">
               {bulk.items.map((r) => (
                 <li key={r.id}>
-                  {r.displayName} <span className="hint">({r.teamName})</span>
+                  {r.displayName}{" "}
+                  <span className="hint">
+                    ({r.teamName}
+                    {r.ip && r.ip !== bulk.group && (
+                      <>
+                        , <span className="mono">{r.ip}</span>
+                      </>
+                    )}
+                    )
+                  </span>
                 </li>
               ))}
             </ul>

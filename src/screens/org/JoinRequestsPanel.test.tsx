@@ -5,6 +5,7 @@ import type { AppState, OrgInfo } from "../../api";
 import type { JoinRequestView, OrgOverview } from "../../api/org";
 import { appState, directory, router } from "../../test/fixtures";
 import { adminOverview, joinRequest, memberOverview, overview, TEAM_2 } from "../../test/orgFixtures";
+import { ipGroup } from "./JoinRequestsPanel";
 import { OrgScreen } from "./OrgScreen";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -177,6 +178,23 @@ describe("Permintaan bergabung: Setujui dan Tolak", () => {
     expect(invoke).toHaveBeenCalledWith("org_approve_join", { requestId: "r1" });
     expect(await screen.findByText("Rina disetujui dan masuk departemen Desain.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Rina" })).not.toBeInTheDocument());
+    // Fokus tidak jatuh ke body: pindah ke Setujui di kartu berikutnya.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Setujui permintaan Fajar" })).toHaveFocus());
+  });
+
+  it("menyetujui permintaan terakhir memindahkan fokus ke judul tab", async () => {
+    let list = [RINA];
+    setup(() => list, undefined, {
+      org_approve_join: () => {
+        list = [];
+        return null;
+      },
+    });
+    const user = await openTab();
+    await screen.findByRole("heading", { name: "Rina" });
+    await user.click(screen.getByRole("button", { name: "Setujui permintaan Rina" }));
+    expect(await screen.findByText("Tidak ada permintaan yang menunggu.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Permintaan bergabung", level: 2 })).toHaveFocus());
   });
 
   it("menampilkan error Rust saat menyetujui", async () => {
@@ -193,7 +211,13 @@ describe("Permintaan bergabung: Setujui dan Tolak", () => {
   });
 
   it("Tolak meminta konfirmasi; Escape membatalkan, konfirmasi memanggil org_reject_join", async () => {
-    setup([RINA, FAJAR], undefined, { org_reject_join: null });
+    let list = [RINA, FAJAR];
+    setup(() => list, undefined, {
+      org_reject_join: () => {
+        list = [FAJAR];
+        return null;
+      },
+    });
     const user = await openTab();
     await screen.findByRole("heading", { name: "Rina" });
 
@@ -213,9 +237,11 @@ describe("Permintaan bergabung: Setujui dan Tolak", () => {
     expect(invoke).toHaveBeenCalledWith("org_reject_join", { requestId: "r1" });
     expect(await screen.findByText(/Permintaan Rina ditolak/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Rina" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Setujui permintaan Fajar" })).toHaveFocus());
   });
 
-  it("menampilkan error Rust saat menolak", async () => {
+  it("error Rust saat menolak tampil di dialog, dan dialog tetap terbuka", async () => {
     setup([RINA], undefined, {
       org_reject_join: () => {
         throw { code: "join_already_decided", message: "Permintaan ini sudah diputuskan." };
@@ -224,9 +250,12 @@ describe("Permintaan bergabung: Setujui dan Tolak", () => {
     const user = await openTab();
     await screen.findByRole("heading", { name: "Rina" });
     await user.click(screen.getByRole("button", { name: "Tolak permintaan Rina" }));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Tolak Rina" }));
-    expect(await screen.findByText("Permintaan belum ditolak")).toBeInTheDocument();
-    expect(screen.getByText("Permintaan ini sudah diputuskan.")).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Tolak permintaan Rina?" });
+    await user.click(within(dialog).getByRole("button", { name: "Tolak Rina" }));
+    expect(await within(dialog).findByText("Permintaan belum ditolak")).toBeInTheDocument();
+    expect(within(dialog).getByText("Permintaan ini sudah diputuskan.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Tolak permintaan Rina?" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Tolak Rina" })).toBeEnabled();
   });
 });
 
@@ -263,6 +292,39 @@ describe("Permintaan bergabung: Tolak semua dari alamat ini", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Tamu Satu" })).not.toBeInTheDocument());
     expect(screen.getByRole("heading", { name: "Rina" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Setujui permintaan Rina" })).toHaveFocus());
+  });
+
+  it("mengelompokkan IPv6 per /64: dua alamat berbeda dalam /64 yang sama ditolak bersama", async () => {
+    const V1 = joinRequest("v1", "Enam Satu", { ip: "2001:db8:1:2::10" });
+    const V2 = joinRequest("v2", "Enam Dua", { ip: "2001:0db8:0001:0002:abcd:0:0:5" });
+    const V3 = joinRequest("v3", "Enam Tiga", { ip: "2001:db8:1:3::7" });
+    let list = [V1, V3, V2];
+    setup(() => list, undefined, {
+      org_reject_join: (args?: Record<string, unknown>) => {
+        list = list.filter((r) => r.id !== args?.requestId);
+        return null;
+      },
+    });
+    const user = await openTab();
+    await screen.findByRole("heading", { name: "Enam Satu" });
+
+    const label = "Tolak semua dari 2001:db8:1:2::/64 (2)";
+    expect(within(card("Enam Satu")).getByRole("button", { name: label })).toBeInTheDocument();
+    expect(within(card("Enam Dua")).getByRole("button", { name: label })).toBeInTheDocument();
+    expect(within(card("Enam Tiga")).queryByRole("button", { name: /Tolak semua dari/ })).not.toBeInTheDocument();
+    // Kartu tetap menampilkan alamat lengkapnya.
+    expect(within(card("Enam Dua")).getByText("2001:0db8:0001:0002:abcd:0:0:5")).toBeInTheDocument();
+
+    await user.click(within(card("Enam Dua")).getByRole("button", { name: label }));
+    const dialog = screen.getByRole("dialog", { name: "Tolak 2 permintaan dari 2001:db8:1:2::/64?" });
+    expect(within(dialog).getByText("2001:db8:1:2::10")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Enam Tiga")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Tolak 2 permintaan" }));
+
+    expect(await screen.findByText("2 permintaan dari 2001:db8:1:2::/64 ditolak.")).toBeInTheDocument();
+    expect(calls("org_reject_join")).toEqual([{ requestId: "v1" }, { requestId: "v2" }]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Setujui permintaan Enam Tiga" })).toHaveFocus());
   });
 
   it("menampilkan kemajuan di tombol konfirmasi", async () => {
@@ -301,7 +363,7 @@ describe("Permintaan bergabung: Tolak semua dari alamat ini", () => {
     const dialog = await screen.findByRole("dialog", { name: `Tolak 2 permintaan dari ${IP}?` });
     expect(within(dialog).getByText("Gagal menolak permintaan Tamu Dua")).toBeInTheDocument();
     expect(within(dialog).getByText("Anda bukan admin departemen Drafting.")).toBeInTheDocument();
-    expect(within(dialog).getByText(/Sudah ditolak sebelum berhenti: 1 dari 3\./)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Sebelum berhenti, 1 dari 3 permintaan sudah ditolak\./)).toBeInTheDocument();
     expect(calls("org_reject_join")).toEqual([{ requestId: "a1" }, { requestId: "b2" }]);
     // Sisanya (yang gagal dan sesudahnya) bisa ditolak lagi.
     expect(within(dialog).getByRole("button", { name: "Tolak 2 permintaan" })).toBeEnabled();
@@ -325,5 +387,23 @@ describe("Permintaan bergabung: Tolak semua dari alamat ini", () => {
     ).toBeInTheDocument();
     expect(calls("org_reject_join")).toEqual([{ requestId: "a1" }, { requestId: "b2" }, { requestId: "c3" }]);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("ipGroup (sama dengan ip_group di join_store.rs)", () => {
+  it("IPv4 apa adanya, IPv6 per /64, IPv4 dalam IPv6 menjadi IPv4", () => {
+    expect(ipGroup("192.168.1.77")).toBe("192.168.1.77");
+    expect(ipGroup("2001:db8:1:2::10")).toBe("2001:db8:1:2::/64");
+    expect(ipGroup("2001:0DB8:0001:0002:abcd:0:0:5")).toBe("2001:db8:1:2::/64");
+    expect(ipGroup("::1")).toBe("0:0:0:0::/64");
+    expect(ipGroup("fe80::1%12")).toBe("fe80:0:0:0::/64");
+    expect(ipGroup("::ffff:192.168.1.5")).toBe("192.168.1.5");
+    expect(ipGroup("64:ff9b::192.168.1.5")).toBe("64:ff9b:0:0::/64");
+  });
+
+  it("tulisan yang tidak terbaca dikelompokkan persis", () => {
+    expect(ipGroup("bukan-alamat")).toBe("bukan-alamat");
+    expect(ipGroup("1:2:3")).toBe("1:2:3");
+    expect(ipGroup("1::2::3")).toBe("1::2::3");
   });
 });

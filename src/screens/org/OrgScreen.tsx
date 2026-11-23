@@ -161,8 +161,8 @@ export function OrgScreen({ state, onRefresh }: Props) {
         <div className="org-pad org-narrow" role="alert">
           <ErrorAlert title="Data organisasi belum terbaca">
             <p>{overviewLive.error?.message ?? "Inti Mira tidak mengirim data organisasi."}</p>
-            <button type="button" className="btn btn-ghost onb-inline-btn" onClick={() => void overviewLive.reload()}>
-              Coba baca lagi
+            <button type="button" className="btn btn-ghost org-retry" onClick={() => void overviewLive.reload()}>
+              Coba lagi
             </button>
           </ErrorAlert>
         </div>
@@ -183,7 +183,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
                   {current.id !== "users" && (
                     <button
                       type="button"
-                      className="btn btn-ghost onb-inline-btn org-notice-btn"
+                      className="btn btn-ghost org-retry org-notice-btn"
                       onClick={() => {
                         setPart("users");
                         setFeedback(null);
@@ -245,7 +245,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
             {current.id === "labels" && <LabelsPanel page={page} />}
             {current.id === "invites" &&
               (ctx ? (
-                <InvitesPanel ctx={ctx} canRedeem={overview?.departmentId === null} />
+                <InvitesPanel ctx={ctx} canRedeem={overview?.departmentId === null && !overview?.isGuest} />
               ) : dirLive.loading ? (
                 <p className="hint" role="status">
                   Memuat kode undangan...
@@ -253,7 +253,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
               ) : (
                 <ErrorAlert title="Kode undangan belum terbaca">
                   <p>{dirLive.error?.message ?? "Inti Mira tidak mengirim data undangan."}</p>
-                  <button type="button" className="btn btn-ghost onb-inline-btn" onClick={() => void dirLive.reload()}>
+                  <button type="button" className="btn btn-ghost org-retry" onClick={() => void dirLive.reload()}>
                     Coba lagi
                   </button>
                 </ErrorAlert>

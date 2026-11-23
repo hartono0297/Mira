@@ -1,4 +1,4 @@
-import { IconPlus } from "@tabler/icons-react";
+import { IconChevronRight, IconPlus } from "@tabler/icons-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { toAppError, type AppError } from "../../api";
 import { orgApi, type LabelView, type PersonView } from "../../api/org";
@@ -6,7 +6,8 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
-import { MAX_LABELS_SHOWN, NameWithLabels } from "../../components/NameWithLabels";
+import { MAX_LABELS_SHOWN } from "../../components/NameWithLabels";
+import { PeoplePicker } from "../../components/PeoplePicker";
 import type { OrgPage } from "./context";
 import { useOrgLive } from "./useOrgLive";
 import "./labels.css";
@@ -53,20 +54,33 @@ function nameProblem(raw: string, labels: LabelView[], current?: LabelView): str
   return null;
 }
 
-function deptText(p: PersonView): string {
-  if (p.isGuest) return "Tamu";
-  return p.departmentName ?? "Belum ada departemen";
-}
-
-function deptKey(p: PersonView): string {
-  if (p.isGuest) return "guest";
-  return p.departmentName ? `dept:${p.departmentName}` : "none";
-}
-
 export function LabelsPanel({ page }: { page: OrgPage }) {
   const live = useOrgLive(loadData, { version: page.version });
   const [dialog, setDialog] = useState<DialogState>(null);
+  // Fokus setelah barisnya pindah: ke ringkasan Dihapus setelah hapus, ke
+  // tombol Atur orang setelah pulihkan (tombol itu baru ada setelah muat ulang).
+  const [focusRemoved, setFocusRemoved] = useState<string | null>(null);
+  const [returnTo, setReturnTo] = useState<string | null>(null);
+  const removedSummary = useRef<HTMLElement | null>(null);
+  const assignButtons = useRef(new Map<string, HTMLButtonElement>());
   const data = live.data;
+
+  useEffect(() => {
+    if (!focusRemoved) return;
+    if (data?.labels.some((l) => l.id === focusRemoved && l.archived)) {
+      removedSummary.current?.focus();
+      setFocusRemoved(null);
+    }
+  }, [focusRemoved, data]);
+
+  useEffect(() => {
+    if (!returnTo) return;
+    const button = assignButtons.current.get(returnTo);
+    if (button) {
+      button.focus();
+      setReturnTo(null);
+    }
+  }, [returnTo, data]);
 
   const { active, removed, people, countOf } = useMemo(() => {
     const labels = data?.labels ?? [];
@@ -84,28 +98,34 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
   const busy = page.pending !== null;
   const close = () => setDialog(null);
 
-  const restore = (l: LabelView) =>
-    void page.act(
+  const restore = async (l: LabelView) => {
+    const ok = await page.act(
       `label-restore:${l.id}`,
       () => orgApi.setLabelArchived(l.id, false),
       `Label ${l.name} dipulihkan dan kembali tampil di samping nama orang yang dulu memakainya.`,
       `Label ${l.name} belum dipulihkan`,
     );
+    if (ok) setReturnTo(l.id);
+  };
 
   return (
     <section className="set-section lbl" aria-labelledby="labels-title">
-      <h2 id="labels-title" className="sr-only">
-        Label
-      </h2>
-      <div className="lbl-tools">
-        <p className="hint lbl-hint">
-          Label tampil di samping nama di chat, daftar pengguna, dan pemilih orang. Paling banyak {MAX_LABELS_SHOWN} label
-          tampil di samping satu nama. Hanya superadmin yang mengatur label.
-        </p>
-        <button type="button" className="btn" disabled={busy} onClick={() => setDialog({ kind: "create" })}>
-          <IconPlus size={18} aria-hidden="true" />
-          Label baru
-        </button>
+      <div className="org-head">
+        <div>
+          <h2 id="labels-title" className="set-title">
+            Label
+          </h2>
+          <p className="hint lbl-hint">
+            Label tampil di samping nama di chat, daftar pengguna, dan pemilih orang. Paling banyak {MAX_LABELS_SHOWN}{" "}
+            label tampil di samping satu nama. Hanya superadmin yang mengatur label.
+          </p>
+        </div>
+        <div className="org-head-actions">
+          <button type="button" className="btn" disabled={busy} onClick={() => setDialog({ kind: "create" })}>
+            <IconPlus size={18} aria-hidden="true" />
+            Label baru
+          </button>
+        </div>
       </div>
 
       {live.loading && !data && (
@@ -118,7 +138,7 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
         <div role="alert">
           <ErrorAlert title="Daftar label belum terbaca">
             <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar label."}</p>
-            <button type="button" className="btn btn-ghost btn-sm lbl-retry" onClick={() => void live.reload()}>
+            <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
               Coba lagi
             </button>
           </ErrorAlert>
@@ -157,6 +177,10 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
                     type="button"
                     className="btn btn-ghost btn-sm"
                     disabled={busy}
+                    ref={(el) => {
+                      if (el) assignButtons.current.set(l.id, el);
+                      else assignButtons.current.delete(l.id);
+                    }}
                     onClick={() => setDialog({ kind: "assign", label: l })}
                   >
                     Atur orang<span className="sr-only">, label {l.name}</span>
@@ -185,8 +209,11 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
       )}
 
       {data && removed.length > 0 && (
-        <details className="lbl-gone">
-          <summary>Dihapus ({removed.length})</summary>
+        <details className="org-fold lbl-gone">
+          <summary ref={removedSummary}>
+            <IconChevronRight size={16} className="org-fold-chev" aria-hidden="true" />
+            Dihapus ({removed.length})
+          </summary>
           <p className="hint lbl-gone-hint">
             Label yang dihapus tidak tampil di samping nama siapa pun. Pulihkan supaya label kembali ke orang yang dulu
             memakainya.
@@ -207,7 +234,7 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
                       className="btn btn-ghost btn-sm"
                       disabled={busy}
                       aria-busy={page.pending === key || undefined}
-                      onClick={() => restore(l)}
+                      onClick={() => void restore(l)}
                     >
                       {page.pending === key ? "Memulihkan... " : "Pulihkan "}
                       <span className="sr-only">label {l.name}</span>
@@ -227,7 +254,13 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
         <RenameLabelDialog page={page} label={dialog.label} labels={data?.labels ?? []} onClose={close} />
       )}
       {dialog?.kind === "delete" && (
-        <DeleteLabelDialog page={page} label={dialog.label} count={countOf(dialog.label)} onClose={close} />
+        <DeleteLabelDialog
+          page={page}
+          label={dialog.label}
+          count={countOf(dialog.label)}
+          onClose={close}
+          onDeleted={(id) => setFocusRemoved(id)}
+        />
       )}
       {dialog?.kind === "assign" && (
         <AssignDialog page={page} label={dialog.label} people={people} onClose={close} />
@@ -358,7 +391,7 @@ function CreateLabelDialog({
       title={created ? `Atur orang untuk label ${created.name}` : "Label baru"}
     >
       {created ? (
-        <PeoplePicker
+        <LabelAssigner
           page={page}
           label={created}
           people={people}
@@ -441,17 +474,20 @@ function RenameLabelDialog({
   );
 }
 
+
 // Hapus = arsipkan di inti Rust: pasangan orang tetap tersimpan.
 function DeleteLabelDialog({
   page,
   label,
   count,
   onClose,
+  onDeleted,
 }: {
   page: OrgPage;
   label: LabelView;
   count: number;
   onClose: () => void;
+  onDeleted: (labelId: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
@@ -463,6 +499,7 @@ function DeleteLabelDialog({
       await orgApi.setLabelArchived(label.id, true);
       page.notify(`Label ${label.name} dihapus. Label ini bisa dipulihkan dari bagian Dihapus.`);
       page.refresh();
+      onDeleted(label.id);
       onClose();
     } catch (err) {
       setError(toAppError(err));
@@ -494,7 +531,7 @@ function DeleteLabelDialog({
           ? `Label ${label.name} hilang dari samping nama ${count} orang dan tidak bisa dipasang lagi.`
           : `Label ${label.name} hilang dari daftar dan tidak bisa dipasang lagi.`}
       </p>
-      <p className="lbl-confirm-more">
+      <p>
         Daftar orang yang memakainya tetap tersimpan. Kalau nanti label ini dipulihkan dari bagian Dihapus, label kembali
         ke orang yang sama.
       </p>
@@ -522,14 +559,16 @@ function AssignDialog({
       }}
       title={`Atur orang untuk label ${label.name}`}
     >
-      <PeoplePicker page={page} label={label} people={people} busy={busy} setBusy={setBusy} onDone={onClose} closeText="Batal" />
+      <LabelAssigner page={page} label={label} people={people} busy={busy} setBusy={setBusy} onDone={onClose} closeText="Batal" />
     </Dialog>
   );
 }
 
 type SaveError = { error: AppError; who: string; assigned: boolean; done: number; total: number };
 
-function PeoplePicker({
+// Pemilih orang untuk satu label: PeoplePicker bersama, ditambah penyimpanan
+// selisihnya satu per satu.
+function LabelAssigner({
   page,
   label,
   people,
@@ -558,56 +597,21 @@ function PeoplePicker({
     return new Set(label.memberKeys.filter((k) => present.has(k)));
   });
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(baseline));
-  const [query, setQuery] = useState("");
-  const [dept, setDept] = useState("all");
   const [progress, setProgress] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const uid = useId();
-
-  useEffect(() => {
-    if (focusSearch) searchRef.current?.focus();
-  }, [focusSearch]);
-
-  const sorted = useMemo(
-    () => [...people].sort((a, b) => collator.compare(a.displayName, b.displayName)),
-    [people],
-  );
-  const deptNames = useMemo(
-    () =>
-      [...new Set(people.filter((p) => !p.isGuest && p.departmentName).map((p) => p.departmentName as string))].sort(
-        collator.compare,
-      ),
-    [people],
-  );
-  const hasGuest = people.some((p) => p.isGuest);
-  const hasNone = people.some((p) => !p.isGuest && !p.departmentName);
-  const deptLabel = (key: string) =>
-    key === "guest" ? "Tamu" : key === "none" ? "Belum ada departemen" : key.slice("dept:".length);
-
-  const q = query.trim().toLocaleLowerCase("id");
-  const shown = sorted.filter(
-    (p) => (dept === "all" || deptKey(p) === dept) && (!q || p.displayName.toLocaleLowerCase("id").includes(q)),
-  );
 
   const nameOf = (pk: string) => people.find((p) => p.publicKey === pk)?.displayName ?? `Laptop ${pk.slice(0, 8)}`;
   const toAdd = [...chosen].filter((k) => !baseline.has(k));
   const toRemove = [...baseline].filter((k) => !chosen.has(k));
   const changes = toAdd.length + toRemove.length;
 
-  const toggle = (pk: string) =>
+  const toggle = (pk: string, checked: boolean) =>
     setChosen((prev) => {
       const next = new Set(prev);
-      if (next.has(pk)) next.delete(pk);
-      else next.add(pk);
+      if (checked) next.add(pk);
+      else next.delete(pk);
       return next;
     });
-
-  const resetFilters = () => {
-    setQuery("");
-    setDept("all");
-    searchRef.current?.focus();
-  };
 
   const save = async () => {
     const steps = [
@@ -648,102 +652,26 @@ function PeoplePicker({
     onDone();
   };
 
-  const filterText = (() => {
-    const bits: string[] = [];
-    if (q) bits.push(`nama "${query.trim()}"`);
-    if (dept !== "all") bits.push(dept === "guest" ? "saringan Tamu" : `saringan ${deptLabel(dept)}`);
-    return bits.join(" dan ");
-  })();
-
   return (
     <div className="dlg-form">
       {intro}
-      <div className="lbl-filters">
-        <div className="field">
-          <label htmlFor={`${uid}-q`}>Cari nama</label>
-          <input
-            id={`${uid}-q`}
-            ref={searchRef}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor={`${uid}-d`}>Departemen</label>
-          <select id={`${uid}-d`} value={dept} onChange={(e) => setDept(e.target.value)}>
-            <option value="all">Semua departemen</option>
-            {deptNames.map((name) => (
-              <option key={name} value={`dept:${name}`}>
-                {name}
-              </option>
-            ))}
-            {hasGuest && <option value="guest">Tamu</option>}
-            {hasNone && <option value="none">Belum ada departemen</option>}
-          </select>
-        </div>
-      </div>
-
-      <p className="hint lbl-picked">
-        {chosen.size} orang dipilih
-        {changes > 0 && `, ${changes} perubahan belum disimpan`}
-      </p>
-
-      {people.length === 0 ? (
-        <div className="org-empty">
-          <p>Belum ada orang di organisasi ini. Orang baru masuk lewat kode undangan di tab Undangan.</p>
-        </div>
-      ) : shown.length === 0 ? (
-        <div className="org-empty lbl-nomatch">
-          <p>Tidak ada orang yang cocok dengan {filterText}.</p>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={resetFilters}>
-            Tampilkan semua orang
-          </button>
-        </div>
-      ) : (
-        <ul className="lbl-pick" aria-label={`Orang untuk label ${label.name}`}>
-          {shown.map((p, i) => {
-            const others = p.labels.filter((l) => l.id !== label.id);
-            const nameId = `${uid}-n${i}`;
-            const subId = `${uid}-s${i}`;
-            const noteId = `${uid}-t${i}`;
-            const crowded = others.length >= MAX_LABELS_SHOWN;
-            return (
-              <li key={p.publicKey}>
-                <label className="lbl-pick-row">
-                  <input
-                    type="checkbox"
-                    checked={chosen.has(p.publicKey)}
-                    onChange={() => toggle(p.publicKey)}
-                    disabled={busy}
-                    aria-labelledby={nameId}
-                    aria-describedby={crowded ? `${subId} ${noteId}` : subId}
-                  />
-                  <span className="lbl-pick-text">
-                    <span id={nameId}>
-                      <NameWithLabels
-                        name={p.displayName}
-                        labels={others}
-                        suffix={page.isMe(p.publicKey) ? " (Anda)" : undefined}
-                      />
-                    </span>
-                    <span id={subId} className="row-sub">
-                      {deptText(p)}
-                    </span>
-                    {crowded && (
-                      <span id={noteId} className="lbl-pick-note">
-                        Sudah punya {others.length} label lain. Di samping nama hanya tampil {MAX_LABELS_SHOWN} label
-                        pertama menurut abjad.
-                      </span>
-                    )}
-                  </span>
-                </label>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <PeoplePicker
+        people={people}
+        selected={chosen}
+        onToggle={toggle}
+        listLabel={`Orang untuk label ${label.name}`}
+        labelsOf={(p) => p.labels.filter((l) => l.id !== label.id)}
+        isMe={page.isMe}
+        disabled={busy}
+        autoFocusSearch={focusSearch}
+        summaryExtra={changes > 0 ? `, ${changes} perubahan belum disimpan` : null}
+        renderNote={(p) => {
+          const others = p.labels.filter((l) => l.id !== label.id).length;
+          return others >= MAX_LABELS_SHOWN
+            ? `Sudah punya ${others} label lain. Di samping nama hanya tampil ${MAX_LABELS_SHOWN} label pertama menurut abjad.`
+            : null;
+        }}
+      />
 
       <div aria-live="polite">
         {progress && <p className="hint">{progress}</p>}

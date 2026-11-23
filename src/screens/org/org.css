@@ -78,8 +78,68 @@
   max-width: 1228px;
 }
 
+.org-live {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Kosong tetap ada di pohon aksesibilitas (tidak display: none), supaya pesan
+   yang baru masuk dibacakan; secara visual tidak memakan tempat. */
 .org-live:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* Tombol Coba lagi di dalam kotak error dan pemberitahuan. Garis text-sec
+   karena border-strong di atas danger-soft hanya 2,81:1. */
+.org-retry {
+  margin-top: 10px;
+  min-height: 36px;
+  background: var(--bg);
+  border-color: var(--text-sec);
+}
+
+/* Tombol aksi utama setiap tab (Departemen baru, Label baru, Buat kode undangan). */
+.org-head-actions .btn,
+.org-head > .btn {
+  min-height: 44px;
+}
+
+/* Bagian lipat (Diarsipkan, Dihapus): <details> dengan ikon chevron sendiri. */
+.org-fold summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 8px;
+  margin-left: -8px;
+  border-radius: 10px;
+  font-weight: 700;
+  color: var(--text-sec);
+  cursor: pointer;
+  list-style: none;
+}
+
+.org-fold summary:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.org-fold summary::-webkit-details-marker {
   display: none;
+}
+
+.org-fold-chev {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.org-fold[open] .org-fold-chev {
+  transform: rotate(90deg);
 }
 
 .org-ok {

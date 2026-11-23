@@ -20,10 +20,15 @@ export function channelNameFor(name: string): string {
   return name.trim().toLowerCase().split(" ").join("-");
 }
 
-// validateTeamName masih menyebut "tim"; di halaman ini istilahnya departemen.
+// Pesan nama dari validateTeamName dan dari Rust (invalid_name) masih menyebut "tim";
+// di halaman ini istilahnya departemen.
+function deptWording(message: string): string {
+  return message.replace(/\bTim\b/g, "Departemen").replace(/\btim\b/g, "departemen");
+}
+
 function validateDepartmentName(raw: string): string | null {
   const msg = validateTeamName(raw);
-  return msg ? msg.replace("Nama tim", "Nama departemen").replace("nama tim", "nama departemen") : null;
+  return msg ? deptWording(msg) : null;
 }
 
 function byName(a: { name: string }, b: { name: string }): number {
@@ -48,6 +53,8 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [archiveId, setArchiveId] = useState<string | null>(null);
   const [adminId, setAdminId] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<AppError | null>(null);
   const [focusArchived, setFocusArchived] = useState<string | null>(null);
   const renameButtons = useRef(new Map<string, HTMLButtonElement>());
   const archivedSummary = useRef<HTMLElement | null>(null);
@@ -55,7 +62,7 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
   const departments = live.data?.departments ?? [];
   const active = departments.filter((d) => !d.archived).sort(byName);
   const archived = manage ? departments.filter((d) => d.archived).sort(byName) : [];
-  const busy = page.pending !== null;
+  const busy = page.pending !== null || archiving;
 
   // Fokus ke tombol Ganti nama sebuah departemen: setelah baris edit ditutup, atau
   // setelah departemen dipulihkan (tombolnya baru ada setelah data dimuat ulang).
@@ -82,23 +89,29 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
     setReturnTo(id);
   }
 
-  if (live.loading && !live.data) {
-    return (
-      <p className="hint" role="status">
-        Memuat daftar departemen...
-      </p>
-    );
+  function openArchive(id: string) {
+    setArchiveError(null);
+    setArchiveId(id);
   }
 
-  if (!live.data) {
-    return (
-      <ErrorAlert title="Daftar departemen belum terbaca">
-        <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar departemen."}</p>
-        <button type="button" className="btn btn-ghost dept-retry" onClick={() => void live.reload()}>
-          Coba lagi
-        </button>
-      </ErrorAlert>
-    );
+  // Dipanggil langsung (bukan lewat page.act) supaya error tampil di dalam dialog,
+  // dan dialog hanya tertutup kalau berhasil.
+  async function archive(dept: DepartmentView) {
+    setArchiving(true);
+    setArchiveError(null);
+    try {
+      await orgApi.setDepartmentArchived(dept.id, true);
+      page.notify(`Departemen ${dept.name} diarsipkan.`);
+      page.refresh();
+      setFocusArchived(dept.id);
+      setArchiveId(null);
+    } catch (err) {
+      const appErr = toAppError(err);
+      setArchiveError(appErr);
+      if (appErr.code === "not_found" || appErr.code === "forbidden") page.refresh();
+    } finally {
+      setArchiving(false);
+    }
   }
 
   const archiveDept = departments.find((d) => d.id === archiveId) ?? null;
@@ -115,9 +128,9 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
           </h2>
           {active.length > 0 && <p className="hint">{active.length} departemen aktif</p>}
         </div>
-        {manage && (
+        {manage && live.data && (
           <div className="org-head-actions">
-            <button type="button" className="btn dept-new" disabled={busy} onClick={() => setCreating(true)}>
+            <button type="button" className="btn" disabled={busy} onClick={() => setCreating(true)}>
               <IconPlus size={16} aria-hidden="true" />
               Departemen baru
             </button>
@@ -125,123 +138,159 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
         )}
       </div>
 
-      {live.error && (
+      {live.loading && !live.data && (
+        <p className="hint" role="status">
+          Memuat daftar departemen...
+        </p>
+      )}
+
+      {!live.loading && !live.data && (
+        <div role="alert">
+          <ErrorAlert title="Daftar departemen belum terbaca">
+            <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar departemen."}</p>
+            <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
+              Coba lagi
+            </button>
+          </ErrorAlert>
+        </div>
+      )}
+
+      {live.data && live.error && (
         <p className="hint">
           Data terbaru belum bisa dibaca ({live.error.message}). Yang tampil adalah data terakhir.
         </p>
       )}
 
-      {active.length === 0 ? (
-        <div className="org-empty">
-          <p>
-            {manage
-              ? "Belum ada departemen. Buat departemen pertama, lalu pindahkan orang ke sana lewat tab Pengguna."
-              : "Belum ada departemen. Superadmin yang membuat departemen."}
-          </p>
-        </div>
-      ) : (
-        <>
-          {manage && someNotEmpty && (
-            <p className="hint">
-              Hanya departemen yang kosong yang bisa diarsipkan. Untuk mengosongkan departemen, pindahkan orangnya dulu
-              lewat tab Pengguna.
+      {live.data &&
+        (active.length === 0 ? (
+          <div className="org-empty">
+            <p>
+              {manage
+                ? "Belum ada departemen. Buat departemen pertama, lalu pindahkan orang ke sana lewat tab Pengguna."
+                : "Belum ada departemen. Superadmin yang membuat departemen."}
             </p>
-          )}
-          <table className="dept-table">
-            <caption className="sr-only">Departemen aktif</caption>
-            <thead>
-              <tr>
-                <th scope="col">Departemen</th>
-                <th scope="col">Orang</th>
-                <th scope="col">Admin departemen</th>
-                <th scope="col">Channel</th>
-                {manage && (
-                  <th scope="col">
-                    <span className="sr-only">Aksi</span>
+          </div>
+        ) : (
+          <>
+            {manage && someNotEmpty && (
+              <p className="hint">
+                Hanya departemen yang kosong yang bisa diarsipkan. Untuk mengosongkan departemen, pindahkan orangnya
+                dulu lewat tab Pengguna.
+              </p>
+            )}
+            {/* Role eksplisit: tata letak bertumpuk (display: grid) menghapus semantik tabel di WebKit. */}
+            <table className="dept-table" role="table">
+              <caption className="sr-only">Departemen aktif</caption>
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th role="columnheader" scope="col">
+                    Departemen
                   </th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {active.map((d) =>
-                editing === d.id ? (
-                  <tr key={d.id} className="dept-editing">
-                    <td colSpan={cols}>
-                      <RenameForm dept={d} page={page} onDone={() => closeEdit(d.id)} />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={d.id}>
-                    <td className="dept-name-cell">
-                      <span className="dept-name">
-                        <span className="row-name">{d.name}</span>
-                        {page.overview.departmentId === d.id && <span className="chip chip-on">Departemen Anda</span>}
-                      </span>
-                    </td>
-                    <td data-label="Orang" className="dept-num">
-                      {d.memberCount}
-                    </td>
-                    <td data-label="Admin departemen">
-                      {d.admins.length > 0 ? (
-                        d.admins.map((a) => a.displayName).join(", ")
-                      ) : (
-                        <span className="dept-muted">Belum ada</span>
-                      )}
-                    </td>
-                    <td data-label="Channel" className="dept-muted dept-channel">
-                      {d.channelName ? `# ${d.channelName}` : "Belum ada"}
-                    </td>
-                    {manage && (
-                      <td className="dept-actions-cell">
-                        <div className="row-actions">
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-sm"
-                            disabled={busy}
-                            aria-label={`Ganti nama ${d.name}`}
-                            ref={(el) => {
-                              if (el) renameButtons.current.set(d.id, el);
-                              else renameButtons.current.delete(d.id);
-                            }}
-                            onClick={() => setEditing(d.id)}
-                          >
-                            Ganti nama
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-sm"
-                            disabled={busy}
-                            aria-label={`Atur admin ${d.name}`}
-                            onClick={() => setAdminId(d.id)}
-                          >
-                            Atur admin
-                          </button>
-                          {d.memberCount === 0 && (
+                  <th role="columnheader" scope="col">
+                    Orang
+                  </th>
+                  <th role="columnheader" scope="col">
+                    Admin departemen
+                  </th>
+                  <th role="columnheader" scope="col">
+                    Channel
+                  </th>
+                  {manage && (
+                    <th role="columnheader" scope="col">
+                      <span className="sr-only">Aksi</span>
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody role="rowgroup">
+                {active.map((d) =>
+                  editing === d.id ? (
+                    <tr key={d.id} role="row" className="dept-editing">
+                      <td role="cell" colSpan={cols} className="dept-edit-cell">
+                        <RenameForm dept={d} page={page} onDone={() => closeEdit(d.id)} />
+                      </td>
+                    </tr>
+                  ) : (
+                    <tr key={d.id} role="row" className={manage ? "dept-row dept-row-act" : "dept-row"}>
+                      <td role="cell" className="dept-name-cell">
+                        <span className="dept-name">
+                          <span className="row-name">{d.name}</span>
+                          {page.overview.departmentId === d.id && <span className="chip chip-on">Departemen Anda</span>}
+                        </span>
+                      </td>
+                      <td role="cell" className="dept-count">
+                        <span className="dept-k" aria-hidden="true">
+                          Orang
+                        </span>
+                        <span className="dept-num">{d.memberCount}</span>
+                      </td>
+                      <td role="cell" className="dept-admins">
+                        <span className="dept-k" aria-hidden="true">
+                          Admin departemen
+                        </span>
+                        {d.admins.length > 0 ? (
+                          <span>{d.admins.map((a) => a.displayName).join(", ")}</span>
+                        ) : (
+                          <span className="dept-muted">Belum ada</span>
+                        )}
+                      </td>
+                      <td role="cell" className="dept-channel">
+                        <span className="dept-k" aria-hidden="true">
+                          Channel
+                        </span>
+                        <span className="dept-muted">{d.channelName ? `# ${d.channelName}` : "Belum ada"}</span>
+                      </td>
+                      {manage && (
+                        <td role="cell" className="dept-actions-cell">
+                          <div className="row-actions">
                             <button
                               type="button"
                               className="btn btn-ghost btn-sm"
                               disabled={busy}
-                              aria-label={`Arsipkan ${d.name}`}
-                              onClick={() => setArchiveId(d.id)}
+                              aria-label={`Ganti nama ${d.name}`}
+                              ref={(el) => {
+                                if (el) renameButtons.current.set(d.id, el);
+                                else renameButtons.current.delete(d.id);
+                              }}
+                              onClick={() => setEditing(d.id)}
                             >
-                              Arsipkan
+                              Ganti nama
                             </button>
-                          )}
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
-        </>
-      )}
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              disabled={busy}
+                              aria-label={`Atur admin ${d.name}`}
+                              onClick={() => setAdminId(d.id)}
+                            >
+                              Atur admin
+                            </button>
+                            {d.memberCount === 0 && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                disabled={busy}
+                                aria-label={`Arsipkan ${d.name}`}
+                                onClick={() => openArchive(d.id)}
+                              >
+                                Arsipkan
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ),
+                )}
+              </tbody>
+            </table>
+          </>
+        ))}
 
       {archived.length > 0 && (
-        <details className="dept-archived">
+        <details className="org-fold">
           <summary ref={archivedSummary}>
-            <IconChevronRight size={16} className="dept-chev" aria-hidden="true" />
+            <IconChevronRight size={16} className="org-fold-chev" aria-hidden="true" />
             Diarsipkan ({archived.length})
           </summary>
           <ul className="row-list">
@@ -295,37 +344,32 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
           title={`Arsipkan ${archiveDept.name}?`}
           confirmLabel={`Arsipkan ${archiveDept.name}`}
           busyLabel="Mengarsipkan..."
-          busy={page.pending === `archive:${archiveDept.id}`}
+          busy={archiving}
           danger={false}
-          onConfirm={async () => {
-            const dept = archiveDept;
-            const ok = await page.act(
-              `archive:${dept.id}`,
-              () => orgApi.setDepartmentArchived(dept.id, true),
-              `Departemen ${dept.name} diarsipkan.`,
-              "Departemen belum diarsipkan",
-            );
-            if (ok) setFocusArchived(dept.id);
-            setArchiveId(null);
-          }}
+          onConfirm={() => void archive(archiveDept)}
+          error={
+            archiveError && (
+              <ErrorAlert title="Departemen belum diarsipkan">
+                <p>{archiveError.message}</p>
+              </ErrorAlert>
+            )
+          }
         >
-          <div className="dept-confirm">
-            <p>
-              {archiveDept.channelName ? `Channel # ${archiveDept.channelName}` : "Channel departemen ini"} menjadi
-              hanya-baca: isinya tetap bisa dibaca, tetapi tidak bisa diisi pesan baru.
-            </p>
-            <p>
-              Departemen ini tidak bisa dipilih lagi saat orang bergabung atau diundang. Anda bisa memulihkannya kapan
-              saja dari bagian Diarsipkan.
-            </p>
-          </div>
+          <p>
+            {archiveDept.channelName ? `Channel # ${archiveDept.channelName}` : "Channel departemen ini"} menjadi
+            hanya-baca: isinya tetap bisa dibaca, tetapi tidak bisa diisi pesan baru.
+          </p>
+          <p>
+            Departemen ini tidak bisa dipilih lagi saat orang bergabung atau diundang. Anda bisa memulihkannya kapan saja
+            dari bagian Diarsipkan.
+          </p>
         </ConfirmDialog>
       )}
 
       {adminDept && (
         <AdminDialog
           dept={adminDept}
-          people={live.data.people}
+          people={live.data?.people ?? []}
           page={page}
           onClose={() => setAdminId(null)}
         />
@@ -380,7 +424,7 @@ function RenameForm({ dept, page, onDone }: { dept: DepartmentView; page: OrgPag
     } catch (err) {
       const appErr = toAppError(err);
       if (appErr.code === "invalid_name") {
-        setFieldError(appErr.message);
+        setFieldError(deptWording(appErr.message));
         input.current?.focus();
       } else {
         setError(appErr);
@@ -485,7 +529,7 @@ function CreateDialog({ open, onOpenChange, page }: { open: boolean; onOpenChang
     } catch (err) {
       const appErr = toAppError(err);
       if (appErr.code === "invalid_name") {
-        setFieldError(appErr.message);
+        setFieldError(deptWording(appErr.message));
         input.current?.focus();
       } else {
         setError(appErr);
@@ -592,11 +636,11 @@ function AdminDialog({
         if (!open && working === null) onClose();
       }}
       title={`Admin departemen ${dept.name}`}
-      description="Admin departemen menyetujui permintaan bergabung ke departemennya dan membuat kode undangan. Satu departemen boleh punya lebih dari satu admin."
+      description="Menyetujui permintaan bergabung ke departemen ini, membuat kode undangan dan proyek departemen, dan mengatur anggota proyeknya. Satu departemen boleh punya lebih dari satu admin."
     >
       {members.length === 0 ? (
         <p className="org-empty">
-          {dept.name} belum punya Anggota. Pindahkan orang ke departemen ini dulu lewat tab Pengguna, lalu angkat admin di
+          {dept.name} belum punya anggota. Pindahkan orang ke departemen ini dulu lewat tab Pengguna, lalu angkat admin di
           sini.
         </p>
       ) : (

@@ -178,14 +178,6 @@
   font-size: 13px;
 }
 
-.req-retry {
-  margin-top: 10px;
-  min-height: 36px;
-  background: var(--bg);
-  /* border-strong di atas danger-soft kurang dari 3:1; text-sec lolos di dua mode. */
-  border-color: var(--text-sec);
-}
-
 .req-dlg-list {
   margin: 6px 0 10px;
   padding-left: 18px;

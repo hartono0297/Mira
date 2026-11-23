@@ -370,6 +370,10 @@ select {
   color: var(--text);
 }
 
+.dlg-desc p + p {
+  margin-top: 8px;
+}
+
 .dlg-actions {
   display: flex;
   justify-content: flex-end;

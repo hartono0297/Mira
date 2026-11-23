@@ -71,7 +71,7 @@ describe("Organisasi: memuat dan error", () => {
     expect(screen.queryByText("Memuat data organisasi...")).not.toBeInTheDocument();
   });
 
-  it("error org_overview tampil, dan Coba baca lagi memuat ulang", async () => {
+  it("error org_overview tampil, dan Coba lagi memuat ulang", async () => {
     const user = userEvent.setup();
     let fail = true;
     answer({
@@ -86,7 +86,7 @@ describe("Organisasi: memuat dan error", () => {
     expect(screen.queryByRole("navigation", { name: "Bagian organisasi" })).not.toBeInTheDocument();
 
     fail = false;
-    await user.click(screen.getByRole("button", { name: "Coba baca lagi" }));
+    await user.click(screen.getByRole("button", { name: "Coba lagi" }));
     expect(await screen.findByRole("navigation", { name: "Bagian organisasi" })).toBeInTheDocument();
     expect(screen.queryByText("Data organisasi belum terbaca")).not.toBeInTheDocument();
   });

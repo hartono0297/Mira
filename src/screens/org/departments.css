@@ -1,17 +1,6 @@
 /* Tab Departemen. Tabel di lebar biasa; di bawah 700px tiap departemen jadi
-   blok bertumpuk dengan label di depan nilainya, tanpa gulir mendatar. */
-
-.dept-new {
-  min-height: 44px;
-}
-
-.dept-retry {
-  margin-top: 10px;
-  min-height: 36px;
-  background: var(--bg);
-  /* border-strong di atas danger-soft kurang dari 3:1; text-sec lolos di dua mode. */
-  border-color: var(--text-sec);
-}
+   blok bertumpuk dengan nama kolom kecil di atas nilainya (seperti tab Pengguna),
+   tanpa gulir mendatar. Tombol utama, Coba lagi, dan bagian lipat memakai org.css. */
 
 .dept-table {
   width: 100%;
@@ -61,14 +50,21 @@
   min-width: 150px;
 }
 
-/* Kolom aksi selebar tombolnya; kolom lain yang membungkus teks. */
+/* Nama kolom di dalam sel hanya tampil di tata letak bertumpuk. */
+.dept-k {
+  display: none;
+}
+
+/* Kolom aksi selebar tombolnya, tombol rata kiri supaya "Ganti nama" sejajar di
+   semua baris walaupun hanya departemen kosong yang punya tombol Arsipkan. */
 .dept-actions-cell {
   width: 1%;
+  min-width: 200px;
 }
 
 .dept-actions-cell .row-actions {
   flex-wrap: nowrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -117,45 +113,8 @@
   border-color: var(--danger);
 }
 
-/* Bagian Diarsipkan: tertutup bawaan, dibuka dengan klik, Enter, atau Spasi. */
-.dept-archived summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 0 8px;
-  margin-left: -8px;
-  border-radius: 10px;
-  font-weight: 700;
-  color: var(--text-sec);
-  cursor: pointer;
-}
-
-.dept-archived summary:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.dept-archived summary::-webkit-details-marker {
-  display: none;
-}
-
-/* Panah menunjuk ke kanan saat tertutup, ke bawah saat terbuka. */
-.dept-chev {
-  flex: none;
-  transition: transform 120ms ease;
-}
-
-.dept-archived[open] .dept-chev {
-  transform: rotate(90deg);
-}
-
-.dept-archived[open] summary {
+.org-fold[open] summary {
   margin-bottom: 6px;
-}
-
-.dept-confirm p + p {
-  margin-top: 8px;
 }
 
 .dept-admin-list {
@@ -165,23 +124,29 @@
 
 @container (max-width: 700px) {
   .dept-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
+    display: none;
   }
 
   .dept-table,
-  .dept-table tbody,
-  .dept-table tr,
-  .dept-table td {
+  .dept-table tbody {
     display: block;
   }
 
-  .dept-table tr {
-    padding: 12px 14px;
+  .dept-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 2fr);
+    grid-template-areas:
+      "name name name"
+      "count admins channel";
+    gap: 10px 16px;
+    padding: 14px;
+  }
+
+  .dept-table tbody tr.dept-row-act {
+    grid-template-areas:
+      "name name name"
+      "count admins channel"
+      "act act act";
   }
 
   .dept-table tbody tr + tr {
@@ -193,37 +158,69 @@
   }
 
   .dept-table td {
-    padding: 2px 0;
+    display: block;
+    padding: 0;
+  }
+
+  .dept-table td.dept-name-cell {
+    grid-area: name;
+  }
+
+  .dept-table td.dept-count {
+    grid-area: count;
+  }
+
+  .dept-table td.dept-admins {
+    grid-area: admins;
   }
 
   .dept-table td.dept-channel {
+    grid-area: channel;
     min-width: 0;
   }
 
-  .dept-table tr.dept-editing {
+  .dept-table td.dept-actions-cell {
+    grid-area: act;
+    width: auto;
+    min-width: 0;
+  }
+
+  .dept-table td.dept-edit-cell {
+    grid-column: 1 / -1;
+  }
+
+  .dept-table tbody tr.dept-editing {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: none;
     background: var(--card);
   }
 
-  .dept-table td[data-label]::before {
-    content: attr(data-label) ": ";
+  .dept-k {
+    display: block;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-sec);
   }
 
-  .dept-name-cell {
-    margin-bottom: 4px;
-  }
-
-  .dept-actions-cell {
-    margin-top: 8px;
-  }
-
-  .dept-actions-cell {
-    width: auto;
-  }
-
   .dept-actions-cell .row-actions {
     flex-wrap: wrap;
-    justify-content: flex-start;
+  }
+}
+
+@container (max-width: 480px) {
+  .dept-table tbody tr.dept-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "name name"
+      "count channel"
+      "admins admins";
+  }
+
+  .dept-table tbody tr.dept-row-act {
+    grid-template-areas:
+      "name name"
+      "count channel"
+      "admins admins"
+      "act act";
   }
 }

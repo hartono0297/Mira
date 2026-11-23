@@ -18,7 +18,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import type { OrgPage } from "./context";
-import { byName, matches, roleText } from "./PeoplePanel";
+import { byName, matches, orgMessage, roleText } from "./PeoplePanel";
 import { useOrgLive } from "./useOrgLive";
 import "./users.css";
 
@@ -115,7 +115,16 @@ function emptyResult(users: UserView[], f: Filters, deptName: (id: string) => st
       };
     }
   }
-  return { title, loosen: { label: "Hapus semua saringan", next: NO_FILTERS, note: "Tidak ada yang cocok walaupun hanya satu saringan dilepas." } };
+  return { title, loosen: { label: "Hapus semua saringan", next: NO_FILTERS, note: "Melepas satu saringan saja tetap tidak memberi hasil." } };
+}
+
+function ErrorBox({ error, title }: { error: AppError; title: string }) {
+  return (
+    <ErrorAlert title={actionErrorTitle(error, title)}>
+      <p>{orgMessage(error.message)}</p>
+      {error.code === "last_superadmin" && <p>Jadikan orang lain superadmin dulu, baru lepaskan peran ini.</p>}
+    </ErrorAlert>
+  );
 }
 
 function OsIcon({ os }: { os: string }) {
@@ -157,12 +166,14 @@ type MenuItem = { id: string; label: string; icon: ReactNode; danger?: boolean; 
 // Menu aksi per baris: pola disclosure. Escape menutup dan mengembalikan fokus
 // ke tombol pembuka, klik atau fokus di luar menutup.
 function ActionMenu({
+  menuKey,
   name,
   items,
   open,
   onOpenChange,
   disabled,
 }: {
+  menuKey: string;
   name: string;
   items: MenuItem[];
   open: boolean;
@@ -208,6 +219,7 @@ function ActionMenu({
         type="button"
         className="btn btn-ghost btn-sm users-menu-btn"
         aria-label={`Aksi untuk ${name}`}
+        data-menu-for={menuKey}
         aria-expanded={open}
         aria-controls={menuId}
         disabled={disabled}
@@ -241,14 +253,7 @@ function ActionMenu({
 
 function DialogError({ error, title }: { error: AppError | null; title: string }) {
   return (
-    <div aria-live="polite">
-      {error && (
-        <ErrorAlert title={actionErrorTitle(error, title)}>
-          <p>{error.message}</p>
-          {error.code === "last_superadmin" && <p>Jadikan orang lain superadmin dulu, baru lepaskan peran ini.</p>}
-        </ErrorAlert>
-      )}
-    </div>
+    <div aria-live="polite">{error && <ErrorBox error={error} title={title} />}</div>
   );
 }
 
@@ -275,12 +280,13 @@ function MoveDialog({
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
-  const chosen = options.find((d) => d.id === target) ?? options[0] ?? null;
+  const chosen = options.find((d) => d.id === target) ?? null;
   const current = (departments ?? []).find((d) => d.id === user.departmentId) ?? null;
   const currentName = user.departmentId === null ? null : (user.departmentName ?? current?.name ?? "departemen lama");
   const who = user.isMe ? "Anda" : user.displayName;
   const byWho = user.isMe ? "oleh Anda" : "olehnya";
-  const channel = (d: DepartmentView | null, fallback: string) => (d?.channelName ? `#${d.channelName}` : `channel ${fallback}`);
+  const channel = (d: DepartmentView | null, fallback: string) =>
+    d?.channelName ? <span className="users-ch"># {d.channelName}</span> : `channel ${fallback}`;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -314,12 +320,14 @@ function MoveDialog({
         </dl>
         {departments === null ? (
           departmentsError ? (
-            <ErrorAlert title="Daftar departemen belum terbaca">
-              <p>{departmentsError.message}</p>
-              <button type="button" className="btn btn-ghost onb-inline-btn" onClick={onRetryDepartments}>
-                Coba lagi
-              </button>
-            </ErrorAlert>
+            <div role="alert">
+              <ErrorAlert title="Daftar departemen belum terbaca">
+                <p>{orgMessage(departmentsError.message)}</p>
+                <button type="button" className="btn btn-ghost org-retry" onClick={onRetryDepartments}>
+                  Coba lagi
+                </button>
+              </ErrorAlert>
+            </div>
           ) : (
             <p className="hint" role="status">
               Memuat daftar departemen...
@@ -336,9 +344,12 @@ function MoveDialog({
               <select
                 id={selectId}
                 value={chosen?.id ?? ""}
-                aria-describedby={hintId}
+                aria-describedby={chosen ? hintId : undefined}
                 onChange={(e) => setTarget(e.target.value)}
               >
+                <option value="" disabled>
+                  Pilih departemen
+                </option>
                 {options.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
@@ -346,13 +357,22 @@ function MoveDialog({
                 ))}
               </select>
             </div>
-            <p id={hintId} className="users-note">
-              {currentName
-                ? `${who} keluar dari ${channel(current, currentName)} dan masuk ke ${channel(chosen, chosen?.name ?? "")}. Riwayat ${channel(current, currentName)} tidak terlihat lagi ${byWho}.`
-                : `${who} masuk ke ${channel(chosen, chosen?.name ?? "")}.`}{" "}
-              Keanggotaan proyek dan grup tidak berubah.
-              {user.departmentRole === "admin" && currentName && ` Hak admin departemen ${currentName} juga hilang.`}
-            </p>
+            {chosen && (
+              <p id={hintId} className="users-note">
+                {currentName ? (
+                  <>
+                    {who} keluar dari {channel(current, currentName)} dan masuk ke {channel(chosen, chosen.name)}. Riwayat{" "}
+                    {channel(current, currentName)} tidak terlihat lagi {byWho}.
+                  </>
+                ) : (
+                  <>
+                    {who} masuk ke {channel(chosen, chosen.name)}.
+                  </>
+                )}{" "}
+                Keanggotaan proyek dan grup tidak berubah.
+                {user.departmentRole === "admin" && currentName && ` Hak admin departemen ${currentName} juga hilang.`}
+              </p>
+            )}
           </>
         )}
         <DialogError error={error} title="Belum dipindahkan" />
@@ -362,8 +382,8 @@ function MoveDialog({
               Batal
             </button>
           </DialogClose>
-          {chosen && (
-            <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
+          {options.length > 0 && (
+            <button type="submit" className="btn" disabled={busy || !chosen} aria-busy={busy || undefined}>
               {busy ? "Memindahkan..." : "Pindahkan"}
             </button>
           )}
@@ -453,7 +473,8 @@ function RoleDialog({
               <span>
                 <span className="role-title">Admin departemen</span>
                 <span className="role-desc">
-                  Memutuskan permintaan bergabung ke departemen ini dan mengatur anggota proyeknya.
+                  Menyetujui permintaan bergabung ke departemen ini, membuat kode undangan dan proyek departemen, dan
+                  mengatur anggota proyeknya.
                 </span>
               </span>
             </label>
@@ -479,7 +500,7 @@ function RoleDialog({
             <span>
               <span className="role-title">Jadikan superadmin</span>
               <span className="role-desc">
-                Mengatur departemen, label, dan semua pengguna, memindah dan mengeluarkan orang, dan memutuskan
+                Mengatur departemen, label, dan pengguna. Bisa memindahkan dan mengeluarkan orang, dan memutuskan
                 permintaan bergabung ke departemen mana pun.
               </span>
               {lastSuperadmin && (
@@ -535,8 +556,28 @@ export function UsersPanel({ page }: { page: OrgPage }) {
   const shown = users.filter((u) => passes(u, filters));
   const onlyMe = active.length <= 1 && active.every((u) => u.isMe);
   const busy = page.pending !== null;
-  const removing = open?.kind === "remove" ? open.user : null;
-  const removeKey = removing ? `remove:${removing.publicKey}` : "";
+
+  // Setelah seseorang dikeluarkan, barisnya hilang dari daftar. Fokus pindah ke
+  // tombol aksi orang berikutnya (atau sebelumnya), kalau tidak ada ke judul tab.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [refocus, setRefocus] = useState<{ gone: string; next: string | null } | null>(null);
+  useEffect(() => {
+    if (!refocus || shown.some((u) => u.publicKey === refocus.gone)) return;
+    const target = refocus.next
+      ? tableRef.current?.querySelector<HTMLButtonElement>(`[data-menu-for="${refocus.next}"]`)
+      : null;
+    (target ?? headingRef.current)?.focus();
+    setRefocus(null);
+  });
+
+  function removed(u: UserView) {
+    const i = shown.findIndex((x) => x.publicKey === u.publicKey);
+    const others = [...shown.slice(i + 1), ...shown.slice(0, Math.max(i, 0)).reverse()];
+    const next = others.find((x) => x.status === "active" && items(x).length > 0) ?? null;
+    setRefocus({ gone: u.publicKey, next: next?.publicKey ?? null });
+    setOpen(null);
+  }
 
   function set(next: Partial<Filters>) {
     setFilters((f) => ({ ...f, ...next }));
@@ -576,7 +617,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
     <section className="set-section users" aria-labelledby="users-title">
       <div className="org-head">
         <div>
-          <h2 id="users-title" className="set-title">
+          <h2 id="users-title" className="set-title" ref={headingRef} tabIndex={-1}>
             Pengguna
           </h2>
           <p className="hint">
@@ -593,19 +634,21 @@ export function UsersPanel({ page }: { page: OrgPage }) {
       )}
 
       {!live.loading && !live.data && (
-        <ErrorAlert title="Daftar pengguna belum terbaca">
-          <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar pengguna."}</p>
-          <button type="button" className="btn btn-ghost onb-inline-btn" onClick={() => void live.reload()}>
-            Coba lagi
-          </button>
-        </ErrorAlert>
+        <div role="alert">
+          <ErrorAlert title="Daftar pengguna belum terbaca">
+            <p>{live.error ? orgMessage(live.error.message) : "Inti Mira tidak mengirim daftar pengguna."}</p>
+            <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
+              Coba lagi
+            </button>
+          </ErrorAlert>
+        </div>
       )}
 
       {live.data && (
         <>
           {live.error && (
             <p className="hint">
-              Data terbaru belum bisa dibaca ({live.error.message}). Yang tampil adalah data terakhir.
+              Data terbaru belum bisa dibaca ({orgMessage(live.error.message)}). Yang tampil adalah data terakhir.
             </p>
           )}
 
@@ -674,7 +717,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
           )}
 
           {shown.length > 0 && (
-            <table className="ut" role="table" aria-labelledby="users-title">
+            <table className="ut" role="table" aria-labelledby="users-title" ref={tableRef}>
               <thead role="rowgroup">
                 <tr role="row">
                   <th role="columnheader" scope="col">Nama</th>
@@ -752,6 +795,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
                       <td role="cell" className="ut-act">
                         {menu.length > 0 && (
                           <ActionMenu
+                            menuKey={u.publicKey}
                             name={u.displayName}
                             items={menu}
                             open={menuFor === u.publicKey}
@@ -783,44 +827,65 @@ export function UsersPanel({ page }: { page: OrgPage }) {
         <RoleDialog user={open.user} superadminCount={superadminCount} onClose={() => setOpen(null)} page={page} />
       )}
 
-      <ConfirmDialog
-        open={removing !== null}
-        onOpenChange={(next) => {
-          if (!next) setOpen(null);
-        }}
-        title={removing ? `Keluarkan ${removing.displayName} dari organisasi?` : "Keluarkan dari organisasi?"}
-        confirmLabel={removing ? `Keluarkan ${removing.displayName}` : "Keluarkan"}
-        busyLabel="Mengeluarkan..."
-        busy={removing !== null && page.pending === removeKey}
-        onConfirm={async () => {
-          if (!removing) return;
-          const who = removing;
-          await page.act(
-            `remove:${who.publicKey}`,
-            () => api.removeMember(who.publicKey),
-            `${who.displayName} sudah dikeluarkan dari organisasi.`,
-            `${who.displayName} belum dikeluarkan`,
-          );
-          setOpen(null);
-        }}
-      >
-        {removing && (
-          <>
-            <p>
-              {removing.displayName} keluar dari departemennya dan kehilangan semua perannya. Laptopnya tidak menerima
-              pesan dan perubahan baru lagi, dan laptop rekan menolak sambungan dari laptop itu.
-            </p>
-            <p>
-              Data yang sudah ada di laptop {removing.displayName} tetap ada di sana. Mira tidak bisa menghapusnya dari
-              jauh.
-            </p>
-            <p>
-              Laptop itu tidak bisa bergabung lagi ke organisasi ini, juga dengan kode undangan baru. Langkah ini tidak
-              bisa dibatalkan.
-            </p>
-          </>
-        )}
-      </ConfirmDialog>
+      {open?.kind === "remove" && (
+        <RemoveDialog user={open.user} onClose={() => setOpen(null)} onRemoved={removed} page={page} />
+      )}
     </section>
+  );
+}
+
+function RemoveDialog({
+  user,
+  onClose,
+  onRemoved,
+  page,
+}: {
+  user: UserView;
+  onClose: () => void;
+  onRemoved: (u: UserView) => void;
+  page: OrgPage;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<AppError | null>(null);
+  const name = user.displayName;
+
+  async function confirm() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.removeMember(user.publicKey);
+      page.notify(`${name} sudah dikeluarkan dari organisasi.`);
+      page.refresh();
+      onRemoved(user);
+    } catch (err) {
+      setError(toAppError(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={`Keluarkan ${name} dari organisasi?`}
+      confirmLabel={`Keluarkan ${name}`}
+      busyLabel="Mengeluarkan..."
+      busy={busy}
+      onConfirm={() => void confirm()}
+      error={error && <ErrorBox error={error} title={`${name} belum dikeluarkan`} />}
+    >
+      <p>
+        {name} keluar dari departemennya dan kehilangan semua perannya. Laptopnya tidak menerima pesan dan perubahan
+        baru lagi, dan laptop rekan menolak sambungan dari laptop itu.
+      </p>
+      <p>Data yang sudah ada di laptop {name} tetap ada di sana. Mira tidak bisa menghapusnya dari jauh.</p>
+      <p>
+        Laptop itu tidak bisa bergabung lagi ke organisasi ini, juga dengan kode undangan baru. Langkah ini tidak bisa
+        dibatalkan.
+      </p>
+    </ConfirmDialog>
   );
 }

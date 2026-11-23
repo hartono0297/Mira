@@ -5,8 +5,9 @@ import "./nav-count.css";
 const POLL_MS = 30000;
 
 // Jumlah permintaan bergabung yang menunggu keputusan orang ini
-// (OrgOverview.pendingJoinCount). 0 selama memuat, kalau gagal dibaca, dan
-// untuk orang yang tidak boleh memutuskan. Dimuat ulang pada `mira://directory`
+// (OrgOverview.pendingJoinCount). 0 selama memuat dan untuk orang yang tidak
+// boleh memutuskan; kalau muat ulang gagal, angka terakhir dipertahankan.
+// Dimuat ulang pada `mira://directory`
 // dan `mira://join-requests`, dengan polling 30 detik sebagai cadangan.
 export function usePendingJoinCount(): number {
   const [count, setCount] = useState(0);

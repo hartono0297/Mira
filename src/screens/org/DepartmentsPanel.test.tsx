@@ -88,7 +88,8 @@ describe("Departemen: keadaan", () => {
   it("menampilkan teks memuat sebelum data datang", async () => {
     setup({ org_departments: () => new Promise(() => {}) });
     await openTab();
-    expect(screen.getByText("Memuat daftar departemen...")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Memuat daftar departemen...");
+    expect(screen.getByRole("heading", { name: "Departemen" })).toBeInTheDocument();
   });
 
   it("kosong untuk superadmin mengajak membuat departemen", async () => {
@@ -119,8 +120,10 @@ describe("Departemen: keadaan", () => {
       },
     });
     const user = await openTab();
-    expect(await screen.findByText("Daftar departemen belum terbaca")).toBeInTheDocument();
-    expect(screen.getByText("Basis data sedang dipakai proses lain.")).toBeInTheDocument();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Daftar departemen belum terbaca");
+    expect(alert).toHaveTextContent("Basis data sedang dipakai proses lain.");
+    expect(screen.getByRole("heading", { name: "Departemen" })).toBeInTheDocument();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Coba lagi" }));
     expect(await screen.findByRole("table", { name: "Departemen aktif" })).toBeInTheDocument();
@@ -198,7 +201,7 @@ describe("Departemen: buat", () => {
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByLabelText("Nama departemen"), "Gudang");
     await user.click(within(dialog).getByRole("button", { name: "Buat departemen" }));
-    expect(await within(dialog).findByText(/karakter yang tidak diizinkan/)).toBeInTheDocument();
+    expect(await within(dialog).findByText("Nama departemen berisi karakter yang tidak diizinkan, misalnya baris baru atau tab.")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Nama departemen")).toHaveAttribute("aria-invalid", "true");
   });
 
@@ -258,7 +261,7 @@ describe("Departemen: ganti nama", () => {
     const input = screen.getByLabelText("Nama baru untuk departemen Desain");
     await user.type(input, " Baru");
     await user.click(screen.getByRole("button", { name: "Simpan nama" }));
-    expect(await screen.findByText("Nama tim paling banyak 60 karakter.")).toBeInTheDocument();
+    expect(await screen.findByText("Nama departemen paling banyak 60 karakter.")).toBeInTheDocument();
     expect(input).toHaveAttribute("aria-invalid", "true");
   });
 
@@ -300,12 +303,20 @@ describe("Departemen: arsipkan dan pulihkan", () => {
     expect(screen.queryByRole("button", { name: "Arsipkan Interior" })).not.toBeInTheDocument();
   });
 
-  it("error Rust saat mengarsipkan ditampilkan", async () => {
+  it("error Rust saat mengarsipkan tampil di dalam dialog yang tetap terbuka", async () => {
     setup({ org_set_department_archived: rustError("department_not_empty", "Departemen ini masih punya orang.") });
     const user = await openTable();
     await user.click(screen.getByRole("button", { name: "Arsipkan Interior" }));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Arsipkan Interior" }));
-    expect(await screen.findByText("Departemen ini masih punya orang.")).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Arsipkan Interior" }));
+    expect(await within(dialog).findByText("Departemen belum diarsipkan")).toBeInTheDocument();
+    expect(within(dialog).getByText("Departemen ini masih punya orang.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Batal" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // Dibuka lagi: error lama tidak ikut tampil.
+    await user.click(screen.getByRole("button", { name: "Arsipkan Interior" }));
+    expect(within(screen.getByRole("dialog")).queryByText("Departemen belum diarsipkan")).not.toBeInTheDocument();
   });
 
   it("memulihkan departemen dari bagian Diarsipkan, lalu fokus pindah ke barisnya", async () => {

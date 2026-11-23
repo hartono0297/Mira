@@ -16,6 +16,11 @@ export function roleText(p: Pick<PersonView, "isGuest" | "isSuperadmin" | "depar
   return p.departmentRole === "admin" ? TEAM_ROLE_LABELS.admin : ROLE_LABELS.member;
 }
 
+// Pesan dari inti Rust masih bisa menyebut "tim"; di tampilan v0.3 namanya departemen.
+export function orgMessage(message: string): string {
+  return message.replace(/\bTim\b/g, "Departemen").replace(/\btim\b/g, "departemen");
+}
+
 export function byName<T extends { displayName: string }>(a: T, b: T): number {
   return a.displayName.localeCompare(b.displayName, "id", { sensitivity: "base" });
 }
@@ -61,19 +66,21 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
       )}
 
       {!live.loading && !live.data && (
-        <ErrorAlert title="Daftar anggota belum terbaca">
-          <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar anggota."}</p>
-          <button type="button" className="btn btn-ghost onb-inline-btn" onClick={() => void live.reload()}>
-            Coba lagi
-          </button>
-        </ErrorAlert>
+        <div role="alert">
+          <ErrorAlert title="Daftar anggota belum terbaca">
+            <p>{live.error ? orgMessage(live.error.message) : "Inti Mira tidak mengirim daftar anggota."}</p>
+            <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
+              Coba lagi
+            </button>
+          </ErrorAlert>
+        </div>
       )}
 
       {live.data && (
         <>
           {live.error && (
             <p className="hint">
-              Data terbaru belum bisa dibaca ({live.error.message}). Yang tampil adalah data terakhir.
+              Data terbaru belum bisa dibaca ({orgMessage(live.error.message)}). Yang tampil adalah data terakhir.
             </p>
           )}
 

@@ -169,7 +169,7 @@ describe("Pengguna: data", () => {
     });
     await openTab(ue);
     expect(await screen.findByText("Daftar pengguna belum terbaca")).toBeInTheDocument();
-    expect(screen.getByText("Database terkunci.")).toBeInTheDocument();
+    expect(screen.getByText("Database terkunci.").closest("[role=alert]")).not.toBeNull();
     fail = false;
     await ue.click(screen.getByRole("button", { name: "Coba lagi" }));
     expect(await screen.findByText("Sari")).toBeInTheDocument();
@@ -328,11 +328,14 @@ describe("Pengguna: ubah departemen", () => {
     expect(within(dialog).getByText("Desain")).toBeInTheDocument();
     const select = within(dialog).getByRole("combobox", { name: "Pindah ke" });
     const options = within(select).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(["Drafting", "Keuangan"]);
+    expect(options).toEqual(["Pilih departemen", "Drafting", "Keuangan"]);
+    expect(select).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Pindahkan" })).toBeDisabled();
+    expect(dialog).not.toHaveTextContent("Keanggotaan proyek");
 
     await ue.selectOptions(select, "Keuangan");
-    expect(within(dialog).getByText(/Sari keluar dari #desain dan masuk ke #keuangan/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Keanggotaan proyek dan grup tidak berubah/)).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("Sari keluar dari # desain dan masuk ke # keuangan. Riwayat # desain tidak terlihat lagi olehnya.");
+    expect(dialog).toHaveTextContent("Keanggotaan proyek dan grup tidak berubah.");
 
     await ue.click(within(dialog).getByRole("button", { name: "Pindahkan" }));
     expect(invoke).toHaveBeenCalledWith("org_move_member", { publicKey: PK_B, teamId: TEAM_2 });
@@ -345,17 +348,20 @@ describe("Pengguna: ubah departemen", () => {
     await ready(ue);
     await openMenuItem(ue, "Wulan", "Ubah departemen");
     const dialog = await screen.findByRole("dialog", { name: "Ubah departemen Wulan" });
+    await ue.selectOptions(within(dialog).getByRole("combobox", { name: "Pindah ke" }), "Desain");
     expect(within(dialog).getByText(/Hak admin departemen Keuangan juga hilang/)).toBeInTheDocument();
   });
 
-  it("gagal: pesan Rust tampil di dialog", async () => {
-    const ue = renderUsers({ org_move_member: rustError("forbidden", "Hanya superadmin yang boleh memindah orang.") });
+  it("gagal: pesan Rust tampil di dialog, kata tim menjadi departemen", async () => {
+    const ue = renderUsers({ org_move_member: rustError("forbidden", "Hanya admin tim yang boleh memindah orang.") });
     await ready(ue);
     await openMenuItem(ue, "Sari", "Ubah departemen");
     const dialog = await screen.findByRole("dialog");
+    await ue.selectOptions(within(dialog).getByRole("combobox", { name: "Pindah ke" }), "Drafting");
     await ue.click(within(dialog).getByRole("button", { name: "Pindahkan" }));
-    expect(await within(dialog).findByText("Hanya superadmin yang boleh memindah orang.")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Hanya admin departemen yang boleh memindah orang.")).toBeInTheDocument();
     expect(within(dialog).getByText("Anda tidak punya izin untuk ini")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("Escape menutup dialog dan fokus kembali ke tombol aksi", async () => {
@@ -462,8 +468,15 @@ describe("Pengguna: ubah peran", () => {
 });
 
 describe("Pengguna: keluarkan", () => {
-  it("mengeluarkan orang setelah konfirmasi", async () => {
-    const ue = renderUsers();
+  it("mengeluarkan orang setelah konfirmasi, fokus pindah ke orang berikutnya", async () => {
+    let gone = false;
+    const ue = renderUsers({
+      org_users: () => (gone ? people().filter((p) => p.publicKey !== PK_B) : people()),
+      remove_member: () => {
+        gone = true;
+        return null;
+      },
+    });
     await ready(ue);
     await openMenuItem(ue, "Sari", "Keluarkan dari organisasi");
     const dialog = await screen.findByRole("dialog", { name: "Keluarkan Sari dari organisasi?" });
@@ -472,14 +485,21 @@ describe("Pengguna: keluarkan", () => {
     await ue.click(within(dialog).getByRole("button", { name: "Keluarkan Sari" }));
     expect(invoke).toHaveBeenCalledWith("remove_member", { publicKey: PK_B });
     expect(await screen.findByText("Sari sudah dikeluarkan dari organisasi.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Sari")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Aksi untuk Wulan" })).toHaveFocus());
   });
 
-  it("gagal: pesan Rust tampil", async () => {
-    const ue = renderUsers({ remove_member: rustError("forbidden", "Hanya superadmin yang boleh mengeluarkan orang.") });
+  it("gagal: dialog tetap terbuka dan pesan Rust tampil di dalamnya", async () => {
+    const ue = renderUsers({ remove_member: rustError("forbidden", "Hanya superadmin yang boleh mengeluarkan anggota tim.") });
     await ready(ue);
     await openMenuItem(ue, "Sari", "Keluarkan dari organisasi");
     const dialog = await screen.findByRole("dialog");
     await ue.click(within(dialog).getByRole("button", { name: "Keluarkan Sari" }));
-    expect(await screen.findByText("Hanya superadmin yang boleh mengeluarkan orang.")).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText("Hanya superadmin yang boleh mengeluarkan anggota departemen."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Keluarkan Sari" })).toBeEnabled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });

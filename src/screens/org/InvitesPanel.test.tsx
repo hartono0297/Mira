@@ -125,23 +125,55 @@ describe("Undangan: daftar", () => {
     ]);
     expect(within(list).getAllByText("Desain, Anggota")).toHaveLength(4);
     expect(within(list).getByText(/Dipakai oleh Anggota Dua/)).toBeInTheDocument();
+    expect(within(list).getAllByText(/Dibuat oleh Penguji/)).toHaveLength(4);
     expect(within(list).getAllByRole("button", { name: /Cabut kode undangan/ })).toHaveLength(1);
   });
 
-  it("mencabut kode memanggil revoke_invite dan menampilkan pesan berhasil", async () => {
+  it("mencabut kode lewat konfirmasi, lalu pesan berhasil dan fokus ke judul tab", async () => {
     const user = userEvent.setup();
-    answer({ get_directory: dir({ invites: [invite()] }) });
+    let revoked = false;
+    answer({
+      get_directory: () => dir({ invites: [invite(revoked ? { status: "revoked" } : {})] }),
+      revoke_invite: () => {
+        revoked = true;
+        return null;
+      },
+    });
     const { onRefresh } = renderOrg();
     const list = await openTab(user);
     await user.click(within(list).getByRole("button", { name: "Cabut kode undangan Desain, Anggota" }));
+    const dialog = await screen.findByRole("dialog", { name: "Cabut kode undangan Desain, Anggota?" });
+    expect(invoke).not.toHaveBeenCalledWith("revoke_invite", expect.anything());
+    expect(within(dialog).getByRole("button", { name: "Batal" })).toHaveFocus();
+
+    await user.click(within(dialog).getByRole("button", { name: "Cabut kode" }));
     expect(invoke).toHaveBeenCalledWith("revoke_invite", { inviteId: "7".repeat(32) });
     expect(
       await screen.findByText("Kode undangan untuk Desain dicabut. Kode itu tidak bisa dipakai lagi."),
     ).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(within(list).queryByRole("button", { name: /Cabut kode undangan/ })).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Kode undangan" })).toHaveFocus());
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("gagal mencabut: pesan dari Rust tampil", async () => {
+  it("Escape di konfirmasi tidak mencabut apa pun dan fokus kembali ke Cabut", async () => {
+    const user = userEvent.setup();
+    answer({ get_directory: dir({ invites: [invite()] }) });
+    renderOrg();
+    const list = await openTab(user);
+    const button = within(list).getByRole("button", { name: "Cabut kode undangan Desain, Anggota" });
+    await user.click(button);
+    await screen.findByRole("dialog", { name: "Cabut kode undangan Desain, Anggota?" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(button).toHaveFocus());
+    expect(invoke).not.toHaveBeenCalledWith("revoke_invite", expect.anything());
+  });
+
+  it("gagal mencabut: dialog tetap terbuka dengan pesan dari Rust", async () => {
     const user = userEvent.setup();
     answer({
       get_directory: dir({ invites: [invite()] }),
@@ -150,8 +182,11 @@ describe("Undangan: daftar", () => {
     renderOrg();
     const list = await openTab(user);
     await user.click(within(list).getByRole("button", { name: "Cabut kode undangan Desain, Anggota" }));
-    expect(await screen.findByText("Kode belum dicabut")).toBeInTheDocument();
-    expect(screen.getByText("Database terkunci.")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Cabut kode undangan Desain, Anggota?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cabut kode" }));
+    expect(await within(dialog).findByText("Kode belum dicabut")).toBeInTheDocument();
+    expect(within(dialog).getByText("Database terkunci.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cabut kode" })).toBeEnabled();
   });
 
   it("kosong untuk pengelola: diajak membuat kode", async () => {
@@ -245,7 +280,12 @@ describe("Undangan: dialog buat kode", () => {
     expect(within(dialog).getByRole("radio", { name: /Admin departemen/ })).toBeEnabled();
     expect(within(dialog).getByRole("radio", { name: /Tamu/ })).toBeEnabled();
     expect(
-      within(dialog).getByText("Chat di departemen ini, buat dan kerjakan task di proyek yang ia ikuti"),
+      within(dialog).getByText("Chat di departemen ini, buat dan kerjakan task di proyek yang ia ikuti."),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "Menyetujui permintaan bergabung ke departemen ini, membuat kode undangan dan proyek departemen, dan mengatur anggota proyeknya.",
+      ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("combobox", { name: "Kode berlaku selama" })).toHaveValue("24h");
     expect(within(dialog).queryByText(/\btim\b/i)).not.toBeInTheDocument();
@@ -498,16 +538,52 @@ describe("Undangan: memakai kode", () => {
     expect(invoke).not.toHaveBeenCalledWith("redeem_invite", expect.anything());
   });
 
-  it("Tamu melihat kalimat untuk proyek", async () => {
+  it("Tamu tidak melihat formulir, karena Rust menolak Tamu memakai kode", async () => {
     const user = userEvent.setup();
     const guestDir: Partial<Directory> = {
       ...memberDir,
-      members: [member(ME, "Penguji", { orgRole: "guest" }), member(PK_B, "Anggota Satu", { orgRole: "superadmin", isSuperadmin: true })],
+      members: [
+        member(ME, "Penguji", { orgRole: "guest" }),
+        member(PK_B, "Anggota Satu", { orgRole: "superadmin", isSuperadmin: true }),
+      ],
     };
     answer({ get_directory: dir(guestDir) }, memberOverview({ isGuest: true, departmentId: null }));
     renderOrg();
     await openTab(user);
-    expect(screen.getByRole("heading", { name: "Punya kode undangan Tamu yang baru?" })).toBeInTheDocument();
-    expect(screen.getByText("Kode Tamu membuka proyek yang tertulis di kode itu untuk Anda.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Kode undangan", { selector: "input" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pakai kode" })).not.toBeInTheDocument();
+  });
+
+  it("forbidden: judul dan teks sendiri, tanpa pesan Rust", async () => {
+    const user = userEvent.setup();
+    answer(
+      { get_directory: dir(memberDir), redeem_invite: rustError("forbidden", "Anda sudah di tim lain.") },
+      memberOverview({ departmentId: null }),
+    );
+    renderOrg();
+    await openTab(user);
+    await user.type(screen.getByLabelText("Kode undangan", { selector: "input" }), "abcdefghjkmnpqrstvwx");
+    await user.click(screen.getByRole("button", { name: "Pakai kode" }));
+    expect(await screen.findByText("Kode ini tidak bisa Anda pakai")).toBeInTheDocument();
+    expect(screen.getByText(/Kode undangan hanya untuk orang yang belum punya departemen/)).toBeInTheDocument();
+    expect(screen.queryByText("Anda sudah di tim lain.")).not.toBeInTheDocument();
+  });
+
+  it("pesan Rust lain yang menyebut tim ditulis dengan departemen", async () => {
+    const user = userEvent.setup();
+    answer(
+      {
+        get_directory: dir(memberDir),
+        redeem_invite: rustError("database", "Tim tujuan belum tersimpan. Data tim sedang dimuat."),
+      },
+      memberOverview({ departmentId: null }),
+    );
+    renderOrg();
+    await openTab(user);
+    await user.type(screen.getByLabelText("Kode undangan", { selector: "input" }), "abcdefghjkmnpqrstvwx");
+    await user.click(screen.getByRole("button", { name: "Pakai kode" }));
+    expect(
+      await screen.findByText("Departemen tujuan belum tersimpan. Data departemen sedang dimuat."),
+    ).toBeInTheDocument();
   });
 });

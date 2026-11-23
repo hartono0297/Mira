@@ -158,6 +158,15 @@
   color: var(--text-sec);
 }
 
+/* Baris orang yang sudah dikeluarkan: nama memakai warna pendukung, status tetap ditulis. */
+.ut-off .ut-n {
+  color: var(--text-sec);
+}
+
+.users-ch {
+  white-space: nowrap;
+}
+
 .ut-mono {
   font-size: 12.5px;
 }

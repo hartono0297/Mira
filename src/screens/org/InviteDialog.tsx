@@ -27,8 +27,9 @@ type ProjectsState =
   | { status: "error"; error: AppError };
 
 const ROLE_DESC: Record<InviteRole, string> = {
-  member: "Chat di departemen ini, buat dan kerjakan task di proyek yang ia ikuti",
-  team_admin: "Izin Anggota, ditambah membuat proyek departemen, mengatur anggota proyeknya, dan menyetujui orang baru",
+  member: "Chat di departemen ini, buat dan kerjakan task di proyek yang ia ikuti.",
+  team_admin:
+    "Menyetujui permintaan bergabung ke departemen ini, membuat kode undangan dan proyek departemen, dan mengatur anggota proyeknya.",
   guest: "Melihat board dan membaca komentar di proyek yang dipilih. Tidak bisa mengubah task atau berkomentar.",
 };
 
