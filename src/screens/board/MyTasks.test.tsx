@@ -51,6 +51,10 @@ function item(n: number, due: string | null, extra: Partial<TaskCard> = {}, proj
       labels: [],
       commentCount: 0,
       merged: false,
+      subtaskDone: 0,
+      subtaskTotal: 0,
+      trackedSecs: 0,
+      timersRunningSince: [],
       ...extra,
     },
   };

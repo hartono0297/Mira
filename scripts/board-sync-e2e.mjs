@@ -166,11 +166,19 @@ async function openProject(page, name = PROJECT) {
   await projectNav(page).getByRole("button", { name: new RegExp(name) }).click();
   await page.getByRole("button", { name: "Task baru" }).waitFor({ timeout: 10000 });
 }
+// Dialog detail task v0.4. Pilihan Tenggat, Label, dan Hentikan timer juga
+// role=dialog di dalamnya, jadi dialog task dikenali dari tombol Tutup-nya.
+const taskDialog = (page) =>
+  page.getByRole("dialog").filter({ has: page.getByRole("button", { name: "Tutup detail task" }) });
 async function openTask(page, title) {
   await card(page, title).click();
-  const dlg = page.getByRole("dialog");
-  await dlg.getByLabel("Penanggung jawab").waitFor({ timeout: 10000 });
+  const dlg = taskDialog(page);
+  await dlg.getByRole("textbox", { name: "Judul task", exact: true }).waitFor({ timeout: 10000 });
   return dlg;
+}
+async function closeTask(page, dlg) {
+  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
+  await dlg.waitFor({ state: "detached", timeout: 5000 });
 }
 // Panel "Anggota proyek" dari tombol berawalan "Anggota" di kepala board.
 async function openMembers(page) {
@@ -282,8 +290,8 @@ try {
   check("Dua task dibuat", (await card(page, TASKS[0]).count()) === 1 && (await card(page, TASKS[1]).count()) === 1);
 
   dlg = await openTask(page, TASKS[0]);
-  const desc = dlg.getByLabel("Deskripsi");
-  const titleInput = dlg.getByLabel("Judul task");
+  const desc = dlg.getByRole("textbox", { name: "Deskripsi", exact: true });
+  const titleInput = dlg.getByRole("textbox", { name: "Judul task", exact: true });
   await desc.click();
   await desc.pressSequentially(DRAFT, { delay: 5 });
   const descFocused = () => desc.evaluate((el) => el === document.activeElement);
@@ -299,8 +307,9 @@ try {
   const featureAt = Date.now();
   const emitted = await emitFeature(page, "board");
   check("Event mira://feature topik board terpancar dari JS", emitted.ok, emitted.ok ? "" : JSON.stringify(emitted.error));
+  // Judul di dialog v0.4 berupa textarea satu baris berlabel "Judul task".
   await page.waitForFunction(
-    ([title]) => [...document.querySelectorAll("[role=dialog] input")].some((i) => i.value === title),
+    ([title]) => [...document.querySelectorAll("[role=dialog] textarea[aria-label=\"Judul task\"]")].some((i) => i.value === title),
     [TITLE_FROM_CORE],
     { timeout: 10000 },
   ).catch(() => {});
@@ -339,7 +348,7 @@ try {
   const savedTask = await must(page, "board_get_task", { projectId: project.id, taskId: target.id });
   check("Deskripsi tersimpan setelah Simpan deskripsi", savedTask.description === DRAFT && savedTask.title === TITLE_FROM_CORE);
   await page.screenshot({ path: join(shots, "sb-04-detail-task-terang.png") });
-  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
+  await closeTask(page, dlg);
   await page.waitForTimeout(400);
 
   // 5. Ubah nama proyek.
@@ -375,7 +384,7 @@ try {
   dlg = await openTask(page, TITLE_FROM_CORE);
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(shots, "sb-09-detail-task-terang.png") });
-  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
+  await closeTask(page, dlg);
   await page.waitForTimeout(300);
   await setTheme(page, "Gelap");
   await openProject(page, PROJECT_RENAMED);
@@ -383,7 +392,7 @@ try {
   dlg = await openTask(page, TITLE_FROM_CORE);
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(shots, "sb-11-detail-task-gelap.png") });
-  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
+  await closeTask(page, dlg);
   await page.waitForTimeout(300);
   const membersDark = await openMembers(page);
   await page.waitForTimeout(300);

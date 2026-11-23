@@ -230,6 +230,10 @@ function card(n: number, columnId: ColumnId, extra: Partial<TaskCard> = {}): Tas
     labels: [],
     commentCount: 0,
     merged: false,
+    subtaskDone: 0,
+    subtaskTotal: 0,
+    trackedSecs: 0,
+    timersRunningSince: [],
     ...extra,
   };
 }
@@ -278,6 +282,17 @@ function detail(card: TaskCard): TaskDetailData {
     canEdit: true,
     canDelete: true,
     canComment: true,
+    subtasks: [],
+    timeEntries: [],
+    timeTotals: [],
+    myRunningEntry: null,
+    statusTime: {
+      closedSecs: { todo: 0, doing: 0, done: 0 },
+      currentColumn: card.columnId,
+      currentSince: "2026-11-22T03:00:00Z",
+      cycleSecs: null,
+      clockWarning: false,
+    },
   };
 }
 
@@ -382,6 +397,65 @@ describe("Board: daftar proyek dan kolom", () => {
     expect(dlg).toHaveTextContent(`detail ${P1} ${taskId(2)}`);
     await user.click(within(dlg).getByRole("button", { name: "Tutup detail" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("Board: subtask dan waktu di kartu", () => {
+  const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+
+  function withCards(todo: TaskCard[]) {
+    current = view({ columns: view().columns.map((c) => (c.id === "todo" ? { ...c, tasks: todo } : c)) });
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("menampilkan progres subtask dan waktu tercatat dengan teks untuk pembaca layar", async () => {
+    withCards([
+      card(1, "todo", { subtaskDone: 1, subtaskTotal: 3, trackedSecs: 3 * 3600 + 20 * 60 }),
+      card(2, "todo", { subtaskDone: 3, subtaskTotal: 3 }),
+    ]);
+    await renderBoard();
+    const todo = column("To do");
+    const progress = within(todo).getByText("1/3");
+    expect(progress.closest(".tc-sub")).not.toHaveClass("tc-sub-done");
+    expect(within(todo).getByText("3j 20m")).toBeInTheDocument();
+    expect(within(todo).getByText("3/3").closest(".tc-sub")).toHaveClass("tc-sub-done");
+
+    const first = within(todo).getByRole("button", { name: "Task nomor 1" });
+    expect(first).toHaveAccessibleDescription(/1 dari 3 subtask selesai/);
+    expect(first).toHaveAccessibleDescription(/waktu tercatat 3 jam 20 menit/);
+    expect(first).not.toHaveAccessibleDescription(/timer berjalan/);
+    // Kartu tanpa catatan waktu tidak menampilkan jam sama sekali.
+    expect(within(todo).getByRole("button", { name: "Task nomor 2" })).not.toHaveAccessibleDescription(/waktu tercatat/);
+    expect(todo.querySelectorAll(".tc-time")).toHaveLength(1);
+    // Kartu tanpa subtask tidak menampilkan progres.
+    expect(column("Dikerjakan").querySelector(".tc-sub")).toBeNull();
+  });
+
+  it("timer berjalan: total ikut naik, ada titik, dan diumumkan", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date", "setInterval", "clearInterval"] });
+    withCards([card(1, "todo", { trackedSecs: 600, timersRunningSince: [minutesAgo(5)] }), card(2, "todo")]);
+    await renderBoard();
+    const todo = column("To do");
+    expect(within(todo).getByText("15m")).toBeInTheDocument();
+    const first = within(todo).getByRole("button", { name: "Task nomor 1" });
+    expect(first).toHaveAccessibleDescription(/waktu tercatat 15 menit, timer berjalan/);
+    expect(todo.querySelectorAll(".tc-running")).toHaveLength(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(within(todo).getByText("16m")).toBeInTheDocument();
+  });
+
+  it("timer yang baru mulai tanpa catatan lain tetap terlihat sebagai 0m", async () => {
+    withCards([card(1, "todo", { timersRunningSince: [minutesAgo(0)] })]);
+    await renderBoard();
+    const todo = column("To do");
+    expect(within(todo).getByText(/^(0m|<1m)$/)).toBeInTheDocument();
+    expect(within(todo).getByRole("button", { name: "Task nomor 1" })).toHaveAccessibleDescription(/timer berjalan/);
   });
 });
 

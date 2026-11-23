@@ -1,0 +1,314 @@
+/* Bagian Subtask di dialog detail task (design/v04-detail-task.html, arah A).
+   Kelas bersama (.td-sec, .td-sec-head, .td-sh, .td-av, .td-av-sm, .td-check,
+   .td-input, .td-del) dan menu (.td-pop, .td-mi) ada di task.css. Di sini hanya
+   kelas khusus subtask.
+   Semua warna lewat token peran. Pasangan yang dicek (AA, terang dan gelap):
+   - judul --text di atas --bg dan --hover: 16,04 / 13,22 dan 14,96 / 12,25.
+   - judul selesai, petunjuk, keadaan kosong --text-sec di atas --bg dan --hover:
+     6,11 / 5,03 dan 8,46 / 6,93.
+   - garis kotak centang dan lingkaran "tetapkan orang" memakai --text-sec, bukan
+     --border-strong: --border-strong di atas --hover hanya 2,63:1 (gagal 3:1).
+   - centang --on-accent di atas --accent: 5,42 dan 6,51.
+   - avatar --accent-text di atas --accent-soft: 5,00 dan 7,51.
+   - isi bar --accent di atas jalur --border: 4,12 dan 5,13 (non-teks, lolos 3:1).
+   - cincin fokus --focus di atas --hover: 4,47 dan 5,88.
+   - pesan error --danger di atas --bg: 7,49 dan 8,65; di atas --hover (baris
+     yang disorot): 6,18 dan 7,08. */
+
+.td-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.td-bar {
+  width: 96px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.td-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.td-sub-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+
+.td-sub-empty {
+  padding: 4px 0;
+  font-size: 14px;
+  color: var(--text-sec);
+}
+
+/* Baris: pegangan / centang / judul / orang / hapus. Pegangan menggantung di
+   padding kiri supaya kotak centang sejajar judul bagian. */
+.td-subs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.td-sub {
+  display: grid;
+  grid-template-columns: 24px 22px minmax(0, 1fr) auto 32px;
+  align-items: center;
+  column-gap: 6px;
+  min-height: 38px;
+  margin-left: -30px;
+  border-radius: 8px;
+}
+
+/* Hanya baris yang bisa diubah yang menyala saat disorot. */
+.td-sub.is-editable:hover {
+  background: var(--hover);
+}
+
+.td-sub.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.td-sub.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.td-sub.is-dragging {
+  opacity: 0.5;
+}
+
+.td-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  color: var(--text-sec);
+  cursor: grab;
+  touch-action: none;
+}
+
+.td-handle,
+.td-sub .td-del,
+.td-who-empty {
+  opacity: 0;
+}
+
+.td-sub:hover .td-handle,
+.td-sub:focus-within .td-handle,
+.td-sub:hover .td-del,
+.td-sub:focus-within .td-del,
+.td-sub:hover .td-who-empty,
+.td-sub:focus-within .td-who-empty,
+.td-who-empty[aria-expanded="true"] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .td-handle,
+  .td-sub .td-del,
+  .td-who-empty {
+    opacity: 1;
+  }
+}
+
+/* Judul: tampak seperti teks, jadi kolom isian saat difokus. */
+.td-sub-title,
+.td-sub-text {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.td-sub-text {
+  display: flex;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+
+.td-sub-title:focus {
+  background: var(--bg);
+  border-color: var(--border-strong);
+}
+
+.td-sub-title:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+
+.td-sub.is-done .td-sub-title,
+.td-sub.is-done .td-sub-text {
+  color: var(--text-sec);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.td-sub.is-done .td-sub-title:focus {
+  text-decoration: none;
+}
+
+/* Penanggung jawab */
+.td-who-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.td-who {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-sec);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.td-who-static {
+  cursor: default;
+}
+
+.td-who-empty {
+  width: 24px;
+  height: 24px;
+  margin: 2px;
+  border: 1.5px dashed var(--text-sec);
+}
+
+.td-who-empty:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+/* Bukan anggota proyek lagi: garis putus-putus, keterangan ada di nama aksesibel dan tooltip. */
+.td-av-former {
+  background: transparent;
+  color: var(--text-sec);
+  border: 1.5px dashed var(--text-sec);
+}
+
+.td-who-item-none {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1.5px dashed var(--text-sec);
+  border-radius: 50%;
+}
+
+/* Menunggu simpan: kontrol tetap bisa difokus tetapi tidak menerima klik. */
+.td-sub [aria-disabled="true"] {
+  cursor: progress;
+}
+
+/* Tambah subtask */
+.td-sub-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 8px;
+  margin-left: -8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-sec);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.td-sub-add:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.td-sub-newwrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.td-sub-new {
+  grid-template-columns: 24px 22px minmax(0, 1fr);
+}
+
+.td-sub-input[aria-busy="true"] {
+  cursor: progress;
+}
+
+.td-check-ph {
+  width: 18px;
+  height: 18px;
+  border: 1.5px dashed var(--text-sec);
+  border-radius: 5px;
+}
+
+.td-sub-err {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+/* Pesan di bawah judul baris, sejajar dengan teks judul. */
+.td-sub-rowmsg {
+  grid-column: 3 / -1;
+  margin: 0 0 6px;
+  padding: 0 9px;
+}
+
+.td-sub-hint {
+  font-size: 12px;
+  color: var(--text-sec);
+  visibility: hidden;
+}
+
+.td-subs-sec:focus-within .td-sub-hint {
+  visibility: visible;
+}
+
+/* Selama seret: kursor genggam di mana pun dan teks tidak ikut terpilih. */
+:root.row-dragging,
+:root.row-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* Jendela sempit: padding dialog tinggal 16 px. Kolom pegangan 10 px + jarak
+   6 px pas di padding itu; ikon 14 px tetap utuh karena titik-titik pegangan
+   berada di tengah ikon. */
+@media (max-width: 720px) {
+  .td-sub {
+    grid-template-columns: 10px 22px minmax(0, 1fr) auto 32px;
+    margin-left: -16px;
+  }
+
+  .td-sub-new {
+    grid-template-columns: 10px 22px minmax(0, 1fr);
+  }
+
+  .td-handle > svg {
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
+}

@@ -22,6 +22,10 @@ function task(projectId: string, extra: Partial<TaskCard>): MyTask {
       labels: [],
       commentCount: 0,
       merged: false,
+      subtaskDone: 0,
+      subtaskTotal: 0,
+      trackedSecs: 0,
+      timersRunningSince: [],
       ...extra,
     },
   };

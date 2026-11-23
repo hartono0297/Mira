@@ -1,52 +1,70 @@
 /* Detail task (dialog), Task saya, dan pengaturan pengingat. Semua warna lewat token peran. */
 
-/* Dialog detail task: lebih lebar dari .dlg karena ada panel rincian di kanan. */
+/* Overlay dan dialog satu tingkat di bawah .dlg-overlay (50) dan .dlg (51) global,
+   supaya konfirmasi hapus yang dibuka dari dialog ini tampil di atasnya, lengkap
+   dengan latar gelapnya. */
+.td-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 49;
+}
+
+/* Dialog detail task, arah A di design/v04-detail-task.html: satu kolom seperti
+   dokumen. Pemisah hanya garis bawah kepala dan garis bawah tab; sisanya jarak. */
 .td-dlg {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 51;
-  width: min(920px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
-  overflow: auto;
+  z-index: 50;
+  width: min(960px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px 22px 22px;
+  /* clip, bukan hidden: elemen hidden masih bisa tergulir oleh scrollIntoView. */
+  overflow: clip;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   background: var(--bg);
   color: var(--text);
-  /* Satu-satunya elemen yang terangkat: dialog di atas board. */
+  /* Dialog terangkat di atas board. */
   box-shadow: 0 12px 32px var(--scrim);
 }
 
 .td-head {
+  position: relative;
+  z-index: 2;
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-bottom: 10px;
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 12px 8px 24px;
   border-bottom: 1px solid var(--border);
 }
 
 .td-crumb {
   display: flex;
   align-items: baseline;
-  flex-wrap: wrap;
   gap: 6px;
-  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  margin: 0 auto 0 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-sec);
-  min-width: 0;
 }
 
 .td-project {
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .td-code {
+  flex: none;
   font-size: 14px;
   font-weight: 800;
   color: var(--text);
@@ -54,33 +72,69 @@
 }
 
 .td-status {
-  margin-left: auto;
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-sec);
+  text-align: right;
 }
 
-.td-close {
+/* Wilayah aria-live: tetap dipasang saat kosong (display:none membuatnya tidak
+   dibacakan saat terisi). Margin negatif menghapus jarak flex-nya. */
+.td-status:empty {
+  margin-left: -8px;
+}
+
+.td-icon-btn {
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-sec);
   cursor: pointer;
 }
 
-.td-close:hover {
+.td-icon-btn:hover,
+.td-icon-btn[aria-expanded="true"] {
   background: var(--hover);
   color: var(--text);
 }
 
-.td-pad {
-  padding: 8px 0;
+.td-more {
+  position: relative;
+  flex: none;
+}
+
+/* Pemberitahuan di bawah kepala: tidak ikut digulir, jadi tetap terlihat saat menutup.
+   Isinya wilayah aria-live yang selalu terpasang; saat semuanya kosong tidak ada jarak. */
+.td-notices {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 24px 0;
+}
+
+.td-notices:not(:has(> .td-live:not(:empty))) {
+  padding: 0;
+}
+
+.td-notices > .td-live {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.td-notices > .td-live:empty {
+  margin: 0;
+}
+
+.td-notices > .td-live:not(:empty) ~ .td-live:not(:empty) {
+  margin-top: 8px;
 }
 
 .td-unsaved {
@@ -91,6 +145,40 @@
 .td-gone .btn-ghost {
   margin-top: 4px;
   border-color: var(--text-sec);
+}
+
+.td-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.td-doc {
+  max-width: 768px;
+  margin: 0 auto;
+  padding: 20px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.td-top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.td-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Wilayah aria-live kosong tetap dipasang; margin negatif menghapus jarak flex-nya. */
+.td-slot > .td-live:empty {
+  margin-top: -8px;
 }
 
 /* Draf yang belum tersimpan, ditampilkan untuk disalin setelah task hilang. */
@@ -115,60 +203,6 @@
   overflow-wrap: anywhere;
 }
 
-.td-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 240px;
-  grid-template-areas:
-    "top side"
-    "bottom side";
-  column-gap: 24px;
-  row-gap: 20px;
-  align-items: start;
-}
-
-.td-top {
-  grid-area: top;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
-
-.td-side {
-  grid-area: side;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding-left: 20px;
-  border-left: 1px solid var(--border);
-  min-width: 0;
-}
-
-.td-bottom {
-  grid-area: bottom;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-  min-width: 0;
-}
-
-@media (max-width: 760px) {
-  .td-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "top"
-      "side"
-      "bottom";
-  }
-
-  .td-side {
-    padding-left: 0;
-    padding-top: 14px;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
-}
-
 .td-field {
   display: flex;
   flex-direction: column;
@@ -181,33 +215,385 @@
   font-weight: 700;
 }
 
-/* Judul bisa diedit langsung. Garis tepi tetap terlihat supaya jelas ini kolom isian. */
-.td-title-input {
-  width: 100%;
-  min-height: 44px;
-  padding: 6px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--card);
-  font-size: 19px;
+/* Judul: tampak seperti teks, jadi kolom isian saat disorot atau difokus. */
+.td-title {
+  display: block;
+  width: calc(100% + 16px);
+  min-height: 0;
+  margin: 0 -8px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1.3;
   font-weight: 700;
+  color: var(--text);
+  resize: none;
+  overflow: hidden;
+  field-sizing: content;
+}
+
+.td-title:hover {
+  background: var(--hover);
+}
+
+.td-title:focus {
+  background: var(--bg);
+  border-color: var(--border-strong);
+}
+
+.td-title:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.td-title[aria-invalid="true"] {
+  border-color: var(--danger);
 }
 
 .td-title-text {
-  font-size: 19px;
+  font-size: 24px;
+  line-height: 1.3;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 
+/* Properti: baris "label: nilai" dalam dua kolom. */
+.td-props {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 2px;
+  margin: 0;
+}
+
+.td-prop {
+  display: grid;
+  grid-template-columns: 136px minmax(0, 1fr);
+  align-items: center;
+  min-height: 38px;
+}
+
+.td-prop-wide {
+  grid-column: 1 / -1;
+}
+
+.td-prop dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.td-prop dd {
+  position: relative;
+  margin: 0;
+  min-width: 0;
+}
+
+.td-pv,
+.td-pv-text {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  max-width: calc(100% + 8px);
+  min-height: 34px;
+  padding: 5px 8px;
+  margin-left: -8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.td-pv {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.td-pv:hover,
+.td-pv[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+.td-pv-ic {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.td-pv-sub {
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.td-pv-empty {
+  color: var(--text-sec);
+}
+
+/* Panah muncul saat disorot atau difokus, supaya baris tetap tenang saat dibaca. */
+.td-pv-caret {
+  flex: none;
+  color: var(--text-sec);
+  opacity: 0;
+}
+
+.td-pv:hover .td-pv-caret,
+.td-pv:focus-visible .td-pv-caret,
+.td-pv[aria-expanded="true"] .td-pv-caret {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .td-pv-caret {
+    opacity: 1;
+  }
+}
+
+/* Terlambat: teks "terlambat 2 hari" sudah membawa artinya. Warnanya sama dengan
+   kartu board (token state, "menunggu Anda"); merah hanya untuk prioritas Tinggi dan error. */
+.td-late {
+  color: var(--state);
+}
+
+.td-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.td-lbl {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.td-prio {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.td-prio-medium {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.td-prio-high {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Pilihan kecil. Satu-satunya elemen yang terangkat di dalam dialog, jadi memakai bayangan.
+   Lebar dibatasi lebar jendela supaya tidak terpotong atau menimbulkan gulir mendatar. */
+.td-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: -8px;
+  z-index: 5;
+  min-width: min(224px, calc(100vw - 64px));
+  max-width: min(300px, calc(100vw - 64px));
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 8px 24px var(--scrim);
+}
+
+.td-pop-end {
+  left: auto;
+  right: 0;
+}
+
+/* Baris di kolom kanan properti: pilihan dibuka rata kanan, ke arah dalam dialog. */
+.td-props > .td-prop:nth-child(2n):not(.td-prop-wide) .td-pop {
+  left: auto;
+  right: 0;
+}
+
+.td-menu,
+.td-menu-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.td-mi {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.td-mi > svg {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.td-mi:hover,
+.td-mi:focus {
+  background: var(--hover);
+}
+
+.td-mi:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.td-mi-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.td-mi-sub {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.td-mi > .td-mi-check {
+  margin-left: auto;
+  color: var(--accent-text);
+}
+
+.td-mi-sub + .td-mi-check {
+  margin-left: 0;
+}
+
+.td-mi-danger,
+.td-mi-danger > svg {
+  color: var(--danger);
+}
+
+.td-mi-checkrow:focus-within {
+  background: var(--hover);
+}
+
+.td-pop-checks {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.td-pop-empty {
+  padding: 6px 10px;
+}
+
+.td-pop-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px 4px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.td-pop-form > label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.td-pop-row {
+  display: flex;
+  gap: 6px;
+}
+
+.td-pop-row .td-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Kotak centang bersama (label, subtask). Garis memakai --text-sec, bukan
+   --border-strong: --border-strong di atas --hover hanya 2,63:1 (gagal 3:1). */
+.td-check {
+  appearance: none;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 1.5px solid var(--text-sec);
+  border-radius: 5px;
+  background: var(--bg);
+  display: grid;
+  place-content: center;
+  cursor: pointer;
+}
+
+.td-check::before {
+  content: "";
+  width: 9px;
+  height: 5px;
+  border: 2px solid var(--on-accent);
+  border-top: 0;
+  border-right: 0;
+  transform: translate(0, -1px) rotate(-45deg);
+  opacity: 0;
+}
+
+.td-check:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.td-check:checked::before {
+  opacity: 1;
+}
+
+/* Tercentang tapi tidak bisa diubah (misalnya hanya-baca): tetap terbaca penuh. */
+.td-check:disabled {
+  cursor: default;
+}
+
+.td-check:disabled:not(:checked) {
+  opacity: 0.6;
+}
+
+.td-check:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Isian berbingkai hanya untuk tempat mengetik: komentar, tanggal lain, label baru. */
 .td-input,
 .td-textarea {
   width: 100%;
-  min-height: 40px;
+  min-height: 38px;
   padding: 7px 10px;
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--card);
+  border-radius: 10px;
+  background: var(--bg);
   font-size: 14px;
+  color: var(--text);
 }
 
 .td-textarea {
@@ -215,7 +601,6 @@
   line-height: 1.55;
 }
 
-.td-title-input:focus-visible,
 .td-input:focus-visible,
 .td-textarea:focus-visible {
   outline: 2px solid var(--focus);
@@ -223,9 +608,54 @@
   border-color: var(--focus);
 }
 
-.td-title-input[aria-invalid="true"],
 .td-input[aria-invalid="true"] {
   border-color: var(--danger);
+}
+
+/* Isian label baru saat sudah 10 label: tetap ada, tidak bisa diisi. */
+.td-input[aria-disabled="true"] {
+  background: var(--col);
+  cursor: default;
+}
+
+/* Tombol ikon hapus bersama (subtask, catatan waktu). Merah hanya saat disorot
+   atau difokus, supaya daftar tetap tenang saat dibaca. */
+.td-del {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.td-del:hover,
+.td-del:focus-visible {
+  background: var(--hover);
+  color: var(--danger);
+}
+
+.td-del:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.td-del:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.td-input::placeholder,
+.td-textarea::placeholder,
+.td-desc::placeholder {
+  color: var(--text-sec);
+  opacity: 1;
 }
 
 .td-row-actions {
@@ -235,25 +665,9 @@
   gap: 8px;
 }
 
-.td-composer .td-row-actions {
-  justify-content: space-between;
-}
-
 .td-link {
   align-self: flex-start;
   font-size: 13px;
-}
-
-.td-due-hint {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-sec);
-}
-
-/* Terlambat: teks "Terlambat 2 hari" sudah membawa artinya. Warnanya sama dengan
-   kartu board (token state, "menunggu Anda"); merah hanya untuk prioritas Tinggi dan error. */
-.td-late {
-  color: var(--state);
 }
 
 /* Wilayah aria-live yang selalu terpasang. Saat kosong tidak menambah jarak. */
@@ -292,131 +706,20 @@
   line-height: 1.6;
 }
 
-/* Label dan prioritas */
-
-.td-labels {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* Bagian (dipakai juga oleh Subtask dan Waktu) */
+.td-sec {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.td-label-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 28px;
-  padding: 2px 4px 2px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--card);
-  font-size: 12px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.td-dl .td-label-chip {
-  padding-right: 10px;
-}
-
-.td-chip-x {
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-sec);
-  cursor: pointer;
-}
-
-.td-chip-x:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.td-label-add {
-  display: flex;
-  gap: 6px;
-}
-
-.td-label-add .td-input {
-  flex: 1;
+  flex-direction: column;
+  gap: 8px;
   min-width: 0;
 }
 
-.td-prio {
-  display: inline-flex;
+.td-sec-head {
+  display: flex;
   align-items: center;
-  padding: 1px 9px;
-  border-radius: 10px;
-  border: 1px solid var(--border-strong);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-sec);
-  white-space: nowrap;
-}
-
-.td-prio-medium {
-  border-color: transparent;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
-.td-prio-high {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-/* Rincian hanya-baca */
-
-.td-dl {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.td-dl dt {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-sec);
-}
-
-.td-dl dd {
-  margin: 2px 0 0;
-  font-size: 14px;
-}
-
-.td-side-foot {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.td-delete {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
-.td-delete:hover:not(:disabled) {
-  background: var(--danger-soft);
-}
-
-/* Komentar dan aktivitas */
-
-.td-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-height: 30px;
 }
 
 .td-sh {
@@ -424,7 +727,7 @@
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -434,13 +737,118 @@
   color: var(--text-sec);
 }
 
+.td-empty {
+  font-size: 14px;
+  color: var(--text-sec);
+}
+
+/* Deskripsi: tanpa kotak sampai disorot atau difokus. */
+.td-desc {
+  display: block;
+  width: calc(100% + 20px);
+  min-height: 76px;
+  margin: 0 -10px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  resize: none;
+  field-sizing: content;
+}
+
+.td-desc:hover {
+  background: var(--hover);
+}
+
+.td-desc:focus {
+  background: var(--bg);
+  border-color: var(--border-strong);
+}
+
+.td-desc:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* Tab Komentar dan Aktivitas. Tab aktif bergaris bawah token text, supaya
+   accent hanya dipakai timer dan progres. */
+.td-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.td-tab {
+  position: relative;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.td-tab:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.td-tab[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.td-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+.td-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.td-tab-n {
+  margin-left: 2px;
+  font-weight: 700;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+
+.td-panel {
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.td-panel:focus-visible {
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
 .td-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+}
+
+.td-acts {
+  gap: 10px;
 }
 
 .td-comment,
@@ -450,18 +858,25 @@
   align-items: flex-start;
 }
 
+/* Avatar inisial: 22 px di komentar, 18 px di baris (properti, aktivitas, subtask). */
 .td-av {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   flex: none;
   border-radius: 50%;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.td-av-sm {
+  width: 18px;
+  height: 18px;
+  font-size: 9px;
 }
 
 .td-entry {
@@ -481,17 +896,22 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.td-ctext {
+  padding-top: 2px;
+  font-size: 14px;
 }
 
 .td-log p {
+  padding-top: 2px;
   font-size: 13px;
-  padding-top: 4px;
   overflow-wrap: anywhere;
 }
 
 .td-log .td-time {
-  margin-left: 8px;
-  white-space: nowrap;
+  margin-left: 6px;
 }
 
 .td-composer {
@@ -500,8 +920,72 @@
   gap: 8px;
 }
 
+.td-composer-row {
+  justify-content: space-between;
+}
+
 .td-send {
   min-width: 84px;
+}
+
+/* Jendela sempit: properti satu kolom, label lebih sempit, jarak tepi lebih kecil. */
+@media (max-width: 720px) {
+  .td-head {
+    padding-left: 16px;
+  }
+
+  .td-notices {
+    padding: 12px 16px 0;
+  }
+
+  .td-doc {
+    padding: 16px 16px 24px;
+  }
+
+  .td-props {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .td-prop {
+    grid-template-columns: 112px minmax(0, 1fr);
+  }
+
+  /* Satu kolom: semua pilihan kembali rata kiri. */
+  .td-props > .td-prop:nth-child(2n):not(.td-prop-wide) .td-pop {
+    left: -8px;
+    right: auto;
+  }
+}
+
+/* Jendela sangat sempit: kode task di baris sendiri, timer dan tombol di baris
+   kedua rata kanan. Urutan Tab tetap sama dengan urutan tampil. */
+@media (max-width: 480px) {
+  .td-head {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 4px;
+    padding-left: 16px;
+  }
+
+  .td-crumb {
+    flex: 1 0 100%;
+  }
+}
+
+/* Layar sentuh: target sentuh minimal 44 px. */
+@media (pointer: coarse) {
+  .td-icon-btn,
+  .td-tab,
+  .td-mi,
+  .td-pv {
+    min-height: 44px;
+  }
+
+  .td-icon-btn,
+  .td-del {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 /* Task saya */

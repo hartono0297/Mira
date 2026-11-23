@@ -719,7 +719,7 @@ fn ingest(
             );
             continue;
         }
-        let backup = (is_root || !needs.new_comments.is_empty() || !needs.new_activity.is_empty() || !needs.new_tasks.is_empty())
+        let backup = (is_root || needs.creates())
             .then(|| doc.fork());
         let applied_hash = change.hash();
         if let Err((code, detail)) = doc.apply_remote(change, &sc.author) {

@@ -13,20 +13,33 @@
 //! | root | put `next_number` (integer up to the number ceiling + 1) |
 //! | `project` | put `name` or `code` (needs the manage right) |
 //! | `tasks` | make a map at a key that is not a task yet (a new task, its id bound to A) |
-//! | an existing task | put `column`, `rank`, `assignee`, `due`, `priority`, `updated_at`, or delete some but not all of their values (what Automerge writes when a put repeats the winning value of a conflict); put `number` (integer up to the ceiling) when the task is not deleted; put `deleted = true` (needs the delete right); make `title`/`description` text or `labels` list; make `comments`/`activity` only when missing |
+//! | an existing task | put `column`, `rank`, `assignee`, `due`, `priority`, `updated_at`, or delete some but not all of their values (what Automerge writes when a put repeats the winning value of a conflict); put `number` (integer up to the ceiling) when the task is not deleted; put `deleted = true` (needs the delete right); make `title`/`description` text or `labels` list; make `comments`/`activity` only when missing; make a `subtasks`/`time` map only when missing at the change's dependencies |
 //! | title, description, labels | anything |
 //! | `comments` of a task | make a map at a new key (a new comment, its id bound to A) |
 //! | `activity` of a task | insert a new map (a new entry) |
+//! | `subtasks` of a task | make a map at a key missing at the dependencies (a new subtask, created by A, its id bound to A) |
+//! | an existing subtask | put `title` (str), `done` (bool), `rank` (str), `assignee`, `done_by`, `done_at` (str or null), or delete some but not all of their values; put `deleted = true` |
+//! | `time` of a task | make a map at a key missing at the dependencies (a new entry, `by` = A, its id bound to A) |
+//! | an existing time entry, `by` = A | put `start` (str), `end` (str or null), `note` (str), or delete some but not all of their values; put `deleted = true` |
 //! | anything created in this change | anything (the shape check and [`check_new_authorship`] follow) |
 //!
-//! Everything else (deleting a task or comment key, replacing `tasks` or
-//! `project`, changing `created_by` or `nonce`, editing someone's comment or
-//! an old activity entry, marks, counters) is refused for good.
+//! Everything else (deleting a task, comment, subtask or time entry key,
+//! replacing `tasks` or `project`, changing `created_by`, `by` or `nonce`,
+//! editing someone's comment, an old activity entry or someone else's time
+//! entry, bringing a deleted subtask or entry back, marks, counters) is
+//! refused for good.
 //!
-//! A new task or comment must sit at the id bound to A and its nonce
-//! (`doc::derive_task_id`, `doc::derive_comment_id`, checked after applying
+//! A new task, comment, subtask or time entry must sit at the id bound to A
+//! and its nonce (`doc::derive_task_id`, `doc::derive_comment_id`,
+//! `doc::derive_subtask_id`, `doc::derive_time_id`, checked after applying
 //! in [`check_new_authorship`]), so two authors can never create the same
 //! key and refusing an existing key gives the same answer on every laptop.
+//!
+//! Whether a task's `subtasks` or `time` map, or a key inside one, already
+//! exists is read at the change's dependencies, not in the current document:
+//! two laptops that both make the map of an older task offline are judged
+//! the same whatever order their changes arrive in. Both maps then stay as
+//! a conflict and `doc.rs` reads the contents of both.
 //!
 //! The number ceiling is [`BoardDoc::fresh_number_at`] the change's
 //! dependencies plus [`NUMBER_SLACK`], and "deleted" is read there too, so it
@@ -42,7 +55,9 @@ use std::collections::HashMap;
 use automerge::legacy::{Key, ObjectId, OpId, OpType, SortedVec};
 use automerge::{ActorId, Change, ChangeHash, ObjType, Prop, ReadDoc, ScalarValue};
 
-use super::doc::{BoardDoc, derive_comment_id, derive_task_id, is_bound_id};
+use super::doc::{
+    BoardDoc, derive_comment_id, derive_subtask_id, derive_task_id, derive_time_id, is_bound_id,
+};
 
 /// Most operations in one change from another laptop. A local change with a
 /// full description stays far below this.
@@ -66,6 +81,21 @@ pub struct Needs {
     pub new_comments: Vec<(String, String)>,
     /// Activity entries it creates, as object ids.
     pub new_activity: Vec<String>,
+    /// Subtask maps it creates: `(object id, subtask id)`.
+    pub new_subtasks: Vec<(String, String)>,
+    /// Time entry maps it creates: `(object id, entry id)`.
+    pub new_time: Vec<(String, String)>,
+}
+
+impl Needs {
+    /// Whether the change creates anything [`check_new_authorship`] checks.
+    pub fn creates(&self) -> bool {
+        !self.new_tasks.is_empty()
+            || !self.new_comments.is_empty()
+            || !self.new_activity.is_empty()
+            || !self.new_subtasks.is_empty()
+            || !self.new_time.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +109,10 @@ enum Kind {
     Comment { new: bool },
     Activity { new: bool },
     Entry { new: bool },
+    Subtasks { new: bool },
+    Subtask { new: bool },
+    Times { new: bool },
+    Time { new: bool },
     Other,
 }
 
@@ -113,11 +147,15 @@ fn existing_kind(doc: &BoardDoc, key: &str) -> Kind {
             Some("title" | "description" | "labels") => Kind::Free,
             Some("comments") => Kind::Comments { new: false },
             Some("activity") => Kind::Activity { new: false },
+            Some("subtasks") => Kind::Subtasks { new: false },
+            Some("time") => Kind::Times { new: false },
             _ => Kind::Other,
         },
         [t, Prop::Map(_), f, _] if m(t) == Some("tasks") => match m(f) {
             Some("comments") => Kind::Comment { new: false },
             Some("activity") => Kind::Entry { new: false },
+            Some("subtasks") => Kind::Subtask { new: false },
+            Some("time") => Kind::Time { new: false },
             _ => Kind::Other,
         },
         _ => Kind::Other,
@@ -147,6 +185,7 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
     }
     let expanded = change.decode();
     let actor = expanded.actor_id.clone();
+    let author = actor.to_hex_string();
     let start = expanded.start_op.get();
     let mut needs = Needs::default();
     let mut new_objs: HashMap<String, Kind> = HashMap::new();
@@ -222,6 +261,8 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
                 Some("title" | "description" | "labels") => Kind::Free,
                 Some("comments") => Kind::Comments { new: true },
                 Some("activity") => Kind::Activity { new: true },
+                Some("subtasks") => Kind::Subtasks { new: true },
+                Some("time") => Kind::Times { new: true },
                 _ => Kind::Free,
             }),
             (Kind::Task { id, new: false }, action, Some(k)) => match (k, action) {
@@ -270,6 +311,16 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
                         _ => return refuse(format!("jenis {k} task {id} salah")),
                     }
                 }
+                ("subtasks" | "time", OpType::Make(t)) => {
+                    if present_at(before, &op.obj, k, &deps) {
+                        return refuse(format!("mengganti {k} task {id}"));
+                    }
+                    match (k, t) {
+                        ("subtasks", ObjType::Map) => Some(Kind::Subtasks { new: true }),
+                        ("time", ObjType::Map) => Some(Kind::Times { new: true }),
+                        _ => return refuse(format!("jenis {k} task {id} salah")),
+                    }
+                }
                 _ => return refuse(format!("mengubah {k} task {id}")),
             },
             (Kind::Task { id, .. }, _, None) => return refuse(format!("operasi tidak dikenal di task {id}")),
@@ -313,14 +364,71 @@ pub fn judge(before: &BoardDoc, change: &Change) -> Result<Needs, String> {
             (Kind::Entry { new: true }, _, _) => new_kind(Kind::Free),
             (Kind::Entry { new: false }, _, _) => return refuse("mengubah riwayat aktivitas lama"),
 
+            (Kind::Subtasks { new: true }, _, _) => new_kind(Kind::Subtask { new: true }),
+            (Kind::Subtasks { new: false }, OpType::Make(ObjType::Map), Some(sid)) => {
+                if present_at(before, &op.obj, sid, &deps) {
+                    return refuse("menimpa subtask yang sudah ada");
+                }
+                needs.new_subtasks.push((this.clone(), sid.to_owned()));
+                Some(Kind::Subtask { new: true })
+            }
+            (Kind::Subtasks { .. }, _, _) => return refuse("menghapus atau menimpa subtask"),
+
+            (Kind::Subtask { new: true }, _, _) => new_kind(Kind::Free),
+            (Kind::Subtask { new: false }, action, Some(k)) => match (k, action) {
+                ("title" | "rank", OpType::Put(ScalarValue::Str(_)))
+                | ("done", OpType::Put(ScalarValue::Boolean(_)))
+                | ("assignee" | "done_by" | "done_at", OpType::Put(ScalarValue::Str(_) | ScalarValue::Null))
+                | ("deleted", OpType::Put(ScalarValue::Boolean(true))) => None,
+                ("title" | "rank" | "done" | "assignee" | "done_by" | "done_at", OpType::Delete)
+                    if drops_only_losers(before, &op.obj, k, &op.pred, &deps) =>
+                {
+                    None
+                }
+                _ => return refuse(format!("mengubah {k} subtask")),
+            },
+            (Kind::Subtask { new: false }, _, None) => return refuse("operasi tidak dikenal di subtask"),
+
+            (Kind::Times { new: true }, _, _) => new_kind(Kind::Time { new: true }),
+            (Kind::Times { new: false }, OpType::Make(ObjType::Map), Some(eid)) => {
+                if present_at(before, &op.obj, eid, &deps) {
+                    return refuse("menimpa catatan waktu yang sudah ada");
+                }
+                needs.new_time.push((this.clone(), eid.to_owned()));
+                Some(Kind::Time { new: true })
+            }
+            (Kind::Times { .. }, _, _) => return refuse("menghapus atau menimpa catatan waktu"),
+
+            (Kind::Time { new: true }, _, _) => new_kind(Kind::Free),
+            (Kind::Time { new: false }, action, key) => {
+                if str_at(before, &op.obj, "by", &deps).as_deref() != Some(author.as_str()) {
+                    return refuse("mengubah catatan waktu orang lain");
+                }
+                match (key, action) {
+                    (Some("start" | "note"), OpType::Put(ScalarValue::Str(_)))
+                    | (Some("end"), OpType::Put(ScalarValue::Str(_) | ScalarValue::Null))
+                    | (Some("deleted"), OpType::Put(ScalarValue::Boolean(true))) => None,
+                    (Some(k @ ("start" | "end" | "note")), OpType::Delete)
+                        if drops_only_losers(before, &op.obj, k, &op.pred, &deps) =>
+                    {
+                        None
+                    }
+                    _ => return refuse(format!("mengubah {} catatan waktu", key.unwrap_or("?"))),
+                }
+            }
+
             (Kind::Other, _, _) => return refuse("mengubah bagian dokumen yang tidak dikenal"),
         };
-        // Comments made inside a comments map created in this change are new
-        // comments too.
-        if let (Kind::Comments { new: true }, Some(ObjType::Map)) = (&target, made) {
-            needs
-                .new_comments
-                .push((this.clone(), key.unwrap_or_default().to_owned()));
+        // Comments, subtasks and time entries made inside a map created in
+        // this change are new ones too.
+        let made_in = match (&target, made) {
+            (Kind::Comments { new: true }, Some(ObjType::Map)) => Some(&mut needs.new_comments),
+            (Kind::Subtasks { new: true }, Some(ObjType::Map)) => Some(&mut needs.new_subtasks),
+            (Kind::Times { new: true }, Some(ObjType::Map)) => Some(&mut needs.new_time),
+            _ => None,
+        };
+        if let Some(list) = made_in {
+            list.push((this.clone(), key.unwrap_or_default().to_owned()));
         }
         if let Some(kind) = child {
             new_objs.insert(this, kind);
@@ -367,6 +475,24 @@ fn drops_only_losers(
     !pred.is_empty() && pred.len() < ids.len() && pred.iter().all(|p| ids.contains(&op_key(p)))
 }
 
+/// Whether `key` of `obj` holds a value as of `heads`.
+fn present_at(doc: &BoardDoc, obj: &ObjectId, key: &str, heads: &[ChangeHash]) -> bool {
+    let am = doc.automerge();
+    am.import_obj(&op_key_of_target(obj))
+        .ok()
+        .and_then(|o| am.get_at(&o, key, heads).ok().flatten())
+        .is_some()
+}
+
+/// The string at `key` of `obj` as of `heads`.
+fn str_at(doc: &BoardDoc, obj: &ObjectId, key: &str, heads: &[ChangeHash]) -> Option<String> {
+    let am = doc.automerge();
+    am.import_obj(&op_key_of_target(obj))
+        .ok()
+        .and_then(|o| am.get_at(&o, key, heads).ok().flatten())
+        .and_then(|(v, _)| v.as_str().map(str::to_owned))
+}
+
 /// Whether the task `obj` was deleted as of `heads`.
 fn deleted_at(doc: &BoardDoc, obj: &ObjectId, heads: &[ChangeHash]) -> bool {
     let am = doc.automerge();
@@ -377,10 +503,10 @@ fn deleted_at(doc: &BoardDoc, obj: &ObjectId, heads: &[ChangeHash]) -> bool {
         .unwrap_or(false)
 }
 
-/// After applying: every task the change created names `author` (64 hex)
-/// as its creator and every comment and activity entry names it as author,
-/// and each new task and comment sits at the id bound to `author` and its
-/// nonce.
+/// After applying: every task and subtask the change created names
+/// `author` (64 hex) as its creator, every comment, activity entry and time
+/// entry names it as author, and each new task, comment, subtask and time
+/// entry sits at the id bound to `author` and its nonce.
 pub fn check_new_authorship(after: &BoardDoc, needs: &Needs, author: &str) -> Result<(), String> {
     let am = after.automerge();
     let field = |key: &str, name: &str| -> Option<String> {
@@ -409,6 +535,22 @@ pub fn check_new_authorship(after: &BoardDoc, needs: &Needs, author: &str) -> Re
     for e in &needs.new_activity {
         if field(e, "actor").as_deref() != Some(author) {
             return Err("riwayat aktivitas baru dibuat atas nama orang lain".into());
+        }
+    }
+    for (obj, id) in &needs.new_subtasks {
+        if field(obj, "created_by").as_deref() != Some(author) {
+            return Err("subtask baru dibuat atas nama orang lain".into());
+        }
+        if !is_bound_id(derive_subtask_id, id, author, field(obj, "nonce").as_deref()) {
+            return Err("kode subtask baru tidak cocok dengan pembuatnya".into());
+        }
+    }
+    for (obj, id) in &needs.new_time {
+        if field(obj, "by").as_deref() != Some(author) {
+            return Err("catatan waktu baru dibuat atas nama orang lain".into());
+        }
+        if !is_bound_id(derive_time_id, id, author, field(obj, "nonce").as_deref()) {
+            return Err("kode catatan waktu baru tidak cocok dengan pemiliknya".into());
         }
     }
     Ok(())

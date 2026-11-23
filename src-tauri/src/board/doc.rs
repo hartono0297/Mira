@@ -12,13 +12,29 @@
 //!     assignee (str or null), due (str or null), priority, labels: List<str>,
 //!     created_by, created_at, updated_at, deleted,
 //!     comments: Map<comment_id> { nonce, author, at, body },
-//!     activity: List<{ at, actor, kind, detail }>
+//!     activity: List<{ at, actor, kind, detail }>,
+//!     subtasks: Map<subtask_id> {            (v0.4, optional)
+//!       nonce, title, done, rank, assignee (str or null),
+//!       done_by (str or null), done_at (str or null),
+//!       created_by, created_at, deleted
+//!     },
+//!     time: Map<entry_id> {                  (v0.4, optional)
+//!       nonce, by, start, end (str or null, null = running), manual, note,
+//!       deleted
+//!     }
 //!   }
 //! ```
 //!
+//! `subtasks` and `time` (docs/plans/v04-board.md) are made with every new
+//! task and, for older tasks, with their first subtask or time entry. When
+//! two laptops make the same map offline, Automerge keeps both values as a
+//! conflict; reads merge the contents of every value ([`BoardDoc::tasks`])
+//! and writes look an entry up in all of them, so nothing written offline is
+//! lost. New entries go into the winning map.
+//!
 //! A task id is bound to its creator and a comment id to its author through
 //! the random `nonce` stored next to it ([`derive_task_id`],
-//! [`derive_comment_id`]), so nobody can create a task or comment at a key
+//! [`derive_comment_id`], [`derive_subtask_id`], [`derive_time_id`]), so nobody can create a task or comment at a key
 //! that someone else's task or comment could take. Tasks and comments made
 //! before ids were bound have no nonce; they are still read normally.
 //!
@@ -28,7 +44,7 @@
 //! The document actor is the laptop's 32-byte public key, so the author of a
 //! change can be checked against its signer (`sign.rs`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use automerge::transaction::Transactable;
 use automerge::{
@@ -37,9 +53,12 @@ use automerge::{
 };
 use rand_core::{OsRng, RngCore};
 use serde::Serialize;
+use time::format_description::well_known::Rfc3339;
+use time::{Duration, OffsetDateTime};
 
-use super::model::{ColumnId, LABELS_MAX, Priority};
+use super::model::{ColumnId, LABELS_MAX, Priority, SUBTASKS_MAX, TIME_ENTRIES_MAX};
 use super::rank;
+use super::timing;
 use crate::error::{AppError, AppResult};
 
 pub const DOC_VERSION: i64 = 1;
@@ -62,6 +81,13 @@ pub mod kind {
     /// The task got a new number because another task had the same one after
     /// sync; `detail` is the old code, for example `PA-12`.
     pub const RENUMBERED: &str = "renumbered";
+    /// `detail` is the subtask title.
+    pub const SUBTASK_ADDED: &str = "subtask_added";
+    pub const SUBTASK_DONE: &str = "subtask_done";
+    pub const SUBTASK_REOPENED: &str = "subtask_reopened";
+    pub const SUBTASK_DELETED: &str = "subtask_deleted";
+    /// A timer stopped or time logged by hand; `detail` is the seconds.
+    pub const TIME_LOGGED: &str = "time_logged";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -88,6 +114,42 @@ pub struct ActivityData {
     pub detail: String,
 }
 
+/// One subtask as read from the document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubtaskData {
+    pub id: String,
+    pub title: String,
+    pub done: bool,
+    pub rank: String,
+    pub assignee: Option<String>,
+    pub done_by: Option<String>,
+    pub done_at: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub deleted: bool,
+}
+
+/// One time entry as read from the document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TimeData {
+    pub id: String,
+    /// Who tracked it (64 hex); only they may change it.
+    pub by: String,
+    pub start: String,
+    /// `None` while the timer runs.
+    pub end: Option<String>,
+    pub manual: bool,
+    pub note: String,
+    pub deleted: bool,
+}
+
+impl TimeData {
+    /// A timer that still runs (not stopped, not deleted).
+    pub fn is_running(&self) -> bool {
+        self.end.is_none() && !self.deleted
+    }
+}
+
 /// One task as read from the document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TaskData {
@@ -109,6 +171,12 @@ pub struct TaskData {
     pub comments: Vec<CommentData>,
     /// In document order (oldest first).
     pub activity: Vec<ActivityData>,
+    /// Live and deleted, sorted by `(rank, id)`, from every value of a
+    /// conflicted `subtasks` key.
+    pub subtasks: Vec<SubtaskData>,
+    /// Live and deleted, sorted by `(start, id)`, from every value of a
+    /// conflicted `time` key.
+    pub time: Vec<TimeData>,
 }
 
 /// Validated input for a new task.
@@ -132,6 +200,14 @@ pub struct TaskChanges {
     pub due: Option<Option<String>>,
     pub priority: Option<Priority>,
     pub labels: Option<Vec<String>>,
+}
+
+/// Validated subtask changes; `None` = leave as is.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubtaskChanges {
+    pub title: Option<String>,
+    pub done: Option<bool>,
+    pub assignee: Option<Option<String>>,
 }
 
 /// Who did it and when, for `updated_at` and the activity entry.
@@ -159,6 +235,18 @@ pub fn derive_comment_id(author: &str, nonce: &str) -> String {
     bound_id("mira-comment-v1", author, nonce)
 }
 
+/// A subtask id bound to its creator, like [`derive_task_id`] with
+/// `mira-subtask-v1`.
+pub fn derive_subtask_id(created_by: &str, nonce: &str) -> String {
+    bound_id("mira-subtask-v1", created_by, nonce)
+}
+
+/// A time entry id bound to whoever tracked it, like [`derive_task_id`] with
+/// `mira-time-v1`.
+pub fn derive_time_id(by: &str, nonce: &str) -> String {
+    bound_id("mira-time-v1", by, nonce)
+}
+
 fn bound_id(domain: &str, who: &str, nonce: &str) -> String {
     let input = format!("{domain}
 {who}
@@ -184,6 +272,23 @@ fn am(err: AutomergeError) -> AppError {
 fn task_not_found() -> AppError {
     AppError::NotFound("Task tidak ditemukan. Mungkin sudah dihapus.".into())
 }
+
+fn subtask_not_found() -> AppError {
+    AppError::NotFound(
+        "Subtask tidak ditemukan. Mungkin sudah dihapus dari laptop lain. Tutup lalu buka lagi task ini."
+            .into(),
+    )
+}
+
+fn entry_not_found() -> AppError {
+    AppError::NotFound(
+        "Catatan waktu tidak ditemukan. Mungkin sudah dihapus. Tutup lalu buka lagi task ini.".into(),
+    )
+}
+
+/// Keys of a task that hold a map of subtasks or of time entries.
+const SUBTASKS: &str = "subtasks";
+const TIME: &str = "time";
 
 pub struct BoardDoc {
     doc: AutoCommit,
@@ -394,6 +499,12 @@ impl BoardDoc {
             if !fields_ok {
                 return bad("isian wajib hilang atau jenisnya salah");
             }
+            if !self.entries_ok(&t, SUBTASKS, subtask_shape_ok) {
+                return bad("subtask rusak atau jenis isiannya salah");
+            }
+            if !self.entries_ok(&t, TIME, time_shape_ok) {
+                return bad("catatan waktu rusak atau jenis isiannya salah");
+            }
             let created_by = self.str(&t, "created_by").unwrap_or_default();
             let deleted = f("deleted") == Some(Field::Bool(true));
             match before.get(&id) {
@@ -417,6 +528,21 @@ impl BoardDoc {
             }
         }
         Ok(())
+    }
+
+    /// Every value at `key` of `task` (none is fine) is a map whose entries
+    /// are maps passing `entry_ok`.
+    fn entries_ok(&self, task: &ObjId, key: &str, entry_ok: ShapeCheck) -> bool {
+        let Ok(values) = self.doc.get_all(task, key) else {
+            return false;
+        };
+        values.into_iter().all(|(v, map)| {
+            matches!(v, Value::Object(ObjType::Map))
+                && self.doc.keys(&map).all(|id| match self.doc.get(&map, &id) {
+                    Ok(Some((Value::Object(ObjType::Map), e))) => entry_ok(&|k| self.field(&e, k)),
+                    _ => false,
+                })
+        })
     }
 
     fn field(&self, obj: &ObjId, key: &str) -> Option<Field> {
@@ -516,6 +642,8 @@ impl BoardDoc {
         d.put(&t, "deleted", false).map_err(am)?;
         d.put_object(&t, "comments", ObjType::Map).map_err(am)?;
         d.put_object(&t, "activity", ObjType::List).map_err(am)?;
+        d.put_object(&t, SUBTASKS, ObjType::Map).map_err(am)?;
+        d.put_object(&t, TIME, ObjType::Map).map_err(am)?;
         self.log(&t, stamp, kind::CREATED, column.name())?;
         Ok(id)
     }
@@ -750,6 +878,309 @@ impl BoardDoc {
         Ok(comment_id)
     }
 
+    /// Adds a subtask at the bottom of the task's list; returns its id.
+    pub fn add_subtask(
+        &mut self,
+        stamp: Stamp<'_>,
+        task_id: &str,
+        title: &str,
+        assignee: Option<&str>,
+    ) -> AppResult<String> {
+        let task = self.live_task(task_id)?;
+        let live: Vec<&SubtaskData> = task.subtasks.iter().filter(|s| !s.deleted).collect();
+        if live.len() >= SUBTASKS_MAX {
+            return Err(AppError::InvalidInput(format!(
+                "Satu task paling banyak punya {SUBTASKS_MAX} subtask. Hapus subtask yang sudah tidak perlu, atau pecah task ini menjadi beberapa task."
+            )));
+        }
+        let last = live
+            .iter()
+            .map(|s| s.rank.as_str())
+            .filter(|r| rank::is_valid(r))
+            .max();
+        let rank = rank::between(last, None).unwrap_or_else(|| "V".to_owned());
+        let t = self.task_obj(task_id)?;
+        let map = self.map_for_new(&t, SUBTASKS)?;
+        let nonce = random_id();
+        let id = derive_subtask_id(stamp.actor, &nonce);
+        let d = &mut self.doc;
+        let s = d.put_object(&map, id.as_str(), ObjType::Map).map_err(am)?;
+        d.put(&s, "nonce", nonce.as_str()).map_err(am)?;
+        d.put(&s, "title", title).map_err(am)?;
+        d.put(&s, "done", false).map_err(am)?;
+        d.put(&s, "rank", rank.as_str()).map_err(am)?;
+        d.put(&s, "assignee", opt_scalar(assignee)).map_err(am)?;
+        d.put(&s, "done_by", ScalarValue::Null).map_err(am)?;
+        d.put(&s, "done_at", ScalarValue::Null).map_err(am)?;
+        d.put(&s, "created_by", stamp.actor).map_err(am)?;
+        d.put(&s, "created_at", stamp.at).map_err(am)?;
+        d.put(&s, "deleted", false).map_err(am)?;
+        d.put(&t, "updated_at", stamp.at).map_err(am)?;
+        self.log(&t, stamp, kind::SUBTASK_ADDED, title)?;
+        Ok(id)
+    }
+
+    /// The live subtask `subtask_id` of the live task `task_id`, with the
+    /// task object and the subtask object.
+    fn live_subtask(&self, task_id: &str, subtask_id: &str) -> AppResult<(SubtaskData, ObjId, ObjId)> {
+        let task = self.live_task(task_id)?;
+        let cur = task
+            .subtasks
+            .into_iter()
+            .find(|s| s.id == subtask_id && !s.deleted)
+            .ok_or_else(subtask_not_found)?;
+        let t = self.task_obj(task_id)?;
+        let s = self
+            .entry_obj(&t, SUBTASKS, subtask_id)
+            .ok_or_else(subtask_not_found)?;
+        Ok((cur, t, s))
+    }
+
+    /// Applies the subtask fields that differ. Ticking it records who and
+    /// when; opening it again clears both.
+    pub fn update_subtask(
+        &mut self,
+        stamp: Stamp<'_>,
+        task_id: &str,
+        subtask_id: &str,
+        changes: &SubtaskChanges,
+    ) -> AppResult<()> {
+        let (cur, t, s) = self.live_subtask(task_id, subtask_id)?;
+        let mut changed = false;
+        let mut title = cur.title.clone();
+        if let Some(v) = changes.title.as_ref().filter(|v| **v != cur.title) {
+            self.doc.put(&s, "title", v.as_str()).map_err(am)?;
+            title.clone_from(v);
+            changed = true;
+        }
+        if let Some(a) = changes.assignee.as_ref().filter(|v| **v != cur.assignee) {
+            self.doc
+                .put(&s, "assignee", opt_scalar(a.as_deref()))
+                .map_err(am)?;
+            changed = true;
+        }
+        if let Some(done) = changes.done.filter(|v| *v != cur.done) {
+            self.doc.put(&s, "done", done).map_err(am)?;
+            let (by, at, what) = if done {
+                (Some(stamp.actor), Some(stamp.at), kind::SUBTASK_DONE)
+            } else {
+                (None, None, kind::SUBTASK_REOPENED)
+            };
+            self.doc.put(&s, "done_by", opt_scalar(by)).map_err(am)?;
+            self.doc.put(&s, "done_at", opt_scalar(at)).map_err(am)?;
+            self.log(&t, stamp, what, &title)?;
+            changed = true;
+        }
+        if changed {
+            self.doc.put(&t, "updated_at", stamp.at).map_err(am)?;
+        }
+        Ok(())
+    }
+
+    /// Moves a subtask to `index` among the live subtasks (position after
+    /// the move, 0 = top, clamped), like [`BoardDoc::move_task`]: usually
+    /// one rank written, the whole list renumbered when there is no room.
+    pub fn move_subtask(
+        &mut self,
+        stamp: Stamp<'_>,
+        task_id: &str,
+        subtask_id: &str,
+        index: usize,
+    ) -> AppResult<()> {
+        let (_, t, s) = self.live_subtask(task_id, subtask_id)?;
+        // Sorted by (rank, id) already.
+        let live: Vec<SubtaskData> = self
+            .live_task(task_id)?
+            .subtasks
+            .into_iter()
+            .filter(|x| !x.deleted)
+            .collect();
+        let pos = live.iter().position(|x| x.id == subtask_id);
+        let others: Vec<&SubtaskData> = live.iter().filter(|x| x.id != subtask_id).collect();
+        let index = index.min(others.len());
+        if pos == Some(index) {
+            return Ok(());
+        }
+        let before = index.checked_sub(1).map(|i| others[i].rank.as_str());
+        let after = others.get(index).map(|x| x.rank.as_str());
+        match rank::between(before, after) {
+            Some(r) => self.doc.put(&s, "rank", r.as_str()).map_err(am)?,
+            None => {
+                let mut order: Vec<&str> = others.iter().map(|x| x.id.as_str()).collect();
+                order.insert(index, subtask_id);
+                for (id, r) in order.into_iter().zip(rank::spread(others.len() + 1)) {
+                    if let Some(obj) = self.entry_obj(&t, SUBTASKS, id) {
+                        self.doc.put(&obj, "rank", r.as_str()).map_err(am)?;
+                    }
+                }
+            }
+        }
+        self.doc.put(&t, "updated_at", stamp.at).map_err(am)?;
+        Ok(())
+    }
+
+    /// Marks a subtask deleted; it is never brought back.
+    pub fn delete_subtask(&mut self, stamp: Stamp<'_>, task_id: &str, subtask_id: &str) -> AppResult<()> {
+        let (cur, t, s) = self.live_subtask(task_id, subtask_id)?;
+        self.doc.put(&s, "deleted", true).map_err(am)?;
+        self.doc.put(&t, "updated_at", stamp.at).map_err(am)?;
+        self.log(&t, stamp, kind::SUBTASK_DELETED, &cur.title)
+    }
+
+    /// Starts the timer of `stamp.actor` on a live task; returns the entry
+    /// id. Timers of the same person still running on other tasks of this
+    /// project are stopped in the same change. When the timer already runs
+    /// here nothing is staged and its entry is returned.
+    pub fn start_timer(&mut self, stamp: Stamp<'_>, task_id: &str) -> AppResult<String> {
+        let task = self.live_task(task_id)?;
+        if let Some(e) = task.time.iter().find(|e| e.by == stamp.actor && e.is_running()) {
+            return Ok(e.id.clone());
+        }
+        check_room_for_entry(&task)?;
+        for other in self.tasks()? {
+            if other.id == task_id {
+                continue;
+            }
+            for e in other.time.iter().filter(|e| e.by == stamp.actor && e.is_running()) {
+                self.stop_entry(&other.id, e, stamp, None)?;
+            }
+        }
+        self.new_entry(stamp, task_id, stamp.at, None, "")
+    }
+
+    /// Stops the running timer of `stamp.actor` on the task, with `note`
+    /// (already validated, may be empty).
+    pub fn stop_timer(&mut self, stamp: Stamp<'_>, task_id: &str, note: &str) -> AppResult<()> {
+        let task = self.live_task(task_id)?;
+        let running: Vec<&TimeData> = task
+            .time
+            .iter()
+            .filter(|e| e.by == stamp.actor && e.is_running())
+            .collect();
+        if running.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Timer Anda di task ini sudah berhenti. Tutup lalu buka lagi task ini untuk melihat catatan terbaru."
+                    .into(),
+            ));
+        }
+        for e in running {
+            self.stop_entry(task_id, e, stamp, Some(note))?;
+        }
+        Ok(())
+    }
+
+    /// Logs `secs` of work by hand, ending now (`stamp.at`, RFC 3339);
+    /// returns the entry id.
+    pub fn log_time(&mut self, stamp: Stamp<'_>, task_id: &str, secs: i64, note: &str) -> AppResult<String> {
+        let task = self.live_task(task_id)?;
+        check_room_for_entry(&task)?;
+        let end = OffsetDateTime::parse(stamp.at, &Rfc3339).map_err(|_| {
+            AppError::Internal(
+                "Jam laptop ini tidak terbaca. Periksa pengaturan tanggal dan jam Windows, lalu coba lagi.".into(),
+            )
+        })?;
+        let secs = secs.max(0);
+        let start = crate::clock::format_rfc3339(end - Duration::seconds(secs));
+        let id = self.new_entry(stamp, task_id, &start, Some(stamp.at), note)?;
+        let t = self.task_obj(task_id)?;
+        self.log(&t, stamp, kind::TIME_LOGGED, &secs.to_string())?;
+        Ok(id)
+    }
+
+    /// Marks a time entry of `stamp.actor` deleted.
+    pub fn delete_time_entry(&mut self, stamp: Stamp<'_>, task_id: &str, entry_id: &str) -> AppResult<()> {
+        let task = self.live_task(task_id)?;
+        let e = task
+            .time
+            .iter()
+            .find(|e| e.id == entry_id && !e.deleted)
+            .ok_or_else(entry_not_found)?;
+        if e.by != stamp.actor {
+            return Err(AppError::Forbidden(
+                "Anda hanya bisa menghapus catatan waktu Anda sendiri. Minta pemiliknya menghapus catatan itu."
+                    .into(),
+            ));
+        }
+        let t = self.task_obj(task_id)?;
+        let obj = self.entry_obj(&t, TIME, entry_id).ok_or_else(entry_not_found)?;
+        self.doc.put(&obj, "deleted", true).map_err(am)
+    }
+
+    /// Stages a new time entry of `stamp.actor` (manual when `end` is given).
+    fn new_entry(
+        &mut self,
+        stamp: Stamp<'_>,
+        task_id: &str,
+        start: &str,
+        end: Option<&str>,
+        note: &str,
+    ) -> AppResult<String> {
+        let t = self.task_obj(task_id)?;
+        let map = self.map_for_new(&t, TIME)?;
+        let nonce = random_id();
+        let id = derive_time_id(stamp.actor, &nonce);
+        let d = &mut self.doc;
+        let e = d.put_object(&map, id.as_str(), ObjType::Map).map_err(am)?;
+        d.put(&e, "nonce", nonce.as_str()).map_err(am)?;
+        d.put(&e, "by", stamp.actor).map_err(am)?;
+        d.put(&e, "start", start).map_err(am)?;
+        d.put(&e, "end", opt_scalar(end)).map_err(am)?;
+        d.put(&e, "manual", end.is_some()).map_err(am)?;
+        d.put(&e, "note", note).map_err(am)?;
+        d.put(&e, "deleted", false).map_err(am)?;
+        Ok(id)
+    }
+
+    /// Ends the running entry `e` of task `task_id` now and logs its length.
+    /// `note` replaces the entry's note when given.
+    fn stop_entry(&mut self, task_id: &str, e: &TimeData, stamp: Stamp<'_>, note: Option<&str>) -> AppResult<()> {
+        let t = self.task_obj(task_id)?;
+        let obj = self.entry_obj(&t, TIME, &e.id).ok_or_else(entry_not_found)?;
+        self.doc.put(&obj, "end", stamp.at).map_err(am)?;
+        if let Some(n) = note.filter(|n| *n != e.note) {
+            self.doc.put(&obj, "note", n).map_err(am)?;
+        }
+        let secs = timing::entry_secs(&e.start, Some(stamp.at));
+        self.log(&t, stamp, kind::TIME_LOGGED, &secs.to_string())
+    }
+
+    /// Every map at `key` of `task`, the winning value of a conflict first.
+    fn maps_at(&self, task: &ObjId, key: &str) -> Vec<ObjId> {
+        let Ok(values) = self.doc.get_all(task, key) else {
+            return Vec::new();
+        };
+        let mut maps: Vec<ObjId> = values
+            .into_iter()
+            .filter(|(v, _)| matches!(v, Value::Object(ObjType::Map)))
+            .map(|(_, id)| id)
+            .collect();
+        if let Some(winner) = self.obj(task, key)
+            && let Some(i) = maps.iter().position(|m| *m == winner)
+        {
+            maps.swap(0, i);
+        }
+        maps
+    }
+
+    /// The entry `id` in any of the maps at `key` of `task`.
+    fn entry_obj(&self, task: &ObjId, key: &str, id: &str) -> Option<ObjId> {
+        self.maps_at(task, key)
+            .iter()
+            .find_map(|m| match self.doc.get(m, id) {
+                Ok(Some((Value::Object(ObjType::Map), e))) => Some(e),
+                _ => None,
+            })
+    }
+
+    /// The map at `key` of `task` that new entries go into (the winning
+    /// value), made when the task has none (tasks from before v0.4).
+    fn map_for_new(&mut self, task: &ObjId, key: &str) -> AppResult<ObjId> {
+        match self.maps_at(task, key).into_iter().next() {
+            Some(m) => Ok(m),
+            None => self.doc.put_object(task, key, ObjType::Map).map_err(am),
+        }
+    }
+
     fn log(&mut self, task: &ObjId, stamp: Stamp<'_>, kind: &str, detail: &str) -> AppResult<()> {
         let list = match self.obj(task, "activity") {
             Some(l) => l,
@@ -845,7 +1276,72 @@ impl BoardDoc {
             deleted,
             comments: self.comments(&t),
             activity: self.activity(&t),
+            subtasks: self.subtasks(&t),
+            time: self.time(&t),
         })
+    }
+
+    fn bool(&self, obj: &ObjId, key: &str) -> Option<bool> {
+        match self.doc.get(obj, key) {
+            Ok(Some((v, _))) => v.as_bool(),
+            _ => None,
+        }
+    }
+
+    /// `(id, object)` of every entry in the maps at `key` of `task`, an id
+    /// found in more than one map only once (the winning map first).
+    fn entries(&self, task: &ObjId, key: &str) -> Vec<(String, ObjId)> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for map in self.maps_at(task, key) {
+            for id in self.doc.keys(&map) {
+                if let Some(e) = self.obj(&map, &id)
+                    && seen.insert(id.clone())
+                {
+                    out.push((id, e));
+                }
+            }
+        }
+        out
+    }
+
+    fn subtasks(&self, task: &ObjId) -> Vec<SubtaskData> {
+        let mut out: Vec<SubtaskData> = self
+            .entries(task, SUBTASKS)
+            .into_iter()
+            .map(|(id, s)| SubtaskData {
+                title: self.str(&s, "title").unwrap_or_default(),
+                done: self.bool(&s, "done").unwrap_or(false),
+                rank: self.str(&s, "rank").unwrap_or_default(),
+                assignee: self.str(&s, "assignee"),
+                done_by: self.str(&s, "done_by"),
+                done_at: self.str(&s, "done_at"),
+                created_by: self.str(&s, "created_by").unwrap_or_default(),
+                created_at: self.str(&s, "created_at").unwrap_or_default(),
+                deleted: self.bool(&s, "deleted").unwrap_or(false),
+                id,
+            })
+            .collect();
+        out.sort_by(|a, b| (&a.rank, &a.id).cmp(&(&b.rank, &b.id)));
+        out
+    }
+
+    fn time(&self, task: &ObjId) -> Vec<TimeData> {
+        let mut out: Vec<TimeData> = self
+            .entries(task, TIME)
+            .into_iter()
+            .map(|(id, e)| TimeData {
+                by: self.str(&e, "by").unwrap_or_default(),
+                start: self.str(&e, "start").unwrap_or_default(),
+                end: self.str(&e, "end"),
+                manual: self.bool(&e, "manual").unwrap_or(false),
+                note: self.str(&e, "note").unwrap_or_default(),
+                deleted: self.bool(&e, "deleted").unwrap_or(false),
+                id,
+            })
+            .collect();
+        out.sort_by(|a, b| (&a.start, &a.id).cmp(&(&b.start, &b.id)));
+        out
     }
 
     fn labels(&self, task: &ObjId) -> Vec<String> {
@@ -915,6 +1411,46 @@ enum Field {
     Bool(bool),
     Null,
     Other,
+}
+
+/// Checks one subtask or time entry, given its fields.
+type ShapeCheck = fn(&dyn Fn(&str) -> Option<Field>) -> bool;
+
+fn subtask_shape_ok(f: &dyn Fn(&str) -> Option<Field>) -> bool {
+    let is_str = |k: &str| matches!(f(k), Some(Field::Str(_)));
+    let str_or_null = |k: &str| matches!(f(k), Some(Field::Str(_) | Field::Null));
+    let is_bool = |k: &str| matches!(f(k), Some(Field::Bool(_)));
+    is_str("nonce")
+        && is_str("title")
+        && is_bool("done")
+        && is_str("rank")
+        && str_or_null("assignee")
+        && str_or_null("done_by")
+        && str_or_null("done_at")
+        && is_str("created_by")
+        && is_str("created_at")
+        && is_bool("deleted")
+}
+
+fn time_shape_ok(f: &dyn Fn(&str) -> Option<Field>) -> bool {
+    let is_str = |k: &str| matches!(f(k), Some(Field::Str(_)));
+    let is_bool = |k: &str| matches!(f(k), Some(Field::Bool(_)));
+    is_str("nonce")
+        && is_str("by")
+        && is_str("start")
+        && matches!(f("end"), Some(Field::Str(_) | Field::Null))
+        && is_bool("manual")
+        && is_str("note")
+        && is_bool("deleted")
+}
+
+fn check_room_for_entry(task: &TaskData) -> AppResult<()> {
+    if task.time.iter().filter(|e| !e.deleted).count() >= TIME_ENTRIES_MAX {
+        return Err(AppError::InvalidInput(format!(
+            "Task ini sudah punya {TIME_ENTRIES_MAX} catatan waktu, batas paling banyak. Hapus catatan lama yang tidak perlu, atau catat waktunya di task lain."
+        )));
+    }
+    Ok(())
 }
 
 fn opt_scalar(v: Option<&str>) -> ScalarValue {
@@ -1417,5 +1953,454 @@ mod tests {
         let c = again.doc.get_change_by_hash(&h).unwrap();
         assert_eq!(c.seq(), 3);
         assert_eq!(c.actor_id().to_bytes(), &A);
+    }
+
+    // ---------------------------------------------------------------------
+    // v0.4: subtasks and time entries.
+
+    fn titles(d: &BoardDoc, id: &str) -> Vec<String> {
+        d.live_task(id)
+            .unwrap()
+            .subtasks
+            .into_iter()
+            .filter(|s| !s.deleted)
+            .map(|s| s.title)
+            .collect()
+    }
+
+    fn sub(d: &BoardDoc, id: &str, sid: &str) -> SubtaskData {
+        d.live_task(id)
+            .unwrap()
+            .subtasks
+            .into_iter()
+            .find(|s| s.id == sid)
+            .unwrap()
+    }
+
+    /// Exchanges every change both ways.
+    fn sync_both(a: &mut BoardDoc, b: &mut BoardDoc) {
+        for c in a.changes_after(&[]) {
+            if !b.has_change(&c.hash()) {
+                b.apply(c).unwrap();
+            }
+        }
+        for c in b.changes_after(&[]) {
+            if !a.has_change(&c.hash()) {
+                a.apply(c).unwrap();
+            }
+        }
+        assert_eq!(a.heads(), b.heads());
+    }
+
+    fn by(actor: &'static str, at: &'static str) -> Stamp<'static> {
+        Stamp { actor, at }
+    }
+
+    /// A committed task without `subtasks` and `time`, as made before v0.4.
+    fn old_task(d: &mut BoardDoc) -> String {
+        let id = d.create_task(stamp("t1"), init("Lama")).unwrap();
+        let t = d.task_obj(&id).unwrap();
+        d.doc.delete(&t, SUBTASKS).unwrap();
+        d.doc.delete(&t, TIME).unwrap();
+        d.commit(0).unwrap();
+        id
+    }
+
+    #[test]
+    fn new_tasks_get_empty_subtask_and_time_maps() {
+        let mut d = new_doc();
+        let id = d.create_task(stamp("t1"), init("a")).unwrap();
+        let t = d.task_obj(&id).unwrap();
+        for key in [SUBTASKS, TIME] {
+            assert_eq!(d.field(&t, key), Some(Field::Obj(ObjType::Map)), "{key}");
+        }
+        let task = d.live_task(&id).unwrap();
+        assert!(task.subtasks.is_empty() && task.time.is_empty());
+    }
+
+    #[test]
+    fn subtasks_add_edit_tick_move_and_delete() {
+        let mut d = new_doc();
+        let id = d.create_task(stamp("t1"), init("a")).unwrap();
+        let s1 = d.add_subtask(stamp("t2"), &id, "Satu", None).unwrap();
+        let s2 = d.add_subtask(stamp("t3"), &id, "Dua", Some("bb")).unwrap();
+        let s3 = d.add_subtask(stamp("t4"), &id, "Tiga", None).unwrap();
+        assert_eq!(titles(&d, &id), ["Satu", "Dua", "Tiga"]);
+        let t = d.live_task(&id).unwrap();
+        assert_eq!(t.updated_at, "t4");
+        let last = t.activity.last().unwrap();
+        assert_eq!((last.kind.as_str(), last.detail.as_str()), (kind::SUBTASK_ADDED, "Tiga"));
+        let first = sub(&d, &id, &s1);
+        assert_eq!(first.created_by, "aa");
+        assert_eq!(first.created_at, "t2");
+        assert!(!first.done && first.done_by.is_none() && first.done_at.is_none());
+        assert_eq!(sub(&d, &id, &s2).assignee.as_deref(), Some("bb"));
+        let map = d.obj(&d.task_obj(&id).unwrap(), SUBTASKS).unwrap();
+        let obj = d.obj(&map, &s1).unwrap();
+        assert_eq!(s1, derive_subtask_id("aa", &nonce(&d, &obj).unwrap()));
+        d.commit(0).unwrap();
+
+        // Rename and tick in one go.
+        let tick = SubtaskChanges {
+            title: Some("Satu baru".into()),
+            done: Some(true),
+            ..Default::default()
+        };
+        d.update_subtask(stamp("t5"), &id, &s1, &tick).unwrap();
+        let s = sub(&d, &id, &s1);
+        assert_eq!(s.title, "Satu baru");
+        assert!(s.done);
+        assert_eq!((s.done_by.as_deref(), s.done_at.as_deref()), (Some("aa"), Some("t5")));
+        let t = d.live_task(&id).unwrap();
+        assert_eq!(t.updated_at, "t5");
+        let last = t.activity.last().unwrap();
+        assert_eq!((last.kind.as_str(), last.detail.as_str()), (kind::SUBTASK_DONE, "Satu baru"));
+        d.commit(0).unwrap();
+        d.update_subtask(stamp("t6"), &id, &s1, &tick).unwrap();
+        assert_eq!(d.commit(0), None, "nothing changed, nothing staged");
+
+        // Open it again, clear an assignee.
+        let reopen = SubtaskChanges {
+            done: Some(false),
+            ..Default::default()
+        };
+        d.update_subtask(stamp("t7"), &id, &s1, &reopen).unwrap();
+        let s = sub(&d, &id, &s1);
+        assert!(!s.done && s.done_by.is_none() && s.done_at.is_none());
+        assert_eq!(d.live_task(&id).unwrap().activity.last().unwrap().kind, kind::SUBTASK_REOPENED);
+        let clear = SubtaskChanges {
+            assignee: Some(None),
+            ..Default::default()
+        };
+        d.update_subtask(stamp("t8"), &id, &s2, &clear).unwrap();
+        assert_eq!(sub(&d, &id, &s2).assignee, None);
+
+        // Move.
+        d.move_subtask(stamp("t9"), &id, &s3, 0).unwrap();
+        assert_eq!(titles(&d, &id), ["Tiga", "Satu baru", "Dua"]);
+        d.commit(0).unwrap();
+        d.move_subtask(stamp("t9"), &id, &s3, 0).unwrap();
+        assert_eq!(d.commit(0), None, "same place, nothing staged");
+        d.move_subtask(stamp("t10"), &id, &s3, 99).unwrap();
+        assert_eq!(titles(&d, &id), ["Satu baru", "Dua", "Tiga"]);
+        assert_eq!(d.live_task(&id).unwrap().updated_at, "t10");
+
+        // Delete: kept as deleted, never edited again.
+        d.delete_subtask(stamp("t11"), &id, &s2).unwrap();
+        assert_eq!(titles(&d, &id), ["Satu baru", "Tiga"]);
+        assert!(sub(&d, &id, &s2).deleted);
+        let last = d.live_task(&id).unwrap().activity.last().unwrap().clone();
+        assert_eq!((last.kind.as_str(), last.detail.as_str()), (kind::SUBTASK_DELETED, "Dua"));
+        for err in [
+            d.update_subtask(stamp("t12"), &id, &s2, &tick).unwrap_err(),
+            d.delete_subtask(stamp("t12"), &id, &s2).unwrap_err(),
+            d.move_subtask(stamp("t12"), &id, &s2, 0).unwrap_err(),
+            d.delete_subtask(stamp("t12"), &id, "nope").unwrap_err(),
+        ] {
+            assert_eq!(err.code(), "not_found");
+        }
+        d.delete_task(stamp("t13"), &id).unwrap();
+        assert_eq!(
+            d.add_subtask(stamp("t14"), &id, "x", None).unwrap_err().code(),
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn at_most_a_hundred_live_subtasks() {
+        let mut d = new_doc();
+        let id = d.create_task(stamp("t1"), init("a")).unwrap();
+        let mut first = String::new();
+        for i in 0..SUBTASKS_MAX {
+            let s = d.add_subtask(stamp("t"), &id, &format!("s{i}"), None).unwrap();
+            if i == 0 {
+                first = s;
+            }
+        }
+        let err = d.add_subtask(stamp("t"), &id, "lagi", None).unwrap_err();
+        assert_eq!(err.code(), "invalid_input");
+        assert!(!err.to_string().contains('\u{2014}'));
+        d.delete_subtask(stamp("t"), &id, &first).unwrap();
+        d.add_subtask(stamp("t"), &id, "lagi", None).unwrap();
+        assert_eq!(titles(&d, &id).len(), SUBTASKS_MAX);
+    }
+
+    /// A doc with a task holding subtasks "a", "b", "c", and its copy on B.
+    fn two_laptops_with_subtasks() -> (BoardDoc, BoardDoc, String, Vec<String>) {
+        let mut a = new_doc();
+        let id = a.create_task(stamp("t1"), init("Tugas")).unwrap();
+        let subs: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|t| a.add_subtask(stamp("t1"), &id, t, None).unwrap())
+            .collect();
+        a.commit(0).unwrap();
+        let b = BoardDoc::load(&a.save(), &B).unwrap();
+        (a, b, id, subs)
+    }
+
+    #[test]
+    fn concurrent_tick_and_rename_both_survive() {
+        let (mut a, mut b, id, subs) = two_laptops_with_subtasks();
+        let tick = SubtaskChanges {
+            done: Some(true),
+            ..Default::default()
+        };
+        a.update_subtask(by("aa", "t2"), &id, &subs[0], &tick).unwrap();
+        a.commit(0).unwrap();
+        let rename = SubtaskChanges {
+            title: Some("A baru".into()),
+            ..Default::default()
+        };
+        b.update_subtask(by("bb", "t2"), &id, &subs[0], &rename).unwrap();
+        b.commit(0).unwrap();
+        sync_both(&mut a, &mut b);
+        let s = sub(&a, &id, &subs[0]);
+        assert!(s.done);
+        assert_eq!(s.title, "A baru");
+        assert_eq!(a.live_task(&id).unwrap(), b.live_task(&id).unwrap());
+    }
+
+    #[test]
+    fn concurrent_delete_and_rename_stays_deleted() {
+        let (mut a, mut b, id, subs) = two_laptops_with_subtasks();
+        a.delete_subtask(by("aa", "t2"), &id, &subs[1]).unwrap();
+        a.commit(0).unwrap();
+        let rename = SubtaskChanges {
+            title: Some("B baru".into()),
+            done: Some(true),
+            ..Default::default()
+        };
+        b.update_subtask(by("bb", "t2"), &id, &subs[1], &rename).unwrap();
+        b.commit(0).unwrap();
+        sync_both(&mut a, &mut b);
+        for d in [&a, &b] {
+            let s = sub(d, &id, &subs[1]);
+            assert!(s.deleted);
+            assert_eq!(s.title, "B baru");
+            assert_eq!(titles(d, &id), ["a", "c"]);
+        }
+        assert_eq!(a.live_task(&id).unwrap(), b.live_task(&id).unwrap());
+    }
+
+    #[test]
+    fn concurrent_moves_and_adds_converge_and_can_be_reordered() {
+        let (mut a, mut b, id, subs) = two_laptops_with_subtasks();
+        a.move_subtask(by("aa", "t2"), &id, &subs[2], 0).unwrap();
+        a.add_subtask(by("aa", "t2"), &id, "dari A", None).unwrap();
+        a.commit(0).unwrap();
+        b.move_subtask(by("bb", "t2"), &id, &subs[0], 2).unwrap();
+        b.add_subtask(by("bb", "t2"), &id, "dari B", None).unwrap();
+        b.commit(0).unwrap();
+        sync_both(&mut a, &mut b);
+        let order = titles(&a, &id);
+        assert_eq!(order, titles(&b, &id));
+        assert_eq!(order.len(), 5);
+        assert_eq!(a.live_task(&id).unwrap(), b.live_task(&id).unwrap());
+    }
+
+    #[test]
+    fn equal_subtask_ranks_after_concurrent_adds_are_spread_by_a_move() {
+        let (mut a, mut b, id, subs) = two_laptops_with_subtasks();
+        let xa = a.add_subtask(by("aa", "t2"), &id, "x", None).unwrap();
+        a.commit(0).unwrap();
+        let xb = b.add_subtask(by("bb", "t2"), &id, "y", None).unwrap();
+        b.commit(0).unwrap();
+        sync_both(&mut a, &mut b);
+        assert_eq!(sub(&a, &id, &xa).rank, sub(&a, &id, &xb).rank);
+        // Between the two equal ranks: the list is renumbered.
+        a.move_subtask(by("aa", "t3"), &id, &subs[0], 3).unwrap();
+        assert_eq!(titles(&a, &id).iter().position(|t| t == "a"), Some(3));
+        let ranks: Vec<String> = a
+            .live_task(&id)
+            .unwrap()
+            .subtasks
+            .into_iter()
+            .map(|s| s.rank)
+            .collect();
+        assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{ranks:?}");
+    }
+
+    #[test]
+    fn both_laptops_making_the_maps_of_an_old_task_keep_everything() {
+        let mut a = new_doc();
+        let id = old_task(&mut a);
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        let sa = a.add_subtask(by("aa", "2026-11-23T08:00:00Z"), &id, "Dari A", None).unwrap();
+        a.log_time(by("aa", "2026-11-23T08:00:00Z"), &id, 600, "").unwrap();
+        a.commit(0).unwrap();
+        let sb = b.add_subtask(by("bb", "2026-11-23T08:00:00Z"), &id, "Dari B", None).unwrap();
+        b.log_time(by("bb", "2026-11-23T08:00:00Z"), &id, 300, "").unwrap();
+        b.commit(0).unwrap();
+        sync_both(&mut a, &mut b);
+
+        let t = a.task_obj(&id).unwrap();
+        assert_eq!(a.doc.get_all(&t, SUBTASKS).unwrap().len(), 2, "a conflict");
+        assert_eq!(a.doc.get_all(&t, TIME).unwrap().len(), 2, "a conflict");
+        for d in [&a, &b] {
+            let mut got = titles(d, &id);
+            got.sort();
+            assert_eq!(got, ["Dari A", "Dari B"]);
+            assert_eq!(d.live_task(&id).unwrap().time.len(), 2);
+        }
+        assert_eq!(a.live_task(&id).unwrap(), b.live_task(&id).unwrap());
+
+        // Each laptop edits the subtask of the other, whichever map it sits in.
+        let tick = SubtaskChanges {
+            done: Some(true),
+            ..Default::default()
+        };
+        a.update_subtask(by("aa", "t3"), &id, &sb, &tick).unwrap();
+        a.commit(0).unwrap();
+        b.update_subtask(by("bb", "t3"), &id, &sa, &tick).unwrap();
+        b.delete_time_entry(
+            by("bb", "t3"),
+            &id,
+            &b.live_task(&id).unwrap().time.iter().find(|e| e.by == "bb").unwrap().id.clone(),
+        )
+        .unwrap();
+        let sc = b.add_subtask(by("bb", "t3"), &id, "Ketiga", None).unwrap();
+        b.commit(0).unwrap();
+        sync_both(&mut a, &mut b);
+        for d in [&a, &b] {
+            assert!(sub(d, &id, &sa).done && sub(d, &id, &sb).done);
+            assert_eq!(titles(d, &id).len(), 3);
+            assert!(!sub(d, &id, &sc).deleted);
+            let live: Vec<_> = d.live_task(&id).unwrap().time.into_iter().filter(|e| !e.deleted).collect();
+            assert_eq!(live.len(), 1);
+            assert_eq!(live[0].by, "aa");
+        }
+        assert_eq!(a.live_task(&id).unwrap(), b.live_task(&id).unwrap());
+    }
+
+    #[test]
+    fn timers_start_stop_log_and_delete() {
+        let mut d = new_doc();
+        let x = d.create_task(stamp("t0"), init("x")).unwrap();
+        let y = d.create_task(stamp("t0"), init("y")).unwrap();
+        d.commit(0).unwrap();
+
+        let e1 = d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap();
+        let e = &d.live_task(&x).unwrap().time[0];
+        assert_eq!(e.id, e1);
+        assert!(e.is_running() && !e.manual);
+        assert_eq!((e.by.as_str(), e.start.as_str()), ("aa", "2026-11-23T08:00:00Z"));
+        let map = d.obj(&d.task_obj(&x).unwrap(), TIME).unwrap();
+        let obj = d.obj(&map, &e1).unwrap();
+        assert_eq!(e1, derive_time_id("aa", &nonce(&d, &obj).unwrap()));
+        d.commit(0).unwrap();
+        assert_eq!(d.start_timer(by("aa", "2026-11-23T08:10:00Z"), &x).unwrap(), e1);
+        assert_eq!(d.commit(0), None, "already running, nothing staged");
+
+        // Someone else's timer on x keeps running when aa moves to y.
+        let other = d.start_timer(by("bb", "2026-11-23T08:05:00Z"), &x).unwrap();
+        let e2 = d.start_timer(by("aa", "2026-11-23T08:30:00Z"), &y).unwrap();
+        let tx = d.live_task(&x).unwrap();
+        let first = tx.time.iter().find(|e| e.id == e1).unwrap();
+        assert_eq!(first.end.as_deref(), Some("2026-11-23T08:30:00Z"));
+        assert!(tx.time.iter().find(|e| e.id == other).unwrap().is_running());
+        let last = tx.activity.last().unwrap();
+        assert_eq!((last.kind.as_str(), last.detail.as_str()), (kind::TIME_LOGGED, "1800"));
+        assert_eq!(tx.updated_at, "t0", "timers do not touch updated_at");
+        assert_eq!(
+            d.stop_timer(by("aa", "2026-11-23T08:40:00Z"), &x, "").unwrap_err().code(),
+            "invalid_input"
+        );
+
+        d.stop_timer(by("aa", "2026-11-23T09:00:00Z"), &y, "rapat").unwrap();
+        let ty = d.live_task(&y).unwrap();
+        let stopped = ty.time.iter().find(|e| e.id == e2).unwrap();
+        assert_eq!(stopped.end.as_deref(), Some("2026-11-23T09:00:00Z"));
+        assert_eq!(stopped.note, "rapat");
+        assert_eq!(ty.activity.last().unwrap().detail, "1800");
+
+        let m = d.log_time(by("aa", "2026-11-23T10:00:00Z"), &x, 900, "manual").unwrap();
+        let tx = d.live_task(&x).unwrap();
+        let manual = tx.time.iter().find(|e| e.id == m).unwrap();
+        assert!(manual.manual);
+        assert_eq!(manual.start, "2026-11-23T09:45:00Z");
+        assert_eq!(manual.end.as_deref(), Some("2026-11-23T10:00:00Z"));
+        assert_eq!(manual.note, "manual");
+        assert_eq!(tx.activity.last().unwrap().detail, "900");
+        assert_eq!(tx.updated_at, "t0");
+        assert_eq!(
+            d.log_time(stamp("bukan waktu"), &x, 60, "").unwrap_err().code(),
+            "internal"
+        );
+
+        // Only the owner deletes an entry; a deleted one is gone.
+        let err = d.delete_time_entry(by("bb", "t"), &x, &m).unwrap_err();
+        assert_eq!(err.code(), "forbidden");
+        d.delete_time_entry(by("aa", "t"), &x, &m).unwrap();
+        assert!(d.live_task(&x).unwrap().time.iter().find(|e| e.id == m).unwrap().deleted);
+        assert_eq!(
+            d.delete_time_entry(by("aa", "t"), &x, &m).unwrap_err().code(),
+            "not_found"
+        );
+        // A deleted running timer is not running.
+        d.delete_time_entry(by("bb", "t"), &x, &other).unwrap();
+        assert!(d.live_task(&x).unwrap().time.iter().all(|e| !e.is_running()));
+    }
+
+    #[test]
+    fn remote_subtasks_and_entries_of_the_wrong_shape_are_refused() {
+        let mut a = new_doc();
+        let id = d_task(&mut a);
+        let base = a.heads();
+        let b_hex = hex::encode(B);
+        // Subtask with `done` as text.
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        let sid = b.add_subtask(Stamp { actor: &b_hex, at: "t" }, &id, "x", None).unwrap();
+        let t = b.task_obj(&id).unwrap();
+        let s = b.entry_obj(&t, SUBTASKS, &sid).unwrap();
+        b.doc.put(&s, "done", "ya").unwrap();
+        b.commit(0).unwrap();
+        let err = a.apply_remote(b.changes_after(&base).remove(0), &b_hex).unwrap_err();
+        assert_eq!(err.0, "board_invalid_doc");
+        assert!(a.live_task(&id).unwrap().subtasks.is_empty(), "restored");
+        // Time entry without `by`.
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        let eid = b.start_timer(Stamp { actor: &b_hex, at: "t" }, &id).unwrap();
+        let t = b.task_obj(&id).unwrap();
+        let e = b.entry_obj(&t, TIME, &eid).unwrap();
+        b.doc.delete(&e, "by").unwrap();
+        b.commit(0).unwrap();
+        let err = a.apply_remote(b.changes_after(&base).remove(0), &b_hex).unwrap_err();
+        assert_eq!(err.0, "board_invalid_doc");
+        // `subtasks` that is not a map, on a new task.
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        let nid = b.create_task(Stamp { actor: &b_hex, at: "t" }, init("n")).unwrap();
+        let t = b.task_obj(&nid).unwrap();
+        b.doc.put(&t, SUBTASKS, 5).unwrap();
+        b.commit(0).unwrap();
+        let err = a.apply_remote(b.changes_after(&base).remove(0), &b_hex).unwrap_err();
+        assert_eq!(err.0, "board_invalid_doc");
+        // The real thing is accepted, also on a task without the maps.
+        let mut b = BoardDoc::load(&a.save(), &B).unwrap();
+        let old = old_task_by(&mut b, &b_hex);
+        b.add_subtask(Stamp { actor: &b_hex, at: "t" }, &id, "x", None).unwrap();
+        b.add_subtask(Stamp { actor: &b_hex, at: "t" }, &old, "y", None).unwrap();
+        b.start_timer(Stamp { actor: &b_hex, at: "2026-11-23T08:00:00Z" }, &old).unwrap();
+        b.commit(0).unwrap();
+        for c in b.changes_after(&base) {
+            a.apply_remote(c, &b_hex).unwrap();
+        }
+        assert_eq!(titles(&a, &id), ["x"]);
+        assert_eq!(titles(&a, &old), ["y"]);
+    }
+
+    fn d_task(d: &mut BoardDoc) -> String {
+        let id = d.create_task(stamp("t1"), init("a")).unwrap();
+        d.commit(0).unwrap();
+        id
+    }
+
+    /// Like [`old_task`], by `actor`.
+    fn old_task_by(d: &mut BoardDoc, actor: &str) -> String {
+        let id = d.create_task(Stamp { actor, at: "t" }, init("Lama")).unwrap();
+        let t = d.task_obj(&id).unwrap();
+        d.doc.delete(&t, SUBTASKS).unwrap();
+        d.doc.delete(&t, TIME).unwrap();
+        d.commit(0).unwrap();
+        id
     }
 }

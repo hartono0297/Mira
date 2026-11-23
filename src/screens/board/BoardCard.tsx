@@ -1,10 +1,13 @@
-import { IconCalendarDue, IconGitMerge, IconMessage } from "@tabler/icons-react";
+import { IconCalendarDue, IconClock, IconGitMerge, IconMessage, IconSquareCheck } from "@tabler/icons-react";
 import { useId, type KeyboardEvent, type PointerEvent } from "react";
 import type { TaskCard } from "../../api/board";
 import { initials } from "../../components/initials";
 import type { Direction } from "./boardMoves";
 import { daysUntil, dueLabel, formatDue, PRIORITY_LABELS } from "./format";
 import { MoveMenu, type MoveOption } from "./MoveMenu";
+import { TEKS } from "./teks";
+import { cardTrackedSecs, formatDuration, formatDurationLong } from "./timeFormat";
+import { useNow } from "./useNow";
 
 type Props = {
   task: TaskCard;
@@ -29,6 +32,11 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, 
   const metaId = useId();
   const days = task.due ? daysUntil(task.due) : null;
   const late = !done && days !== null && days < 0;
+  const timerRunning = task.timersRunningSince.length > 0;
+  // Hanya kartu dengan timer berjalan yang punya interval; tampilannya per menit.
+  const now = useNow(30_000, timerRunning);
+  const tracked = cardTrackedSecs(task, now);
+  const allSubtasksDone = task.subtaskTotal > 0 && task.subtaskDone >= task.subtaskTotal;
 
   function onKey(e: KeyboardEvent<HTMLElement>) {
     if (!canMove || !e.altKey) return;
@@ -70,6 +78,28 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, 
             <IconCalendarDue size={14} aria-hidden="true" />
             <span className="sr-only">, tenggat </span>
             {done ? formatDue(task.due) : dueLabel(task.due)}
+          </span>
+        )}
+        {task.subtaskTotal > 0 && (
+          <span className={`tc-sub${allSubtasksDone ? " tc-sub-done" : ""}`}>
+            <IconSquareCheck size={14} aria-hidden="true" />
+            <span aria-hidden="true">
+              {task.subtaskDone}/{task.subtaskTotal}
+            </span>
+            <span className="sr-only">{TEKS.kartu.subtaskSr(task.subtaskDone, task.subtaskTotal)}</span>
+          </span>
+        )}
+        {(tracked > 0 || timerRunning) && (
+          <span className="tc-time">
+            <IconClock size={14} aria-hidden="true" />
+            <span aria-hidden="true">{formatDuration(tracked)}</span>
+            <span className="sr-only">{TEKS.kartu.waktuSr(formatDurationLong(tracked))}</span>
+            {timerRunning && (
+              <>
+                <span className="tc-running" aria-hidden="true" />
+                <span className="sr-only">{TEKS.kartu.timerBerjalanSr}</span>
+              </>
+            )}
           </span>
         )}
         {task.priority !== "none" && (

@@ -1,0 +1,377 @@
+/* Pelacakan waktu di detail task (Board v0.4, design/v04-detail-task.html arah A).
+   Kelas bersama dialog (.td-sec, .td-sec-head, .td-sh, .td-av, .td-label, .td-field,
+   .td-input, .td-del) hanya ditulis di task.css; berkas ini memuat yang khusus waktu.
+   Warna hanya dari token tema. */
+
+/* ---------- Bersama ---------- */
+
+/* Titik timer berjalan: statis, tanpa denyut, sama dengan .tc-running di kartu board.
+   --online di atas --bg 5,14:1 terang dan 8,33:1 gelap (cukup untuk 3:1 non-teks).
+   Selalu didampingi teks ("berjalan", jam berjalan, atau teks pembaca layar). */
+.td-mini .td-run,
+.td-waktu .td-run {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--online);
+}
+
+.td-mini .td-row-end,
+.td-waktu .td-row-end {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.td-mini .td-forgot,
+.td-waktu .td-forgot {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--state);
+  white-space: nowrap;
+}
+
+/* ---------- Timer di kepala dialog ---------- */
+
+.td-mini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 6px;
+}
+
+.td-mini-clock {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.td-mini-anchor {
+  position: relative;
+}
+
+/* Satu-satunya elemen terangkat di kepala dialog, jadi memakai bayangan. */
+.td-stop-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  width: min(300px, calc(100vw - 48px));
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 8px 24px var(--scrim);
+}
+
+.td-stop-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.td-stop-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.td-stop-clock {
+  font-variant-numeric: tabular-nums;
+}
+
+.td-stop-form .hint {
+  margin: 0;
+}
+
+/* ---------- Bagian Waktu ---------- */
+
+/* .td-waktu hanya pembatas cakupan; tata letaknya dari .td-sec di task.css. */
+.td-waktu p {
+  margin: 0;
+}
+
+.td-waktu .td-meta {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+
+.td-waktu .td-meta b {
+  color: var(--text);
+  font-weight: 800;
+}
+
+/* Tombol teks: aksi sekunder tanpa kotak, warna accent-text. */
+.td-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.td-link-btn:hover {
+  background: var(--hover);
+}
+
+.td-link-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+
+/* Tombol Catat waktu manual di ujung kanan kepala bagian. */
+.td-waktu .td-log-open {
+  margin-left: auto;
+}
+
+/* Form catat manual */
+.td-log-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0 6px;
+}
+
+.td-log-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: flex-end;
+}
+
+.td-log-dur {
+  flex: 0 1 160px;
+  min-width: 120px;
+}
+
+.td-log-note {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* Grid per orang dan per status */
+.td-time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 40px;
+}
+
+@media (max-width: 640px) {
+  .td-time-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.td-waktu .td-mini-h {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.td-waktu .td-kv {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.td-waktu .td-kv li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: 14px;
+  min-width: 0;
+}
+
+.td-waktu .td-kv svg {
+  flex: none;
+  color: var(--text-sec);
+}
+
+.td-kv-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.td-waktu .td-kv .v {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.td-waktu .td-kv .v.muted {
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.td-waktu .td-kv li.td-kv-empty {
+  color: var(--text-sec);
+}
+
+/* Garis tipis memisahkan total dari baris per orang. */
+.td-waktu .td-kv li.td-kv-total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  font-weight: 700;
+}
+
+.td-waktu .td-tag,
+.td-waktu .td-run-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.td-waktu .td-cycle {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+/* Catatan jam laptop */
+.td-waktu .td-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  max-width: 640px;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.td-waktu .td-note svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* Riwayat catatan waktu */
+.td-entries summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+  cursor: pointer;
+  list-style: none;
+}
+
+.td-entries summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Panah kecil dari garis: kanan saat tertutup, bawah saat terbuka. */
+.td-entries summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 0 2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.td-entries[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.td-entries summary:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.td-entries summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+
+.td-elist {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.td-erow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.td-emain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.td-emain b {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.td-emeta {
+  color: var(--text-sec);
+  font-weight: 600;
+}
+
+.td-enote {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.td-waktu .td-erun {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.td-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.td-confirm-q {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .td-entries summary::before {
+    transition: none;
+  }
+}

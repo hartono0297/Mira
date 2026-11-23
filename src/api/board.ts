@@ -33,6 +33,13 @@ export type TaskCard = {
   commentCount: number;
   // Ada perubahan dari laptop lain yang digabung otomatis (F-TASK-04). Selalu false sampai sinkron board ada.
   merged: boolean;
+  // v0.4: progres subtask (yang belum dihapus) dan waktu tercatat.
+  subtaskDone: number;
+  subtaskTotal: number;
+  // Total detik dari catatan waktu yang sudah berhenti (semua orang).
+  trackedSecs: number;
+  // Waktu mulai (RFC 3339) setiap timer yang masih berjalan, semua orang.
+  timersRunningSince: string[];
 };
 
 export type Column = { id: ColumnId; name: string; tasks: TaskCard[] };
@@ -58,9 +65,53 @@ export type ActivityKind =
   | "labels"
   | "deleted"
   | "commented"
-  | "renumbered";
+  | "renumbered"
+  | "subtask_added"
+  | "subtask_done"
+  | "subtask_reopened"
+  | "subtask_deleted"
+  | "time_logged";
 
 export type Activity = { at: string; actor: Person; kind: ActivityKind | string; detail: string };
+
+// Subtask hidup, urut menurut posisinya.
+export type Subtask = {
+  id: string;
+  title: string;
+  done: boolean;
+  assignee: Person | null;
+  doneBy: Person | null;
+  doneAt: string | null;
+  createdBy: Person;
+};
+
+// Satu catatan waktu. end null = timer masih berjalan. secs = end - start (0 kalau berjalan).
+export type TimeEntry = {
+  id: string;
+  person: Person;
+  start: string;
+  end: string | null;
+  manual: boolean;
+  note: string;
+  secs: number;
+  mine: boolean;
+};
+
+// Total per orang. secs = catatan yang sudah berhenti; runningSince = timer yang berjalan.
+export type TimeTotal = { person: Person; secs: number; runningSince: string | null };
+
+// Durasi per status dari riwayat perpindahan. closedSecs tidak termasuk selang yang
+// masih berjalan; tambahkan (sekarang - currentSince) ke currentColumn.
+export type StatusTime = {
+  closedSecs: Record<ColumnId, number>;
+  currentColumn: ColumnId;
+  currentSince: string;
+  // Dari dibuat sampai terakhir masuk Selesai; null kalau task belum di Selesai.
+  cycleSecs: number | null;
+  // Ada waktu di masa depan atau urutan riwayat tidak cocok dengan urutan waktu:
+  // jam beberapa laptop mungkin berbeda.
+  clockWarning: boolean;
+};
 
 export type TaskDetail = TaskCard & {
   projectId: string;
@@ -73,7 +124,16 @@ export type TaskDetail = TaskCard & {
   canEdit: boolean;
   canDelete: boolean;
   canComment: boolean;
+  subtasks: Subtask[];
+  timeEntries: TimeEntry[]; // terbaru dulu, tanpa yang dihapus
+  timeTotals: TimeTotal[];
+  // Id catatan timer saya yang sedang berjalan di task ini.
+  myRunningEntry: string | null;
+  statusTime: StatusTime;
 };
+
+// Field yang tidak ada = tidak diubah. assignee null = dikosongkan.
+export type SubtaskPatch = { title?: string; done?: boolean; assignee?: string | null };
 
 export type NewTask = {
   title: string;
@@ -153,6 +213,24 @@ export const boardApi = {
   addComment: (projectId: string, taskId: string, body: string) =>
     call<TaskDetail>("board_add_comment", { projectId, taskId, body }),
   myTasks: () => call<MyTask[]>("board_my_tasks"),
+  addSubtask: (projectId: string, taskId: string, title: string, assignee: string | null = null) =>
+    call<TaskDetail>("board_add_subtask", { projectId, taskId, title, assignee }),
+  updateSubtask: (projectId: string, taskId: string, subtaskId: string, patch: SubtaskPatch) =>
+    call<TaskDetail>("board_update_subtask", { projectId, taskId, subtaskId, patch }),
+  // index = posisi setelah pindah, 0 = paling atas.
+  moveSubtask: (projectId: string, taskId: string, subtaskId: string, index: number) =>
+    call<TaskDetail>("board_move_subtask", { projectId, taskId, subtaskId, index }),
+  deleteSubtask: (projectId: string, taskId: string, subtaskId: string) =>
+    call<TaskDetail>("board_delete_subtask", { projectId, taskId, subtaskId }),
+  // Menghentikan timer saya yang lain di proyek yang sama.
+  startTimer: (projectId: string, taskId: string) => call<TaskDetail>("board_start_timer", { projectId, taskId }),
+  stopTimer: (projectId: string, taskId: string, note: string | null = null) =>
+    call<TaskDetail>("board_stop_timer", { projectId, taskId, note }),
+  // minutes 1 sampai 1440.
+  logTime: (projectId: string, taskId: string, minutes: number, note: string | null = null) =>
+    call<TaskDetail>("board_log_time", { projectId, taskId, minutes, note }),
+  deleteTimeEntry: (projectId: string, taskId: string, entryId: string) =>
+    call<TaskDetail>("board_delete_time_entry", { projectId, taskId, entryId }),
 };
 
 function isBoardTopic(payload: unknown): boolean {

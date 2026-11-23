@@ -3,9 +3,12 @@
 // Menjalankan mira.exe dengan folder data baru, lalu lewat DevTools Protocol:
 // isi nama, buat organisasi, buat proyek "Proyek A" (kode PA), tambah task,
 // pindahkan task dengan keyboard (Alt+Panah dan menu Pindahkan) dan dengan
-// seret mouse dari To do ke Dikerjakan ke Selesai, isi detail task, lihat Task
-// saya, ambil screenshot terang dan gelap, restart, dan pastikan semuanya tetap
-// tersimpan.
+// seret mouse dari To do ke Dikerjakan ke Selesai, isi detail task lewat dialog
+// v0.4 (deskripsi, penanggung jawab dan prioritas lewat menu, tenggat dan label
+// lewat pilihan kecil, komentar), tambah dan centang subtask, mulai lalu hentikan
+// timer, tambah subtask kedua lewat IPC lalu cek progres "1/2" di kartu, hapus
+// task terpisah lewat menu Lainnya, lihat Task saya, ambil screenshot terang dan
+// gelap, restart, dan pastikan semuanya tetap tersimpan.
 //
 // Pakai:  node scripts/board-e2e.mjs <path mira.exe> <folder screenshot> [folder induk data]
 // Dengan MIRA_E2E_OS_MOUSE=1, setelah restart satu kartu juga diseret dengan
@@ -51,6 +54,12 @@ function isoDate(offsetDays) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+// Format isian "Tanggal lain" di pilihan Tenggat: hh/bb/tttt.
+function dmyDate(offsetDays) {
+  const [y, m, d] = isoDate(offsetDays).split("-");
+  return `${d}/${m}/${y}`;
 }
 
 // emulateViewport: false membiarkan ukuran jendela asli, supaya koordinat halaman
@@ -99,6 +108,25 @@ async function stop({ child, browser }) {
   await new Promise((r) => setTimeout(r, 1500));
 }
 
+// Memanggil command Tauri dari halaman. Hasil: { ok, value } atau { ok: false, error }.
+async function call(page, cmd, args = {}) {
+  return page.evaluate(
+    async ([c, a]) => {
+      try {
+        return { ok: true, value: await window.__TAURI_INTERNALS__.invoke(c, a) };
+      } catch (error) {
+        return { ok: false, error };
+      }
+    },
+    [cmd, args],
+  );
+}
+async function must(page, cmd, args) {
+  const r = await call(page, cmd, args);
+  if (!r.ok) throw new Error(`${cmd}: ${JSON.stringify(r.error)}`);
+  return r.value;
+}
+
 const column = (page, name) => page.locator("section.pb-col").filter({ has: page.getByRole("heading", { name }) });
 const cardTitles = async (page, name) =>
   (await column(page, name).locator("[data-open-task]").allInnerTexts()).map((s) => s.trim());
@@ -113,6 +141,66 @@ async function setTheme(page, label) {
 async function openProject(page) {
   await page.getByRole("navigation", { name: "Task saya dan proyek" }).getByRole("button", { name: /Proyek A/ }).click();
   await page.getByRole("button", { name: "Task baru" }).waitFor();
+}
+
+// Dialog detail task v0.4. Pilihan Tenggat, Label, dan Hentikan timer juga
+// role=dialog di dalamnya, jadi dialog task dikenali dari tombol Tutup-nya.
+const taskDialog = (page) =>
+  page.getByRole("dialog").filter({ has: page.getByRole("button", { name: "Tutup detail task" }) });
+
+async function openTaskDialog(page, title) {
+  await page.locator("[data-open-task]", { hasText: title }).click();
+  const dlg = taskDialog(page);
+  await dlg.getByRole("textbox", { name: "Judul task", exact: true }).waitFor({ timeout: 10000 });
+  return dlg;
+}
+
+async function closeTaskDialog(page) {
+  const dlg = taskDialog(page);
+  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
+  await dlg.waitFor({ state: "detached", timeout: 5000 });
+  await page.waitForTimeout(300);
+}
+
+// Baris properti di group "Rincian task": nama tombol = label lalu nilai, misalnya
+// "Prioritas Tinggi". Dibatasi ke group supaya tidak tertukar dengan tombol
+// "Penanggung jawab subtask ..." di daftar subtask.
+const prop = (dlg, label) =>
+  dlg.getByRole("group", { name: "Rincian task" }).getByRole("button", { name: new RegExp(`^${label}(\\s|$)`) });
+
+// Status, Prioritas, dan Penanggung jawab membuka menu berisi menuitemradio.
+async function pickMenu(page, dlg, label, option) {
+  await prop(dlg, label).click();
+  const menu = dlg.getByRole("menu", { name: label, exact: true });
+  await menu.getByRole("menuitemradio", { name: option }).click();
+  await menu.waitFor({ state: "detached", timeout: 5000 });
+  await page.waitForTimeout(300);
+}
+
+// Tenggat: isian "Tanggal lain" (hh/bb/tttt) lalu Pakai, atau pilihan cepat (regex nama tombol).
+async function pickDue(page, dlg, { typed, quick }) {
+  await prop(dlg, "Tenggat").click();
+  const pop = dlg.getByRole("dialog", { name: "Tenggat", exact: true });
+  if (typed) {
+    await pop.getByRole("textbox", { name: "Tanggal lain" }).fill(typed);
+    await pop.getByRole("button", { name: "Pakai", exact: true }).click();
+  } else {
+    await pop.getByRole("button", { name: quick }).click();
+  }
+  await pop.waitFor({ state: "detached", timeout: 5000 });
+  await page.waitForTimeout(300);
+}
+
+// Label: tulis di "Label baru", Tambah, tunggu centangnya, lalu tutup lewat tombol Label lagi.
+async function addLabel(page, dlg, label) {
+  await prop(dlg, "Label").click();
+  const pop = dlg.getByRole("dialog", { name: "Label", exact: true });
+  await pop.getByRole("textbox", { name: "Label baru" }).fill(label);
+  await pop.getByRole("button", { name: "Tambah", exact: true }).click();
+  await prop(dlg, `Label ${label}`).waitFor({ timeout: 5000 }).catch(() => {});
+  await prop(dlg, "Label").click();
+  await pop.waitFor({ state: "detached", timeout: 5000 });
+  await page.waitForTimeout(300);
 }
 
 // Kartu di board (bukan bayangan seret, yang tidak punya data-card).
@@ -308,46 +396,173 @@ try {
     check("Seret mouse memindah task antar kolom", false, String(err?.message ?? err).slice(0, 200));
   }
 
-  // Detail task PA-1.
-  await page.locator("[data-open-task]", { hasText: "Review kontrak proyek A" }).click();
-  const dlg = page.getByRole("dialog");
-  await dlg.getByLabel("Penanggung jawab").waitFor({ timeout: 10000 });
-  await dlg.getByLabel("Deskripsi").fill("Cek pasal pembayaran dan lampiran teknis, lalu kirim catatan ke tim.");
+  // Detail task PA-1 lewat dialog v0.4: deskripsi, penanggung jawab dan prioritas
+  // lewat menu, tenggat lewat isian hh/bb/tttt, label lewat pilihan Label, komentar.
+  const proj = (await must(page, "board_list_projects")).find((p) => p.code === "PA");
+  const taskIdOf = async (title) =>
+    (await must(page, "board_get_board", { projectId: proj.id })).columns.flatMap((c) => c.tasks).find((t) => t.title === title).id;
+  const me = (await must(page, "get_app_state")).identity.publicKey;
+  const reviewId = await taskIdOf("Review kontrak proyek A");
+  const DESC = "Cek pasal pembayaran dan lampiran teknis, lalu kirim catatan ke tim.";
+  let dlg = await openTaskDialog(page, "Review kontrak proyek A");
+  await dlg.getByRole("textbox", { name: "Deskripsi", exact: true }).fill(DESC);
   await dlg.getByRole("button", { name: "Simpan deskripsi" }).click();
   await page.waitForTimeout(300);
-  const me = await dlg.getByLabel("Penanggung jawab").locator("option").nth(1).getAttribute("value");
-  await dlg.getByLabel("Penanggung jawab").selectOption(me);
-  await page.waitForTimeout(300);
-  await dlg.getByLabel("Tenggat").fill(isoDate(1));
-  await dlg.getByLabel("Tenggat").press("Enter");
-  await page.waitForTimeout(300);
-  await dlg.getByLabel("Prioritas").selectOption("high");
-  await page.waitForTimeout(300);
-  await dlg.getByLabel("Label baru").fill("kontrak");
-  await dlg.getByLabel("Label baru").press("Enter");
-  await page.waitForTimeout(300);
-  await dlg.getByLabel("Tulis komentar").fill("Draft kontrak sudah saya baca sampai pasal 5.");
-  await dlg.getByRole("button", { name: "Kirim" }).click();
+  await pickMenu(page, dlg, "Penanggung jawab", /^Rina Uji/);
+  await pickDue(page, dlg, { typed: dmyDate(1) });
+  await pickMenu(page, dlg, "Prioritas", "Tinggi");
+  await addLabel(page, dlg, "kontrak");
+  await dlg.getByRole("textbox", { name: "Tulis komentar" }).fill("Draft kontrak sudah saya baca sampai pasal 5.");
+  await dlg.getByRole("button", { name: "Kirim", exact: true }).click();
   await page.waitForTimeout(600);
   const dlgText = await dlg.innerText();
+  const savedReview = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+  const propNames = {
+    assignee: await prop(dlg, "Penanggung jawab").innerText().catch(() => ""),
+    priority: (await prop(dlg, "Prioritas Tinggi").count()) === 1,
+    label: (await prop(dlg, "Label kontrak").count()) === 1,
+    commentsTab: (await dlg.getByRole("tab", { name: /^Komentar 1$/ }).count()) === 1,
+  };
   check(
     "Detail task menyimpan deskripsi, penanggung jawab, tenggat, prioritas, label, komentar",
-    dlgText.includes("pasal 5") && dlgText.includes("kontrak") && /Tinggi/.test(dlgText),
+    dlgText.includes("pasal 5") &&
+      savedReview.description === DESC &&
+      savedReview.assignee?.publicKey === me &&
+      savedReview.due === isoDate(1) &&
+      savedReview.priority === "high" &&
+      savedReview.labels.includes("kontrak") &&
+      savedReview.comments.length === 1,
+    JSON.stringify({
+      due: savedReview.due,
+      priority: savedReview.priority,
+      labels: savedReview.labels,
+      comments: savedReview.comments.length,
+    }),
+  );
+  check(
+    "v0.4: baris properti dan tab menampilkan nilai baru (Rina Uji, Tinggi, kontrak, Komentar 1)",
+    propNames.assignee.includes("Rina Uji") && propNames.priority && propNames.label && propNames.commentsTab,
+    JSON.stringify(propNames),
   );
   await page.screenshot({ path: join(shots, "t3-04-detail-task-terang.png") });
-  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
-  await page.waitForTimeout(400);
 
-  // Task kedua untuk Task saya: tenggat hari ini.
-  await page.locator("[data-open-task]", { hasText: "Siapkan laporan bulanan" }).click();
-  await dlg.getByLabel("Penanggung jawab").waitFor({ timeout: 10000 });
-  await dlg.getByLabel("Penanggung jawab").selectOption(me);
-  await page.waitForTimeout(300);
-  await dlg.getByLabel("Tenggat").fill(isoDate(0));
-  await dlg.getByLabel("Tenggat").press("Enter");
-  await page.waitForTimeout(300);
-  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
-  await page.waitForTimeout(400);
+  // v0.4 lewat dialog: satu subtask ditambah lalu dicentang, timer dimulai lalu
+  // dihentikan tanpa catatan. Subtask kedua lewat IPC, lalu kartu menampilkan "1/2".
+  try {
+    const base = { projectId: proj.id, taskId: reviewId };
+    await dlg.getByRole("button", { name: "Tambah subtask" }).click();
+    const newSub = dlg.getByRole("textbox", { name: "Judul subtask baru" });
+    await newSub.fill("Cek pasal pembayaran");
+    await newSub.press("Enter");
+    const subCheck = dlg.getByRole("checkbox", { name: "Cek pasal pembayaran", exact: true });
+    await subCheck.waitFor({ timeout: 5000 });
+    await subCheck.click();
+    let subChecked = false;
+    for (let i = 0; i < 20 && !subChecked; i++) {
+      subChecked = await subCheck.isChecked();
+      if (!subChecked) await page.waitForTimeout(250);
+    }
+    const progress = await dlg.getByRole("progressbar", { name: "Subtask selesai" }).getAttribute("aria-valuetext").catch(() => "");
+    check("v0.4: subtask ditambah lewat Tambah subtask + Enter lalu dicentang", subChecked, progress ?? "");
+
+    await dlg.getByRole("button", { name: "Mulai timer" }).click();
+    const stopBtn = dlg.getByRole("button", { name: "Hentikan timer", exact: true });
+    await stopBtn.waitFor({ timeout: 5000 });
+    const started = await must(page, "board_get_task", base);
+    await page.waitForTimeout(1200);
+    await stopBtn.click();
+    const stopDlg = dlg.getByRole("dialog", { name: "Hentikan timer" });
+    await stopDlg.getByRole("button", { name: "Hentikan tanpa catatan" }).click();
+    await dlg.getByRole("button", { name: "Mulai timer" }).waitFor({ timeout: 5000 });
+    check(
+      "v0.4: tombol Mulai timer menjalankan timer, Hentikan tanpa catatan menghentikannya",
+      Boolean(started.myRunningEntry) && (await stopDlg.count()) === 0,
+    );
+    await page.screenshot({ path: join(shots, "v04-dialog-terang.png") });
+    await closeTaskDialog(page);
+
+    await must(page, "board_add_subtask", { ...base, title: "Cek lampiran teknis", assignee: null });
+    const d = await must(page, "board_get_task", base);
+    check(
+      "v0.4: dua subtask (satu selesai) dan satu catatan timer yang sudah berhenti tersimpan",
+      d.subtaskTotal === 2 &&
+        d.subtaskDone === 1 &&
+        d.subtasks.some((s) => s.title === "Cek pasal pembayaran" && s.done) &&
+        d.myRunningEntry === null &&
+        d.timeEntries.length === 1 &&
+        d.timeEntries[0].end !== null,
+      `${d.subtaskDone}/${d.subtaskTotal}, catatan=${d.timeEntries.length}, ${d.trackedSecs} dtk`,
+    );
+    // Buka lagi board: pindah ke Task saya lalu kembali ke proyek, supaya board dimuat ulang.
+    await page.getByRole("navigation", { name: "Task saya dan proyek" }).getByRole("button", { name: /Task saya/ }).click();
+    await page.waitForTimeout(400);
+    await openProject(page);
+    const cardEl = page.locator(`section.pb-col [data-card="${reviewId}"]`);
+    let cardText = "";
+    for (let i = 0; i < 30; i++) {
+      cardText = await cardEl.innerText().catch(() => "");
+      if (/(^|[^\d])1\s*\/\s*2([^\d]|$)/.test(cardText)) break;
+      await page.waitForTimeout(500);
+    }
+    check(
+      "v0.4: kartu task menampilkan progres subtask 1/2",
+      /(^|[^\d])1\s*\/\s*2([^\d]|$)/.test(cardText),
+      cardText.replace(/\s+/g, " ").slice(0, 160),
+    );
+    await page.screenshot({ path: join(shots, "t3-12-kartu-subtask-terang.png") });
+  } catch (err) {
+    check("v0.4: subtask dan timer lewat dialog, progres di kartu", false, String(err?.message ?? err).slice(0, 300));
+    if ((await taskDialog(page).count()) > 0) await closeTaskDialog(page).catch(() => {});
+  }
+
+  // Task kedua untuk Task saya: penanggung jawab lewat menu, tenggat hari ini lewat pilihan cepat.
+  dlg = await openTaskDialog(page, "Siapkan laporan bulanan");
+  await pickMenu(page, dlg, "Penanggung jawab", /^Rina Uji/);
+  await pickDue(page, dlg, { quick: /^Hari ini/ });
+  await closeTaskDialog(page);
+
+  // Hapus task lewat menu Lainnya, pada task terpisah supaya alur lain tetap sama.
+  const DELETE_TITLE = "Task uji hapus";
+  try {
+    await column(page, "To do").getByRole("button", { name: "Tambah task" }).click();
+    const quickAdd = column(page, "To do").getByLabel(/Judul task baru/);
+    await quickAdd.fill(DELETE_TITLE);
+    await quickAdd.press("Enter");
+    await page.waitForTimeout(300);
+    await column(page, "To do").getByLabel(/Judul task baru/).press("Escape");
+    const delId = await taskIdOf(DELETE_TITLE);
+    const delCode = (await must(page, "board_get_task", { projectId: proj.id, taskId: delId })).code;
+    dlg = await openTaskDialog(page, DELETE_TITLE);
+    const confirm = page.getByRole("dialog", { name: `Hapus task ${delCode}?` });
+    // Batal dulu: task tetap ada dan dialog detail tetap terbuka.
+    await dlg.getByRole("button", { name: "Lainnya", exact: true }).click();
+    await dlg.getByRole("menuitem", { name: "Hapus task" }).click();
+    await confirm.waitFor({ timeout: 5000 });
+    await confirm.getByRole("button", { name: "Batal", exact: true }).click();
+    await confirm.waitFor({ state: "detached", timeout: 5000 });
+    const keptAfterCancel = (await call(page, "board_get_task", { projectId: proj.id, taskId: delId })).ok;
+    const dialogAfterCancel = (await taskDialog(page).count()) === 1;
+    await dlg.getByRole("button", { name: "Lainnya", exact: true }).click();
+    await dlg.getByRole("menuitem", { name: "Hapus task" }).click();
+    await confirm.waitFor({ timeout: 5000 });
+    await confirm.getByRole("button", { name: `Hapus ${delCode}`, exact: true }).click();
+    await confirm.waitFor({ state: "detached", timeout: 10000 });
+    await taskDialog(page).waitFor({ state: "detached", timeout: 10000 });
+    await page.waitForTimeout(500);
+    const left = (await must(page, "board_get_board", { projectId: proj.id })).columns.flatMap((c) => c.tasks);
+    check(
+      "v0.4: Lainnya > Hapus task: Batal mempertahankan task, Hapus menghapusnya dari board",
+      keptAfterCancel &&
+        dialogAfterCancel &&
+        !left.some((t) => t.id === delId) &&
+        (await page.locator("[data-open-task]", { hasText: DELETE_TITLE }).count()) === 0,
+      `${delCode}, batal: task=${keptAfterCancel} dialog=${dialogAfterCancel}`,
+    );
+  } catch (err) {
+    check("v0.4: Lainnya > Hapus task", false, String(err?.message ?? err).slice(0, 300));
+    if ((await page.getByRole("dialog", { name: /^Hapus task/ }).count()) > 0) await page.keyboard.press("Escape");
+    if ((await taskDialog(page).count()) > 0) await closeTaskDialog(page).catch(() => {});
+  }
 
   await page.screenshot({ path: join(shots, "t3-03-board-terang.png") });
   await page.getByRole("navigation", { name: "Task saya dan proyek" }).getByRole("button", { name: /Task saya/ }).click();
@@ -376,11 +591,11 @@ try {
       !(await cardTitles(page, "Dikerjakan")).includes("Review kontrak proyek A"),
     JSON.stringify(darkDrag),
   );
-  await page.locator("[data-open-task]", { hasText: "Review kontrak proyek A" }).click();
-  await dlg.getByLabel("Penanggung jawab").waitFor({ timeout: 10000 });
+  dlg = await openTaskDialog(page, "Review kontrak proyek A");
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(shots, "t3-07-detail-task-gelap.png") });
-  await dlg.getByRole("button", { name: "Tutup detail task" }).click();
+  await page.screenshot({ path: join(shots, "v04-dialog-gelap.png") });
+  await closeTaskDialog(page);
   await stop(app);
   app = null;
 

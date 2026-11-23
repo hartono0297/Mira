@@ -1,12 +1,19 @@
 // Kalimat riwayat aktivitas task dari kind, detail, dan pelakunya.
 import type { Activity, ColumnId, Person, Priority } from "../../api/board";
 import { COLUMN_NAMES, formatDue, PRIORITY_LABELS } from "./format";
+import { formatDurationLong } from "./timeFormat";
 
 const HEX_KEY = /^[0-9a-f]{64}$/i;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function columnName(detail: string): string {
   return COLUMN_NAMES[detail as ColumnId] ?? detail;
+}
+
+// Detail time_logged = jumlah detik. "1 jam 30 menit", "45 menit", "kurang dari 1 menit".
+function loggedText(detail: string): string | null {
+  if (!/^\d+$/.test(detail)) return null;
+  return formatDurationLong(Number(detail));
 }
 
 function personName(detail: string, people: Person[], me: string): string {
@@ -46,6 +53,18 @@ export function activitySentence(a: Activity, me: string, people: Person[] = [],
       return d
         ? `${who} mengganti nomor task ini dari ${d} karena nomornya sama dengan task lain`
         : `${who} mengganti nomor task ini`;
+    case "subtask_added":
+      return d ? `${who} menambahkan subtask "${d}"` : `${who} menambahkan subtask`;
+    case "subtask_done":
+      return d ? `${who} menyelesaikan subtask "${d}"` : `${who} menyelesaikan subtask`;
+    case "subtask_reopened":
+      return d ? `${who} membuka lagi subtask "${d}"` : `${who} membuka lagi subtask`;
+    case "subtask_deleted":
+      return d ? `${who} menghapus subtask "${d}"` : `${who} menghapus subtask`;
+    case "time_logged": {
+      const text = loggedText(d);
+      return text ? `${who} mencatat ${text}` : `${who} mencatat waktu`;
+    }
     default:
       return d ? `${who} mengubah task: ${d}` : `${who} mengubah task`;
   }
