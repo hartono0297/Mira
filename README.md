@@ -93,6 +93,18 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 
 ## Memasang
 
+Cara tercepat: buka PowerShell (tidak perlu admin), lalu jalankan:
+
+```powershell
+irm https://raw.githubusercontent.com/hartono0297/Mira/main/install.ps1 | iex
+```
+
+Skrip [install.ps1](install.ps1) mencari rilis terbaru, mengunduh installer, mencocokkan checksum SHA-256 dengan yang dicatat GitHub, menutup Mira kalau sedang jalan, memasang tanpa jendela installer, lalu membuka Mira. Perintah yang sama dipakai untuk memperbarui. Data dan kunci laptop tidak tersentuh.
+
+Selama repositori masih privat, perintah ini hanya jalan di komputer yang punya token baca GitHub di variabel `MIRA_GITHUB_TOKEN`. Rekan kantor lain pakai cara manual di bawah.
+
+Cara manual:
+
 1. Unduh `Mira_0.1.0_x64-setup.exe` (installer NSIS, 7,86 MB) dari rilis `v0.1.0` di [halaman Releases](../../releases). Repositorinya privat, jadi butuh akses ke repositori.
 2. Jalankan installer. Installer terpasang per pengguna di `%LOCALAPPDATA%\Mira`, jadi tidak butuh hak admin.
 3. Kalau WebView2 belum ada, installer mengunduhnya. Untuk laptop tanpa WebView2 dan tanpa internet, buat varian offline dengan `npm run build:installer-offline` (sekitar 286 MB).
