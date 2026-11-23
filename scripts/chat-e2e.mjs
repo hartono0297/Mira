@@ -94,6 +94,30 @@ async function foldState(page, title) {
   return { expanded, display };
 }
 
+// Tinggi kerangka Chat: daftar dan panel percakapan harus mengisi grid .chat sampai bawah jendela.
+// Elemen tambahan di grid (misalnya wilayah error) pernah membuat baris kedua sehingga ada strip kosong.
+async function paneFill(page) {
+  return page.evaluate(() => {
+    const box = (s) => {
+      const el = document.querySelector(s);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
+    };
+    const chat = box(".chat");
+    const list = box(".chat-list");
+    const conv = box(".chat-conv");
+    const rows = document.querySelector(".chat") ? getComputedStyle(document.querySelector(".chat")).gridTemplateRows : "";
+    const ok =
+      !!chat && !!list && !!conv &&
+      Math.abs(chat.bottom - innerHeight) <= 1 &&
+      Math.abs(conv.bottom - chat.bottom) <= 1 &&
+      Math.abs(list.bottom - chat.bottom) <= 1 &&
+      rows.trim().split(/\s+/).length === 1;
+    return { ok, detail: `jendela=${innerHeight}, .chat=${JSON.stringify(chat)}, .chat-list=${JSON.stringify(list)}, .chat-conv=${JSON.stringify(conv)}, baris grid="${rows}"` };
+  });
+}
+
 const TEXT = {
   first: "Selamat pagi tim, ini pesan uji pertama.",
   line1: "Baris pertama pesan uji.",
@@ -271,6 +295,8 @@ try {
   const umumCurrent = await sel.row(page, "umum").getAttribute("aria-current");
   await sel.emptyConv(page).waitFor({ timeout: 10000 });
   check("#umum terpilih otomatis dan menampilkan keadaan kosong", umumCurrent === "true", `aria-current=${umumCurrent}`);
+  const fillLight = await paneFill(page);
+  check("Daftar dan panel percakapan mengisi tinggi jendela (satu baris grid, tanpa strip kosong)", fillLight.ok, fillLight.detail);
   await shot(page, "t2-01-chat-kosong-terang.png");
   const firstOverview = await overview(page);
   ownKey = `device-key-${firstOverview.me}.id.mira.desktop`;
@@ -657,6 +683,8 @@ try {
   await setTheme(page, "Gelap");
   await openConv(page, "umum");
   await sel.message(page, TEXT.reply).waitFor({ timeout: 10000 });
+  const fillDark = await paneFill(page);
+  check("Mode gelap dengan pesan: panel percakapan tetap mengisi tinggi jendela", fillDark.ok, fillDark.detail);
   await shot(page, "t2-05-percakapan-gelap.png");
   await sel.list(page).screenshot({ path: join(shots, "t2-06-daftar-gelap.png") });
   const darkMsgMenu = await rightClickMenu(sel.msgText(sel.message(page, TEXT.first)), sel.msgMenu(page));
