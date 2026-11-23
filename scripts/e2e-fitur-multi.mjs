@@ -28,6 +28,7 @@ import { createWriteStream, mkdtempSync, mkdirSync, readFileSync, readdirSync, r
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { mainNav } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/fitur-multi");
@@ -37,10 +38,12 @@ mkdirSync(shotsV03, { recursive: true });
 const ONLY_V03 = process.env.MIRA_E2E_ONLY_V03 === "1";
 const root = mkdtempSync(join(tmpdir(), "mira-fitur-multi-"));
 
+// Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
+const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
 const NODES = {
-  A: { name: "Ayu Uji", port: 47861, cdp: 9361, dir: join(root, "laptop-a") },
-  B: { name: "Budi Uji", port: 47862, cdp: 9362, dir: join(root, "laptop-b") },
-  C: { name: "Citra Uji", port: 47863, cdp: 9363, dir: join(root, "laptop-c") },
+  A: { name: "Ayu Uji", port: 47861 + PORT_OFFSET, cdp: 9361 + PORT_OFFSET, dir: join(root, "laptop-a") },
+  B: { name: "Budi Uji", port: 47862 + PORT_OFFSET, cdp: 9362 + PORT_OFFSET, dir: join(root, "laptop-b") },
+  C: { name: "Citra Uji", port: 47863 + PORT_OFFSET, cdp: 9363 + PORT_OFFSET, dir: join(root, "laptop-c") },
 };
 const addr = (id) => `127.0.0.1:${NODES[id].port}`;
 // Sinkron berjalan saat ada perubahan, ditambah cadangan berkala 60 detik;
@@ -187,8 +190,6 @@ const onlineNames = async (id) =>
   (await must(id, "get_network_status")).peers.filter((p) => p.online).map((p) => p.displayName).sort();
 
 // ---- Selektor layar (sama dengan chat-e2e.mjs dan board-e2e.mjs) ----
-const mainNav = (p, name) =>
-  p.getByRole("navigation", { name: "Menu utama" }).getByRole("button", { name, exact: true });
 const sel = {
   list: (p) => p.getByRole("navigation", { name: /Daftar percakapan/i }),
   // Nama baris: "Channel umum" atau "Channel umum, hanya-baca, 2 pesan belum dibaca". Diakhiri
@@ -427,7 +428,7 @@ try {
       const since = Date.now();
       const pa = page("A");
       await pa.getByRole("button", { name: /^(Chat pribadi baru|Pesan baru)$/ }).click();
-      const dlg = sel.dialog(pa, /Chat pribadi baru/);
+      const dlg = sel.dialog(pa, /^(Chat pribadi baru|Pesan baru)$/);
       await dlg.waitFor({ timeout: 10000 });
       await dlg.getByRole("button", { name: new RegExp(NODES.B.name) }).click();
       await sel.conv(pa, NODES.B.name).waitFor({ timeout: 15000 });
@@ -549,13 +550,13 @@ try {
       const dlg = pa.getByRole("dialog");
       await dlg.getByLabel("Nama proyek").fill(PROJECT);
       await dlg.getByLabel("Kode proyek").fill(PROJECT_CODE);
-      await dlg.getByLabel("Tim", { exact: true }).selectOption({ label: "Tim Desain" });
-      await dlg.getByRole("button", { name: "Buat proyek" }).click();
+      await dlg.getByLabel("Departemen", { exact: true }).selectOption({ label: "Tim Desain" });
+      // v0.3: proyek hanya terlihat anggotanya, jadi B dicentang di pemilih orang dialog Proyek baru.
+      await dlg.getByLabel("Cari nama").fill(NODES.B.name);
+      await dlg.getByRole("checkbox", { name: NODES.B.name, exact: true }).check({ timeout: 15000 });
+      await dlg.getByLabel("Cari nama").fill("");
+      await dlg.getByRole("button", { name: "Buat proyek", exact: true }).click();
       await pa.getByRole("button", { name: "Task baru" }).waitFor({ timeout: 15000 });
-      // v0.3: proyek hanya untuk anggotanya. Dialog Proyek baru belum punya pilihan anggota,
-      // jadi B ditambahkan lewat command (docs/plans/v0.3-kontrak.md bagian 11).
-      const created = (await must("A", "board_list_projects")).find((p) => p.code === PROJECT_CODE);
-      await must("A", "org_add_project_member", { projectId: created.id, publicKey: pk.B });
       const todo = column(pa, "To do");
       await todo.getByRole("button", { name: "Tambah task" }).click();
       const input = todo.getByLabel(/Judul task baru/);
@@ -576,10 +577,12 @@ try {
       const project = (await must("A", "board_list_projects")).find((p) => p.code === PROJECT_CODE);
       const board = await must("A", "board_get_board", { projectId: project.id });
       const taskA = board.columns.flatMap((c) => c.tasks).find((t) => t.title === TASK);
+      const pm = await must("A", "org_project_members", { projectId: project.id });
+      const pmKeys = pm.members.map((m) => m.publicKey);
       check(
-        "6. A membuat proyek Tim Desain dan task untuk B",
-        project?.teamId === desain.id && taskA?.assignee?.publicKey === pk.B,
-        `${project?.code} tim=${project?.teamName}, ${taskA?.code} -> ${taskA?.assignee?.name}`,
+        "6. A membuat proyek Tim Desain dengan anggota B lewat dialog, dan task untuk B",
+        project?.teamId === desain.id && taskA?.assignee?.publicKey === pk.B && pmKeys.includes(pk.B) && !pmKeys.includes(pk.C),
+        `${project?.code} tim=${project?.teamName}, anggota=${pmKeys.length}, ${taskA?.code} -> ${taskA?.assignee?.name}`,
       );
       await shot("A", "fm-06-board-a.png");
 
