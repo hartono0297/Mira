@@ -111,6 +111,22 @@ pub async fn resolve_conflict(
     .await
 }
 
+/// "Unduh": copies a version's file from a connected rekan (any size; files
+/// up to 20 MB usually arrive by themselves). Error `not_available` when no
+/// connected rekan has it. Returns the summary, with `downloading` set when
+/// an automatic download of the same file is still running.
+#[tauri::command]
+pub async fn download_version(
+    runtime: State<'_, DocumentsRuntime>,
+    document_id: String,
+    version_id: String,
+) -> AppResult<DocumentSummary> {
+    let peer = runtime.peer_sync()?;
+    peer.download_version(document_id.clone(), version_id)
+        .await?;
+    run(&runtime, move |env| env.summary(&document_id)).await
+}
+
 #[tauri::command]
 pub async fn export_version(
     runtime: State<'_, DocumentsRuntime>,
