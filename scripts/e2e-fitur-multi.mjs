@@ -28,10 +28,12 @@ const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/fitur-multi"
 mkdirSync(shots, { recursive: true });
 const root = mkdtempSync(join(tmpdir(), "mira-fitur-multi-"));
 
+// Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
+const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
 const NODES = {
-  A: { name: "Ayu Uji", port: 47861, cdp: 9361, dir: join(root, "laptop-a") },
-  B: { name: "Budi Uji", port: 47862, cdp: 9362, dir: join(root, "laptop-b") },
-  C: { name: "Citra Uji", port: 47863, cdp: 9363, dir: join(root, "laptop-c") },
+  A: { name: "Ayu Uji", port: 47861 + PORT_OFFSET, cdp: 9361 + PORT_OFFSET, dir: join(root, "laptop-a") },
+  B: { name: "Budi Uji", port: 47862 + PORT_OFFSET, cdp: 9362 + PORT_OFFSET, dir: join(root, "laptop-b") },
+  C: { name: "Citra Uji", port: 47863 + PORT_OFFSET, cdp: 9363 + PORT_OFFSET, dir: join(root, "laptop-c") },
 };
 const addr = (id) => `127.0.0.1:${NODES[id].port}`;
 // Sinkron berjalan saat ada perubahan, ditambah cadangan berkala 60 detik;
