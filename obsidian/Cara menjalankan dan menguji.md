@@ -10,6 +10,8 @@ tags: [mira, pengembangan, uji]
 - Node.js 22 dan npm
 - Rust stabil (MSVC) dan Build Tools Visual Studio
 
+Langkah di catatan ini ditulis untuk PC Windows. Build dan tes macOS berjalan di GitHub Actions, lihat [[#GitHub Actions]] di bawah dan [[macOS]].
+
 ## Menjalankan
 
 ```
@@ -45,6 +47,17 @@ npm run build:installer-offline        # installer dengan WebView2 offline
 ```
 
 Installer ada di `src-tauri/target/release/bundle/nsis/`.
+
+## GitHub Actions
+
+Tes otomatis berjalan di GitHub Actions pada runner macOS dan Windows. Installer macOS (`.dmg`) juga dibuat di sana. Lulus di Actions belum berarti lulus di MacBook sungguhan di jaringan kantor, lihat [[Belum diuji]].
+
+## Skrip pasang satu baris
+
+- Windows: [install.ps1](../install.ps1). Uji tanpa memasang dengan `$env:MIRA_INSTALL_DRY_RUN = "1"` sebelum menjalankan perintah `irm ... | iex`.
+- macOS: [install.sh](../install.sh). Uji tanpa memasang dengan `curl -fsSL https://raw.githubusercontent.com/hartono0297/Mira/main/install.sh | MIRA_INSTALL_DRY_RUN=1 bash`.
+
+`install.sh` bisa di-`source` tanpa menjalankan pemasangan, jadi fungsi pembaca daftar rilis dan pemilih file bisa diuji sendiri, juga di Git Bash. Yang sudah dan belum diuji ada di [[macOS]].
 
 ## Uji ujung ke ujung
 
@@ -102,4 +115,6 @@ Variabel lain: `MIRA_EXPORT_DIR` (folder salinan PDF bertanda tangan), `MIRA_TES
 
 Hapus folder data dan entri `device-key-...id.mira.desktop` di Credential Manager (Panel Kontrol > Pengelola Kredensial > Kredensial Windows). Tanpa `MIRA_DATA_DIR`, folder datanya `%LOCALAPPDATA%\id.mira.desktop`.
 
-Lihat juga: [[Belum diuji]], [[Arsitektur]]. Kembali ke [[Beranda]].
+Di Mac, folder datanya `~/Library/Application Support/id.mira.desktop` dan kuncinya ada di Keychain dengan nama layanan `id.mira.desktop`.
+
+Lihat juga: [[Belum diuji]], [[Arsitektur]], [[macOS]]. Kembali ke [[Beranda]].

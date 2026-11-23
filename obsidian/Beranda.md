@@ -4,7 +4,9 @@ tags: [mira, indeks]
 
 # Beranda
 
-Mira adalah aplikasi desktop Windows untuk kerja tim di satu kantor berisi sekitar 10 sampai 30 orang: chat, board task per proyek, dokumen Word dan Excel dengan riwayat versi, dan tanda tangan PDF visual. Semua laptop tersambung langsung di jaringan kantor, tanpa server, relay, cloud, akun, atau login. Dari luar kantor, laptop memakai VPN kantor.
+Mira adalah aplikasi desktop untuk kerja tim di satu kantor berisi sekitar 10 sampai 30 orang: chat, board task per proyek, dokumen Word dan Excel dengan riwayat versi, dan tanda tangan PDF visual. Semua laptop tersambung langsung di jaringan kantor, tanpa server, relay, cloud, akun, atau login. Dari luar kantor, laptop memakai VPN kantor.
+
+Platform: Windows 10/11 64-bit dan macOS 11 atau yang lebih baru (Apple Silicon dan Intel). Kantor memakai MacBook dan laptop Windows. Hal yang khusus Mac ada di [[macOS]].
 
 Stack: Tauri 2, React 19, TypeScript, Vite, dan inti Rust.
 
@@ -27,6 +29,7 @@ Tahapan
 
 Kerja sehari-hari
 - [[Rilis]]: v0.1.0, build internal pertama untuk uji coba
+- [[macOS]]: yang berbeda di Mac, build lewat GitHub Actions, cara memasang, yang belum diuji
 - [[Cara menjalankan dan menguji]]
 - [[Belum diuji]]
 - [[Keputusan]]: keputusan desain dan yang masih terbuka
@@ -46,7 +49,7 @@ Kerja sehari-hari
 
 Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`): `cargo test` 861 lulus, 0 gagal, 7 diabaikan; clippy tanpa peringatan; tsc bersih; Vitest 557 tes di 37 file lulus. Semua uji ujung ke ujung pada build release lulus, termasuk chat dan board tiga instance (20/20) serta dokumen dan tanda tangan tiga instance (37/37). Semua di satu PC, lihat [[Belum diuji]]. Rincian per skrip ada di [[Cara menjalankan dan menguji]].
 
-Rilis pertama, `v0.1.0`, sudah terbit sebagai build internal untuk uji coba. Lihat [[Rilis]].
+Rilis pertama, `v0.1.0`, sudah terbit sebagai build internal untuk uji coba, hanya untuk Windows. Lihat [[Rilis]]. Installer macOS dibuat GitHub Actions dan ikut terbit mulai rilis berikutnya; macOS baru diuji lewat tes otomatis di sana, lihat [[macOS]].
 
 ## Sumber di repo
 

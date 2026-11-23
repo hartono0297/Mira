@@ -1,6 +1,8 @@
 # Mira
 
-Mira adalah aplikasi desktop Windows untuk kerja tim di satu kantor berisi sekitar 10 sampai 30 orang. Di dalamnya ada chat, board task per proyek, dokumen Word dan Excel yang diedit di Microsoft Office dengan riwayat versi, dan tanda tangan PDF visual. Mira bekerja langsung antar laptop di jaringan kantor, tanpa server, tanpa internet, dan tanpa login.
+Mira adalah aplikasi desktop untuk kerja tim di satu kantor berisi sekitar 10 sampai 30 orang. Di dalamnya ada chat, board task per proyek, dokumen Word dan Excel yang diedit di Microsoft Office dengan riwayat versi, dan tanda tangan PDF visual. Mira bekerja langsung antar laptop di jaringan kantor, tanpa server, tanpa internet, dan tanpa login.
+
+Platform: Windows 10/11 64-bit dan macOS 11 atau yang lebih baru (Apple Silicon dan Intel). Kantor memakai MacBook dan laptop Windows.
 
 Dibangun dengan Tauri 2, React 19, TypeScript, dan Vite. Data, jaringan, dan keamanan ditangani inti Rust.
 
@@ -91,7 +93,11 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 
 `v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini publik dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
 
+`v0.1.0` hanya berisi installer Windows. Installer macOS (file `.dmg`) dibuat oleh GitHub Actions dan ikut terbit mulai rilis berikutnya.
+
 ## Memasang
+
+### Windows
 
 Cara tercepat: buka PowerShell (tidak perlu admin), lalu jalankan:
 
@@ -112,6 +118,37 @@ Cara manual:
 5. Saat pertama dibuka: isi nama, pilih "Buat organisasi baru" atau "Gabung dengan kode", lalu ikuti panduan firewall.
 
 Data disimpan di `%LOCALAPPDATA%\id.mira.desktop`. Kunci privat laptop ada di Windows Credential Manager dengan nama `device-key-<kunci publik>.id.mira.desktop`.
+
+### macOS
+
+Cara tercepat: buka Terminal (tidak perlu admin), lalu jalankan:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hartono0297/Mira/main/install.sh | bash
+```
+
+Skrip [install.sh](install.sh) mencari rilis terbaru, memilih file untuk prosesor Mac ini (Apple Silicon atau Intel), mencocokkan checksum SHA-256 dengan yang dicatat GitHub, menutup Mira kalau sedang jalan, menyalin `Mira.app` ke `/Applications`, lalu membuka Mira. Kalau akun ini tidak bisa menulis ke `/Applications`, Mira dipasang di `~/Applications`. Skrip tidak pernah memakai `sudo`. Perintah yang sama dipakai untuk memperbarui. Data dan kunci laptop tidak tersentuh.
+
+Skrip juga menghapus tanda karantina macOS dari `Mira.app`. Alasannya:
+
+- Mira untuk macOS hanya ditandatangani ad-hoc dan tidak dinotarisasi Apple, karena kantor belum punya akun Apple Developer.
+- macOS memberi tanda karantina pada file yang diunduh lewat browser. Untuk aplikasi yang belum dinotarisasi, Gatekeeper menolak membuka aplikasi bertanda karantina.
+- Menghapus tanda itu berarti Gatekeeper tidak memeriksa Mira. Yang menjamin file ini sama dengan yang diterbitkan di GitHub adalah checksum SHA-256, bukan Apple.
+
+Kami menerima ini karena Mira alat internal yang diunduh langsung dari repositori kantor. Jangan lakukan hal yang sama untuk aplikasi lain yang sumbernya tidak Anda kenal.
+
+Cara manual:
+
+1. Unduh file `.dmg` dari rilis terbaru di [halaman Releases](../../releases). Pilih yang berakhiran `_aarch64.dmg` untuk Mac Apple Silicon, `_x64.dmg` untuk Mac Intel, atau `_universal.dmg` yang jalan di keduanya.
+2. Buka file `.dmg`, lalu seret Mira ke folder Applications.
+3. Saat pertama dibuka, klik kanan Mira di folder Applications, pilih Buka (Open), lalu klik Buka sekali lagi. Di macOS 15 (Sequoia) atau yang lebih baru, cara klik kanan ini tidak lagi cukup: coba buka Mira sekali, lalu buka Pengaturan Sistem > Privasi & Keamanan dan klik tombol Open Anyway di bagian bawah.
+4. Cara lain untuk langkah 3: buka Terminal dan jalankan `xattr -dr com.apple.quarantine /Applications/Mira.app`.
+
+Saat pertama dibuka, macOS meminta izin Mira memakai jaringan lokal ("Jaringan lokal"). Klik Izinkan (Allow). Kalau firewall macOS menyala, macOS juga bisa bertanya apakah Mira boleh menerima sambungan masuk. Klik Izinkan juga. Tanpa dua izin ini, Mira tidak bisa menemukan laptop rekan. Kalau terlanjur menolak, nyalakan lagi lewat Pengaturan Sistem > Privasi & Keamanan > Jaringan Lokal.
+
+Data disimpan di `~/Library/Application Support/id.mira.desktop`. Kunci privat laptop ada di Keychain macOS, dengan nama layanan `id.mira.desktop`.
+
+Catatan lengkap soal macOS ada di vault: [`obsidian/macOS.md`](obsidian/macOS.md).
 
 ## Pengembangan
 
@@ -145,6 +182,10 @@ npm run build:installer-offline        # installer NSIS dengan WebView2 offline
 ```
 
 Installer hasil build ada di `src-tauri/target/release/bundle/nsis/`.
+
+### GitHub Actions
+
+Tes berjalan di GitHub Actions pada runner macOS dan Windows. Installer macOS (`.dmg`) juga dibuat di sana. Hasil Actions belum sama dengan uji di MacBook sungguhan, lihat [Belum diuji](#belum-diuji).
 
 ### Uji ujung ke ujung
 
@@ -230,6 +271,9 @@ Modul Rust di `src-tauri/src/`:
 - Belum diuji dengan Microsoft Office berlisensi. Uji dokumen meniru pola simpan Word dan Excel.
 - Tombol "Izinkan lewat Windows Firewall" (UAC) belum pernah dijalankan.
 - Installer belum punya sertifikat penandatanganan kode, jadi Windows SmartScreen bisa memberi peringatan saat memasang.
+- macOS baru diuji lewat tes otomatis di GitHub Actions. Mira belum pernah dijalankan di MacBook sungguhan di jaringan kantor, termasuk sambungan antara MacBook dan laptop Windows.
+- Pola simpan Office for Mac (Word dan Excel) belum diperiksa di perangkat sungguhan.
+- Skrip [install.sh](install.sh) belum pernah dijalankan di Mac. Yang sudah diuji di Windows (Git Bash): pembacaan daftar rilis dari GitHub, pemilihan file per prosesor, pencocokan checksum, dan alur pasang dengan perintah macOS yang ditiru.
 
 Yang belum dibuat:
 - Menambah file ke proyek atau tim tertentu dari layar Dokumen. Inti Rust sudah mendukung cakupan proyek, tapi layar Dokumen baru bisa menambah ke Pustaka Umum.
@@ -242,6 +286,7 @@ Yang belum dibuat:
 
 - Logo final. Saat ini masih logo sementara dari `design/logo-sementara.svg`.
 - Sertifikat penandatanganan kode untuk installer.
+- Akun Apple Developer untuk menandatangani dan menotarisasi Mira di macOS. Tanpa akun ini, Mira untuk macOS hanya ditandatangani ad-hoc.
 - Kebijakan PIN tanda tangan: tetap 6 sampai 12 angka, minimal 8 angka, atau Windows Hello.
 - Nama penerbit di installer. Saat ini masih isian sementara "Mira".
 - Jawaban tim jaringan kantor soal mDNS, aturan firewall, dan pertanyaan lain di Lampiran A PRD.

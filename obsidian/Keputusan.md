@@ -13,7 +13,7 @@ Keputusan desain yang sudah berlaku, dikumpulkan dari PRD dan laporan tahap. Ala
 - Offline itu normal. Setiap fitur harus tetap benar setelah laptop offline lalu tersambung lagi.
 - Data dibatasi dari sumbernya. Laptop hanya menerima data yang boleh ia lihat.
 - Satu organisasi untuk seluruh kantor, dibagi per tim, dengan channel #umum untuk semua.
-- Bukan tujuan saat ini: server, akun cloud, tanda tangan elektronik tersertifikasi, edit dokumen bersamaan secara langsung, aplikasi HP, macOS, dan Linux.
+- Bukan tujuan saat ini: server, akun cloud, tanda tangan elektronik tersertifikasi, edit dokumen bersamaan secara langsung, aplikasi HP, dan Linux. PRD awalnya juga mencantumkan macOS; itu diubah pada 23 November 2026, lihat [[#Dukungan macOS (23 November 2026)]].
 
 ## Platform dan installer ([[Tahap 0]])
 
@@ -69,12 +69,23 @@ Keputusan desain yang sudah berlaku, dikumpulkan dari PRD dan laporan tahap. Ala
 - Halaman tambahan hanya boleh dari penanda tangan terakhir (halaman catatan), supaya penanda tangan di tengah tidak bisa menyisipkan adendum.
 - Mode bebas, dua tanda tangan bersamaan saat offline: yang waktunya paling awal menang, lalu kunci terkecil. Hasilnya sama di semua laptop.
 
+## Dukungan macOS (23 November 2026)
+
+- Kantor memakai MacBook dan Windows, jadi Mira juga dibuat untuk macOS 11 atau yang lebih baru, Apple Silicon dan Intel.
+- Build Mac lewat GitHub Actions. Tes otomatis juga berjalan di sana, pada runner macOS dan Windows.
+- Tanpa akun Apple Developer untuk sekarang. `Mira.app` ditandatangani ad-hoc dan tidak dinotarisasi.
+- Skrip pasang satu baris `install.sh` menghapus tanda karantina setelah menyalin `Mira.app`, supaya Gatekeeper tidak menolak pembukaan pertama. Keaslian file dijaga lewat pencocokan SHA-256 dengan `digest` dari GitHub. Ini diterima karena Mira alat internal.
+- Skrip pasang tidak pernah memakai `sudo`. Kalau `/Applications` tidak bisa ditulis, Mira dipasang di `~/Applications`.
+
+Rinciannya di [[macOS]].
+
 ## Yang masih terbuka
 
 | Keputusan | Keadaan sekarang |
 |---|---|
 | Logo final | Masih logo sementara dari `design/logo-sementara.svg` |
 | Sertifikat penandatanganan kode | Installer `v0.1.0` belum ditandatangani, SmartScreen bisa memberi peringatan |
+| Akun Apple Developer | Belum ada. Mira untuk macOS ditandatangani ad-hoc dan tidak dinotarisasi. Lihat [[macOS]] |
 | Kebijakan PIN tanda tangan | 6 sampai 12 angka. Pilihan: tetap, minimal 8 angka, atau Windows Hello |
 | Nama penerbit di installer | Isian sementara "Mira" dan "Hak cipta (c) 2026 Mira" |
 | Jawaban tim jaringan kantor | Soal mDNS, aturan firewall, isolasi Wi-Fi, VLAN, dan VPN (Lampiran A PRD) belum ada |
