@@ -286,7 +286,7 @@
   transition: border-color 120ms ease;
 }
 
-.tc[draggable="true"] {
+.tc[data-movable] {
   cursor: grab;
 }
 
@@ -299,8 +299,29 @@
   outline-offset: 2px;
 }
 
+/* Asal kartu yang sedang diseret tetap terlihat samar, supaya jelas dari mana ia diambil. */
 .tc-dragging {
   opacity: 0.5;
+}
+
+/* Salinan kartu yang mengikuti pointer. Bayangan menandai ia terangkat dari board,
+   sama dengan menu Pindahkan yang juga melayang di atas kartu lain. */
+.tc-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 50;
+  margin: 0;
+  pointer-events: none;
+  border-color: var(--border-strong);
+  box-shadow: 0 8px 20px var(--scrim);
+}
+
+/* Selama seret: kursor genggam di mana pun pointer berada, dan teks tidak ikut terpilih. */
+.card-dragging,
+.card-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 
 .tc-top {

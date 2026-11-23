@@ -1,5 +1,5 @@
 import { IconCalendarDue, IconGitMerge, IconMessage } from "@tabler/icons-react";
-import { useId, type DragEvent, type KeyboardEvent } from "react";
+import { useId, type KeyboardEvent, type PointerEvent } from "react";
 import type { TaskCard } from "../../api/board";
 import { initials } from "../../components/initials";
 import type { Direction } from "./boardMoves";
@@ -14,8 +14,8 @@ type Props = {
   moveOptions: MoveOption[];
   onOpen: () => void;
   onKeyMove: (dir: Direction) => void;
-  onDragStart: (e: DragEvent<HTMLElement>) => void;
-  onDragEnd: () => void;
+  // Mulai seret dengan mouse; lihat useCardDrag.
+  onPointerDown: (e: PointerEvent<HTMLElement>) => void;
 };
 
 const ARROWS: Record<string, Direction> = {
@@ -25,7 +25,7 @@ const ARROWS: Record<string, Direction> = {
   ArrowDown: "down",
 };
 
-export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, onKeyMove, onDragStart, onDragEnd }: Props) {
+export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, onKeyMove, onPointerDown }: Props) {
   const metaId = useId();
   const days = task.due ? daysUntil(task.due) : null;
   const late = !done && days !== null && days < 0;
@@ -43,9 +43,10 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, 
     <article
       className={`tc${dragging ? " tc-dragging" : ""}`}
       data-card={task.id}
-      draggable={canMove}
-      onDragStart={canMove ? onDragStart : undefined}
-      onDragEnd={canMove ? onDragEnd : undefined}
+      data-movable={canMove || undefined}
+      onPointerDown={canMove ? onPointerDown : undefined}
+      // Seret HTML5 bawaan (misalnya teks yang terpilih) akan merebut pointer dari seret kartu.
+      onDragStart={(e) => e.preventDefault()}
       onKeyDown={onKey}
     >
       <div className="tc-top">

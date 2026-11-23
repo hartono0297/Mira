@@ -9,7 +9,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent,
   type Ref,
 } from "react";
 import { toAppError, type AppError } from "../../api";
@@ -22,6 +21,7 @@ import type { MoveOption } from "./MoveMenu";
 import { QuickAdd } from "./QuickAdd";
 import { RenameProjectDialog } from "./RenameProjectDialog";
 import { useBoardLive } from "./useBoardLive";
+import { useCardDrag } from "./useCardDrag";
 import { useFocusRescue } from "./useFocusRescue";
 
 export type ProjectBoardHandle = {
@@ -95,9 +95,6 @@ export function ProjectBoard({
   const [renaming, setRenaming] = useState(false);
   const [announce, setAnnounce] = useState({ text: "", n: 0 });
   const [failure, setFailure] = useState<MoveFailure | null>(null);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const dragRef = useRef<string | null>(null);
-  const [drop, setDrop] = useState<Place | null>(null);
   const moveSeq = useRef(0);
   const mounted = useRef(true);
   const focusAfter = useRef<string | null>(null);
@@ -107,6 +104,7 @@ export function ProjectBoard({
   const keysId = useId();
   const titleId = useId();
   const { reload, setData } = live;
+  const { dragId, drop, onPointerDown } = useCardDrag(rootRef, (taskId, to) => void move(taskId, to, false));
   // Rekan bisa memindah atau menghapus kartu yang sedang difokus; fokus pindah ke kartu terdekat.
   const rescue = useFocusRescue(rootRef, {
     spare: "[data-qa-open], [data-qa]",
@@ -262,53 +260,6 @@ export function ProjectBoard({
     return opts;
   }
 
-  // Drag-and-drop HTML5. Posisi tujuan dihitung dari titik tengah kartu lain di kolom itu.
-  function onDragStart(e: DragEvent<HTMLElement>, taskId: string) {
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", taskId);
-    dragRef.current = taskId;
-    // Ditunda supaya gambar seret diambil dari kartu yang belum diredupkan.
-    window.setTimeout(() => {
-      if (dragRef.current === taskId) setDragId(taskId);
-    }, 0);
-  }
-
-  function endDrag() {
-    dragRef.current = null;
-    setDragId(null);
-    setDrop(null);
-  }
-
-  function onDragOver(e: DragEvent<HTMLElement>, columnId: ColumnId) {
-    const id = dragRef.current;
-    if (!id) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const cards = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("[data-card]")).filter((el) => el.dataset.card !== id);
-    let index = cards.length;
-    for (let i = 0; i < cards.length; i++) {
-      const r = cards[i].getBoundingClientRect();
-      if (e.clientY < r.top + r.height / 2) {
-        index = i;
-        break;
-      }
-    }
-    if (!drop || drop.columnId !== columnId || drop.index !== index) setDrop({ columnId, index });
-  }
-
-  function onDrop(e: DragEvent<HTMLElement>, columnId: ColumnId) {
-    e.preventDefault();
-    const id = dragRef.current ?? e.dataTransfer.getData("text/plain");
-    const to = drop && drop.columnId === columnId ? drop : { columnId, index: 0 };
-    endDrag();
-    if (id) void move(id, to, false);
-  }
-
-  function onDragLeave(e: DragEvent<HTMLElement>, columnId: ColumnId) {
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-    setDrop((d) => (d && d.columnId === columnId ? null : d));
-  }
-
   function renamed(updated: ProjectSummary) {
     setRenaming(false);
     if (data) setData({ ...data, project: { ...data.project, ...updated } });
@@ -426,7 +377,7 @@ export function ProjectBoard({
         )}
       </div>
 
-      <div className="pb-scroll">
+      <div className="pb-scroll" data-drop-area>
         <div className="pb-cols" aria-labelledby={titleId} role="group">
           {view.columns.map((col) => {
             const done = col.id === "done";
@@ -437,11 +388,9 @@ export function ProjectBoard({
               <section
                 key={col.id}
                 data-rescue-group={col.id}
+                data-drop-col={col.id}
                 className={`pb-col${dropHere !== null ? " pb-col-over" : ""}`}
                 aria-labelledby={`${titleId}-${col.id}`}
-                onDragOver={(e) => onDragOver(e, col.id)}
-                onDrop={(e) => onDrop(e, col.id)}
-                onDragLeave={(e) => onDragLeave(e, col.id)}
               >
                 <h3 id={`${titleId}-${col.id}`} className="pb-colh">
                   {col.name}
@@ -468,8 +417,7 @@ export function ProjectBoard({
                             moveOptions={moveOptions(task.id)}
                             onOpen={() => onOpenTask(task.id)}
                             onKeyMove={(dir) => keyMove(task.id, dir)}
-                            onDragStart={(e) => onDragStart(e, task.id)}
-                            onDragEnd={endDrag}
+                            onPointerDown={(e) => onPointerDown(e, task.id)}
                           />
                         </li>
                       </Fragment>
