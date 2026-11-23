@@ -10,8 +10,10 @@ import {
 } from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { ConversationActionsContext, type ConversationActions, type ConvRequest } from "./ChatActions";
 import { Composer } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
+import { useGroupView } from "./GroupMembers";
 import { messageDomId } from "./MessageItem";
 import { buildTimeline, mergeEvents, MessageList } from "./MessageList";
 import { conversationTarget, conversationTitle, mergeMessages, messagePreview } from "./text";
@@ -26,6 +28,9 @@ export type ConversationProps = {
   onChanged: () => void;
   // Percakapan tidak tersedia lagi (channel dihapus): ChatScreen kembali ke #umum.
   onGone: () => void;
+  // Permintaan dari menu sidebar (Ganti nama, Tambah orang) untuk percakapan ini.
+  request?: ConvRequest | null;
+  onRequestDone?: () => void;
 };
 
 // Jarak dari bawah (px) yang masih dianggap "di bawah": pesan baru ikut menggulir.
@@ -43,7 +48,7 @@ function lastFromOthers(messages: MessageView[]): MessageView | null {
   return null;
 }
 
-function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps) {
+function ConversationPanel({ summary, me, onChanged, onGone, request = null, onRequestDone }: ConversationProps) {
   const title = conversationTitle(summary);
   const load = useCallback(() => chatApi.messages(summary.id), [summary.id]);
   const live = useChatLive<ConversationView>(load, summary.id);
@@ -61,6 +66,13 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
   const [deleteError, setDeleteError] = useState<AppError | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+
+  // Data grup dipegang di sini: kepala percakapan (anggota, dialog) dan menu orang di pesan
+  // (Keluarkan dari grup) memakai data yang sama.
+  const groupState = useGroupView(
+    summary.kind === "group" ? summary.id : null,
+    `${summary.memberCount}|${summary.name}|${summary.former}`,
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -323,9 +335,35 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
     );
   }
 
+  const group = groupState.group;
+  const reloadGroup = groupState.reload;
+  const memberKeys = useMemo(() => new Set((view?.members ?? []).map((p) => p.publicKey)), [view]);
+  const actions = useMemo<ConversationActions>(
+    () => ({
+      conv: summary.id,
+      mention: null,
+      isMember: (pk) => memberKeys.has(pk),
+      canRemove: (pk) => !!group?.members.some((m) => m.person.publicKey === pk && m.canRemove),
+      removeFromGroup: async (person) => {
+        await chatApi.groupRemove(summary.id, person.publicKey);
+        void reloadGroup();
+        onChangedRef.current();
+      },
+    }),
+    [summary.id, memberKeys, group, reloadGroup],
+  );
+
   return (
+    <ConversationActionsContext.Provider value={actions}>
     <section className="chat-conv conv" aria-label={title}>
-      <ConversationHeader summary={summary} onChanged={onChanged} onGone={onGone} />
+      <ConversationHeader
+        summary={summary}
+        groupState={groupState}
+        request={request?.conv === summary.id ? request : null}
+        onRequestDone={onRequestDone}
+        onChanged={onChanged}
+        onGone={onGone}
+      />
       <div aria-live="polite" className="conv-live">
         {view && live.error && (
           <ErrorAlert title="Pesan terbaru belum bisa dimuat">
@@ -378,5 +416,6 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
         </p>
       </ConfirmDialog>
     </section>
+    </ConversationActionsContext.Provider>
   );
 }

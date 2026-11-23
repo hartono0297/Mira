@@ -18,12 +18,18 @@ import { chatApi, type ConversationSummary } from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
-import { AddPeopleDialog, GroupMembers, RenameGroupDialog, useGroupView } from "./GroupMembers";
+import type { ConvRequest } from "./ChatActions";
+import { AddPeopleDialog, GroupMembers, RenameGroupDialog, type GroupState } from "./GroupMembers";
 import { ProjectMembers } from "./ProjectMembers";
 import { conversationTitle, scopeLabel } from "./text";
 
 type Props = {
   summary: ConversationSummary;
+  // Data grup dari panel percakapan (useGroupView). Untuk selain grup: group null.
+  groupState: GroupState;
+  // Permintaan dari menu sidebar untuk percakapan ini (sudah disaring per percakapan).
+  request?: ConvRequest | null;
+  onRequestDone?: () => void;
   onChanged: () => void;
   onGone: () => void;
 };
@@ -40,7 +46,7 @@ const ERROR_TITLES: Record<Action, string> = {
   rename: "Nama grup belum bisa diganti",
 };
 
-export function ConversationHeader({ summary, onChanged, onGone }: Props) {
+export function ConversationHeader({ summary, groupState, request = null, onRequestDone, onChanged, onGone }: Props) {
   const title = conversationTitle(summary);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<Action | null>(null);
@@ -56,11 +62,10 @@ export function ConversationHeader({ summary, onChanged, onGone }: Props) {
   // ganti nama, arsip, atau hapus. Menu hanya berisi notifikasi.
   const isProject = summary.kind === "project";
   const groupLike = isGroup || isProject;
-  const groupState = useGroupView(
-    isGroup ? summary.id : null,
-    `${summary.memberCount}|${summary.name}|${summary.former}`,
-  );
   const group = groupState.group;
+  // SEMENTARA: sesi sidebar/header memakai permintaan ini (lihat ChatActions.ConvRequest).
+  void request;
+  void onRequestDone;
   const [adding, setAdding] = useState(false);
   const [renaming, setRenaming] = useState(false);
 

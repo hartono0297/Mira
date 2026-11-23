@@ -1,6 +1,8 @@
-import { useCallback, useState } from "react";
-import { chatApi, type ChatOverview, type ConversationSummary } from "../../api/chat";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { toAppError, type AppError } from "../../api";
+import { chatApi, type ChatOverview, type ConversationSummary, type Person } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { ChatActionsContext, type ChatActions, type ConvRequest } from "./ChatActions";
 import { Conversation } from "./Conversation";
 import { ConversationList } from "./ConversationList";
 import { defaultConversation, withConversation } from "./ListFormat";
@@ -9,6 +11,7 @@ import { NewDirectDialog } from "./NewDirectDialog";
 import { NewGroupDialog } from "./NewGroupDialog";
 import { NotifySettings } from "./NotifySettings";
 import { PeopleLabelsProvider } from "./PeopleLabels";
+import { ProfileDialog } from "./ProfileDialog";
 import { useChatLive } from "./useChatLive";
 import "./chat.css";
 
@@ -30,6 +33,10 @@ function ChatScreenInner() {
   const [open, setOpen] = useState<Open>(null);
   const [reveal, setReveal] = useState<string | null>(null);
   const revealed = useCallback(() => setReveal(null), []);
+  const [profile, setProfile] = useState<Person | null>(null);
+  const [dmError, setDmError] = useState<AppError | null>(null);
+  const [request, setRequest] = useState<ConvRequest | null>(null);
+  const requestDone = useCallback(() => setRequest(null), []);
 
   // Pilihan yang sudah tidak ada (channel dihapus, akses dicabut) kembali ke #umum.
   const list = overview?.conversations ?? [];
@@ -52,6 +59,31 @@ function ChatScreenInner() {
   const closeTo = (next: boolean) => {
     if (!next) setOpen(null);
   };
+
+  const adoptRef = useRef(adopt);
+  adoptRef.current = adopt;
+  const dmKeys = useMemo(
+    () => new Set(overview?.canDirectMessage ? overview.people.map((p) => p.publicKey) : []),
+    [overview],
+  );
+  const actions = useMemo<ChatActions>(
+    () => ({
+      me: overview?.me ?? "",
+      canMessage: (pk) => dmKeys.has(pk),
+      openDm: async (person) => {
+        setDmError(null);
+        try {
+          const summary = await chatApi.openDm(person.publicKey);
+          setProfile(null);
+          adoptRef.current(summary);
+        } catch (err) {
+          setDmError(toAppError(err));
+        }
+      },
+      showProfile: (person) => setProfile(person),
+    }),
+    [overview?.me, dmKeys],
+  );
 
   if (!overview) {
     return (
@@ -85,6 +117,7 @@ function ChatScreenInner() {
   }
 
   return (
+    <ChatActionsContext.Provider value={actions}>
     <main className="chat" aria-labelledby="page-title">
       <ConversationList
         overview={overview}
@@ -102,7 +135,15 @@ function ChatScreenInner() {
 
       <div className="chat-main">
         {current ? (
-          <Conversation key={current.id} summary={current} me={overview.me} onChanged={changed} onGone={gone} />
+          <Conversation
+            key={current.id}
+            summary={current}
+            me={overview.me}
+            onChanged={changed}
+            onGone={gone}
+            request={request}
+            onRequestDone={requestDone}
+          />
         ) : (
           <EmptyChat guest={overview.isGuest} />
         )}
@@ -128,7 +169,16 @@ function ChatScreenInner() {
         mode={overview.notify}
         onSaved={(notify) => setData({ ...overview, notify })}
       />
+      <ProfileDialog person={profile} onOpenChange={(next) => !next && setProfile(null)} />
+      <div aria-live="polite" className="chat-dm-error">
+        {dmError && (
+          <ErrorAlert title="Pesan pribadi belum bisa dibuka">
+            <p>{dmError.message}</p>
+          </ErrorAlert>
+        )}
+      </div>
     </main>
+    </ChatActionsContext.Provider>
   );
 }
 
