@@ -14,6 +14,25 @@ use super::timing;
 use crate::clock;
 use crate::error::AppResult;
 
+/// The viewer's project rights a card needs.
+///
+/// `can_write` is the `CreateTask` right and `can_manage` the
+/// `ManageProject` right. Both deny guests and require `Rights::can_write`,
+/// and `ManageProject` adds `is_project_manager`, so `can_delete` gives the
+/// same answer as `Rights::can_delete_task` (the `DeleteTask` right):
+/// `can_write && (created_by == me || is_project_manager)`.
+#[derive(Debug, Clone, Copy)]
+struct CardRights {
+    can_write: bool,
+    can_manage: bool,
+}
+
+impl CardRights {
+    fn can_delete(self, me: &str, t: &TaskData) -> bool {
+        self.can_write && (t.created_by == me || self.can_manage)
+    }
+}
+
 /// What every view needs: the database, the viewer and the two seams.
 pub struct Ctx<'a> {
     pub conn: &'a Connection,
@@ -50,7 +69,21 @@ impl Ctx<'_> {
         })
     }
 
-    pub fn card(&self, project: &ProjectRow, t: &TaskData) -> TaskCard {
+    /// The rights a card needs, once per project instead of once per task
+    /// (`allows` loads the rights from the database on every call).
+    fn card_rights(&self, project: &ProjectRow) -> CardRights {
+        CardRights {
+            can_write: self.allows(BoardAction::CreateTask {
+                project_id: project.id.clone(),
+            }),
+            can_manage: self.allows(BoardAction::ManageProject {
+                project_id: project.id.clone(),
+            }),
+        }
+    }
+
+    /// `can_delete` is the viewer's `DeleteTask` right on `t`.
+    pub fn card(&self, project: &ProjectRow, t: &TaskData, can_delete: bool) -> TaskCard {
         let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         let live = t.subtasks.iter().filter(|s| !s.deleted);
         TaskCard {
@@ -71,11 +104,20 @@ impl Ctx<'_> {
             subtask_total: count(live.count()),
             tracked_secs: timing::tracked_secs(&t.time),
             timers_running_since: timing::running_since(&t.time),
+            can_delete,
+            my_timer_running: t.time.iter().any(|e| e.by == self.me && e.is_running()),
         }
     }
 
     pub fn board(&self, project: &ProjectRow, doc: &BoardDoc) -> AppResult<BoardView> {
         let tasks = doc.tasks()?;
+        let summary = self.summary(project)?;
+        let rights = CardRights {
+            can_write: self.allows(BoardAction::CreateTask {
+                project_id: project.id.clone(),
+            }),
+            can_manage: summary.can_manage,
+        };
         let columns = ColumnId::ALL
             .iter()
             .map(|&c| Column {
@@ -85,18 +127,16 @@ impl Ctx<'_> {
                 tasks: tasks
                     .iter()
                     .filter(|t| !t.deleted && t.column == c)
-                    .map(|t| self.card(project, t))
+                    .map(|t| self.card(project, t, rights.can_delete(self.me, t)))
                     .collect(),
             })
             .collect();
         Ok(BoardView {
-            project: self.summary(project)?,
+            project: summary,
             columns,
             assignees: self.dir.assignable(self.conn, project)?,
             me: self.me.to_owned(),
-            can_create: self.allows(BoardAction::CreateTask {
-                project_id: project.id.clone(),
-            }),
+            can_create: rights.can_write,
         })
     }
 
@@ -131,8 +171,13 @@ impl Ctx<'_> {
             (a.person.name.to_lowercase(), &a.person.public_key)
                 .cmp(&(b.person.name.to_lowercase(), &b.person.public_key))
         });
+        let can_delete = self.allows(BoardAction::DeleteTask {
+            project_id: project.id.clone(),
+            task_id: t.id.clone(),
+            created_by: t.created_by.clone(),
+        });
         TaskDetail {
-            card: self.card(project, t),
+            card: self.card(project, t, can_delete),
             project_id: project.id.clone(),
             description: t.description.clone(),
             created_by: self.dir.person(self.conn, &t.created_by),
@@ -161,11 +206,6 @@ impl Ctx<'_> {
             can_edit: self.allows(BoardAction::EditTask {
                 project_id: project.id.clone(),
                 task_id: t.id.clone(),
-            }),
-            can_delete: self.allows(BoardAction::DeleteTask {
-                project_id: project.id.clone(),
-                task_id: t.id.clone(),
-                created_by: t.created_by.clone(),
             }),
             can_comment: self.allows(BoardAction::Comment {
                 project_id: project.id.clone(),
@@ -222,6 +262,7 @@ impl Ctx<'_> {
                 continue;
             }
             let doc = store::load_doc(self.conn, &project_id, actor)?;
+            let rights = self.card_rights(&project);
             for t in doc.tasks()? {
                 if t.deleted || !ids.contains(&t.id.as_str()) {
                     continue;
@@ -231,7 +272,7 @@ impl Ctx<'_> {
                         project_id: project.id.clone(),
                         project_code: project.code.clone(),
                         project_name: project.name.clone(),
-                        task: self.card(&project, &t),
+                        task: self.card(&project, &t, rights.can_delete(self.me, &t)),
                     },
                     t.number,
                 ));

@@ -9,18 +9,32 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
+  type MouseEvent,
+  type ReactNode,
   type Ref,
 } from "react";
 import { toAppError, type AppError } from "../../api";
-import { boardApi, type BoardView, type ColumnId, type ProjectSummary, type TaskDetail } from "../../api/board";
+import {
+  boardApi,
+  type BoardView,
+  type ColumnId,
+  type ProjectSummary,
+  type TaskCard,
+  type TaskDetail,
+  type TaskPatch,
+} from "../../api/board";
+import { useContextMenu, type MenuEntry } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { BoardCard } from "./BoardCard";
 import { applyMove, blockedText, locate, neighbourPlace, samePlace, type Direction, type Place } from "./boardMoves";
+import { cardDragActive, cardMenuEntries, type CardMenuActions } from "./cardMenu";
 import { COLUMN_NAMES, NO_DEPARTMENT, teamLabel } from "./format";
 import type { MoveOption } from "./MoveMenu";
 import { ProjectMembersPanel, useProjectMembers } from "./ProjectMembersPanel";
 import { QuickAdd } from "./QuickAdd";
 import { RenameProjectDialog } from "./RenameProjectDialog";
+import { TEKS_MENU } from "./teksMenu";
 import { useBoardLive } from "./useBoardLive";
 import { useCardDrag } from "./useCardDrag";
 import { useFocusRescue } from "./useFocusRescue";
@@ -46,10 +60,15 @@ type Props = {
   // inti Rust menolak membuka board-nya (dikeluarkan pengelola).
   // Dipanggil dengan id proyek, supaya pemanggil bisa memberi callback yang stabil.
   onLost?: (projectId: string, reason: "left" | "forbidden") => void;
+  // Permintaan dari luar (menu klik kanan proyek di daftar kiri): buka panel
+  // Anggota atau dialog Ubah nama proyek. Dijalankan setiap kali n berubah,
+  // juga saat board baru pertama kali tampil dengan permintaan itu.
+  request?: { kind: "members" | "rename"; n: number };
   ref?: Ref<ProjectBoardHandle>;
 };
 
-type MoveFailure = { code: string; error: AppError };
+// Galat aksi kartu (pindah, ubah dari menu klik kanan, salin kode) di area pb-live.
+type Failure = { title: string; message: string; note?: string };
 type PendingMove = { seq: number; taskId: string; to: Place };
 type FocusTarget = { kind: "card"; id: string } | { kind: "add"; columnId: ColumnId } | { kind: "heading" };
 
@@ -80,11 +99,14 @@ export function ProjectBoard({
   onOpenTask,
   onProjectsChanged,
   onLost,
+  request,
   ref,
 }: Props) {
   const load = useCallback(() => boardApi.getBoard(projectId), [projectId]);
   const live = useBoardLive(load, projectId);
   const data = isBoardView(live.data) ? live.data : null;
+  const dataRef = useRef(data);
+  dataRef.current = data;
   // Pindahan yang belum dijawab inti Rust, diterapkan berurutan di atas data
   // terakhir. Kalau satu gagal, hanya pindahan itu yang dibuang.
   const [pendingMoves, setPendingMoves] = useState<PendingMove[]>([]);
@@ -102,7 +124,7 @@ export function ProjectBoard({
   const [showMembers, setShowMembers] = useState(false);
   const members = useProjectMembers(projectId);
   const [announce, setAnnounce] = useState({ text: "", n: 0 });
-  const [failure, setFailure] = useState<MoveFailure | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
   const moveSeq = useRef(0);
   const mounted = useRef(true);
   const focusAfter = useRef<string | null>(null);
@@ -159,6 +181,15 @@ export function ProjectBoard({
     return () => window.clearTimeout(timer);
   }, [focusHeading, hasView, onHeadingFocused]);
 
+  const handledRequest = useRef<number | null>(null);
+  const canManage = !!view?.project.canManage;
+  useEffect(() => {
+    if (!request || !hasView || handledRequest.current === request.n) return;
+    handledRequest.current = request.n;
+    if (request.kind === "members") setShowMembers(true);
+    else if (canManage) setRenaming(true);
+  }, [request, hasView, canManage]);
+
   function focusTarget(t: FocusTarget) {
     const root = rootRef.current;
     let el: HTMLElement | null = null;
@@ -184,26 +215,30 @@ export function ProjectBoard({
     setAnnounce((a) => ({ text, n: a.n + 1 }));
   }
 
+  // Tujuan fokus setelah kartu dihapus: kartu berikutnya atau sebelumnya di
+  // kolom yang sama, lalu tombol Tambah task kolom itu, lalu judul board.
+  function focusAfterRemoval(taskId: string): FocusTarget {
+    const current = viewRef.current;
+    const at = current ? locate(current, taskId) : null;
+    if (!current || !at) return { kind: "heading" };
+    const col = current.columns.find((c) => c.id === at.columnId);
+    const next = col?.tasks[at.index + 1] ?? col?.tasks[at.index - 1];
+    if (next) return { kind: "card", id: next.id };
+    return current.canCreate ? { kind: "add", columnId: at.columnId } : { kind: "heading" };
+  }
+
+  // Fokus dipasang lewat afterDialog, setelah dialog (detail task atau konfirmasi hapus) tertutup.
+  function removed(taskId: string, code: string) {
+    afterDialog.current = focusAfterRemoval(taskId);
+    const latest = dataRef.current;
+    if (latest) setData(withoutTask(latest, taskId));
+    say(TEKS_MENU.kartu.dihapus(code));
+    void reload();
+    onProjectsChanged();
+  }
+
   useImperativeHandle(ref, () => ({
-    taskDeleted(taskId: string, code: string) {
-      const current = viewRef.current;
-      const at = current ? locate(current, taskId) : null;
-      if (current && at) {
-        const col = current.columns.find((c) => c.id === at.columnId);
-        const next = col?.tasks[at.index + 1] ?? col?.tasks[at.index - 1];
-        afterDialog.current = next
-          ? { kind: "card", id: next.id }
-          : current.canCreate
-            ? { kind: "add", columnId: at.columnId }
-            : { kind: "heading" };
-      } else {
-        afterDialog.current = { kind: "heading" };
-      }
-      if (data) setData(withoutTask(data, taskId));
-      say(`${code} dihapus.`);
-      void reload();
-      onProjectsChanged();
-    },
+    taskDeleted: removed,
   }));
 
   async function move(taskId: string, to: Place, keepFocus: boolean) {
@@ -238,7 +273,8 @@ export function ProjectBoard({
       if (!mounted.current) return;
       if (keepFocus) focusAfter.current = taskId;
       settle();
-      setFailure({ code, error: toAppError(err) });
+      const error = toAppError(err);
+      setFailure({ title: moveErrorTitle(error, code), message: error.message, note: "Kartu dikembalikan ke tempat semula." });
       say(`${code} belum dipindah.`);
       void reload();
     }
@@ -272,6 +308,60 @@ export function ProjectBoard({
     if (at.index < at.size - 1)
       opts.push({ key: "down", label: "Turun satu posisi", run: () => void move(taskId, { columnId: at.columnId, index: at.index + 1 }, true) });
     return opts;
+  }
+
+  // Aksi menu klik kanan kartu yang mengubah task (tugaskan, prioritas,
+  // tenggat, timer). Galat tampil di area pb-live, seperti galat pindah.
+  async function changeTask(code: string, run: () => Promise<unknown>, done: string) {
+    setFailure(null);
+    try {
+      await run();
+      if (!mounted.current) return;
+      say(done);
+      void reload();
+      onProjectsChanged();
+    } catch (err) {
+      if (!mounted.current) return;
+      setFailure({ title: TEKS_MENU.kartu.gagal(code), message: toAppError(err).message });
+      void reload();
+    }
+  }
+
+  async function copyCode(code: string) {
+    setFailure(null);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard");
+      await navigator.clipboard.writeText(code);
+      if (mounted.current) say(TEKS_MENU.kartu.disalin(code));
+    } catch {
+      if (mounted.current) setFailure({ title: TEKS_MENU.kartu.gagalSalin(code), message: TEKS_MENU.kartu.gagalSalinIsi });
+    }
+  }
+
+  function cardActions(task: TaskCard): CardMenuActions {
+    const { id, code } = task;
+    return {
+      open: () => onOpenTask(id),
+      move: (to) => void move(id, to, true),
+      edit: (patch: TaskPatch, done: string) => void changeTask(code, () => boardApi.updateTask(projectId, id, patch), done),
+      timer: (start) =>
+        void changeTask(
+          code,
+          () => (start ? boardApi.startTimer(projectId, id) : boardApi.stopTimer(projectId, id, null)),
+          start ? TEKS_MENU.kartu.timerMulai(code) : TEKS_MENU.kartu.timerBerhenti(code),
+        ),
+      copy: () => void copyCode(code),
+      // Galat dilempar ke dialog konfirmasi menu, yang menampilkannya.
+      remove: async () => {
+        await boardApi.deleteTask(projectId, id);
+        if (mounted.current) removed(id, code);
+      },
+    };
+  }
+
+  function openQuickAdd(columnId: ColumnId) {
+    if (adding === columnId) rootRef.current?.querySelector<HTMLInputElement>(`[data-qa="${columnId}"]`)?.focus();
+    else setAdding(columnId);
   }
 
   function renamed(updated: ProjectSummary) {
@@ -361,10 +451,7 @@ export function ProjectBoard({
             <button
               type="button"
               className="btn btn-ghost btn-sm"
-              onClick={() => {
-                if (adding === "todo") rootRef.current?.querySelector<HTMLInputElement>('[data-qa="todo"]')?.focus();
-                else setAdding("todo");
-              }}
+              onClick={() => openQuickAdd("todo")}
             >
               <IconPlus size={16} aria-hidden="true" />
               Task baru
@@ -384,8 +471,8 @@ export function ProjectBoard({
       <div id={keysId} className="pb-keys" hidden={!showKeys}>
         <p>
           {readOnly
-            ? "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya."
-            : "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya. Alt + panah kiri atau kanan memindah kartu ke kolom sebelah, Alt + panah atas atau bawah mengubah urutannya. Tombol panah empat arah di kartu membuka pilihan yang sama."}
+            ? "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya. Shift + F10 atau tombol Menu membuka menu aksi kartu, sama dengan klik kanan."
+            : "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya. Alt + panah kiri atau kanan memindah kartu ke kolom sebelah, Alt + panah atas atau bawah mengubah urutannya. Tombol panah empat arah di kartu membuka pilihan yang sama. Shift + F10 atau tombol Menu membuka menu aksi kartu, sama dengan klik kanan."}
         </p>
       </div>
 
@@ -398,9 +485,9 @@ export function ProjectBoard({
           <p className="hint">Data terbaru belum terbaca ({live.error.message}). Yang tampil adalah data terakhir.</p>
         )}
         {failure && (
-          <ErrorAlert title={moveErrorTitle(failure.error, failure.code)}>
-            <p>{failure.error.message}</p>
-            <p>Kartu dikembalikan ke tempat semula.</p>
+          <ErrorAlert title={failure.title}>
+            <p>{failure.message}</p>
+            {failure.note && <p>{failure.note}</p>}
           </ErrorAlert>
         )}
       </div>
@@ -413,14 +500,28 @@ export function ProjectBoard({
             const dropHere = drop && drop.columnId === col.id ? drop.index : null;
             let k = 0;
             return (
-              <section
+              <ColumnSection
                 key={col.id}
+                menuLabel={TEKS_MENU.kolom.menu(col.name)}
+                menuItems={
+                  view.canCreate
+                    ? [
+                        {
+                          id: "new-task",
+                          label: TEKS_MENU.kolom.taskBaru(col.name),
+                          icon: <IconPlus size={16} />,
+                          onSelect: () => openQuickAdd(col.id),
+                        },
+                      ]
+                    : []
+                }
                 data-rescue-group={col.id}
                 data-drop-col={col.id}
                 className={`pb-col${dropHere !== null ? " pb-col-over" : ""}`}
                 aria-labelledby={`${titleId}-${col.id}`}
               >
-                <h3 id={`${titleId}-${col.id}`} className="pb-colh">
+                {/* Fokus kembali ke judul kolom setelah menu kolom dari klik kanan ditutup. */}
+                <h3 id={`${titleId}-${col.id}`} className="pb-colh" tabIndex={-1} data-menu-focus>
                   {col.name}
                   <span className="pb-count">
                     <span className="sr-only">, </span>
@@ -429,7 +530,7 @@ export function ProjectBoard({
                   </span>
                 </h3>
                 <ul className="pb-list">
-                  {col.tasks.map((task) => {
+                  {col.tasks.map((task, index) => {
                     const isDragged = task.id === dragId;
                     const marker = !isDragged && dropHere === k;
                     if (!isDragged) k++;
@@ -443,6 +544,14 @@ export function ProjectBoard({
                             canMove={view.canCreate}
                             dragging={isDragged}
                             moveOptions={moveOptions(task.id)}
+                            menu={cardMenuEntries({
+                              view,
+                              task,
+                              columnId: col.id,
+                              index,
+                              size: col.tasks.length,
+                              actions: cardActions(task),
+                            })}
                             onOpen={() => onOpenTask(task.id)}
                             onKeyMove={(dir) => keyMove(task.id, dir)}
                             onPointerDown={(e) => onPointerDown(e, task.id)}
@@ -469,7 +578,7 @@ export function ProjectBoard({
                     }}
                   />
                 )}
-              </section>
+              </ColumnSection>
             );
           })}
         </div>
@@ -488,5 +597,36 @@ export function ProjectBoard({
         <RenameProjectDialog open={renaming} onOpenChange={setRenaming} project={project} onRenamed={renamed} />
       )}
     </div>
+  );
+}
+
+type ColumnSectionProps = ComponentProps<"section"> & {
+  menuLabel: string;
+  menuItems: MenuEntry[];
+  children: ReactNode;
+};
+
+// Kolom board dengan menu klik kanan (Task baru di kolom ini). Tanpa item
+// (tanpa hak membuat task) tidak ada menu. Klik kanan di kartu sudah ditangani
+// menu kartu (event-nya defaultPrevented), jadi menu kolom tidak ikut muncul.
+function ColumnSection({ menuLabel, menuItems, children, ...rest }: ColumnSectionProps) {
+  const menu = useContextMenu({ label: menuLabel, items: menuItems });
+  return (
+    <section
+      {...rest}
+      onContextMenu={(e: MouseEvent<HTMLElement>) => {
+        if (cardDragActive()) {
+          e.preventDefault();
+          return;
+        }
+        menu.triggerProps.onContextMenu(e);
+      }}
+      onKeyDown={(e) => {
+        if (!cardDragActive()) menu.triggerProps.onKeyDown(e);
+      }}
+    >
+      {children}
+      {menu.element}
+    </section>
   );
 }

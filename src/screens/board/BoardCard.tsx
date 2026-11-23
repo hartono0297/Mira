@@ -1,12 +1,15 @@
 import { IconCalendarDue, IconClock, IconGitMerge, IconMessage, IconSquareCheck } from "@tabler/icons-react";
-import { useId, type KeyboardEvent, type PointerEvent } from "react";
+import { useId, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import type { TaskCard } from "../../api/board";
 import { initials } from "../../components/initials";
 import type { Direction } from "./boardMoves";
+import { cardDragActive } from "./cardMenu";
 import { daysUntil, dueLabel, formatDue, PRIORITY_LABELS } from "./format";
 import { MoveMenu, type MoveOption } from "./MoveMenu";
 import { TEKS } from "./teks";
+import { TEKS_MENU } from "./teksMenu";
 import { cardTrackedSecs, formatDuration, formatDurationLong } from "./timeFormat";
+import { useBoardMenu, type BoardMenuEntry } from "./useBoardMenu";
 import { useNow } from "./useNow";
 
 type Props = {
@@ -15,6 +18,8 @@ type Props = {
   canMove: boolean;
   dragging: boolean;
   moveOptions: MoveOption[];
+  // Isi menu klik kanan (cardMenuEntries di cardMenu.tsx).
+  menu: BoardMenuEntry[];
   onOpen: () => void;
   onKeyMove: (dir: Direction) => void;
   // Mulai seret dengan mouse; lihat useCardDrag.
@@ -28,8 +33,15 @@ const ARROWS: Record<string, Direction> = {
   ArrowDown: "down",
 };
 
-export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, onKeyMove, onPointerDown }: Props) {
+// Event dari portal (menu klik kanan, dialog konfirmasi hapus) ikut naik
+// lewat pohon React ke kartu, padahal elemennya tidak ada di dalam kartu.
+function fromCard(e: { target: EventTarget | null; currentTarget: HTMLElement }): boolean {
+  return e.target instanceof Node && e.currentTarget.contains(e.target);
+}
+
+export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: menuEntries, onOpen, onKeyMove, onPointerDown }: Props) {
   const metaId = useId();
+  const menu = useBoardMenu({ label: TEKS_MENU.kartu.menu(task.code), items: menuEntries });
   const days = task.due ? daysUntil(task.due) : null;
   const late = !done && days !== null && days < 0;
   const timerRunning = task.timersRunningSince.length > 0;
@@ -39,7 +51,9 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, 
   const allSubtasksDone = task.subtaskTotal > 0 && task.subtaskDone >= task.subtaskTotal;
 
   function onKey(e: KeyboardEvent<HTMLElement>) {
-    if (!canMove || !e.altKey) return;
+    // Shift+F10 dan tombol Menu membuka menu klik kanan.
+    if (!cardDragActive()) menu.triggerProps.onKeyDown(e);
+    if (!canMove || !e.altKey || !fromCard(e)) return;
     const dir = ARROWS[e.key];
     if (!dir) return;
     if ((e.target as HTMLElement).closest("[role=menu]")) return;
@@ -52,13 +66,30 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, 
       className={`tc${dragging ? " tc-dragging" : ""}`}
       data-card={task.id}
       data-movable={canMove || undefined}
-      onPointerDown={canMove ? onPointerDown : undefined}
+      onPointerDown={
+        canMove
+          ? (e: PointerEvent<HTMLElement>) => {
+              // Ctrl+klik di macOS adalah klik kanan (tombol utama + Ctrl); menu yang
+              // terbuka karenanya tidak boleh berubah jadi seret saat mouse bergeser.
+              if (fromCard(e) && !e.ctrlKey) onPointerDown(e);
+            }
+          : undefined
+      }
       // Seret HTML5 bawaan (misalnya teks yang terpilih) akan merebut pointer dari seret kartu.
-      onDragStart={(e) => e.preventDefault()}
+      onDragStart={(e: DragEvent<HTMLElement>) => {
+        if (fromCard(e)) e.preventDefault();
+      }}
+      onContextMenu={(e: MouseEvent<HTMLElement>) => {
+        if (cardDragActive()) {
+          e.preventDefault();
+          return;
+        }
+        menu.triggerProps.onContextMenu(e);
+      }}
       onKeyDown={onKey}
     >
       <div className="tc-top">
-        <button type="button" className={`tc-open${done ? " tc-open-done" : ""}`} data-open-task={task.id} onClick={onOpen} aria-describedby={metaId}>
+        <button type="button" className={`tc-open${done ? " tc-open-done" : ""}`} data-open-task={task.id} data-menu-focus onClick={onOpen} aria-describedby={metaId}>
           {task.title}
         </button>
         {canMove && <MoveMenu code={task.code} options={moveOptions} />}
@@ -132,6 +163,7 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, onOpen, 
           Diubah saat offline, sudah digabung
         </p>
       )}
+      {menu.element}
     </article>
   );
 }

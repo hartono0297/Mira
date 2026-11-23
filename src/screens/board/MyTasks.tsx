@@ -1,12 +1,14 @@
-import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
+import { IconArrowsMove, IconChevronDown, IconChevronRight, IconCopy, IconFileText } from "@tabler/icons-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
-import { boardApi, subscribeBoard, type MyTask } from "../../api/board";
+import { boardApi, subscribeBoard, type ColumnId, type MyTask } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { COLUMN_NAMES, daysUntil, dueLabel } from "./format";
+import { COLUMN_NAMES, COLUMN_ORDER, daysUntil, dueLabel } from "./format";
 import { GROUP_TITLES, groupMyTasks, type GroupId } from "./myTasksGroups";
 import { ReminderSettings } from "./ReminderSettings";
 import { PriorityChip } from "./TaskDetail";
+import { TEKS_MENU } from "./teksMenu";
+import { boardMenuItems, submenu, useBoardMenu } from "./useBoardMenu";
 import { useFocusRescue } from "./useFocusRescue";
 import "./task.css";
 
@@ -55,6 +57,62 @@ function useMyTasks() {
   return { data, error, loading, reload, setLoading };
 }
 
+type RowProps = {
+  item: MyTask;
+  group: GroupId;
+  now: Date;
+  onOpen: (item: MyTask) => void;
+  onMove: (item: MyTask, columnId: ColumnId) => void;
+  onCopy: (code: string) => void;
+};
+
+// Satu baris Task saya, dengan menu klik kanan (juga Shift+F10). Klik kiri membuka task.
+function MyTaskRow({ item, group, now, onOpen, onMove, onCopy }: RowProps) {
+  const t = item.task;
+  const late = t.due !== null && group !== "done" && (daysUntil(t.due, now) ?? 0) < 0;
+  const txt = TEKS_MENU.taskSaya;
+  const menu = useBoardMenu({
+    label: txt.menu(t.code),
+    items: boardMenuItems(
+      { id: "open", label: txt.buka, icon: <IconFileText size={16} />, onSelect: () => onOpen(item) },
+      submenu({
+        id: "move",
+        label: txt.pindahkan,
+        menuLabel: txt.pindahkanMenu(t.code),
+        icon: <IconArrowsMove size={16} />,
+        items: COLUMN_ORDER.map((col) => ({
+          id: col,
+          label: COLUMN_NAMES[col],
+          disabled: col === t.columnId && TEKS_MENU.kartu.sudahDiKolom,
+          onSelect: () => onMove(item, col),
+        })),
+      }),
+      { id: "copy", label: txt.salinKode(t.code), icon: <IconCopy size={16} />, onSelect: () => onCopy(t.code) },
+    ),
+  });
+  return (
+    <li data-rescue={`${item.projectId}-${t.id}`} {...menu.triggerProps}>
+      <button type="button" className="mt-row" onClick={() => onOpen(item)}>
+        <span className="mt-code">{t.code}</span>
+        <span className="mt-main">
+          <span className="mt-title">{t.title}</span>
+          <span className="mt-meta">
+            <span>{item.projectName}</span>
+            <span>{COLUMN_NAMES[t.columnId] ?? t.columnId}</span>
+          </span>
+        </span>
+        <span className="mt-side">
+          {t.due && <span className={`mt-due${late ? " td-late" : ""}`}>{dueLabel(t.due, now)}</span>}
+          {t.priority !== "none" && <PriorityChip priority={t.priority} />}
+        </span>
+      </button>
+      {menu.element}
+    </li>
+  );
+}
+
+type Failure = { title: string; message: string };
+
 // Halaman Task saya: task milik saya dari semua proyek, dikelompokkan menurut tenggat.
 export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
   const live = useMyTasks();
@@ -69,26 +127,54 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
   const open = groups.filter((g) => g.id !== "done");
   const done = groups.find((g) => g.id === "done");
 
+  // Pengumuman pembaca layar; `n` naik supaya kalimat yang sama tetap dibacakan.
+  const [say, setSay] = useState({ text: "", n: 0 });
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const { reload } = live;
+
+  const announce = useCallback((text: string) => setSay((prev) => ({ text, n: prev.n + 1 })), []);
+
+  const openItem = useCallback((item: MyTask) => onOpenTask(item.projectId, item.task.id), [onOpenTask]);
+
+  const move = useCallback(
+    async (item: MyTask, columnId: ColumnId) => {
+      const code = item.task.code;
+      try {
+        await boardApi.moveTask(item.projectId, item.task.id, columnId, 0);
+        setFailure(null);
+        announce(TEKS_MENU.taskSaya.dipindah(code, COLUMN_NAMES[columnId]));
+      } catch (err) {
+        setFailure({ title: TEKS_MENU.taskSaya.gagalPindah(code), message: toAppError(err).message });
+      }
+      void reload();
+    },
+    [announce, reload],
+  );
+
+  const copy = useCallback(
+    async (code: string) => {
+      try {
+        await navigator.clipboard.writeText(code);
+        setFailure(null);
+        announce(TEKS_MENU.kartu.disalin(code));
+      } catch {
+        setFailure({ title: TEKS_MENU.kartu.gagalSalin(code), message: TEKS_MENU.taskSaya.gagalSalinIsi });
+      }
+    },
+    [announce],
+  );
+
   function row(item: MyTask, group: GroupId) {
-    const t = item.task;
-    const late = t.due !== null && group !== "done" && (daysUntil(t.due, now) ?? 0) < 0;
     return (
-      <li key={`${item.projectId}-${t.id}`} data-rescue={`${item.projectId}-${t.id}`}>
-        <button type="button" className="mt-row" onClick={() => onOpenTask(item.projectId, t.id)}>
-          <span className="mt-code">{t.code}</span>
-          <span className="mt-main">
-            <span className="mt-title">{t.title}</span>
-            <span className="mt-meta">
-              <span>{item.projectName}</span>
-              <span>{COLUMN_NAMES[t.columnId] ?? t.columnId}</span>
-            </span>
-          </span>
-          <span className="mt-side">
-            {t.due && <span className={`mt-due${late ? " td-late" : ""}`}>{dueLabel(t.due, now)}</span>}
-            {t.priority !== "none" && <PriorityChip priority={t.priority} />}
-          </span>
-        </button>
-      </li>
+      <MyTaskRow
+        key={`${item.projectId}-${item.task.id}`}
+        item={item}
+        group={group}
+        now={now}
+        onOpen={openItem}
+        onMove={(i, col) => void move(i, col)}
+        onCopy={(code) => void copy(code)}
+      />
     );
   }
 
@@ -179,8 +265,20 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
         </h2>
         <span className="page-sub">Task yang ditugaskan ke Anda, dikumpulkan dari semua proyek.</span>
       </header>
+      <div className="sr-only mt-say" role="status" aria-live="polite">
+        <span key={say.n}>{say.text}</span>
+      </div>
       <div className="mt-layout">
-        <div className="mt-body">{list()}</div>
+        <div className="mt-body">
+          <div aria-live="polite">
+            {failure && (
+              <ErrorAlert title={failure.title}>
+                <p>{failure.message}</p>
+              </ErrorAlert>
+            )}
+          </div>
+          {list()}
+        </div>
         <aside className="mt-aside">
           <ReminderSettings />
         </aside>

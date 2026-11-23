@@ -1,0 +1,6 @@
+/* Pembungkus menu klik kanan board (useBoardMenu): hanya penangkap event
+   keyboard, tanpa kotak sendiri, supaya tata letak baris (misalnya grid
+   subtask) tidak berubah. */
+.bm-wrap {
+  display: contents;
+}

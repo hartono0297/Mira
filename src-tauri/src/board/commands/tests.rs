@@ -574,3 +574,109 @@ fn starting_a_timer_stops_my_timer_on_another_task() {
         .collect();
     assert_eq!(running, [0, 1]);
 }
+
+#[test]
+fn cards_carry_the_viewers_delete_right_and_running_timer() {
+    use crate::board::testutil::{Laptop, add_member, add_team, register_project};
+
+    let mut l = Laptop::founder("Sari");
+    let pk = |n: u8| format!("{n:02x}").repeat(32);
+    let (admin, budi, citra, guest) = (pk(1), pk(2), pk(3), pk(4));
+    add_member(&l.conn, &admin, "Admin", "member");
+    add_member(&l.conn, &budi, "Budi", "member");
+    add_member(&l.conn, &citra, "Citra", "member");
+    add_member(&l.conn, &guest, "Tamu", "guest");
+    let team = add_team(
+        &l.conn,
+        "Desain",
+        &[(&admin, "admin"), (&budi, "member"), (&citra, "member")],
+    );
+    let project = store::create_project_local(&mut l.conn, &l.id, "Situs Web", "WEB", Some(&team))
+        .unwrap()
+        .value;
+    register_project(
+        &l.conn,
+        &project.id,
+        Some(&team),
+        &l.pk(),
+        &[&admin, &budi, &citra, &guest],
+    );
+    // Budi creates the task (assigned to Citra) and starts a timer on it.
+    let at = clock::now_rfc3339();
+    let stamp = Stamp {
+        actor: &budi,
+        at: &at,
+    };
+    let task_id = store::commit_local(&mut l.conn, &l.id, &project.id, |d| {
+        let id = d.create_task(
+            stamp,
+            TaskInit {
+                title: "Spanduk".into(),
+                description: String::new(),
+                column: None,
+                assignee: Some(citra.clone()),
+                due: None,
+                priority: model::Priority::None,
+                labels: Vec::new(),
+            },
+        )?;
+        d.start_timer(stamp, &id)?;
+        Ok(id)
+    })
+    .unwrap()
+    .value;
+
+    let dir = LocalMembers::new(&l.id);
+    let actor = store::actor_of(&l.id);
+    let doc = store::load_doc(&l.conn, &project.id, &actor).unwrap();
+    let task = doc
+        .tasks()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.id == task_id)
+        .unwrap();
+    let view_as = |me: &str| -> (model::TaskCard, TaskDetail) {
+        let ctx = Ctx {
+            conn: &l.conn,
+            me,
+            policy: &LocalRolePolicy,
+            dir: &dir,
+        };
+        let board = ctx.board(&project, &doc).unwrap();
+        (board.columns[0].tasks[0].clone(), ctx.detail(&project, &task))
+    };
+
+    // (viewer, may delete, timer running)
+    for (who, delete, running) in [
+        (&budi, true, true),   // creator
+        (&admin, true, false), // department admin manages the project
+        (&citra, false, false),
+        (&guest, false, false),
+    ] {
+        let (card, detail) = view_as(who);
+        assert_eq!(card.can_delete, delete, "{who}");
+        assert_eq!(card.my_timer_running, running, "{who}");
+        assert_eq!(detail.card, card, "detail and board agree for {who}");
+        assert_eq!(detail.my_running_entry.is_some(), running, "{who}");
+    }
+
+    // JSON: one camelCase key each, in the card and the flattened detail.
+    let (card, detail) = view_as(&budi);
+    let json = serde_json::to_value(&card).unwrap();
+    assert_eq!(json["canDelete"], true);
+    assert_eq!(json["myTimerRunning"], true);
+    let text = serde_json::to_string(&detail).unwrap();
+    assert_eq!(text.matches("\"canDelete\"").count(), 1);
+    assert_eq!(text.matches("\"myTimerRunning\"").count(), 1);
+
+    // My tasks use the same rule.
+    let ctx = Ctx {
+        conn: &l.conn,
+        me: &citra,
+        policy: &LocalRolePolicy,
+        dir: &dir,
+    };
+    let mine = ctx.my_tasks(&actor).unwrap();
+    assert_eq!(mine.len(), 1);
+    assert!(!mine[0].task.can_delete && !mine[0].task.my_timer_running);
+}
