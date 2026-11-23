@@ -101,7 +101,7 @@ irm https://raw.githubusercontent.com/hartono0297/Mira/main/install.ps1 | iex
 
 Skrip [install.ps1](install.ps1) mencari rilis terbaru, mengunduh installer, mencocokkan checksum SHA-256 dengan yang dicatat GitHub, menutup Mira kalau sedang jalan, memasang tanpa jendela installer, lalu membuka Mira. Perintah yang sama dipakai untuk memperbarui. Data dan kunci laptop tidak tersentuh.
 
-Selama repositori masih privat, perintah ini hanya jalan di komputer yang punya token baca GitHub di variabel `MIRA_GITHUB_TOKEN`. Rekan kantor lain pakai cara manual di bawah.
+Perintah ini baru jalan setelah repositori dibuat publik, karena GitHub menolak mengunduh skrip dan installer dari repositori privat tanpa login. Selama masih privat, pakai cara manual di bawah.
 
 Cara manual:
 
