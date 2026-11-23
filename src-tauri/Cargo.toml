@@ -79,6 +79,16 @@ winreg = "0.56.0"
 
 # Argon2 dan BLAKE2 sangat lambat tanpa optimasi; tes dan `tauri dev` memakai
 # profil dev, jadi keduanya dioptimasi juga di sana (hanya dua crate ini).
+# Build harian dan tes: kode Mira hanya menyimpan nomor baris, dependensi
+# tanpa info debug. Folder target per worktree turun dari sekitar 8 GB ke
+# sekitar 3,6 GB (diukur 23 November 2026); stack trace tetap menunjuk
+# file dan baris. Profil release tidak berubah.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.dev.package.argon2]
 opt-level = 3
 
