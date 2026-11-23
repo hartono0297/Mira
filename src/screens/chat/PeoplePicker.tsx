@@ -173,7 +173,7 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
         <ul ref={chipsRef} className="pick-chips" aria-label="Orang yang dipilih">
           {chosen.map((p, i) => (
             <li key={p.publicKey} className="pick-chip">
-              <PersonName person={p} />
+              <PersonName person={p} plain />
               <button
                 type="button"
                 className="pick-chip-x"

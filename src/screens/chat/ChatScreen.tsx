@@ -8,12 +8,21 @@ import { NewChannelDialog } from "./NewChannelDialog";
 import { NewDirectDialog } from "./NewDirectDialog";
 import { NewGroupDialog } from "./NewGroupDialog";
 import { NotifySettings } from "./NotifySettings";
+import { PeopleLabelsProvider } from "./PeopleLabels";
 import { useChatLive } from "./useChatLive";
 import "./chat.css";
 
 type Open = "channel" | "group" | "direct" | "notify" | null;
 
 export function ChatScreen() {
+  return (
+    <PeopleLabelsProvider>
+      <ChatScreenInner />
+    </PeopleLabelsProvider>
+  );
+}
+
+function ChatScreenInner() {
   const live = useChatLive<ChatOverview>(chatApi.overview, "overview");
   const overview = live.data;
   const { reload, setData } = live;

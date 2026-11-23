@@ -120,7 +120,7 @@ describe("Grup: kepala dan daftar anggota", () => {
     chat.group.mockResolvedValue(groupViewAsMember());
     const { onChanged, onGone } = renderConv();
     const panel = await openMembers(user);
-    await within(panel).findByText("Penguji (Anda)");
+    await within(panel).findByText((_, el) => el?.classList.contains("nwl-name") === true && el.textContent === "Penguji (Anda)");
     expect(within(panel).queryByRole("button", { name: /^Keluarkan/ })).toBeNull();
     expect(within(panel).getAllByRole("listitem")[0]).toHaveTextContent("Pemilik grup");
     await user.click(within(panel).getByRole("button", { name: "Keluar dari grup" }));
@@ -162,7 +162,7 @@ describe("Grup: kepala dan daftar anggota", () => {
     expect(within(panel).getByText("Data grup rusak.")).toBeInTheDocument();
     chat.group.mockResolvedValue(groupView());
     await user.click(within(panel).getByRole("button", { name: "Coba lagi" }));
-    expect(await within(panel).findByText("Penguji (Anda)")).toBeInTheDocument();
+    expect(await within(panel).findByText((_, el) => el?.classList.contains("nwl-name") === true && el.textContent === "Penguji (Anda)")).toBeInTheDocument();
     // Tanpa data grup, Tambah orang tidak tampil sampai data datang.
     expect(screen.getByRole("button", { name: "Tambah orang" })).toBeInTheDocument();
   });

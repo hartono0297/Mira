@@ -2,6 +2,7 @@ import { IconCheck, IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PersonView } from "../../api/org";
 import { initials } from "../../components/initials";
+import { NameWithLabels } from "../../components/NameWithLabels";
 import "./people-picker.css";
 
 export type PeoplePickerProps = {
@@ -227,7 +228,7 @@ export function PeoplePicker({
                   </span>
                   <span className="pp-who">
                     <span id={`${id}-n`} className="pp-name">
-                      {p.displayName}
+                      <NameWithLabels name={p.displayName} labels={p.labels ?? []} />
                     </span>
                     <span id={`${id}-d`} className="pp-dept">
                       {groupName(p)}

@@ -113,7 +113,7 @@ describe("Percakapan: memuat dan menampilkan pesan", () => {
     renderConv();
     await screen.findByText("@Budi Uji");
     // m1 dan m2 (Sari, 09.12 dan 09.14): nama Sari hanya tampil sekali sebagai kepala.
-    expect(screen.getAllByText("Sari Uji", { selector: ".conv-author" })).toHaveLength(1);
+    expect(screen.getAllByText("Sari Uji", { selector: ".conv-author .nwl-name" })).toHaveLength(1);
   });
 
   it("kutipan balasan melompat ke pesan asli", async () => {
