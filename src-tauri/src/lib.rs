@@ -211,6 +211,7 @@ pub fn run() {
             join_commands::join_poll,
             join_commands::join_cancel,
             join_commands::join_resend,
+            join_commands::join_setup_mode,
             network_commands::get_network_status,
             network_commands::add_manual_address,
             network_commands::remove_manual_address,

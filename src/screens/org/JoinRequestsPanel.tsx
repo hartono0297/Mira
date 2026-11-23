@@ -13,9 +13,28 @@ import "./requests.css";
 
 const NOT_RECORDED = "Tidak tercatat";
 
-function systemText(r: JoinRequestView): string {
-  const parts = [r.os.trim(), r.appVersion.trim() ? `Mira ${r.appVersion.trim()}` : ""].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : NOT_RECORDED;
+// Teks kartu permintaan, dikumpulkan di satu tempat untuk terjemahan nanti.
+export const CARD_TEXT = {
+  department: "Departemen",
+  // Keterangan dan akun login ditulis oleh laptop peminta sendiri. Labelnya
+  // mengatakan itu, supaya admin tidak menganggapnya sudah diperiksa.
+  note: "Keterangan dari peminta (belum diperiksa)",
+  laptop: "Laptop",
+  account: "Akun login (dilaporkan laptop peminta)",
+  // Alasannya tidak ditebak dari versi Mira, karena versi itu juga laporan peminta.
+  accountNotSent: "Tidak dikirim",
+  ip: "Alamat IP",
+  os: "Sistem",
+  appVersion: "Versi Mira",
+  codeLabel: "Kode cocok",
+  verifyHint:
+    "Pastikan orangnya benar: telepon dia di nomor yang sudah Anda kenal, bukan nomor dari keterangan, atau datangi mejanya. Minta ia membacakan kode di layarnya, dan setujui hanya kalau kodenya sama.",
+} as const;
+
+// Isi bebas dari peminta: kosong atau hanya spasi dianggap tidak ada.
+function filled(s: string | null | undefined): string | null {
+  const t = s?.trim();
+  return t ? t : null;
 }
 
 function isIpv4(s: string): boolean {
@@ -273,6 +292,9 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
             const group = r.ip ? ipGroup(r.ip) : null;
             const sameGroup = group ? (perGroup.get(group) ?? []) : [];
             const approving = page.pending === `approve:${r.id}`;
+            const note = filled(r.note);
+            const laptop = filled(r.laptop);
+            const account = filled(r.account);
             return (
               <li key={r.id} className="req">
                 <div className="req-head">
@@ -319,34 +341,50 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                   </div>
                 </div>
 
+                {note && (
+                  <figure className="req-note">
+                    <figcaption className="req-note-label">{CARD_TEXT.note}</figcaption>
+                    <blockquote className="req-note-text" dir="auto">
+                      {note}
+                    </blockquote>
+                  </figure>
+                )}
+
                 <dl className="req-facts">
                   <div>
-                    <dt>Departemen</dt>
+                    <dt>{CARD_TEXT.department}</dt>
                     <dd>{r.teamName}</dd>
                   </div>
                   <div>
-                    <dt>Laptop</dt>
-                    <dd className={r.laptop.trim() ? "mono" : undefined}>{r.laptop.trim() || NOT_RECORDED}</dd>
+                    <dt>{CARD_TEXT.laptop}</dt>
+                    <dd className={laptop ? "mono" : undefined}>{laptop ?? NOT_RECORDED}</dd>
                   </div>
                   <div>
-                    <dt>Alamat IP</dt>
+                    <dt>{CARD_TEXT.account}</dt>
+                    <dd className={account ? "mono" : undefined}>
+                      {r.account == null ? CARD_TEXT.accountNotSent : (account ?? NOT_RECORDED)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>{CARD_TEXT.ip}</dt>
                     <dd className={r.ip ? "mono" : undefined}>{r.ip ?? NOT_RECORDED}</dd>
                   </div>
                   <div>
-                    <dt>Sistem</dt>
-                    <dd>{systemText(r)}</dd>
+                    <dt>{CARD_TEXT.os}</dt>
+                    <dd>{filled(r.os) ?? NOT_RECORDED}</dd>
+                  </div>
+                  <div>
+                    <dt>{CARD_TEXT.appVersion}</dt>
+                    <dd>{filled(r.appVersion) ?? NOT_RECORDED}</dd>
                   </div>
                 </dl>
 
                 <div className="req-match">
                   <div className="req-code-box">
-                    <span className="req-code-label">Kode cocok</span>
+                    <span className="req-code-label">{CARD_TEXT.codeLabel}</span>
                     <span className="req-code mono">{r.code}</span>
                   </div>
-                  <p className="req-match-text">
-                    Cocokkan dengan layar di laptop {r.displayName} sebelum menyetujui, lewat telepon atau datang ke
-                    mejanya.
-                  </p>
+                  <p className="req-match-text">{CARD_TEXT.verifyHint}</p>
                 </div>
 
                 {(r.seenByName || sameGroup.length >= 2) && (

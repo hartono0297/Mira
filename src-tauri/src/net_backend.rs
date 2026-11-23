@@ -104,6 +104,10 @@ pub struct MiraBackend {
     /// here is pushed to the other members right away instead of on the
     /// next periodic sync.
     net: OnceLock<Network>,
+    /// Test override of `extras` in `join_info` answers. `None`:
+    /// `JOIN_INFO_EXTRAS` when every member runs a recent enough Mira
+    /// (`permissions::join::join_extras_allowed`), 0 otherwise.
+    join_extras: Option<u32>,
 }
 
 impl MiraBackend {
@@ -111,7 +115,16 @@ impl MiraBackend {
         Self {
             state,
             net: OnceLock::new(),
+            join_extras: None,
         }
+    }
+
+    /// Answers `join_info` with this `extras` whatever the members run
+    /// (0: like Mira v0.3).
+    #[cfg(test)]
+    pub(crate) fn with_join_extras(mut self, extras: u32) -> Self {
+        self.join_extras = Some(extras);
+        self
     }
 
     pub fn attach(&self, net: Network) {
@@ -301,6 +314,11 @@ impl SyncBackend for MiraBackend {
                     name: d.name,
                 })
                 .collect(),
+            extras: self.join_extras.unwrap_or(if info.extras {
+                network::JOIN_INFO_EXTRAS
+            } else {
+                0
+            }),
         })
     }
 

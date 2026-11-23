@@ -722,6 +722,7 @@ mod tests {
                         id: "1".repeat(32),
                         name: "Keuangan".into(),
                     }],
+                    extras: crate::network::JOIN_INFO_EXTRAS,
                 },
             },
             Msg::JoinRequest {

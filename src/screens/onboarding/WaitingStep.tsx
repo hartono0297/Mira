@@ -4,6 +4,7 @@ import { formatDateTime } from "../../api/format";
 import { joinApi, type JoinDevice, type OutgoingJoinRequest } from "../../api/join";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { StepHeading } from "./StepHeading";
+import { WAITING } from "./texts";
 
 export const POLL_MS = 5_000;
 
@@ -87,23 +88,39 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
   // mark_join_sent menulis lastSentAt di setiap percobaan dan mengosongkan
   // lastError kalau ada laptop rekan yang menerima.
   const undelivered = Boolean(request.lastError);
+  // Akun login ikut permintaan hanya bersama keterangan (bentuk v0.4). Permintaan
+  // tanpa keterangan bisa berbentuk v0.3, jadi akunnya tidak diklaim terlihat admin.
+  const accountSent = Boolean(request.note) && Boolean(device?.account);
 
   return (
     <div className="onb-form">
       <StepHeading>Menunggu persetujuan</StepHeading>
       <p className="onb-lead">
-        Permintaan Anda sudah dikirim ke superadmin dan admin departemen {request.teamName}. Layar ini berganti sendiri
+        Permintaan Anda sudah dikirim ke admin kantor dan admin departemen {request.teamName}. Layar ini berganti sendiri
         begitu disetujui.
       </p>
 
       <div className="onb-box">
+        <p className="onb-label">{WAITING.adminSees}</p>
         <dl className="onb-kv">
           <dt>Nama</dt>
           <dd>{request.displayName}</dd>
           <dt>Departemen</dt>
           <dd>{request.teamName}</dd>
+          {request.note && (
+            <>
+              <dt>{WAITING.note}</dt>
+              <dd>{request.note}</dd>
+            </>
+          )}
           <dt>Laptop</dt>
           <dd className="mono">{device?.laptop ?? "belum terbaca"}</dd>
+          {accountSent && (
+            <>
+              <dt>{WAITING.account}</dt>
+              <dd className="mono">{device?.account}</dd>
+            </>
+          )}
           <dt>Kode cocok</dt>
           <dd>
             <span className="mono onb-match">{request.code}</span>
@@ -112,6 +129,12 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
           <dd className="mono">{request.orgFingerprint}</dd>
         </dl>
       </div>
+      {device?.account && !accountSent && (
+        <dl className="onb-kv">
+          <dt>{WAITING.accountFact}</dt>
+          <dd className="mono">{device.account}</dd>
+        </dl>
+      )}
       <p className="hint">
         Kalau admin bertanya, sebutkan kode cocok ini. Kode yang sama muncul di layarnya, jadi ia tahu yang disetujui
         memang laptop Anda.
@@ -139,7 +162,7 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
         <ul className="onb-list">
           <li>Mira boleh ditutup. Permintaan tersimpan dan dikirim ulang saat Mira dibuka lagi.</li>
           <li>Laptop penyetuju harus menyala dan tersambung ke jaringan yang sama.</li>
-          <li>Hubungi superadmin langsung dan sebutkan nama laptop Anda.</li>
+          <li>Hubungi admin kantor langsung dan sebutkan nama laptop Anda.</li>
         </ul>
       </div>
 
@@ -214,7 +237,7 @@ export function RejectedStep({ request, onResent, onSearch }: RejectedProps) {
         {when}.
       </p>
       <p className="onb-lead">
-        Tanyakan alasannya langsung ke {request.decidedByName ?? "superadmin"}. Kalau ternyata keliru, kirim permintaan
+        Tanyakan alasannya langsung ke {request.decidedByName ?? "admin kantor"}. Kalau ternyata keliru, kirim permintaan
         lagi. Permintaan baru mendapat kode cocok baru, jadi cocokkan lagi kodenya dengan penyetuju.
       </p>
 

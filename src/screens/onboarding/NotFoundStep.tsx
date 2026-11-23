@@ -1,4 +1,4 @@
-import { IconDeviceLaptop, IconKey, IconRefresh } from "@tabler/icons-react";
+import { IconChevronRight, IconDeviceLaptop, IconKey, IconRefresh } from "@tabler/icons-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { toAppError, type AppError } from "../../api";
 import { joinApi, type FoundOffice } from "../../api/join";
@@ -6,12 +6,13 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import type { SearchEnd } from "./SearchStep";
 import { StepHeading } from "./StepHeading";
+import { ADMIN_IT } from "./texts";
 
 type Props = {
   end: SearchEnd;
-  // Tautan "kantor baru" hanya kalau pencarian selesai tanpa kantor dan tanpa
-  // pengumuman organisasi apa pun. Diputuskan oleh Onboarding.
-  showNewOffice: boolean;
+  // Di sesi ini pernah terlihat kantor atau pengumuman kantor. Tombol
+  // kantor baru di bagian "Untuk admin IT" diganti penjelasan.
+  officeSeen: boolean;
   onOffices: (offices: FoundOffice[]) => void;
   onInvite: () => void;
   onSearchAgain: () => void;
@@ -22,11 +23,14 @@ const NO_OFFICE_AT_ADDRESS =
   "Tidak ada kantor yang menjawab dari alamat itu. Periksa alamatnya, dan pastikan Mira di laptop rekan sedang terbuka.";
 
 // (d) Kantor belum ditemukan: alamat laptop rekan, kode undangan, atau cari lagi.
-export function NotFoundStep({ end, showNewOffice, onOffices, onInvite, onSearchAgain, onNewOffice }: Props) {
+export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAgain, onNewOffice }: Props) {
   const [address, setAddress] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<AppError | null>(null);
   const [connecting, setConnecting] = useState(false);
+  // Bagian "Untuk admin IT" tertutup sampai dibuka. Isinya baru dipasang saat
+  // terbuka, jadi tombol kantor baru tidak ada di pohon aksesibilitas.
+  const [adminOpen, setAdminOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const hintId = useId();
@@ -73,7 +77,7 @@ export function NotFoundStep({ end, showNewOffice, onOffices, onInvite, onSearch
       <StepHeading>{searched ? "Kantor belum ditemukan" : "Cari kantor dengan cara lain"}</StepHeading>
       {searched ? (
         <p className="onb-lead">
-          Tidak ada organisasi Mira yang terlihat di jaringan ini. Ini biasa terjadi kalau Anda tersambung lewat VPN,
+          Tidak ada kantor Mira yang terlihat di jaringan ini. Ini biasa terjadi kalau Anda tersambung lewat VPN,
           atau memakai Wi-Fi tamu yang terpisah dari jaringan kantor.
         </p>
       ) : (
@@ -139,7 +143,7 @@ export function NotFoundStep({ end, showNewOffice, onOffices, onInvite, onSearch
         <IconKey size={22} aria-hidden="true" />
         <span>
           <span className="onb-choice-title">Pakai kode undangan</span>
-          <span className="onb-choice-desc">Kode dari superadmin atau admin departemen.</span>
+          <span className="onb-choice-desc">Kode dari admin kantor atau admin departemen.</span>
         </span>
       </button>
 
@@ -150,16 +154,33 @@ export function NotFoundStep({ end, showNewOffice, onOffices, onInvite, onSearch
         </button>
       </div>
 
-      {showNewOffice && (
-        <>
-          <hr className="onb-sep" />
-          <p className="hint">
-            <button type="button" className="link-btn" onClick={onNewOffice} disabled={connecting}>
-              Siapkan Mira untuk kantor baru (khusus superadmin)
-            </button>
-          </p>
-        </>
-      )}
+      <details className="onb-fold" open={adminOpen}>
+        <summary
+          onClick={(e) => {
+            e.preventDefault();
+            setAdminOpen((v) => !v);
+          }}
+        >
+          <IconChevronRight size={16} className="onb-fold-chev" aria-hidden="true" />
+          {ADMIN_IT.summary}
+        </summary>
+        {adminOpen && (
+          <div className="onb-fold-body">
+            {officeSeen ? (
+              <p className="hint">{ADMIN_IT.officeSeen}</p>
+            ) : (
+              <>
+                <p className="hint">{ADMIN_IT.explain}</p>
+                <div>
+                  <button type="button" className="btn btn-ghost" onClick={onNewOffice} disabled={connecting}>
+                    {ADMIN_IT.button}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </details>
     </div>
   );
 }

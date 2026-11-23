@@ -1,10 +1,11 @@
-// Data contoh untuk uji layar bergabung (Onboarding v0.3).
+// Data contoh untuk uji layar bergabung (Onboarding v0.3 dan v0.4).
 import type { FoundOffice, JoinDevice, JoinSearch, OutgoingJoinRequest } from "../../api/join";
 
 export const device: JoinDevice = {
   laptop: "LAPTOP-DESAIN-03",
   os: "Windows 11",
-  appVersion: "0.3.0",
+  appVersion: "0.4.0",
+  account: "desain03",
   addresses: ["192.168.1.23"],
 };
 
@@ -21,6 +22,7 @@ export function office(overrides: Partial<FoundOffice> = {}): FoundOffice {
     peerCount: 2,
     conflict: false,
     sameName: false,
+    acceptsNote: true,
     ...overrides,
   };
 }
@@ -39,6 +41,7 @@ export function outgoing(overrides: Partial<OutgoingJoinRequest> = {}): Outgoing
     teamId: "t-des",
     teamName: "Desain",
     displayName: "Rina",
+    note: null,
     createdAt: "2026-11-23T09:00:00Z",
     status: "pending",
     decidedByName: null,

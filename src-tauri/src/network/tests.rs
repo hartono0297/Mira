@@ -784,6 +784,7 @@ fn join_info_sample() -> JoinInfoWire {
                 name: "Gudang".into(),
             },
         ],
+        extras: crate::network::JOIN_INFO_EXTRAS,
     }
 }
 

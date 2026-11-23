@@ -318,6 +318,8 @@ mod tests {
             code: "ABCD EFGH".into(),
             ip: Some("192.168.1.20".into()),
             seen_by_name: Some("Budi".into()),
+            note: None,
+            account: None,
         }
     }
 

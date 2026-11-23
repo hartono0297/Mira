@@ -5,7 +5,7 @@ import type { AppState, OrgInfo } from "../../api";
 import type { JoinRequestView, OrgOverview } from "../../api/org";
 import { appState, directory, router } from "../../test/fixtures";
 import { adminOverview, joinRequest, memberOverview, overview, TEAM_2 } from "../../test/orgFixtures";
-import { ipGroup } from "./JoinRequestsPanel";
+import { CARD_TEXT, ipGroup } from "./JoinRequestsPanel";
 import { OrgScreen } from "./OrgScreen";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -45,6 +45,12 @@ function card(name: string): HTMLElement {
   return screen.getByRole("heading", { name }).closest("li") as HTMLElement;
 }
 
+// Isi <dd> untuk label <dt> di kartu.
+function fact(cardEl: HTMLElement, label: string): HTMLElement {
+  const dt = within(cardEl).getByText(label, { selector: "dt" });
+  return dt.nextElementSibling as HTMLElement;
+}
+
 function calls(cmd: string) {
   return invoke.mock.calls.filter(([c]) => c === cmd).map(([, args]) => args);
 }
@@ -58,7 +64,10 @@ const RINA = joinRequest("r1", "Rina", {
   code: "4F2A 91C0",
   seenByName: "Andi",
   requestedAt: "2026-11-23T01:55:00Z",
+  note: "Drafter baru di proyek Gedung B, nomor karyawan 0412.",
+  account: "rina.w",
 });
+// Permintaan dari Mira v0.3: tanpa keterangan dan akun login.
 const FAJAR = joinRequest("r2", "Fajar", {
   teamId: TEAM_2,
   teamName: "Drafting",
@@ -68,6 +77,8 @@ const FAJAR = joinRequest("r2", "Fajar", {
   code: "7KQ2 X0M9",
   seenByName: null,
   requestedAt: "2026-11-22T00:00:00Z",
+  note: null,
+  account: null,
 });
 
 beforeEach(() => {
@@ -96,15 +107,43 @@ describe("Permintaan bergabung: tampilan", () => {
     expect(within(rina).getByText("Desain")).toBeInTheDocument();
     expect(within(rina).getByText("LAPTOP-DESAIN-03")).toHaveClass("mono");
     expect(within(rina).getByText("192.168.1.23")).toHaveClass("mono");
-    expect(within(rina).getByText("Windows 11 24H2, Mira 0.3.0")).toBeInTheDocument();
+    expect(fact(rina, "Sistem")).toHaveTextContent("Windows 11 24H2");
+    expect(fact(rina, "Versi Mira")).toHaveTextContent("0.3.0");
+    // Akun login dan keterangan diisi oleh laptop peminta sendiri: labelnya
+    // mengatakan itu, supaya admin tidak menganggapnya sudah diperiksa Mira.
+    expect(CARD_TEXT.account).toBe("Akun login (dilaporkan laptop peminta)");
+    expect(fact(rina, CARD_TEXT.account)).toHaveTextContent("rina.w");
+    expect(fact(rina, CARD_TEXT.account)).toHaveClass("mono");
+    // Label keterangan dibacakan sekali: figcaption memberi nama figure (browser
+    // menurunkannya sendiri; jsdom belum), kutipannya tanpa nama sendiri.
+    expect(CARD_TEXT.note).toBe("Keterangan dari peminta (belum diperiksa)");
+    expect(within(rina).getAllByText(CARD_TEXT.note)).toHaveLength(1);
+    const noteFigure = within(rina).getByRole("figure");
+    expect(within(noteFigure).getByText(CARD_TEXT.note, { selector: "figcaption" })).toBeInTheDocument();
+    const noteQuote = within(noteFigure).getByRole("blockquote");
+    expect(noteQuote).toHaveTextContent("Drafter baru di proyek Gedung B, nomor karyawan 0412.");
+    expect(noteQuote).not.toHaveAttribute("aria-labelledby");
+    expect(noteQuote).toHaveAttribute("dir", "auto");
     expect(within(rina).getByText("4F2A 91C0")).toBeInTheDocument();
-    expect(within(rina).getByText(/Cocokkan dengan layar di laptop Rina sebelum menyetujui/)).toBeInTheDocument();
+    expect(within(rina).getByText(CARD_TEXT.verifyHint)).toBeInTheDocument();
+    // Petunjuk verifikasi tidak boleh mengarahkan admin ke nomor dari keterangan:
+    // keterangan ditulis peminta, jadi bisa berisi nomor milik penipu.
+    expect(CARD_TEXT.verifyHint).toBe(
+      "Pastikan orangnya benar: telepon dia di nomor yang sudah Anda kenal, bukan nomor dari keterangan, atau datangi mejanya. Minta ia membacakan kode di layarnya, dan setujui hanya kalau kodenya sama.",
+    );
     expect(within(rina).getByText("Diterima lewat laptop Andi")).toBeInTheDocument();
 
     const fajar = card("Fajar");
     expect(within(fajar).getByText("kemarin")).toBeInTheDocument();
     expect(within(fajar).getByText("Drafting")).toBeInTheDocument();
     expect(within(fajar).getByText("Tidak tercatat")).toBeInTheDocument();
+    // Mira v0.3 tidak mengirim keterangan dan akun: tanpa label kosong.
+    expect(within(fajar).queryByText(CARD_TEXT.note)).not.toBeInTheDocument();
+    expect(within(fajar).queryByRole("figure")).not.toBeInTheDocument();
+    expect(within(fajar).queryByRole("blockquote")).not.toBeInTheDocument();
+    expect(fact(fajar, CARD_TEXT.account)).toHaveTextContent("Tidak dikirim");
+    expect(fact(fajar, CARD_TEXT.account)).not.toHaveClass("mono");
+    expect(within(fajar).getByText(CARD_TEXT.verifyHint)).toBeInTheDocument();
     expect(within(fajar).getByText("7KQ2 X0M9")).toBeInTheDocument();
     expect(within(fajar).queryByText(/Diterima lewat laptop/)).not.toBeInTheDocument();
 
@@ -113,6 +152,42 @@ describe("Permintaan bergabung: tampilan", () => {
     expect(names).toEqual(["Rina", "Fajar"]);
     // IP berbeda atau kosong: tidak ada tombol tolak massal.
     expect(screen.queryByRole("button", { name: /Tolak semua dari/ })).not.toBeInTheDocument();
+  });
+
+  it("keterangan tampil sebagai teks apa adanya; keterangan kosong dan akun kosong ditangani", async () => {
+    const tricky = joinRequest("r3", "Dewi", {
+      note: '<img src=x onerror="alert(1)"> ' + "A".repeat(300),
+      account: "  ",
+    });
+    const blank = joinRequest("r4", "Eko", { note: "   ", account: "eko" });
+    setup([tricky, blank]);
+    await openTab();
+
+    const dewi = await screen.findByRole("heading", { name: "Dewi" }).then((h) => h.closest("li") as HTMLElement);
+    const quote = within(within(dewi).getByRole("figure")).getByRole("blockquote");
+    expect(quote).toHaveTextContent('<img src=x onerror="alert(1)">');
+    expect(quote.querySelector("img")).toBeNull();
+    expect(quote).toHaveClass("req-note-text");
+    // Akun dikirim tapi kosong: bukan versi lama.
+    expect(fact(dewi, CARD_TEXT.account)).toHaveTextContent("Tidak tercatat");
+
+    const eko = card("Eko");
+    expect(within(eko).queryByText(CARD_TEXT.note)).not.toBeInTheDocument();
+    expect(fact(eko, CARD_TEXT.account)).toHaveTextContent("eko");
+  });
+
+  it("akun tidak dikirim: tertulis netral, tanpa menebak alasannya dari versi yang dilaporkan peminta", async () => {
+    const without = (id: string, name: string, appVersion: string) =>
+      joinRequest(id, name, { appVersion, note: null, account: null, ip: null });
+    setup([without("v1", "Gita", "0.3.9"), without("v2", "Hadi", "0.4.0"), without("v3", "Kiki", "versi-uji")]);
+    await openTab();
+    await screen.findByRole("heading", { name: "Gita" });
+
+    expect(CARD_TEXT.accountNotSent).toBe("Tidak dikirim");
+    for (const name of ["Gita", "Hadi", "Kiki"]) {
+      expect(fact(card(name), CARD_TEXT.account).textContent).toBe(CARD_TEXT.accountNotSent);
+    }
+    expect(screen.queryByText(/versi lama/)).not.toBeInTheDocument();
   });
 
   it("memuat", async () => {
@@ -142,7 +217,7 @@ describe("Permintaan bergabung: tampilan", () => {
 
   it("anggota biasa tidak melihat tab Permintaan bergabung", async () => {
     setup([RINA], memberOverview());
-    expect(await screen.findByRole("button", { name: "Undangan" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Anggota" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Permintaan bergabung/ })).not.toBeInTheDocument();
     expect(calls("org_join_requests")).toHaveLength(0);
   });

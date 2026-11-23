@@ -340,7 +340,7 @@ try {
   const ov = await must("A", "org_overview");
   check("org_overview A: pendingJoinCount 0", ov.pendingJoinCount === 0, String(ov.pendingJoinCount));
 
-  // B bukan superadmin: tab Anggota, tanpa Pengguna dan Label.
+  // B bukan superadmin: tab Anggota saja, tanpa halaman admin (v0.4).
   await reload("B");
   await openOrg("B");
   // Tab dan daftar dimuat sesudah judul; tunggu dulu supaya tidak membaca layar yang masih kosong.
@@ -348,8 +348,8 @@ try {
   await pg("B").locator("main").getByText("Drafter").first().waitFor({ timeout: 15000 }).catch(() => {});
   const bTabs = await pg("B").locator("nav.org-tabs-wrap button").allInnerTexts();
   check(
-    "B (Anggota) melihat tab Anggota, tidak melihat Pengguna dan Label",
-    bTabs.includes("Anggota") && !bTabs.includes("Pengguna") && !bTabs.includes("Label"),
+    "B (Anggota) melihat tab Anggota, tidak melihat Pengguna, Departemen, Label, dan Permintaan bergabung",
+    bTabs.includes("Anggota") && !bTabs.some((t) => /^(Pengguna|Departemen|Label|Permintaan bergabung)/.test(t)),
     JSON.stringify(bTabs),
   );
   const bPeople = await pg("B").locator("main").innerText();

@@ -1,10 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 // Fokus pindah ke judul setiap ganti langkah, supaya pengguna keyboard dan
 // pembaca layar tahu isi layar sudah berganti.
 export function StepHeading({ children }: { children: string }) {
   const ref = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     ref.current?.focus();
   }, []);
   return (

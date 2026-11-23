@@ -889,6 +889,45 @@ mod tests {
                 id: "1".repeat(32),
                 name: "Keuangan".into(),
             }],
+            extras: super::super::JOIN_INFO_EXTRAS,
+        }
+    }
+
+    #[test]
+    fn join_info_extras_is_optional_both_ways() {
+        // v0.4 writes `extras` only when set.
+        let v04 = serde_json::to_value(info()).unwrap();
+        assert_eq!(v04["extras"], 1);
+        let v03_shape = JoinInfoWire {
+            extras: 0,
+            ..info()
+        };
+        let v03 = serde_json::to_value(&v03_shape).unwrap();
+        assert!(v03.get("extras").is_none());
+        // A v0.3 answer (no field) parses as 0.
+        let parsed: JoinInfoWire = serde_json::from_value(v03).unwrap();
+        assert_eq!(parsed, v03_shape);
+        // What a v0.3 laptop parses: the same struct without the field and
+        // without `deny_unknown_fields`, so the v0.4 answer still parses.
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct V03Info {
+            org: super::super::OrgRecord,
+            fingerprint: String,
+            departments: Vec<super::super::JoinDept>,
+        }
+        assert!(serde_json::from_value::<V03Info>(v04.clone()).is_ok());
+        // And through the frame decoder.
+        let frame = serde_json::to_vec(&wire::Msg::JoinInfo { info: info() }).unwrap();
+        match wire::decode(&frame).unwrap() {
+            wire::Msg::JoinInfo { info: i } => assert_eq!(i.extras, 1),
+            other => panic!("{other:?}"),
+        }
+        let mut old = serde_json::to_value(wire::Msg::JoinInfo { info: info() }).unwrap();
+        old["info"].as_object_mut().unwrap().remove("extras");
+        match wire::decode(&serde_json::to_vec(&old).unwrap()).unwrap() {
+            wire::Msg::JoinInfo { info: i } => assert_eq!(i.extras, 0),
+            other => panic!("{other:?}"),
         }
     }
 

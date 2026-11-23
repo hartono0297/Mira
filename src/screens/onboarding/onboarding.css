@@ -491,3 +491,75 @@
     padding: 22px 18px 24px;
   }
 }
+
+/* (b) Ringkasan nama dari langkah 1, dengan tombol kembali ke langkah itu. */
+.onb-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 14px;
+}
+
+.onb-summary-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.onb-summary-btn {
+  min-height: 44px;
+  padding: 0 6px;
+  border-radius: 8px;
+}
+
+.onb-summary-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+/* (d) Bagian lipat "Untuk admin IT": jarang dipakai, jadi tenang dan di paling bawah. */
+.onb-fold {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.onb-fold summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 8px;
+  margin-left: -8px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+  cursor: pointer;
+  list-style: none;
+}
+
+.onb-fold summary::-webkit-details-marker {
+  display: none;
+}
+
+.onb-fold summary:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.onb-fold-chev {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.onb-fold[open] .onb-fold-chev {
+  transform: rotate(90deg);
+}
+
+.onb-fold-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 0 2px;
+}

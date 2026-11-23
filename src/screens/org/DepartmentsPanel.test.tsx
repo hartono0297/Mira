@@ -103,12 +103,11 @@ describe("Departemen: keadaan", () => {
     expect(screen.getByRole("button", { name: "Departemen baru" })).toBeInTheDocument();
   });
 
-  it("kosong untuk bukan superadmin menyebut siapa yang membuat", async () => {
+  it("bukan superadmin tidak melihat tab Departemen (v0.4: halaman admin saja)", async () => {
     setup({ org_departments: [lanskap] }, memberOverview());
-    await openTab();
-    expect(await screen.findByText("Belum ada departemen. Superadmin yang membuat departemen.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Departemen baru" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Diarsipkan/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Anggota" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Departemen$/ })).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("org_departments", expect.anything());
   });
 
   it("error menampilkan pesan Rust, Coba lagi memuat ulang", async () => {
@@ -152,15 +151,6 @@ describe("Departemen: daftar", () => {
     expect(screen.getByText("Diarsipkan (1)")).toBeInTheDocument();
   });
 
-  it("bukan superadmin melihat daftar tanpa tombol aksi dan tanpa bagian Diarsipkan", async () => {
-    setup({}, memberOverview());
-    await openTab();
-    const table = await screen.findByRole("table", { name: "Departemen aktif" });
-    expect(within(table).queryAllByRole("button")).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: "Departemen baru" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Diarsipkan/)).not.toBeInTheDocument();
-    expect(invoke).not.toHaveBeenCalledWith("org_people", undefined);
-  });
 });
 
 describe("Departemen: buat", () => {

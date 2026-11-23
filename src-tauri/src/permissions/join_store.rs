@@ -28,9 +28,10 @@ use super::actions::JoinAcceptedData;
 use super::fold::{MemberStatus, OrgState};
 use super::format::{format_time, is_lower_hex, parse_time};
 use super::join::{
-    JOIN_REQUEST_VALIDITY, JOIN_REQUEST_VERSION, JoinRequestPayload, SignedJoinRequest,
-    VerifiedJoinRequest, org_fingerprint, org_fingerprint_short, request_code, request_id,
-    sign_join_request, verify_join_request,
+    JOIN_NOTE_MAX_CHARS, JOIN_REQUEST_VALIDITY, JOIN_REQUEST_VERSION, JoinExtras,
+    JoinRequestPayload, SignedJoinRequest, VerifiedJoinRequest, is_valid_join_account,
+    is_valid_join_note, join_extras_allowed, org_fingerprint, org_fingerprint_short, request_code,
+    request_id, sign_join_request, verify_join_request,
 };
 use super::op::{Body, CLOCK_SLACK, MAX_CLOCK_AHEAD, SignedOp, verify_op};
 use super::store::{
@@ -95,6 +96,8 @@ pub struct OutgoingJoinRequest {
     pub team_id: String,
     pub team_name: String,
     pub display_name: String,
+    /// v0.4: the note signed in the request, if any.
+    pub note: Option<String>,
     pub created_at: String,
     pub status: OutgoingStatus,
     pub decided_by_name: Option<String>,
@@ -157,21 +160,57 @@ fn internal(e: impl std::fmt::Display) -> AppError {
 
 // ----- Requester side ------------------------------------------------------
 
+/// The note as typed: trimmed, blank means none. Too long or with control
+/// or invisible characters is an error the person can fix.
+fn clean_note(note: Option<&str>) -> AppResult<Option<String>> {
+    let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) else {
+        return Ok(None);
+    };
+    if note.chars().count() > JOIN_NOTE_MAX_CHARS {
+        return Err(AppError::InvalidInput(format!(
+            "Keterangan paling banyak {JOIN_NOTE_MAX_CHARS} karakter."
+        )));
+    }
+    if !is_valid_join_note(note) {
+        return Err(AppError::InvalidInput(
+            "Keterangan berisi karakter yang tidak diizinkan, misalnya baris baru, tab, karakter tak terlihat, atau tanda diakritik bertumpuk.".into(),
+        ));
+    }
+    Ok(Some(note.to_owned()))
+}
+
+/// The login name read from the system, trimmed. Left out when it does not
+/// fit the request format: the person cannot change it, so it is no reason
+/// to refuse the request.
+fn clean_account(account: Option<&str>) -> Option<String> {
+    account
+        .map(str::trim)
+        .filter(|a| is_valid_join_account(a))
+        .map(str::to_owned)
+}
+
 /// Signs a new request for `target` and keeps it in `join_outbox`,
 /// replacing any earlier one. Needs a display name and no organization.
 /// The genesis record in `target` must be valid; the request is pinned to
 /// it.
+///
+/// `extras` (v0.4) adds the note and login name. Pass `None` for an office
+/// with v0.3 members: they refuse requests that carry either field. With
+/// both empty the request has the v0.3 shape anyway.
 pub fn create_join_request(
     conn: &mut Connection,
     identity: &Identity,
     target: &JoinTarget,
     device: &DeviceProfile,
+    extras: Option<&JoinExtras>,
     now: OffsetDateTime,
 ) -> AppResult<OutgoingJoinRequest> {
     let name = identity
         .display_name()
         .ok_or(AppError::NameRequired)?
         .to_owned();
+    let note = clean_note(extras.and_then(|e| e.note.as_deref()))?;
+    let account = clean_account(extras.and_then(|e| e.account.as_deref()));
     let org = &target.org;
     if org::validate_org_record(org).is_err()
         || !org.verify_genesis()
@@ -195,6 +234,8 @@ pub fn create_join_request(
         laptop: device.laptop.clone(),
         os: device.os.clone(),
         app_version: device.app_version.clone(),
+        note,
+        account,
         at: format_time(now),
         nonce: random_hex16(),
     };
@@ -290,6 +331,7 @@ pub fn outgoing_join_request(conn: &Connection) -> AppResult<Option<OutgoingJoin
         team_id: row.team_id,
         team_name: row.team_name,
         display_name: parsed.name,
+        note: parsed.note,
         created_at: row.created_at,
         status: if row.status == "rejected" {
             OutgoingStatus::Rejected
@@ -440,6 +482,10 @@ pub struct JoinInfo {
     /// `XXXX-XXXX`, from the genesis record.
     pub fingerprint: String,
     pub departments: Vec<JoinDepartment>,
+    /// v0.4: requests with `note` and `account` are taken here
+    /// ([`join_extras_allowed`]).
+    #[serde(default)]
+    pub extras: bool,
 }
 
 /// Organization record and open departments, sorted by name. `None` when
@@ -471,6 +517,7 @@ pub fn join_info(conn: &Connection) -> AppResult<Option<JoinInfo>> {
     });
     Ok(Some(JoinInfo {
         fingerprint: org_fingerprint_short(&state.org),
+        extras: join_extras_allowed(&state),
         org: state.org,
         departments,
     }))
@@ -493,13 +540,18 @@ pub enum JoinRequestRefusal {
     Removed,
     /// Too many pending requests on this laptop or from this address.
     Busy,
+    /// v0.4 fields (`note`, `account`) while some member of the office
+    /// still runs an older Mira ([`join_extras_allowed`]).
+    ExtrasNotAccepted,
 }
 
 impl JoinRequestRefusal {
     pub fn code(self) -> &'static str {
         match self {
             JoinRequestRefusal::NotMember => "not_member",
-            JoinRequestRefusal::Invalid => "invalid_request",
+            JoinRequestRefusal::Invalid | JoinRequestRefusal::ExtrasNotAccepted => {
+                "invalid_request"
+            }
             JoinRequestRefusal::WrongKey => "wrong_key",
             JoinRequestRefusal::Expired => "request_expired",
             JoinRequestRefusal::TeamNotFound => "team_not_found",
@@ -527,6 +579,9 @@ impl JoinRequestRefusal {
             }
             JoinRequestRefusal::Busy => {
                 "Terlalu banyak permintaan bergabung yang menunggu. Coba lagi nanti atau hubungi superadmin."
+            }
+            JoinRequestRefusal::ExtrasNotAccepted => {
+                "Kantor ini masih punya laptop Mira versi lama. Kirim ulang permintaan tanpa keterangan."
             }
         }
     }
@@ -772,6 +827,11 @@ pub fn receive_join_request(
     if !state.is_active_non_guest(me) {
         return Err(JoinRequestRefusal::NotMember);
     }
+    // Members on an older Mira would refuse the forwarded request and the
+    // `join_approve` op that carries it.
+    if req.payload.has_extras() && !join_extras_allowed(&state) {
+        return Err(JoinRequestRefusal::ExtrasNotAccepted);
+    }
     prune_join_requests(&tx, &state, now).map_err(|_| JoinRequestRefusal::Busy)?;
     if admissible(&state, &req, now)? {
         let ip = ip.map(|ip| ip.to_canonical().to_string());
@@ -951,6 +1011,7 @@ pub fn ingest_join_records(
         });
     }
     prune_join_requests(&tx, &state, now)?;
+    let extras_ok = join_extras_allowed(&state);
     let mut out = JoinIngest::default();
     for body in bodies {
         let Ok(record) = serde_json::from_str::<JoinRecord>(body) else {
@@ -965,6 +1026,11 @@ pub fn ingest_join_records(
             out.rejected += 1;
             continue;
         };
+        // Not stored while the gate is closed here (see
+        // `receive_join_request`); offered again on the next sync.
+        if req.payload.has_extras() && !extras_ok {
+            continue;
+        }
         let seen = &record.seen;
         let seen_at_ok = parse_time(&seen.at).is_some_and(|at| {
             at <= now + MAX_CLOCK_AHEAD && at + JOIN_REQUEST_VALIDITY + CLOCK_SLACK >= now
@@ -1016,6 +1082,10 @@ pub struct JoinRequestView {
     /// self-reported).
     pub ip: Option<String>,
     pub seen_by_name: Option<String>,
+    /// v0.4, from the signed request; `None` for a v0.3 request.
+    pub note: Option<String>,
+    /// v0.4: the requester's login name, from the signed request.
+    pub account: Option<String>,
 }
 
 struct PendingRow {
@@ -1085,6 +1155,8 @@ pub fn pending_join_requests(
             laptop: p.laptop,
             os: p.os,
             app_version: p.app_version,
+            note: p.note,
+            account: p.account,
             requested_at: p.at,
             received_at: row.received_at,
             ip: row.ip,

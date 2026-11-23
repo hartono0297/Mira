@@ -89,6 +89,19 @@ fn request(
     team: &str,
     at: time::OffsetDateTime,
 ) -> (String, String) {
+    request_with(sim, who, name, team, at, None, None)
+}
+
+/// Same with the v0.4 fields `note` and `account`.
+fn request_with(
+    sim: &Sim,
+    who: &Actor,
+    name: &str,
+    team: &str,
+    at: time::OffsetDateTime,
+    note: Option<&str>,
+    account: Option<&str>,
+) -> (String, String) {
     let p = JoinRequestPayload {
         v: 1,
         org: sim.org.id.clone(),
@@ -99,6 +112,8 @@ fn request(
         laptop: "LAPTOP-DESAIN-03".into(),
         os: "Windows 11".into(),
         app_version: "0.3.0".into(),
+        note: note.map(str::to_owned),
+        account: account.map(str::to_owned),
         at: format_time(at),
         nonce: rand_hex16(),
     };
@@ -473,6 +488,52 @@ fn join_approve_admits_with_name_department_and_device() {
     assert!(decision.approved);
     assert_eq!(decision.by, w.admin_d.pk);
     assert_order_free(&w.sim);
+}
+
+#[test]
+fn join_approve_with_note_and_account_admits() {
+    let mut w = world();
+    let x = Actor::new();
+    let req = request_with(
+        &w.sim,
+        &x,
+        "Lestari",
+        &w.desain,
+        w.sim.now,
+        Some("Staf gudang, NIK 1234"),
+        Some("lestari"),
+    );
+    assert!(req.0.contains("\"note\":\"Staf gudang, NIK 1234\""));
+    assert_eq!(w.sim.push(&w.admin_d, approve(&req)), Ok(()));
+    let s = w.sim.state();
+    assert!(s.is_active(&x.pk));
+    assert_eq!(dept(&s, &x), Some(w.desain.clone()));
+    assert_order_free(&w.sim);
+    // A request whose note breaks the format does not even pass the op
+    // format check (`verify_op` refuses it).
+    let y = Actor::new();
+    let bad = request_with(
+        &w.sim,
+        &y,
+        "Yudi",
+        &w.desain,
+        w.sim.now,
+        Some("baris\nbaru"),
+        None,
+    );
+    let p = w.sim.payload(
+        &w.admin_d,
+        w.sim.lamport + 1,
+        crate::permissions::Scope::Org,
+        approve(&bad),
+    );
+    let signed = Sim::sign(&w.admin_d, &p);
+    assert_eq!(
+        crate::permissions::verify_op(&signed, &w.sim.org.id, w.sim.now)
+            .unwrap_err()
+            .code,
+        "bad_format"
+    );
 }
 
 #[test]
@@ -1120,6 +1181,8 @@ fn request_for_a_copy_of_the_organization_is_rejected() {
         laptop: "L".into(),
         os: "Windows 11".into(),
         app_version: "0.3.0".into(),
+        note: None,
+        account: None,
         at: format_time(w.sim.now),
         nonce: rand_hex16(),
     };
