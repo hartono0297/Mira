@@ -193,6 +193,30 @@ fn founder_gets_profile_op_and_derived_tables() {
 }
 
 #[test]
+fn device_profile_is_published_once_after_create_and_again_at_startup() {
+    // create_organization publishes the device (join_commands::publish_device)
+    // and the next start calls ensure_device_op again: one op, not two.
+    let mut f = Node::founder("Sari");
+    let dev = p::DeviceProfile {
+        laptop: "LAPTOP-SARI".into(),
+        os: "Windows 11".into(),
+        app_version: "0.3.0".into(),
+    };
+    assert!(p::ensure_device_op(&mut f.conn, &f.id, &dev, now()).unwrap().is_some());
+    let ops = f.op_ids().len();
+    assert_eq!(p::ensure_device_op(&mut f.conn, &f.id, &dev, now()).unwrap(), None);
+    assert_eq!(f.op_ids().len(), ops);
+    // A new version is published once.
+    let newer = p::DeviceProfile {
+        app_version: "0.3.1".into(),
+        ..dev
+    };
+    assert!(p::ensure_device_op(&mut f.conn, &f.id, &newer, now()).unwrap().is_some());
+    assert_eq!(p::ensure_device_op(&mut f.conn, &f.id, &newer, now()).unwrap(), None);
+    assert_eq!(f.op_ids().len(), ops + 1);
+}
+
+#[test]
 fn tahap_0_org_gets_profile_op_at_startup() {
     let mut f = Node::founder("Sari");
     f.conn.execute("DELETE FROM org_ops", []).unwrap();
