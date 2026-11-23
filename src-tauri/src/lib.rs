@@ -275,6 +275,8 @@ pub fn run() {
             chat::commands::chat_group_remove,
             chat::commands::chat_group_leave,
             chat::commands::chat_group_rename,
+            chat::commands::chat_project,
+            chat::commands::chat_set_folded,
             updater::update_info,
             updater::update_check,
             updater::update_download,

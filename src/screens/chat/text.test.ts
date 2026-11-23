@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { budi, channel, dm, message, ME, penguji, sari } from "./conversationTestData";
+import { budi, channel, dm, group, message, ME, penguji, project, sari } from "./conversationTestData";
 import {
   baseName,
+  conversationTarget,
   conversationTitle,
   dayLabel,
   deliveryLine,
@@ -71,6 +72,19 @@ describe("judul dan cakupan", () => {
     expect(scopeLabel(channel({ scope: { kind: "team", id: "t", name: "Keuangan" } }))).toBe("Departemen Keuangan");
     expect(scopeLabel(channel())).toBe("Proyek Gedung A");
     expect(scopeLabel(dm())).toBe("Pesan pribadi");
+  });
+
+  it("chat proyek: nama proyek tanpa #, cakupan Proyek", () => {
+    expect(conversationTitle(project())).toBe("Gedung Alfa");
+    expect(scopeLabel(project())).toBe("Proyek");
+  });
+
+  it("sasaran tulis: chat proyek memakai kata Proyek, yang lain sama dengan judul", () => {
+    expect(conversationTarget(project())).toBe("Proyek Gedung Alfa");
+    expect(conversationTarget(project({ name: "Proyek Pameran" }))).toBe("Proyek Pameran");
+    expect(conversationTarget(channel())).toBe("#proyek-a");
+    expect(conversationTarget(group())).toBe("Persiapan pameran");
+    expect(conversationTarget(dm())).toBe("Sari Uji");
   });
 });
 

@@ -37,6 +37,8 @@ const MAX_INGEST_PASSES: usize = 8;
 
 /// Setting key for notifications: `all` (default), `mentions`, `off`.
 pub const NOTIFY_SETTING: &str = "chat.notify";
+/// Folded sidebar sections, comma separated (v0.4).
+pub const FOLDED_SETTING: &str = "chat.folded";
 /// Longest text in a notification.
 pub const NOTIFY_TEXT_CHARS: usize = 120;
 
@@ -506,7 +508,9 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
             continue;
         };
         let sender = ctx.dir.name(&m.author);
-        let title = if info.is_channel() {
+        let title = if info.is_project_chat() {
+            format!("{sender} di {}", project_label(&info.scope_name))
+        } else if info.is_channel() {
             format!("{sender} di #{}", info.name)
         } else if info.is_group() {
             format!("{sender} di {}", info.name)
@@ -521,6 +525,19 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
     }
     fx.notifications.extend(out);
     Ok(())
+}
+
+/// "Proyek Alfa"; a name that already starts with "Proyek" is kept as it is
+/// (same as `conversationTarget` in `src/screens/chat/text.ts`).
+pub(crate) fn project_label(name: &str) -> String {
+    let starts = name
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("proyek "));
+    if starts {
+        name.to_owned()
+    } else {
+        format!("Proyek {name}")
+    }
 }
 
 pub(crate) fn notification_body(text: &str, files: usize) -> String {

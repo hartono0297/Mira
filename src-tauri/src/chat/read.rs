@@ -11,7 +11,8 @@ use super::store::envelope::ACKED;
 use super::view::{
     ChannelScopeView, ChatSection, ConversationEvent, ConversationKind, ConversationSummary,
     DeliveryState, FileState, FileView, GroupMemberView, GroupView, MessageStatus, MessageView,
-    Person, ReceiptView, ReplyPreview, ScopeKind, truncate_chars,
+    Person, ProjectChatMember, ProjectChatView, ReceiptView, ReplyPreview, ScopeKind,
+    truncate_chars,
 };
 use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
 use crate::error::{AppError, AppResult};
@@ -105,6 +106,12 @@ pub fn post_blocked(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
         };
         return Ok(Some(text.into()));
     }
+    if info.archived && info.is_project_chat() {
+        return Ok(Some(
+            "Chat proyek ini diarsipkan di versi lama Mira. Pengelola proyek bisa mengembalikannya dari menu di atas."
+                .into(),
+        ));
+    }
     if info.archived {
         return Ok(Some(
             "Channel ini diarsipkan. Kembalikan dulu sebelum mengirim pesan.".into(),
@@ -180,6 +187,8 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
         id: info.conv.clone(),
         kind: if info.is_group() {
             ConversationKind::Group
+        } else if info.is_project_chat() {
+            ConversationKind::Project
         } else if info.is_channel() {
             ConversationKind::Channel
         } else {
@@ -189,9 +198,12 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
         locked: info.locked,
         former,
         member_count,
-        name: peer
-            .as_ref()
-            .map_or_else(|| info.name.clone(), |p| p.name.clone()),
+        name: match &peer {
+            Some(p) => p.name.clone(),
+            // The project's own name, not the `#channel` form.
+            None if info.is_project_chat() => info.scope_name.clone(),
+            None => info.name.clone(),
+        },
         scope: scope_view(info),
         peer,
         is_umum: info.scope == Scope::Umum,
@@ -203,8 +215,10 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
         last_preview,
         can_post: blocked.is_none(),
         post_blocked_reason: blocked,
-        can_archive: admin,
-        can_delete: admin,
+        // A project chat lives as long as its project (v0.4). Restoring an
+        // archive made by v0.3 stays possible.
+        can_archive: admin && (!info.is_project_chat() || info.archived),
+        can_delete: admin && !info.is_project_chat(),
         can_lock: can_lock(ctx, info),
     })
 }
@@ -676,6 +690,37 @@ pub fn message_view(
         mine,
         status,
         can_delete: !row.deleted && (mine || (!facts.direct && facts.admin)),
+    })
+}
+
+/// The members of a project chat: the project's members now (the board is
+/// the source of truth), sorted by name.
+pub fn project_chat_view(ctx: &Ctx, info: &ConvInfo) -> AppResult<ProjectChatView> {
+    let Scope::Project(project) = &info.scope else {
+        return Err(AppError::Internal("Percakapan ini bukan chat proyek.".into()));
+    };
+    let me = ctx.me();
+    let mut members = Vec::new();
+    for pk in ctx.audience(info)? {
+        members.push(ProjectChatMember {
+            person: person(&ctx.dir, &pk),
+            me: pk == me,
+            manager: ctx.projects.is_manager(ctx.conn, project, &pk)?,
+        });
+    }
+    members.sort_by(|a, b| {
+        a.person
+            .name
+            .cmp(&b.person.name)
+            .then_with(|| a.person.public_key.cmp(&b.person.public_key))
+    });
+    Ok(ProjectChatView {
+        conv: info.conv.clone(),
+        project_id: project.clone(),
+        name: info.scope_name.clone(),
+        members,
+        can_manage: ctx.projects.is_manager(ctx.conn, project, me)?,
+        former: !ctx.in_audience(info, me)?,
     })
 }
 

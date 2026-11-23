@@ -294,6 +294,19 @@ fn channel_admin(ctx: &Ctx, rec: &VerifiedRecord, st: Standing, conv: &str) -> A
     if info.scope == Scope::Umum {
         return Ok(forbidden("#umum tidak bisa diarsipkan atau dihapus"));
     }
+    // v0.4: a project's chat lives as long as the project. Its conversation
+    // id is fixed, so a deleted one could never come back. Restoring an
+    // archive made by v0.3 is still taken.
+    if info.is_project_chat()
+        && matches!(
+            rec.body(),
+            Body::ChannelDelete { .. } | Body::ChannelArchive { archived: true, .. }
+        )
+    {
+        return Ok(forbidden(
+            "chat proyek ikut proyeknya dan tidak bisa diarsipkan atau dihapus",
+        ));
+    }
     admin_rights(ctx, &info, rec.author(), st)
 }
 

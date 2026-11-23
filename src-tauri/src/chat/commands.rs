@@ -13,7 +13,7 @@ use super::runtime::ChatRuntime;
 use super::sync::ChatSync;
 use super::view::{
     ChatOverview, ConversationSummary, ConversationView, FileView, GroupView, MessageView,
-    NewChannelScope, NotifyMode, ReceiptView,
+    NewChannelScope, NotifyMode, ProjectChatView, ReceiptView,
 };
 use crate::error::{AppError, AppResult};
 
@@ -248,6 +248,12 @@ pub async fn chat_file_download(rt: State<'_, ChatRuntime>, hash: String) -> App
     run(&rt, move |c| c.file_view(&hash)).await
 }
 
+/// Sidebar sections folded on this laptop (v0.4).
+#[tauri::command]
+pub async fn chat_set_folded(rt: State<'_, ChatRuntime>, sections: Vec<String>) -> AppResult<()> {
+    run(&rt, move |c| c.set_folded(&sections)).await
+}
+
 #[tauri::command]
 pub async fn chat_set_notify(rt: State<'_, ChatRuntime>, mode: NotifyMode) -> AppResult<()> {
     run(&rt, move |c| c.set_notify(mode)).await
@@ -283,6 +289,12 @@ pub async fn chat_create_group(
 #[tauri::command]
 pub async fn chat_group(rt: State<'_, ChatRuntime>, conv: String) -> AppResult<GroupView> {
     run(&rt, move |c| c.group(&conv)).await
+}
+
+/// Members of a project chat (v0.4); they are changed on the board.
+#[tauri::command]
+pub async fn chat_project(rt: State<'_, ChatRuntime>, conv: String) -> AppResult<ProjectChatView> {
+    run(&rt, move |c| c.project_chat(&conv)).await
 }
 
 #[tauri::command]

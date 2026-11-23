@@ -454,6 +454,13 @@ impl ConvInfo {
         matches!(self.scope, Scope::Group(_))
     }
 
+    /// The built-in chat of a board project (`ch:<project id>`, v0.4: shown
+    /// as a group of the project's members). A v0.2 `channel_create` with a
+    /// project scope stays an ordinary channel.
+    pub fn is_project_chat(&self) -> bool {
+        matches!(self.scope, Scope::Project(_)) && !self.created
+    }
+
     pub fn is_direct(&self) -> bool {
         matches!(self.scope, Scope::Direct(..))
     }

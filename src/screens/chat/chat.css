@@ -93,6 +93,12 @@
   flex-direction: column;
 }
 
+/* display: flex di atas menimpa [hidden] bawaan browser, jadi bagian yang dilipat disembunyikan
+   di sini. */
+.chat-sec-body[hidden] {
+  display: none;
+}
+
 .chat-rows {
   list-style: none;
   margin: 0;
@@ -277,11 +283,6 @@
 .chat-fold:hover {
   background: var(--hover);
   color: var(--text);
-}
-
-/* Bagian yang berisi percakapan terbuka tidak bisa dilipat (lihat title tombolnya). */
-.chat-fold[aria-disabled="true"] {
-  cursor: default;
 }
 
 .chat-fold-title {

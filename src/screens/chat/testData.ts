@@ -6,6 +6,7 @@ export const PK_B = "b".repeat(64);
 export const PK_C = "c".repeat(64);
 export const TEAM_1 = "1".repeat(32);
 export const PROJ_1 = "2".repeat(32);
+export const PROJ_2 = "7".repeat(32);
 
 export const REKAN_B: Person = { publicKey: PK_B, name: "Rekan Bayu" };
 export const REKAN_C: Person = { publicKey: PK_C, name: "Rekan Citra" };
@@ -13,6 +14,7 @@ export const REKAN_C: Person = { publicKey: PK_C, name: "Rekan Citra" };
 export const UMUM_ID = `ch:${"f".repeat(32)}`;
 export const TIM_ID = `ch:${"9".repeat(32)}`;
 export const PROYEK_ID = `ch:${PROJ_1}`;
+export const PROYEK_CHAT_ID = `ch:${PROJ_2}`;
 export const LAMA_ID = `ch:${"8".repeat(32)}`;
 export const DM_B_ID = `dm:${ME}:${PK_B}`;
 export const GRUP_ID = `gr:${"3".repeat(32)}`;
@@ -73,6 +75,15 @@ export const PENGUMUMAN = summary(PENGUMUMAN_ID, "pengumuman", {
   canPost: false,
   postBlockedReason: "Hanya superadmin yang bisa menulis di channel ini.",
 });
+// Chat bawaan proyek (v0.4): tampil seperti grup, selalu di bagian Proyek.
+export const PROYEK_CHAT = summary(PROYEK_CHAT_ID, "Gudang Baru", {
+  kind: "project",
+  scope: { kind: "project", id: PROJ_2, name: "Gudang Baru" },
+  section: "proyek",
+  memberCount: 4,
+  canArchive: false,
+  canDelete: false,
+});
 // Proyek yang saya sudah bukan anggotanya lagi: tetap tampil di akhir bagiannya.
 export const BEKAS = summary(BEKAS_ID, "proyek-lama", {
   scope: { kind: "project", id: "5".repeat(32), name: "Lama" },
@@ -100,6 +111,7 @@ export function overview(extra: Partial<ChatOverview> = {}): ChatOverview {
     projects: [{ id: PROJ_1, name: "Alfa", teamId: TEAM_1 }],
     otherProjects: 0,
     notify: "all",
+    folded: [],
     ...extra,
   };
 }

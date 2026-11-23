@@ -30,6 +30,38 @@ pub enum ChatSection {
     Pribadi,
 }
 
+impl ChatSection {
+    pub const ALL: [ChatSection; 5] = [
+        ChatSection::Umum,
+        ChatSection::Departemen,
+        ChatSection::Proyek,
+        ChatSection::Grup,
+        ChatSection::Pribadi,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ChatSection::Umum => "umum",
+            ChatSection::Departemen => "departemen",
+            ChatSection::Proyek => "proyek",
+            ChatSection::Grup => "grup",
+            ChatSection::Pribadi => "pribadi",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.as_str() == s)
+    }
+
+    /// Known sections among `names`, unique, in display order.
+    pub fn known(names: &[String]) -> Vec<ChatSection> {
+        Self::ALL
+            .into_iter()
+            .filter(|c| names.iter().any(|n| ChatSection::parse(n) == Some(*c)))
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelScopeView {
@@ -43,6 +75,8 @@ pub struct ChannelScopeView {
 pub enum ConversationKind {
     Channel,
     Group,
+    /// The built-in chat of a project (v0.4).
+    Project,
     Dm,
 }
 
@@ -135,6 +169,8 @@ pub struct ChatOverview {
     /// Registered projects this laptop's person is not in.
     pub other_projects: u32,
     pub notify: NotifyMode,
+    /// Sidebar sections folded on this laptop (v0.4), in display order.
+    pub folded: Vec<ChatSection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -160,6 +196,28 @@ pub struct GroupView {
     pub can_add: bool,
     pub can_rename: bool,
     pub can_leave: bool,
+    pub former: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectChatMember {
+    pub person: Person,
+    pub me: bool,
+    /// Project manager on the board (may change the project's members).
+    pub manager: bool,
+}
+
+/// Members of a project chat: the project's members now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectChatView {
+    pub conv: String,
+    pub project_id: String,
+    pub name: String,
+    /// Sorted by name.
+    pub members: Vec<ProjectChatMember>,
+    pub can_manage: bool,
     pub former: bool,
 }
 

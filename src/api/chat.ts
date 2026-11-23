@@ -18,9 +18,11 @@ export const CHAT_SECTIONS: ChatSection[] = ["umum", "departemen", "proyek", "gr
 
 export type ConversationSummary = {
   id: string; // "ch:<32 hex>", "gr:<32 hex>", atau "dm:<kunci>:<kunci>"
-  kind: "channel" | "group" | "dm";
+  // "project" (v0.4): chat bawaan sebuah proyek. Tampil seperti grup, anggotanya selalu anggota
+  // proyek, dan selalu di bagian Proyek. Channel buatan v0.2 untuk proyek tetap "channel".
+  kind: "channel" | "group" | "project" | "dm";
   section: ChatSection;
-  name: string; // nama channel tanpa "#", nama grup, atau nama rekan untuk chat pribadi
+  name: string; // nama channel tanpa "#", nama grup, nama proyek, atau nama rekan untuk chat pribadi
   scope: ChannelScope | null; // null untuk chat pribadi
   peer: Person | null; // rekan di chat pribadi
   isUmum: boolean;
@@ -64,6 +66,8 @@ export type ChatOverview = {
   projects: { id: string; name: string; teamId: string | null }[]; // proyek yang saya ikuti
   otherProjects: number; // proyek terdaftar yang bukan milik saya (untuk catatan di bagian Proyek)
   notify: NotifyMode;
+  // Bagian sidebar yang dilipat, disimpan di database laptop ini (v0.4). Urut CHAT_SECTIONS.
+  folded: ChatSection[];
 };
 
 export type GroupMemberView = {
@@ -86,6 +90,22 @@ export type GroupView = {
   canRename: boolean;
   canLeave: boolean;
   former: boolean; // saya bukan anggota lagi
+};
+
+export type ProjectChatMember = {
+  person: Person;
+  me: boolean;
+  manager: boolean; // pengelola proyek di board (yang bisa mengubah anggota proyek)
+};
+
+// Anggota chat proyek: sama dengan anggota proyek di board, dihitung ulang setiap dibuka.
+export type ProjectChatView = {
+  conv: string;
+  projectId: string;
+  name: string; // nama proyek
+  members: ProjectChatMember[]; // urut nama
+  canManage: boolean; // saya pengelola proyek: bisa mengubah anggota lewat Board
+  former: boolean; // saya bukan anggota proyek lagi
 };
 
 // Kejadian di grup ("Rina membuat grup ini dan menambahkan Dimas dan Sari."), diselipkan
@@ -187,9 +207,12 @@ export const chatApi = {
   fileDownload: (hash: string) => call<FileView>("chat_file_download", { hash }),
   setNotify: (mode: NotifyMode) => call<null>("chat_set_notify", { mode }),
   setMuted: (conv: string, muted: boolean) => call<null>("chat_set_muted", { conv, muted }),
+  // Bagian sidebar yang dilipat di laptop ini. Nilai yang tidak dikenal dibuang inti Rust.
+  setFolded: (sections: ChatSection[]) => call<null>("chat_set_folded", { sections }),
   // Superadmin: channel Umum hanya-baca untuk selain superadmin.
   setLocked: (conv: string, locked: boolean) => call<null>("chat_set_locked", { conv, locked }),
-  // Grup (bukan Tamu). members: kunci publik, tanpa saya.
+  // Grup (bukan Tamu). members: kunci publik, tanpa saya. Boleh kosong (v0.4): grup berisi
+  // pembuatnya saja, anggota ditambah belakangan.
   createGroup: (name: string, members: string[]) =>
     call<ConversationSummary>("chat_create_group", { name, members }),
   group: (conv: string) => call<GroupView>("chat_group", { conv }),
@@ -198,6 +221,8 @@ export const chatApi = {
   groupRemove: (conv: string, member: string) => call<null>("chat_group_remove", { conv, member }),
   groupLeave: (conv: string) => call<null>("chat_group_leave", { conv }),
   groupRename: (conv: string, name: string) => call<null>("chat_group_rename", { conv, name }),
+  // Chat proyek (kind "project"): anggota proyek sekarang. Anggota diubah lewat Board.
+  projectChat: (conv: string) => call<ProjectChatView>("chat_project", { conv }),
 };
 
 // Berlangganan perubahan chat: event `mira://feature` dengan topik "chat".

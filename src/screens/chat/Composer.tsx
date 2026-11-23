@@ -16,7 +16,7 @@ import { useNetworkOptional, validStatus } from "../shell/NetworkContext";
 import {
   authorName,
   baseName,
-  conversationTitle,
+  conversationTarget,
   filterMembers,
   formatSize,
   mentionQuery,
@@ -47,6 +47,8 @@ function usePeerOffline(summary: ConversationSummary): boolean {
 
 function blockedReason(summary: ConversationSummary): string {
   if (summary.postBlockedReason) return summary.postBlockedReason;
+  // Chat proyek tidak bisa diarsipkan lagi (v0.4); yang lama mungkin masih diarsipkan.
+  if (summary.archived && summary.kind === "project") return "Chat proyek ini diarsipkan, jadi pesan baru tidak bisa dikirim.";
   if (summary.archived) return "Channel ini diarsipkan. Kembalikan dari arsip untuk mengirim pesan.";
   return "Anda tidak bisa mengirim pesan di percakapan ini.";
 }
@@ -56,13 +58,13 @@ const KEPT = "Pesan baru tidak dikirim lagi ke laptop Anda; pesan lama tetap ter
 // Percakapan yang saya sudah bukan anggotanya lagi: alasan menurut bagiannya.
 export function formerText(summary: ConversationSummary): string {
   if (summary.kind === "group" || summary.section === "grup") return `Anda sudah tidak ada di grup ini. ${KEPT}`;
-  if (summary.section === "proyek") return `Anda sudah bukan anggota proyek ini. ${KEPT}`;
+  if (summary.kind === "project" || summary.section === "proyek") return `Anda sudah bukan anggota proyek ini. ${KEPT}`;
   if (summary.section === "departemen") return `Anda sudah pindah dari departemen ini. ${KEPT}`;
   return `Anda sudah bukan anggota channel ini. ${KEPT}`;
 }
 
 export function Composer({ summary, me, members, replyTo, onCancelReply, onSent, inputRef }: Props) {
-  const title = conversationTitle(summary);
+  const title = conversationTarget(summary);
   const [text, setText] = useState("");
   const [files, setFiles] = useState<PickedFile[]>([]);
   const [sending, setSending] = useState(false);

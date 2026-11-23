@@ -7,6 +7,9 @@
 // arsipkan dan kembalikan channel, atur notifikasi, ambil screenshot terang dan
 // gelap, restart, dan pastikan semuanya tetap tersimpan.
 //
+// v0.4: buat grup yang hanya berisi pembuatnya, lipat bagian Grup (dicek dengan CSS
+// sungguhan, bukan hanya atribut), dan pastikan lipatan bertahan setelah restart.
+//
 // Pakai:  node scripts/chat-e2e.mjs <path mira.exe> <folder screenshot> [folder induk data]
 // Folder data dibuat di bawah folder induk (bawaan: folder temp) dan dihapus di akhir.
 // Build dulu: npx tauri build --debug --no-bundle
@@ -60,7 +63,21 @@ const sel = {
   confirmDelete: (dlg) => dlg.getByRole("button", { name: /^Hapus pesan$/ }),
   notifyMentions: (dlg) => dlg.getByRole("radio", { name: /menyebut saya/i }),
   close: (dlg) => dlg.getByRole("button", { name: /^Tutup$/ }),
+  groupRow: (page, name) => sel.list(page).getByRole("button", { name: new RegExp(`^Grup ${name}(,|$)`) }),
+  // Juga baris di bagian terlipat (tersembunyi), untuk memastikan barisnya ada tapi tidak terlihat.
+  groupRowAny: (page, name) =>
+    sel.list(page).getByRole("button", { name: new RegExp(`^Grup ${name}(,|$)`), includeHidden: true }),
+  section: (page, title) => sel.list(page).getByRole("region", { name: title, exact: true }),
+  foldBtn: (page, title) => sel.section(page, title).locator("button.chat-fold"),
+  sectionBody: (page, title) => sel.section(page, title).locator(".chat-sec-body"),
 };
+
+// Keadaan lipat sebuah bagian menurut tampilan sungguhan: tombol, atribut, dan CSS.
+async function foldState(page, title) {
+  const expanded = await sel.foldBtn(page, title).getAttribute("aria-expanded");
+  const display = await sel.sectionBody(page, title).evaluate((el) => getComputedStyle(el).display);
+  return { expanded, display };
+}
 
 const TEXT = {
   first: "Selamat pagi tim, ini pesan uji pertama.",
@@ -69,6 +86,8 @@ const TEXT = {
   reply: "Ini balasan untuk pesan pertama.",
   channelMsg: "Halo proyek A, channel ini untuk koordinasi.",
   toDelete: "Pesan ini akan dihapus.",
+  soloGroup: "Catatan Rina",
+  soloMsg: "Catatan pribadi di grup yang hanya berisi saya.",
 };
 
 function miraCredentials() {
@@ -80,6 +99,9 @@ function miraCredentials() {
   }
 }
 const credentialsBefore = miraCredentials();
+// Kunci laptop uji milik skrip ini. Di akhir hanya kunci ini yang dihapus, supaya kunci uji skrip
+// lain yang berjalan bersamaan (sesi lain di PC yang sama) tidak ikut hilang.
+let ownKey = null;
 
 const results = [];
 function check(name, ok, detail = "") {
@@ -201,7 +223,9 @@ try {
   await sel.emptyConv(page).waitFor({ timeout: 10000 });
   check("#umum terpilih otomatis dan menampilkan keadaan kosong", umumCurrent === "true", `aria-current=${umumCurrent}`);
   await shot(page, "t2-01-chat-kosong-terang.png");
-  const umumId = (await overview(page)).conversations.find((c) => c.isUmum)?.id;
+  const firstOverview = await overview(page);
+  ownKey = `device-key-${firstOverview.me}.id.mira.desktop`;
+  const umumId = firstOverview.conversations.find((c) => c.isUmum)?.id;
   check("Ringkasan chat berisi #umum", !!umumId, umumId ?? "tidak ada");
 
   // 3. Kirim dengan Enter, status Menunggu, pesan banyak baris dengan Shift+Enter.
@@ -340,6 +364,49 @@ try {
   await sel.close(nDlg).click();
   await nDlg.waitFor({ state: "hidden", timeout: 10000 });
 
+  // 9b. v0.4: grup tanpa anggota lain, lalu lipat bagian Grup.
+  await sel.list(page).getByRole("button", { name: "Grup baru", exact: true }).click();
+  const gDlg = sel.dialog(page, "Grup baru");
+  await gDlg.waitFor({ timeout: 10000 });
+  await gDlg.getByLabel("Nama grup").fill(TEXT.soloGroup);
+  const createGroupBtn = gDlg.getByRole("button", { name: /^Buat grup$/ });
+  const lockedBefore = await createGroupBtn.getAttribute("aria-disabled");
+  await createGroupBtn.click();
+  await gDlg.waitFor({ state: "hidden", timeout: 10000 });
+  await sel.conv(page, TEXT.soloGroup).waitFor({ timeout: 10000 });
+  const solo = (await overview(page)).conversations.find((c) => c.kind === "group" && c.name === TEXT.soloGroup);
+  check(
+    "Grup bisa dibuat tanpa memilih orang dan berisi pembuatnya saja",
+    lockedBefore !== "true" && solo?.memberCount === 1 && solo?.section === "grup" && solo?.canPost === true,
+    solo ? `anggota=${solo.memberCount}, bagian=${solo.section}, tombol terkunci=${lockedBefore}` : "grup tidak ada",
+  );
+  await sendWithEnter(page, TEXT.soloMsg);
+  const soloMsgs = solo ? await messagesIn(page, solo.id) : [];
+  check(
+    "Pesan tersimpan di grup satu orang",
+    soloMsgs.some((m) => m.text === TEXT.soloMsg),
+    `${soloMsgs.length} pesan`,
+  );
+
+  // Bagian Grup berisi percakapan yang sedang dibuka, dan tetap bisa dilipat.
+  await sel.foldBtn(page, "Grup").click();
+  const folded = await foldState(page, "Grup");
+  const rowCount = await sel.groupRowAny(page, TEXT.soloGroup).count();
+  const rowVisible = await sel.groupRowAny(page, TEXT.soloGroup).isVisible();
+  check(
+    "Bagian Grup terlipat: panah tertutup, isi tersembunyi menurut CSS, baris tidak terlihat",
+    rowCount === 1 && folded.expanded === "false" && folded.display === "none" && !rowVisible,
+    `baris=${rowCount}, aria-expanded=${folded.expanded}, display=${folded.display}, baris terlihat=${rowVisible}`,
+  );
+  const umumOpen = await foldState(page, "Umum");
+  check(
+    "Bagian lain tetap terbuka",
+    umumOpen.expanded === "true" && umumOpen.display !== "none" && (await sel.row(page, "umum").isVisible()),
+    `Umum aria-expanded=${umumOpen.expanded}, display=${umumOpen.display}`,
+  );
+  await sel.conv(page, TEXT.soloGroup).waitFor({ timeout: 5000 });
+  await sel.list(page).screenshot({ path: join(shots, "v04-01-grup-terlipat.png") });
+
   // 10. Mode gelap.
   await setTheme(page, "Gelap");
   await openConv(page, "umum");
@@ -355,6 +422,21 @@ try {
   page = app.page;
   await sel.nav(page, "Chat").click({ timeout: 20000 });
   await sel.list(page).waitFor({ timeout: 10000 });
+  const afterRestart = await foldState(page, "Grup");
+  check(
+    "Setelah restart bagian Grup tetap terlipat",
+    afterRestart.expanded === "false" && afterRestart.display === "none",
+    `aria-expanded=${afterRestart.expanded}, display=${afterRestart.display}`,
+  );
+  await sel.foldBtn(page, "Grup").click();
+  const reopened = await foldState(page, "Grup");
+  await sel.groupRow(page, TEXT.soloGroup).click({ timeout: 10000 });
+  await sel.message(page, TEXT.soloMsg).waitFor({ timeout: 10000 });
+  check(
+    "Bagian Grup dibuka lagi dan pesan grup satu orang tetap ada",
+    reopened.expanded === "true" && reopened.display !== "none",
+    `aria-expanded=${reopened.expanded}, display=${reopened.display}`,
+  );
   await openConv(page, "umum");
   await sel.message(page, TEXT.reply).waitFor({ timeout: 10000 });
   const umumText = await sel.log(page).textContent();
@@ -381,7 +463,9 @@ try {
   }
 }
 
-for (const target of miraCredentials()) {
+// Kunci publik belum terbaca (gagal sangat awal): kembali ke cara lama, semua kunci baru.
+const ownTargets = ownKey ? [ownKey] : [...miraCredentials()].filter((t) => !credentialsBefore.has(t));
+for (const target of ownTargets) {
   if (!credentialsBefore.has(target)) {
     try {
       execFileSync("cmdkey", [`/delete:${target}`], { stdio: "ignore" });

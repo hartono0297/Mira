@@ -14,7 +14,7 @@ import { Composer } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
 import { messageDomId } from "./MessageItem";
 import { buildTimeline, mergeEvents, MessageList } from "./MessageList";
-import { conversationTitle, mergeMessages, messagePreview } from "./text";
+import { conversationTarget, conversationTitle, mergeMessages, messagePreview } from "./text";
 import { useChatLive } from "./useChatLive";
 import "./conversation.css";
 
@@ -276,8 +276,8 @@ function ConversationPanel({ summary, me, onChanged, onGone }: ConversationProps
     body = (
       <p className="conv-state">
         {summary.canPost
-          ? `Belum ada pesan di ${title}. Tulis pesan pertama di kolom bawah.`
-          : `Belum ada pesan di ${title}.`}
+          ? `Belum ada pesan di ${conversationTarget(summary)}. Tulis pesan pertama di kolom bawah.`
+          : `Belum ada pesan di ${conversationTarget(summary)}.`}
       </p>
     );
   } else {

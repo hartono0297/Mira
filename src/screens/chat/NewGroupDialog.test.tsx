@@ -45,7 +45,11 @@ describe("Dialog Grup baru", () => {
     expect(visibleNames()).toEqual(["Budi Uji", "Dimas Uji", "Sari Uji", "Wulan Uji"]);
     expect(await screen.findByRole("button", { name: "Drafting" })).toBeInTheDocument();
     expect(box(/Dimas Uji/).closest("label")).toHaveTextContent("Desain");
-    expect(screen.getByText("Belum ada yang dipilih. Tamu tidak bisa dimasukkan ke grup.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Belum ada yang dipilih. Grup bisa dibuat berisi Anda saja, lalu tambah orang belakangan. Tamu tidak bisa dimasukkan ke grup.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("cari nama di semua departemen", async () => {
@@ -94,16 +98,28 @@ describe("Dialog Grup baru", () => {
     expect(box(/Dimas Uji/)).toBeChecked();
   });
 
-  it("tanpa nama atau tanpa orang: pesan di kolom, API tidak dipanggil", async () => {
+  it("tanpa nama: pesan di kolom, API tidak dipanggil", async () => {
     const user = userEvent.setup();
     renderDialog();
     const submit = screen.getByRole("button", { name: "Buat grup" });
     expect(submit).toHaveAttribute("aria-disabled", "true");
     await user.click(submit);
     expect(screen.getByText("Isi nama grup.")).toBeInTheDocument();
-    expect(screen.getByText("Pilih minimal satu orang.")).toBeInTheDocument();
+    expect(screen.queryByText("Pilih minimal satu orang.")).toBeNull();
     expect(screen.getByLabelText("Nama grup")).toHaveAttribute("aria-invalid", "true");
     expect(chat.createGroup).not.toHaveBeenCalled();
+  });
+
+  it("tanpa orang dipilih: grup dibuat berisi saya saja", async () => {
+    const user = userEvent.setup();
+    const { onCreated } = renderDialog();
+    await user.type(screen.getByLabelText("Nama grup"), "Catatan pribadi");
+    const submit = screen.getByRole("button", { name: "Buat grup" });
+    expect(submit).not.toHaveAttribute("aria-disabled");
+    await user.click(submit);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(group()));
+    expect(chat.createGroup).toHaveBeenCalledTimes(1);
+    expect(chat.createGroup).toHaveBeenCalledWith("Catatan pribadi", []);
   });
 
   it("Buat grup mengirim nama yang dirapikan dan kunci orang terpilih", async () => {
