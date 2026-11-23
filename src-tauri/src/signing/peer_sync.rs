@@ -1520,18 +1520,18 @@ fn wanted_files(
 }
 
 /// Jumlah byte file yang masih harus diunduh untuk permintaan ini
-/// (`wanted_files` tanpa `verify`). 0 kalau tidak ada atau ukurannya tidak
-/// diketahui.
+/// (`wanted_files` tanpa `verify`): `Some(0)` kalau tidak ada, `None` kalau
+/// ukuran salah satunya tidak diketahui.
 pub fn download_size(
     conn: &Connection,
     store: &dyn DocumentStore,
     request_id: &str,
-) -> AppResult<u64> {
+) -> AppResult<Option<u64>> {
     let wanted = wanted_files(conn, store, request_id, false)?;
     if wanted.iter().any(|w| w.size == 0) {
-        return Ok(0);
+        return Ok(None);
     }
-    Ok(wanted.iter().map(|w| w.size).sum())
+    Ok(Some(wanted.iter().map(|w| w.size).sum()))
 }
 
 /// Ada file permintaan ini yang sedang diunduh proses ini.

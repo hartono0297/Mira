@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkPdfFile,
   coolingText,
+  downloadLabel,
   eventLabel,
   exportNoticeText,
   exportStateLabel,
@@ -19,7 +20,7 @@ import {
   kindLabel,
   modeLabel,
   myStateLabel,
-  rejectReasonText,
+  rejectedText,
   requestStateLabel,
   signErrorMessage,
   shortHash,
@@ -130,15 +131,54 @@ describe("label tanda tangan", () => {
 describe("label sinkron dari rekan", () => {
   const MB = 1024 * 1024;
   const base = { status: "in_progress" as const, fileAvailable: true, pending: false, fileSize: MB };
+  const need = (over: Partial<Parameters<typeof fileNeed>[0]>) => fileNeed({ ...base, ...over });
 
   it("file belum ada: disalin otomatis sampai 20 MB, lebih besar diunduh", () => {
     expect(fileNeed(base)).toBeNull();
-    expect(fileNeed({ ...base, fileAvailable: false })).toEqual({ state: "copying", newer: false });
-    expect(fileNeed({ ...base, fileAvailable: false, fileSize: 20 * MB })).toEqual({ state: "copying", newer: false });
-    expect(fileNeed({ ...base, fileAvailable: false, fileSize: 20 * MB + 1 })).toEqual({ state: "manual", newer: false });
-    expect(fileNeed({ ...base, pending: true })).toEqual({ state: "copying", newer: true });
-    expect(fileNeedText({ state: "manual", newer: false }, 25 * MB)).toBe(
+    expect(need({ fileAvailable: false })).toEqual({ state: "auto", newer: false, size: MB, downloading: false });
+    expect(need({ fileAvailable: false, fileSize: 20 * MB })?.state).toBe("auto");
+    expect(need({ fileAvailable: false, fileSize: 20 * MB + 1 })?.state).toBe("manual");
+    // Ukuran unduhan dari inti menang atas ukuran file terkini.
+    expect(need({ fileAvailable: false, fileSize: MB, downloadSize: 21 * MB })).toEqual({
+      state: "manual",
+      newer: false,
+      size: 21 * MB,
+      downloading: false,
+    });
+  });
+
+  it("ukuran 0 atau null berarti tidak diketahui: unduh manual tanpa ukuran", () => {
+    const unknown = need({ fileAvailable: false, fileSize: 0 });
+    expect(unknown).toEqual({ state: "manual", newer: false, size: null, downloading: false });
+    expect(need({ fileAvailable: false, fileSize: MB, downloadSize: null })?.size).toBeNull();
+    expect(fileNeedText(unknown!)).toBe("File ini belum diunduh. Ukurannya belum diketahui, jadi tidak disalin otomatis.");
+    expect(downloadLabel(unknown!)).toBe("Unduh file");
+    expect(downloadLabel({ state: "manual", newer: false, size: 25 * MB, downloading: false })).toBe("Unduh file (25 MB)");
+  });
+
+  it("sedang disalin hanya kalau laptop ini memang sedang menyalin", () => {
+    const waiting = need({ fileAvailable: false })!;
+    expect(fileNeedText(waiting)).toBe("File disalin otomatis saat laptop rekan yang menyimpannya tersambung.");
+    expect(fileNeedText(need({ fileAvailable: false, downloading: true })!)).toBe("File sedang disalin dari laptop rekan");
+    expect(fileNeedText({ state: "manual", newer: false, size: 25 * MB, downloading: false })).toBe(
       "File 25 MB belum diunduh. File di atas 20 MB tidak disalin otomatis.",
+    );
+  });
+
+  it("tanda tangan terbaru rekan belum sampai: ukurannya dari downloadSize", () => {
+    expect(need({ pending: true })).toEqual({ state: "auto", newer: true, size: 0, downloading: false });
+    expect(need({ pending: true, downloadSize: 2 * MB, downloading: true })).toEqual({
+      state: "auto",
+      newer: true,
+      size: 2 * MB,
+      downloading: true,
+    });
+    expect(need({ pending: true, downloadSize: 30 * MB })?.state).toBe("manual");
+    expect(fileNeedText(need({ pending: true })!)).toBe(
+      "Tanda tangan terbaru dari rekan disalin otomatis saat laptop rekan yang menyimpannya tersambung.",
+    );
+    expect(fileNeedText(need({ pending: true, downloading: true })!)).toBe(
+      "Tanda tangan terbaru dari rekan sedang disalin ke laptop ini",
     );
   });
 
@@ -148,6 +188,13 @@ describe("label sinkron dari rekan", () => {
     expect(requestStateLabel(r)).toBe("Menunggu file");
   });
 
+  it("giliran saya selagi tanda tangan rekan belum sampai: belum bisa ditandatangani", () => {
+    const r = { status: "in_progress" as const, myState: "your_turn" as const, integrity: "intact" as const, pending: true };
+    expect(isActionable(r)).toBe(false);
+    expect(requestStateLabel(r)).toBe("Menunggu tanda tangan rekan");
+    expect(isActionable({ ...r, pending: false })).toBe(true);
+  });
+
   it("kode error baru dijelaskan dengan kata biasa, kode lain apa adanya", () => {
     expect(signErrorMessage({ code: "version_changes_content", message: "x" })).toMatch(/mengubah isi dokumen selain stempel/);
     expect(signErrorMessage({ code: "version_not_prefix", message: "x" })).toMatch(/isi versi sebelumnya tidak utuh/);
@@ -155,24 +202,40 @@ describe("label sinkron dari rekan", () => {
     expect(signErrorMessage({ code: "pin_wrong", message: "PIN salah." })).toBe("PIN salah.");
   });
 
-  it("alasan penolakan: kode, potongan kalimat, atau kalimat utuh", () => {
-    expect(rejectReasonText("version_changes_content")).toBe(
-      "Versi ditolak karena mengubah isi dokumen selain stempel tanda tangan.",
+  it("versi ditolak: kalimat dari kode, menyebut orangnya, tanpa teks inti", () => {
+    const v = (code: string, otherName: string | null = null) => rejectedText({ signerName: "Budi", code, otherName });
+    expect(v("version_changes_content")).toBe(
+      "Versi dari Budi ditolak karena mengubah isi dokumen, bukan hanya menambah tanda tangan.",
     );
-    expect(rejectReasonText("ditandatangani bersamaan")).toBe("Versi ditolak karena ditandatangani bersamaan.");
-    expect(rejectReasonText("Versi lama tidak cocok.")).toBe("Versi lama tidak cocok.");
-    expect(rejectReasonText("  ")).toBe("Versi ditolak Mira.");
+    expect(v("skipped_concurrent", "Citra")).toBe(
+      "Versi dari Budi tidak dipakai karena Citra menandatangani versi yang sama lebih dulu. Budi perlu menandatangani versi terbaru.",
+    );
+    expect(v("already_signed")).toBe("Versi dari Budi tidak dipakai karena Budi sudah menandatangani versi lain dokumen ini.");
+    expect(v("not_your_turn")).toBe("Versi dari Budi ditolak karena dibuat sebelum giliran Budi.");
+    expect(v("on_rejected")).toMatch(/^Versi dari Budi ditolak karena ditandatangani di atas versi lain/);
+    for (const code of ["version_not_prefix", "pdf_invalid", "tag_missing", "outdated_version", "not_allowed", "request_closed", "invalid_record"]) {
+      expect(v(code)).toMatch(/^Versi dari Budi (ditolak|tidak dipakai) karena /);
+      expect(v(code)).not.toMatch(/startxref|katalog|Anda/);
+    }
+    // Kode yang tidak dikenal (atau dari inti lama): kalimat netral.
+    expect(v("other")).toBe("Versi dari Budi tidak dipakai Mira.");
+    expect(v("toString")).toBe("Versi dari Budi tidak dipakai Mira.");
+    expect(rejectedText({ signerName: " ", code: "", otherName: null })).toBe("Versi dari rekan tidak dipakai Mira.");
   });
 
   it("tidak ada em dash di teks baru", () => {
+    const MBn = 1024 * 1024;
     const text = [
-      fileNeedText({ state: "copying", newer: false }, 1),
-      fileNeedText({ state: "copying", newer: true }, 1),
-      fileNeedText({ state: "manual", newer: true }, 1),
+      fileNeedText({ state: "auto", newer: false, size: 1, downloading: false }),
+      fileNeedText({ state: "auto", newer: true, size: 0, downloading: true }),
+      fileNeedText({ state: "manual", newer: true, size: null, downloading: false }),
+      fileNeedText({ state: "manual", newer: false, size: 30 * MBn, downloading: false }),
       signErrorMessage({ code: "version_not_prefix", message: "" }),
       signErrorMessage({ code: "version_changes_content", message: "" }),
       signErrorMessage({ code: "not_available", message: "" }),
-      rejectReasonText("concurrent"),
+      ...["version_not_prefix", "version_changes_content", "pdf_invalid", "tag_missing", "skipped_concurrent", "on_rejected", "outdated_version", "not_allowed", "not_your_turn", "already_signed", "request_closed", "invalid_record", "x"].map(
+        (code) => rejectedText({ signerName: "Budi", code, otherName: null }),
+      ),
     ].join(" ");
     expect(text).not.toContain(String.fromCharCode(0x2014));
   });

@@ -66,6 +66,8 @@ function detail(over: Partial<RequestDetail> = {}): RequestDetail {
     fileAvailable: true,
     fileSize: 1024,
     pending: false,
+    downloadSize: 0,
+    downloading: false,
     scope: { teamId: null, projectId: null },
     rejected: [],
     requestedBy: { publicKey: OTHER_KEY, displayName: "Pengirim Uji" },

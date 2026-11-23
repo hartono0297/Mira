@@ -44,6 +44,17 @@ function GuestChip() {
 }
 
 // "Rekan A", "Rekan A dan Rekan B", "Rekan A, Rekan B, dan Rekan C".
+// Penanda tangan yang dilepas setelah proyek diganti. Tanpa proyek, yang
+// dilepas hanya Tamu (Tamu hanya menandatangani di proyek yang boleh ia buka).
+function droppedText(names: string[], withProject: boolean): string {
+  const who = joinNames(names);
+  if (!withProject) {
+    return `Mira melepas ${who} dari penanda tangan karena Tamu hanya bisa menandatangani dokumen di proyek yang boleh ia buka.`;
+  }
+  const subject = names.length > 1 ? "mereka" : "ia";
+  return `Mira melepas ${who} dari penanda tangan karena ${subject} tidak bisa membuka proyek ini.`;
+}
+
 function joinNames(names: string[]): string {
   if (names.length <= 1) return names.join("");
   if (names.length === 2) return `${names[0]} dan ${names[1]}`;
@@ -371,10 +382,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
           </div>
           <div aria-live="polite">
             {dropped.length > 0 && (
-              <p className="hint sign-dropped">
-                {joinNames(dropped)} tidak bisa melihat dokumen dengan pilihan proyek ini, jadi dilepas dari penanda
-                tangan.
-              </p>
+              <p className="hint sign-dropped">{droppedText(dropped, projectId !== "")}</p>
             )}
           </div>
         </fieldset>

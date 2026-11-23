@@ -1,6 +1,6 @@
 import { IconAlertTriangle, IconDownload, IconLock } from "@tabler/icons-react";
 import type { DocumentSummary } from "../../api/documents";
-import { keys, type DocActions } from "./actions";
+import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
 import { appName, downloadLabel, editable, fetchState, statusLines, type StatusKind } from "./text";
 
@@ -68,7 +68,6 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
 export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
   const lines = statusLines(doc, now);
   const buttons = rowButtons(doc, actions);
-  const blocked = actions.pending !== null;
   return (
     <li className={`doc-row${selected ? " is-selected" : ""}`} data-testid={`doc-${doc.id}`}>
       <button
@@ -91,7 +90,8 @@ export function DocumentRow({ doc, selected, onSelect, actions, now }: Props) {
       </button>
       <div className="doc-actions">
         {buttons.map((b, i) => {
-          const busy = actions.pending === b.key;
+          const busy = isBusy(actions, b.key);
+          const blocked = isBlocked(actions, b.key);
           const text = busy ? b.busyLabel : b.label;
           return (
             // Kunci per posisi: tombol yang sama dipakai ulang saat labelnya

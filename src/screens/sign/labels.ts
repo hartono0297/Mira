@@ -6,6 +6,7 @@ import {
   type EventKind,
   type Integrity,
   type MyState,
+  type RejectedVersion,
   type RequestStatus,
   type RequestSummary,
   type SignErrorCode,
@@ -39,13 +40,21 @@ export function statusLabel(status: RequestStatus): string {
 }
 
 type StateInput = Pick<RequestSummary, "status" | "myState" | "integrity"> &
-  Partial<Pick<RequestSummary, "fileAvailable">>;
+  Partial<Pick<RequestSummary, "fileAvailable" | "pending">>;
 
-// Giliran saya DAN file ada dan utuh. File yang berubah, hilang, atau belum
-// tersalin dari rekan tidak bisa ditandatangani, jadi tidak dihitung sebagai
-// "menunggu tanda tangan Anda".
+// Giliran saya DAN file ada dan utuh DAN tidak ada tanda tangan rekan yang
+// belum sampai. File yang berubah, hilang, atau belum tersalin tidak bisa
+// ditandatangani, dan menandatangani sebelum tanda tangan terbaru rekan sampai
+// membuat salah satu versi ditolak. Keduanya tidak dihitung "menunggu tanda
+// tangan Anda".
 export function isActionable(r: StateInput): boolean {
-  return r.status === "in_progress" && r.myState === "your_turn" && r.integrity === "intact" && r.fileAvailable !== false;
+  return (
+    r.status === "in_progress" &&
+    r.myState === "your_turn" &&
+    r.integrity === "intact" &&
+    r.fileAvailable !== false &&
+    r.pending !== true
+  );
 }
 
 // Satu label untuk baris daftar: status akhir menang atas keadaan saya, dan
@@ -53,6 +62,7 @@ export function isActionable(r: StateInput): boolean {
 export function requestStateLabel(r: StateInput): string {
   if (r.status !== "in_progress") return statusLabel(r.status);
   if (r.myState === "your_turn" && r.fileAvailable === false) return "Menunggu file";
+  if (r.myState === "your_turn" && r.pending === true) return "Menunggu tanda tangan rekan";
   if (r.myState === "your_turn" && r.integrity !== "intact") return "Tidak bisa ditandatangani";
   if (r.myState === "not_involved") return "Menunggu penanda tangan";
   return myStateLabel(r.myState);
@@ -148,28 +158,54 @@ export function exportWarningLabel(count: number): string {
 }
 
 // File dari laptop rekan yang belum ada di laptop ini, untuk daftar dan layar dokumen:
-// - copying: sampai 20 MB, disalin otomatis (sedang atau saat rekan tersambung);
-// - manual: lebih dari 20 MB, diunduh lewat tombol "Unduh file".
-// `pending` berarti versi bertanda tangan yang lebih baru belum sampai.
-export type FileNeed = { state: "copying" | "manual"; newer: boolean };
+// - auto: sampai 20 MB, disalin otomatis saat laptop rekan yang menyimpannya tersambung;
+// - manual: lebih dari 20 MB atau ukurannya tidak diketahui, diunduh lewat tombol "Unduh file".
+// `newer`: file versi terkini ada, tetapi tanda tangan terbaru dari rekan belum sampai.
+// `size`: byte yang diunduh, null kalau tidak diketahui.
+// `downloading`: laptop ini sedang menyalinnya sekarang.
+export type FileNeed = { state: "auto" | "manual"; newer: boolean; size: number | null; downloading: boolean };
 
-export function fileNeed(r: Pick<RequestSummary, "fileAvailable" | "pending" | "fileSize" | "status">): FileNeed | null {
+type NeedInput = Pick<RequestSummary, "fileAvailable" | "pending" | "fileSize" | "status"> &
+  Partial<Pick<RequestSummary, "downloadSize" | "downloading">>;
+
+function neededBytes(r: NeedInput, newer: boolean): number | null {
+  if (r.downloadSize === null) return null;
+  if (typeof r.downloadSize === "number" && (r.downloadSize > 0 || newer)) return r.downloadSize;
+  if (newer) return 0;
+  // fileSize 0 berarti ukurannya tidak diketahui, bukan file kecil.
+  return r.fileSize > 0 ? r.fileSize : null;
+}
+
+export function fileNeed(r: NeedInput): FileNeed | null {
   const missing = r.fileAvailable === false;
   const newer = !missing && r.pending === true;
   if (!missing && !newer) return null;
   // Permintaan yang sudah selesai atau dibatalkan tetap bisa diunduh untuk dibaca.
-  return { state: r.fileSize > AUTO_COPY_MAX_BYTES ? "manual" : "copying", newer };
+  const size = neededBytes(r, newer);
+  const state = size === null || size > AUTO_COPY_MAX_BYTES ? "manual" : "auto";
+  return { state, newer, size, downloading: r.downloading === true };
 }
 
-export function fileNeedText(need: FileNeed, fileSize: number): string {
-  if (need.newer) {
-    return need.state === "copying"
-      ? "Tanda tangan terbaru dari rekan sedang disalin ke laptop ini"
-      : "Versi bertanda tangan terbaru belum diunduh. File di atas 20 MB tidak disalin otomatis.";
+export function fileNeedText(need: FileNeed): string {
+  if (need.downloading) {
+    return need.newer ? "Tanda tangan terbaru dari rekan sedang disalin ke laptop ini" : "File sedang disalin dari laptop rekan";
   }
-  return need.state === "copying"
-    ? "File sedang disalin dari laptop rekan"
-    : `File ${formatSize(fileSize)} belum diunduh. File di atas 20 MB tidak disalin otomatis.`;
+  if (need.state === "auto") {
+    return need.newer
+      ? "Tanda tangan terbaru dari rekan disalin otomatis saat laptop rekan yang menyimpannya tersambung."
+      : "File disalin otomatis saat laptop rekan yang menyimpannya tersambung.";
+  }
+  const why =
+    need.size === null
+      ? "Ukurannya belum diketahui, jadi tidak disalin otomatis."
+      : "File di atas 20 MB tidak disalin otomatis.";
+  if (need.newer) return `Versi bertanda tangan terbaru belum diunduh. ${why}`;
+  return need.size === null ? `File ini belum diunduh. ${why}` : `File ${formatSize(need.size)} belum diunduh. ${why}`;
+}
+
+// Teks tombol unduh: ukuran hanya kalau diketahui.
+export function downloadLabel(need: FileNeed): string {
+  return need.size ? `Unduh file (${formatSize(need.size)})` : "Unduh file";
 }
 
 // Pesan yang mudah dipahami untuk kode error tanda tangan yang baru. Kode lain
@@ -187,21 +223,32 @@ export function signErrorMessage(error: AppError): string {
   }
 }
 
-const REJECT_REASONS: Record<string, string> = {
-  version_changes_content: "Versi ditolak karena mengubah isi dokumen selain stempel tanda tangan.",
-  version_not_prefix: "Versi ditolak karena isi versi sebelumnya tidak utuh di dalamnya.",
-  concurrent:
-    "Versi ditolak karena ditandatangani bersamaan dengan penanda tangan lain saat laptop tidak tersambung. Yang lebih dulu dipakai.",
+type RejectText = (name: string, other: string | null) => string;
+
+const REJECT_TEXT: Record<string, RejectText> = {
+  version_changes_content: (n) => `Versi dari ${n} ditolak karena mengubah isi dokumen, bukan hanya menambah tanda tangan.`,
+  version_not_prefix: (n) =>
+    `Versi dari ${n} ditolak karena isi dokumen sebelumnya tidak utuh di dalamnya. Tanda tangan hanya boleh ditambahkan di belakang isi lama.`,
+  pdf_invalid: (n) => `Versi dari ${n} ditolak karena filenya bukan PDF yang bisa dibaca Mira.`,
+  tag_missing: (n) => `Versi dari ${n} ditolak karena file itu bukan untuk dokumen ini.`,
+  skipped_concurrent: (n, other) =>
+    `Versi dari ${n} tidak dipakai karena ${other ?? "penanda tangan lain"} menandatangani versi yang sama lebih dulu. ${n} perlu menandatangani versi terbaru.`,
+  on_rejected: (n) => `Versi dari ${n} ditolak karena ditandatangani di atas versi lain yang sudah ditolak.`,
+  outdated_version: (n) => `Versi dari ${n} tidak dipakai karena ditandatangani di atas versi lama dokumen.`,
+  not_allowed: (n) => `Versi dari ${n} ditolak karena ${n} bukan penanda tangan dokumen ini.`,
+  not_your_turn: (n) => `Versi dari ${n} ditolak karena dibuat sebelum giliran ${n}.`,
+  already_signed: (n) => `Versi dari ${n} tidak dipakai karena ${n} sudah menandatangani versi lain dokumen ini.`,
+  request_closed: (n) => `Versi dari ${n} tidak dipakai karena dokumen sudah selesai ditandatangani.`,
+  invalid_record: (n) => `Versi dari ${n} ditolak karena catatan tanda tangannya tidak lengkap.`,
 };
 
-// Alasan penolakan dari inti Rust bisa berupa kode atau potongan kalimat
-// ("ditandatangani bersamaan"); keduanya dijadikan satu kalimat utuh.
-export function rejectReasonText(reason: string): string {
-  const r = reason.trim();
-  if (REJECT_REASONS[r]) return REJECT_REASONS[r];
-  if (!r) return "Versi ditolak Mira.";
-  if (/^[a-z]/.test(r)) return `Versi ditolak karena ${r.replace(/\.$/, "")}.`;
-  return r;
+// Kalimat untuk satu versi yang ditolak, dipilih dari kodenya. Teks dari inti
+// Rust (reason) tidak pernah ditampilkan: isinya istilah teknis dan bisa
+// menyebut orang yang salah.
+export function rejectedText(x: Pick<RejectedVersion, "signerName" | "code"> & { otherName?: string | null }): string {
+  const name = x.signerName.trim() || "rekan";
+  const text = Object.prototype.hasOwnProperty.call(REJECT_TEXT, x.code) ? REJECT_TEXT[x.code] : undefined;
+  return text ? text(name, x.otherName?.trim() || null) : `Versi dari ${name} tidak dipakai Mira.`;
 }
 
 // Pemberitahuan di atas layar dokumen.

@@ -26,16 +26,16 @@ import { SignatureSetupDialog } from "./pad/SignatureSetupDialog";
 import { AuditTrail, HashText } from "./AuditTrail";
 import {
   coolingText,
+  downloadLabel,
   exportNoticeText,
   exportStateLabel,
   fileNeed,
   fileNeedText,
-  formatSize,
   formatWhen,
   headerStatusLabel,
   integrityLabel,
   kindLabel,
-  rejectReasonText,
+  rejectedText,
   signErrorMessage,
 } from "./labels";
 import {
@@ -103,6 +103,7 @@ function signerStatus(
   if (detail.status === "cancelled") return { text: "Belum, permintaan dibatalkan", tone: "wait" };
   if (s.isMe && s.canSignNow) {
     if (!fileHere(detail)) return { text: "Giliran Anda, menunggu file", tone: "wait" };
+    if (detail.pending) return { text: "Giliran Anda, menunggu tanda tangan rekan", tone: "wait" };
     return fileTrusted ? { text: "Giliran Anda", tone: "now" } : { text: "Tidak bisa ditandatangani", tone: "wait" };
   }
   return { text: "Menunggu", tone: "wait" };
@@ -302,7 +303,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   const mySigner = detail?.signers.find((s) => s.isMe) ?? null;
   // File yang berubah atau hilang tidak boleh ditandatangani: tanda tangan baru akan menutupi masalahnya.
   const fileTrusted = !!detail && detail.integrity === "intact";
-  const canSign = !!(detail && detail.status === "in_progress" && mySigner?.canSignNow && fileTrusted);
+  // Tanda tangan rekan yang belum sampai (pending) akan mengubah versi
+  // terkini; menandatangani sekarang membuat salah satu versi ditolak.
+  const canSign = !!(detail && detail.status === "in_progress" && mySigner?.canSignNow && fileTrusted && !detail.pending);
   const placing = canSign && !!saved && placement !== null;
   const fileReady = file.status === "ready" && !!detail && file.hash === detail.currentHash;
   const cooling = coolingText(saved?.usableAfter);
@@ -814,6 +817,8 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
     );
   } else if (d.status === "in_progress" && mySigner?.canSignNow && !fileHere(d)) {
     myPart = <p className="sdoc-text">Giliran Anda. Tanda tangan bisa dibuat setelah file dokumen ada di laptop ini.</p>;
+  } else if (d.status === "in_progress" && mySigner?.canSignNow && d.pending) {
+    myPart = <p className="sdoc-text">Tunggu tanda tangan terbaru dari rekan sampai, lalu tanda tangani.</p>;
   } else if (d.status === "in_progress" && mySigner?.canSignNow && !fileTrusted) {
     myPart = (
       <p className="sdoc-text">
@@ -851,6 +856,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   // File yang belum ada di laptop ini (atau tanda tangan terbaru yang filenya
   // belum sampai): keterangan, dan tombol unduh untuk file di atas 20 MB.
   const need = fileNeed(d);
+  const downloadBusy = downloading || need?.downloading === true;
   const arrival = need ? (
     <div className="sdoc-arrival">
       <p className="sdoc-arrival-text">
@@ -860,21 +866,21 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
           <IconClockHour4 size={18} aria-hidden="true" />
         )}
         <span>
-          {fileNeedText(need, d.fileSize)}
-          {need.state === "copying" && !need.newer && ". Halaman tampil di sini begitu salinannya selesai."}
-          {need.state === "copying" && need.newer && ". Status penanda tangan diperbarui setelah file itu sampai."}
+          {fileNeedText(need)}
+          {need.downloading && !need.newer && ". Halaman tampil di sini begitu salinannya selesai."}
+          {need.downloading && need.newer && ". Status penanda tangan diperbarui setelah file itu sampai."}
         </span>
       </p>
       {need.state === "manual" && (
         <button
           type="button"
           className="btn btn-sm sdoc-fit"
-          onClick={guarded(downloading, () => void downloadFile())}
-          aria-disabled={downloading || undefined}
-          aria-busy={downloading || undefined}
+          onClick={guarded(downloadBusy, () => void downloadFile())}
+          aria-disabled={downloadBusy || undefined}
+          aria-busy={downloadBusy || undefined}
         >
           <IconDownload size={16} aria-hidden="true" />
-          {downloading ? "Mengunduh..." : `Unduh file (${formatSize(d.fileSize)})`}
+          {downloadBusy ? "Mengunduh..." : downloadLabel(need)}
         </button>
       )}
       <div aria-live="polite">
@@ -1034,10 +1040,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
                   <li key={`${x.signerName}-${x.at}-${i}`} className="sdoc-reject">
                     <p className="sdoc-reject-head">
                       <IconAlertTriangle size={16} aria-hidden="true" />
-                      Versi dari {x.signerName}
+                      <span>{rejectedText(x)}</span>
                     </p>
-                    <p className="sdoc-small">{formatWhen(x.at)}</p>
-                    <p>{rejectReasonText(x.reason)}</p>
+                    <p className="sdoc-small">Ditandatangani {formatWhen(x.at)}</p>
                   </li>
                 ))}
               </ul>

@@ -981,6 +981,7 @@ fn large_file_is_not_fetched_automatically_and_served_only_to_involved() {
     let b = w.detail(1, &id);
     assert!(!b.summary.file_available);
     assert_eq!(b.summary.file_size, big.len() as u64);
+    assert_eq!(b.summary.download_size, Some(big.len() as u64));
     assert!(w.nodes[1].notifier.shown().is_empty(), "file belum ada");
     let missing = w.nodes[1].sync.missing_files(&id).unwrap();
     assert_eq!(missing.len(), 1);
@@ -1329,7 +1330,7 @@ fn downloads_cover_current_and_pending_versions_only() {
         missing.iter().map(|m| m.hash.as_str()).collect::<Vec<_>>(),
         vec![v1.as_str()]
     );
-    assert_eq!(c.summary.download_size, missing[0].size);
+    assert_eq!(c.summary.download_size, Some(missing[0].size));
     assert_eq!(missing[0].size, w.read(1, &v1).len() as u64);
 
     // Selama file itu diunduh, permintaan tampil `downloading`.
@@ -1348,7 +1349,7 @@ fn downloads_cover_current_and_pending_versions_only() {
     w.converge(&ALL3);
     let c = w.detail(2, &id);
     assert!(!c.summary.pending);
-    assert_eq!(c.summary.download_size, 0);
+    assert_eq!(c.summary.download_size, Some(0));
     assert_eq!(c.current_hash, v1);
     // Bukti stempel dicatat (di luar kunci inti), dengan aturannya.
     let cached: String = w.lab.laptops[2].with(|c| {
@@ -1379,5 +1380,5 @@ fn downloads_cover_current_and_pending_versions_only() {
     let h = crate::blobs::BlobHash::parse(&d.original_hash).unwrap();
     w.lab.laptops[1].blobs().remove(&h).unwrap();
     assert!(w.nodes[1].sync.missing_files(&id).unwrap().is_empty());
-    assert_eq!(w.detail(1, &id).summary.download_size, 0);
+    assert_eq!(w.detail(1, &id).summary.download_size, Some(0));
 }

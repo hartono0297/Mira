@@ -77,8 +77,9 @@ pub struct RequestSummary {
     pub pending: bool,
     /// Jumlah byte yang diunduh `sign_download_file` untuk permintaan ini
     /// (versi terkini dan versi baru yang menunggu, yang belum ada); 0 kalau
-    /// tidak ada yang perlu diunduh atau ukurannya tidak diketahui.
-    pub download_size: u64,
+    /// tidak ada yang perlu diunduh, `None` (`null`) kalau ukurannya tidak
+    /// diketahui.
+    pub download_size: Option<u64>,
     /// Proses ini sedang mengunduh file permintaan ini dari laptop rekan.
     pub downloading: bool,
 }

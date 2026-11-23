@@ -28,6 +28,7 @@ import { NewRequestDialog } from "./NewRequestDialog";
 import { VerifyDialog } from "./VerifyDialog";
 import {
   checkPdfFile,
+  downloadLabel,
   exportWarningLabel,
   fileNeed,
   fileNeedText,
@@ -231,11 +232,13 @@ function RequestRow({
   const warn = hasWarning(r);
   const when = r.completedAt ?? r.updatedAt;
   const need = fileNeed(r);
-  const busy = download.busyId === r.id;
+  // Sibuk: tombol ini sedang mengunduh, atau laptop ini sudah menyalin file
+  // permintaan ini (misalnya dari jendela lain).
+  const busy = download.busyId === r.id || need?.downloading === true;
   // Satu unduhan pada satu waktu. aria-disabled, bukan disabled, supaya fokus
   // keyboard tidak lepas dari tombol yang sedang menunggu.
-  const blocked = download.busyId !== null;
-  const size = formatSize(r.fileSize);
+  const blocked = download.busyId !== null || busy;
+  const size = need?.size ? `, ${formatSize(need.size)}` : "";
   return (
     <li>
       <button
@@ -271,7 +274,7 @@ function RequestRow({
               ) : (
                 <IconClockHour4 size={16} aria-hidden="true" />
               )}
-              {fileNeedText(need, r.fileSize)}
+              {fileNeedText(need)}
             </span>
           )}
           {warn && (
@@ -299,7 +302,7 @@ function RequestRow({
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            aria-label={busy ? `Mengunduh file ${r.title}` : `Unduh file ${r.title}, ${size}`}
+            aria-label={busy ? `Mengunduh file ${r.title}` : `Unduh file ${r.title}${size}`}
             aria-busy={busy || undefined}
             aria-disabled={blocked || undefined}
             onClick={() => {
@@ -307,7 +310,7 @@ function RequestRow({
             }}
           >
             <IconDownload size={16} aria-hidden="true" />
-            {busy ? "Mengunduh..." : `Unduh file (${size})`}
+            {busy ? "Mengunduh..." : downloadLabel(need)}
           </button>
         </div>
       )}
@@ -470,8 +473,12 @@ export function SignScreen() {
     setDownloadingId(r.id);
     setFeedback(null);
     try {
-      await signingApi.downloadFile(r.id);
-      setFeedback({ kind: "ok", text: `File ${r.title} sudah ada di laptop ini.` });
+      const result = await signingApi.downloadFile(r.id);
+      // File yang sedang disalin otomatis tidak diunduh dua kali.
+      const text = result?.downloading
+        ? `File ${r.title} sedang disalin. Daftar diperbarui begitu selesai.`
+        : `File ${r.title} sudah ada di laptop ini.`;
+      setFeedback({ kind: "ok", text });
       await reload();
       window.setTimeout(() => {
         const active = document.activeElement;
@@ -542,7 +549,7 @@ export function SignScreen() {
             <section className="sign-section" aria-labelledby="sign-wait-title">
               <div className="sign-head-text">
                 <h2 id="sign-wait-title" className="sign-h2">
-                  Menunggu tanda tangan
+                  Menunggu tanda tangan Anda
                 </h2>
                 <p className="hint">Permintaan dari rekan yang mencantumkan nama Anda. Giliran Anda tampil paling atas.</p>
               </div>
@@ -606,8 +613,8 @@ export function SignScreen() {
 
             {!overview.canRequest && (
               <p className="sign-guest">
-                Tamu tidak bisa meminta tanda tangan, tetapi bisa menandatangani dokumen yang dikirim rekan untuk proyek
-                yang boleh Anda buka.
+                Sebagai Tamu, Anda tidak bisa meminta tanda tangan, tetapi bisa menandatangani dokumen dari rekan untuk
+                proyek yang boleh Anda buka.
               </p>
             )}
 
