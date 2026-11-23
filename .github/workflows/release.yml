@@ -11,15 +11,17 @@ on:
       - src-tauri/tauri.conf.json
       - src-tauri/tauri.*.conf.json
       - src-tauri/Info.plist
+      - scripts/release/**
   workflow_dispatch:
     inputs:
       publish:
-        description: "Buat draft rilis GitHub. Jika false, installer hanya diunggah sebagai artefak workflow (uji coba)."
+        description: "Buat draft rilis GitHub (hanya dari main). Jika false, installer hanya diunggah sebagai artefak workflow (uji coba)."
         type: boolean
         default: false
 
+# Token baca saja secara bawaan. Hanya job release yang boleh menulis ke Releases.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: rilis-${{ github.ref }}
@@ -43,6 +45,8 @@ jobs:
             pattern: "*_x64-setup.exe"
             # install.ps1 mencari aset Mira_*_x64-setup.exe, jangan ubah nama ini.
             asset_suffix: "x64-setup.exe"
+            # Di Windows artefak pembaruan adalah installer itu sendiri.
+            updater_suffix: "x64-setup.exe"
             artifact: mira-windows-x64
           - label: macOS universal
             os: macos-latest
@@ -51,10 +55,17 @@ jobs:
             bundle_dir: src-tauri/target/universal-apple-darwin/release/bundle/dmg
             pattern: "*.dmg"
             asset_suffix: "universal.dmg"
+            # Mira.app dikemas jadi .app.tar.gz (format yang dibaca updater di Mac).
+            updater_suffix: "universal.app.tar.gz"
             artifact: mira-macos-universal
     runs-on: ${{ matrix.os }}
+    env:
+      # Build rilis (tag atau publish manual) memakai kunci asli. Build lain memakai kunci sekali pakai.
+      RILIS: ${{ startsWith(github.ref, 'refs/tags/') || inputs.publish == true }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Baca versi aplikasi
         id: ver
@@ -66,11 +77,50 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} tidak cocok dengan versi tauri.conf.json (v${VERSION})."
             exit 1
           fi
+          # Publish manual hanya dari main, supaya kode cabang tidak ikut ditandatangani kunci asli.
+          if [ "$RILIS" = "true" ] && [ "${GITHUB_REF_TYPE}" != "tag" ] && [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::Publish manual hanya boleh dari main (sekarang ${GITHUB_REF})."
+            exit 1
+          fi
 
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
+
+      # Syarat rilis: secret kunci ada, pubkey bukan placeholder, catatan "Yang baru" ada.
+      # Secret hanya dicek ada atau tidak, isinya tidak masuk ke langkah ini.
+      - name: Periksa syarat rilis
+        if: env.RILIS == 'true'
+        shell: bash
+        env:
+          ADA_KUNCI: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if [ "$ADA_KUNCI" != "true" ]; then
+            echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY kosong. Rilis butuh kunci tanda tangan updater."
+            exit 1
+          fi
+          NOTES="src/whats-new/${VERSION}.md"
+          if [ ! -s "$NOTES" ]; then
+            echo "::error::Catatan rilis $NOTES belum ada atau kosong."
+            exit 1
+          fi
+          PUB="$RUNNER_TEMP/mira-updater.pub"
+          node -e '
+            const pk = require("./src-tauri/tauri.conf.json").plugins?.updater?.pubkey ?? "";
+            if (!pk.trim() || pk.startsWith("BELUM-DIISI")) {
+              console.log("::error::plugins.updater.pubkey di src-tauri/tauri.conf.json belum diisi public key asli.");
+              process.exit(1);
+            }
+            require("fs").writeFileSync(process.argv[1], pk);
+          ' "$PUB"
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { parsePublicKey } from "./scripts/release/verify-updater-sig.mjs";
+            parsePublicKey(readFileSync(process.argv[1], "utf8"));
+          ' "$PUB"
+          echo "UPDATER_PUBKEY_FILE=$PUB" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -84,6 +134,8 @@ jobs:
       - name: Pasang dependensi npm
         run: npm ci
 
+      # Build tanpa kunci apa pun. Artefak pembaruan ditandatangani di langkah terpisah di bawah,
+      # jadi kunci tidak pernah ada di lingkungan vite, cargo, build script, atau proc macro.
       - name: Build installer
         run: npx tauri build ${{ matrix.args }}
 
@@ -101,7 +153,7 @@ jobs:
           plutil -extract NSBonjourServices xml1 -o - "$PLIST" | grep -q "_mira._udp"
           plutil -extract LSMinimumSystemVersion raw "$PLIST"
 
-      - name: Kumpulkan installer dengan nama tetap
+      - name: Kumpulkan installer dan artefak pembaruan dengan nama tetap
         id: stage
         shell: bash
         run: |
@@ -115,10 +167,85 @@ jobs:
           fi
           NAME="Mira_${{ steps.ver.outputs.version }}_${{ matrix.asset_suffix }}"
           cp "${files[0]}" "out/$NAME"
+
+          UNAME="Mira_${{ steps.ver.outputs.version }}_${{ matrix.updater_suffix }}"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # Updater Mac membuang komponen pertama tiap entri, jadi akar arsip harus Mira.app/.
+            # COPYFILE_DISABLE mencegah berkas ._ AppleDouble ikut masuk.
+            COPYFILE_DISABLE=1 tar -czf "out/$UNAME" \
+              -C src-tauri/target/universal-apple-darwin/release/bundle/macos Mira.app
+            if tar -tzf "out/$UNAME" | grep -qv '^Mira\.app/'; then
+              echo "::error::Arsip $UNAME memuat entri di luar Mira.app/."
+              exit 1
+            fi
+          fi
+          # Di Windows UNAME sama dengan NAME: installer sudah tersalin di atas.
+          echo "updater=$UNAME" >> "$GITHUB_OUTPUT"
+
           cd out
-          if command -v sha256sum >/dev/null; then sha256sum "$NAME" > "$NAME.sha256"; else shasum -a 256 "$NAME" > "$NAME.sha256"; fi
+          SUMS=("$NAME")
+          [ "$UNAME" = "$NAME" ] || SUMS+=("$UNAME")
+          for f in "${SUMS[@]}"; do
+            if command -v sha256sum >/dev/null; then sha256sum "$f" > "$f.sha256"; else shasum -a 256 "$f" > "$f.sha256"; fi
+            cat "$f.sha256"
+          done
           ls -la
-          cat "$NAME.sha256"
+
+      # Build uji tidak pernah memakai kunci asli, walau secret tersedia di push cabang.
+      - name: Buat kunci updater sekali pakai (build uji)
+        if: env.RILIS != 'true'
+        shell: bash
+        run: |
+          PW=$(node -p "require('crypto').randomBytes(24).toString('hex')")
+          echo "::add-mask::$PW"
+          KEY="$RUNNER_TEMP/mira-updater-uji.key"
+          npx tauri signer generate --ci -p "$PW" -w "$KEY" > /dev/null
+          {
+            echo "UJI_KUNCI=$KEY"
+            echo "UJI_SANDI=$PW"
+            echo "UPDATER_PUBKEY_FILE=$KEY.pub"
+          } >> "$GITHUB_ENV"
+
+      # Satu-satunya langkah yang melihat kunci asli: hanya menjalankan tauri signer.
+      - name: Tanda tangani artefak pembaruan (rilis, kunci asli)
+        if: env.RILIS == 'true'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BERKAS: out/${{ steps.stage.outputs.updater }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npx tauri signer sign --app-version "$VERSION" "$BERKAS"
+
+      - name: Tanda tangani artefak pembaruan (uji, kunci sekali pakai)
+        if: env.RILIS != 'true'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ env.UJI_KUNCI }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.UJI_SANDI }}
+          BERKAS: out/${{ steps.stage.outputs.updater }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npx tauri signer sign --app-version "$VERSION" "$BERKAS"
+
+      # Rilis: dicek dengan pubkey di tauri.conf.json. Uji: dengan pubkey sekali pakai.
+      - name: Periksa tanda tangan artefak pembaruan
+        shell: bash
+        run: |
+          node scripts/release/verify-updater-sig.mjs \
+            --pubkey "@$UPDATER_PUBKEY_FILE" \
+            --sig "out/${{ steps.stage.outputs.updater }}.sig" \
+            --file "out/${{ steps.stage.outputs.updater }}" \
+            --expect-version "${{ steps.ver.outputs.version }}"
+
+      # Bongkar arsip seperti updater Mac (buang komponen pertama), lalu periksa tanda tangan kodenya.
+      - name: Periksa isi arsip pembaruan macOS
+        if: runner.os == 'macOS'
+        run: |
+          CEK="$RUNNER_TEMP/cek-arsip"
+          mkdir -p "$CEK/Mira.app"
+          tar -xzf "out/${{ steps.stage.outputs.updater }}" -C "$CEK/Mira.app" --strip-components 1
+          codesign --verify --strict --verbose=2 "$CEK/Mira.app"
+          lipo -archs "$CEK/Mira.app/Contents/MacOS/mira"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -132,28 +259,69 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/') || inputs.publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
 
       - uses: actions/download-artifact@v8
         with:
           path: out
           merge-multiple: true
 
+      - name: Buat latest.json
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          NOTES="src/whats-new/${VERSION}.md"
+          if [ ! -s "$NOTES" ]; then
+            echo "::error::Catatan rilis $NOTES belum ada atau kosong."
+            exit 1
+          fi
+          WIN="Mira_${VERSION}_x64-setup.exe"
+          MAC="Mira_${VERSION}_universal.app.tar.gz"
+          for f in "$WIN" "$WIN.sig" "Mira_${VERSION}_universal.dmg" "$MAC" "$MAC.sig"; do
+            if [ ! -s "out/$f" ]; then
+              echo "::error::Aset out/$f tidak ada."
+              exit 1
+            fi
+          done
+          node scripts/release/make-latest-json.mjs \
+            --version "$VERSION" \
+            --notes "$NOTES" \
+            --base-url "https://github.com/hartono0297/Mira/releases/download/v${VERSION}/" \
+            --windows-asset "$WIN" --windows-sig "out/$WIN.sig" \
+            --macos-asset "$MAC" --macos-sig "out/$MAC.sig" \
+            --out out/latest.json
+          cat out/latest.json
+
+      # Draft biasa (bukan prerelease): /releases/latest/ hanya menunjuk rilis non-prerelease,
+      # jadi laptop kantor melihat versi baru setelah draft diterbitkan.
+      # Rilis yang sudah terbit tidak pernah ditimpa: aset yang sudah dipakai orang tetap sama.
       - name: Buat atau perbarui draft rilis
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           TAG="${GITHUB_REF_TYPE}"
           if [ "$TAG" = "tag" ]; then TAG="${GITHUB_REF_NAME}"; else TAG="v${VERSION}"; fi
           ls -la out
           if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "::error::Rilis $TAG sudah terbit. Asetnya tidak ditimpa; naikkan versi untuk rilis baru."
+              exit 1
+            fi
             gh release upload "$TAG" out/* --clobber
           else
             gh release create "$TAG" out/* \
-              --draft --prerelease \
+              --draft \
               --target "$GITHUB_SHA" \
               --title "Mira $TAG" \
-              --notes "Installer Windows (x64, NSIS) dan macOS (universal, ad-hoc signed, tanpa notarisasi)."
+              --notes-file "src/whats-new/${VERSION}.md"
           fi

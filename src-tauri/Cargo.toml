@@ -56,6 +56,8 @@ chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["
 lopdf = { version = "=0.47.0", default-features = false }
 # Tahap 2 (chat): titipan tersegel untuk penerima yang offline.
 crypto_box = { version = "0.9.1", features = ["seal"] }
+# Pembaruan dari dalam aplikasi lewat GitHub Releases (docs/plans/updater.md).
+tauri-plugin-updater = "2.14.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

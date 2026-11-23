@@ -1,15 +1,17 @@
 import type { AppState, OrgInfo } from "../../api";
+import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { DeviceSection } from "./DeviceSection";
 import { NetworkSection } from "./NetworkSection";
 import "./settings.css";
 
-export type SettingsPart = "appearance" | "network" | "device";
+export type SettingsPart = "appearance" | "network" | "device" | "about";
 
 const PARTS: { id: SettingsPart; label: string }[] = [
   { id: "appearance", label: "Tampilan" },
   { id: "network", label: "Jaringan" },
   { id: "device", label: "Laptop ini" },
+  { id: "about", label: "Tentang dan pembaruan" },
 ];
 
 type Props = {
@@ -50,6 +52,7 @@ export function SettingsScreen({ state, part, onPart }: Props) {
           {current.id === "appearance" && <AppearanceSection />}
           {current.id === "network" && <NetworkSection />}
           {current.id === "device" && <DeviceSection state={state} />}
+          {current.id === "about" && <AboutSection />}
         </div>
       </div>
     </main>

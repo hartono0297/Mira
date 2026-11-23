@@ -1,0 +1,129 @@
+/* Pembaruan: titik di menu, Pengaturan > Tentang dan pembaruan, dialog Yang baru. */
+
+/* Titik menandai keadaan nyata (ada versi baru), jadi tanpa kedip dan tanpa glow.
+   Warna aksen lolos 3:1 terhadap latar sidebar, menu aktif, dan sorotan kursor. */
+.update-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+@media (forced-colors: active) {
+  .update-dot {
+    background: CanvasText;
+  }
+}
+
+/* Versi terpasang jadi titik fokus bagian ini. */
+.about-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.about-version {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.about-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.about .btn[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.about .btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+.update-status {
+  font-size: 14px;
+}
+
+/* Kabar yang tidak butuh tindakan segera (offline, belum disiapkan): teks biasa, bukan kotak merah. */
+.update-calm {
+  color: var(--text-sec);
+}
+
+.update-date {
+  color: var(--text-sec);
+}
+
+.update-progress {
+  width: 100%;
+  max-width: 420px;
+  height: 10px;
+  accent-color: var(--accent);
+}
+
+.update-notes {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.about-auto {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.check-row input {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* Catatan rilis dari Markdown sederhana */
+
+.md {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.md-h {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 6px 0 0;
+}
+
+.md-h:first-child {
+  margin-top: 0;
+}
+
+.md-ul {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

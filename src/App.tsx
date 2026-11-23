@@ -4,6 +4,8 @@ import { Onboarding } from "./screens/onboarding/Onboarding";
 import { RemovedScreen } from "./screens/RemovedScreen";
 import { Shell } from "./screens/shell/Shell";
 import { ErrorScreen, LoadingScreen } from "./screens/StatusScreens";
+import { MarkWhatsNewSeen, UpdateProvider } from "./updates/UpdateContext";
+import { WhatsNewDialog } from "./updates/WhatsNewDialog";
 
 type Phase = { kind: "loading" } | { kind: "error"; error: AppError } | { kind: "ready"; state: AppState };
 
@@ -54,16 +56,24 @@ export default function App() {
   const { state } = phase;
   if (state.identity.displayName === null || !hasOrganization(state)) {
     return (
-      <Onboarding
-        state={state}
-        onIdentity={(identity) => update((s) => ({ ...s, identity }))}
-        onOrganization={joined}
-        onReload={load}
-      />
+      <>
+        <MarkWhatsNewSeen />
+        <Onboarding
+          state={state}
+          onIdentity={(identity) => update((s) => ({ ...s, identity }))}
+          onOrganization={joined}
+          onReload={load}
+        />
+      </>
     );
   }
   if (state.membership === "removed") {
     return <RemovedScreen state={state} onRecheck={load} />;
   }
-  return <Shell state={state} onRefresh={refresh} />;
+  return (
+    <UpdateProvider>
+      <Shell state={state} onRefresh={refresh} />
+      <WhatsNewDialog />
+    </UpdateProvider>
+  );
 }
