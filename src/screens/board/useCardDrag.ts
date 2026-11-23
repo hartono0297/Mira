@@ -202,7 +202,18 @@ export function useCardDrag(rootRef: RefObject<HTMLElement | null>, onDrop: (tas
     const cancel = (ev: PointerEvent) => {
       if (session.current && ev.pointerId === session.current.pointerId) finish(false);
     };
+    // Menu klik kanan (klik kanan, Shift+F10, tombol Menu) yang terbuka selagi
+    // tombol kiri masih ditahan membatalkan tekanan yang belum jadi seret, supaya
+    // gerakan mouse sesudahnya tidak memulai seret di bawah menu. Seret yang
+    // sudah berjalan tidak terpengaruh; menu memang tidak dibuka selama seret.
+    const dropPending = () => {
+      if (session.current && !session.current.started) finish(false);
+    };
     const key = (ev: KeyboardEvent) => {
+      if (ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey)) {
+        dropPending();
+        return;
+      }
       if (ev.key !== "Escape" || !session.current?.started) return;
       ev.preventDefault();
       ev.stopPropagation();
@@ -213,6 +224,7 @@ export function useCardDrag(rootRef: RefObject<HTMLElement | null>, onDrop: (tas
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("keydown", key, true);
+    window.addEventListener("contextmenu", dropPending, true);
     window.addEventListener("blur", blur);
 
     session.current = {
@@ -234,6 +246,7 @@ export function useCardDrag(rootRef: RefObject<HTMLElement | null>, onDrop: (tas
         window.removeEventListener("pointerup", up);
         window.removeEventListener("pointercancel", cancel);
         window.removeEventListener("keydown", key, true);
+        window.removeEventListener("contextmenu", dropPending, true);
         window.removeEventListener("blur", blur);
       },
     };

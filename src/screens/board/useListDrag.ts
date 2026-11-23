@@ -4,6 +4,7 @@
 // 5 px untuk mulai, lepas untuk menjatuhkan, Escape membatalkan. Pointer di
 // dekat tepi wadah gulir (isi dialog) menggulir otomatis.
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { isMac } from "../../platform";
 
 const THRESHOLD = 5;
 // Lebar tepi wadah gulir yang memicu gulir otomatis, dan kecepatan maksimalnya per frame.
@@ -112,7 +113,8 @@ export function useListDrag(
   }
 
   function onHandlePointerDown(e: ReactPointerEvent<HTMLElement>, id: string) {
-    if (e.button !== 0 || session.current) return;
+    // Ctrl + klik di macOS adalah klik kanan: membuka menu, bukan mulai seret.
+    if (e.button !== 0 || (e.ctrlKey && isMac()) || session.current) return;
     e.preventDefault();
     const handle = e.currentTarget;
     const pointerId = e.pointerId;
@@ -187,5 +189,15 @@ export function useListDrag(
 
   useEffect(() => () => finish(false), []);
 
-  return { dragId, dropIndex, onHandlePointerDown };
+  // Untuk menu klik kanan baris: selama seret berjalan menu tidak dibuka, dan
+  // seret yang masih tertunda (tombol ditahan, belum lewat ambang) dibatalkan.
+  function isDragging(): boolean {
+    return !!session.current?.started;
+  }
+
+  function cancelPending() {
+    if (session.current && !session.current.started) finish(false);
+  }
+
+  return { dragId, dropIndex, onHandlePointerDown, isDragging, cancelPending };
 }

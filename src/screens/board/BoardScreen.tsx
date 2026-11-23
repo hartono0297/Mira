@@ -1,4 +1,4 @@
-import { IconListCheck, IconPlus } from "@tabler/icons-react";
+import { IconLayoutKanban, IconListCheck, IconPencil, IconPlus, IconUsers } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { boardApi, subscribeBoard, type ProjectSummary } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -11,6 +11,8 @@ import { NewProjectDialog } from "./NewProjectDialog";
 import { OutsideProjects } from "./OutsideProjects";
 import { ProjectBoard, type ProjectBoardHandle } from "./ProjectBoard";
 import { TaskDetail } from "./TaskDetail";
+import { TEKS_MENU } from "./teksMenu";
+import { boardMenuItems, useBoardMenu } from "./useBoardMenu";
 import { useBoardLive } from "./useBoardLive";
 import "./board.css";
 import "./members.css";
@@ -44,6 +46,62 @@ function validProjects(data: unknown): ProjectSummary[] | null {
 }
 
 type OpenTask = { projectId: string; taskId: string };
+
+// Permintaan dari menu proyek agar board membuka panel Anggota atau dialog Ubah
+// nama. `n` naik setiap permintaan; hanya berlaku untuk proyek `projectId`.
+type BoardRequest = { projectId: string; kind: "members" | "rename"; n: number };
+
+type LinkProps = {
+  project: ProjectSummary;
+  current: boolean;
+  due: number;
+  onSelect: (projectId: string) => void;
+  onRequest: (projectId: string, kind: BoardRequest["kind"]) => void;
+};
+
+// Satu baris proyek di daftar kiri, dengan menu klik kanan (juga Shift+F10).
+function ProjectLink({ project: p, current, due, onSelect, onRequest }: LinkProps) {
+  const t = TEKS_MENU.proyek;
+  const menu = useBoardMenu({
+    label: t.menu(p.code, p.name),
+    items: boardMenuItems(
+      {
+        id: "open",
+        label: t.buka,
+        icon: <IconLayoutKanban size={16} />,
+        disabled: current && t.sedangTerbuka,
+        onSelect: () => onSelect(p.id),
+      },
+      { id: "members", label: t.anggota, icon: <IconUsers size={16} />, onSelect: () => onRequest(p.id, "members") },
+      p.canManage && {
+        id: "rename",
+        label: t.ubahNama,
+        icon: <IconPencil size={16} />,
+        onSelect: () => onRequest(p.id, "rename"),
+      },
+    ),
+  });
+  return (
+    <li {...menu.triggerProps}>
+      <button
+        type="button"
+        className="bd-link"
+        title={`${p.code} ${p.name}`}
+        aria-current={current ? "page" : undefined}
+        onClick={() => onSelect(p.id)}
+      >
+        <span className="bd-link-code">{p.code}</span> <span className="bd-link-name">{p.name}</span>
+        <span className="bd-link-count">
+          <span className="sr-only">, </span>
+          {p.openCount}
+          <span className="sr-only"> task belum selesai</span>
+        </span>
+        <SidebarCount count={due} meaning={DUE_MEANING} className="bd-link-due" />
+      </button>
+      {menu.element}
+    </li>
+  );
+}
 
 // Task yang ditugaskan ke saya, belum Selesai, tenggat hari ini atau lewat (D1, D5).
 // Kalau gagal dibaca, angkanya tidak tampil; daftar proyek tetap jalan.
@@ -91,6 +149,8 @@ export function BoardScreen() {
   const [selected, setSelected] = useState<string | null>(readSelection);
   const [creating, setCreating] = useState(false);
   const [openTask, setOpenTask] = useState<OpenTask | null>(null);
+  const [request, setRequest] = useState<BoardRequest | null>(null);
+  const requestSeq = useRef(0);
   const [refreshKey, setRefreshKey] = useState(0);
   // Proyek yang judul board-nya difokus begitu tampil (setelah proyek dibuat).
   const [focusProject, setFocusProject] = useState<string | null>(null);
@@ -141,7 +201,18 @@ export function BoardScreen() {
     writeSelection(value);
     // Pilihan sendiri menang atas pembukaan otomatis proyek yang baru diikuti.
     setJoinedId(null);
+    // Permintaan menu yang lama tidak ikut terbuka lagi saat board dipasang ulang.
+    setRequest(null);
   }, []);
+
+  const requestPanel = useCallback(
+    (projectId: string, kind: BoardRequest["kind"]) => {
+      select(projectId);
+      requestSeq.current += 1;
+      setRequest({ projectId, kind, n: requestSeq.current });
+    },
+    [select],
+  );
 
   const changed = useCallback(() => {
     setRefreshKey((n) => n + 1);
@@ -183,6 +254,15 @@ export function BoardScreen() {
   }, [joinedId, projects, select]);
 
   const currentProject = projects?.find((p) => p.id === current) ?? null;
+  const currentId = currentProject?.id ?? null;
+  // Permintaan menu hanya berlaku selama board proyeknya tetap terpasang. Begitu
+  // board itu tidak tampil (misalnya proyeknya hilang dari daftar), permintaan
+  // dibuang, supaya board yang dipasang lagi nanti tidak membuka panelnya sendiri.
+  if (request && request.projectId !== currentId) setRequest(null);
+  const boardRequest = useMemo(
+    () => (request && request.projectId === currentId ? { kind: request.kind, n: request.n } : undefined),
+    [request, currentId],
+  );
   const lostShown = projects && lost && current === lost.id && !currentProject ? lost : null;
   const nextProject = projects?.[0] ?? null;
 
@@ -236,24 +316,14 @@ export function BoardScreen() {
         {projects && projects.length > 0 && (
           <ul className="bd-navlist">
             {projects.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  className="bd-link"
-                  title={`${p.code} ${p.name}`}
-                  aria-current={current === p.id ? "page" : undefined}
-                  onClick={() => select(p.id)}
-                >
-                  <span className="bd-link-code">{p.code}</span>{" "}
-                  <span className="bd-link-name">{p.name}</span>
-                  <span className="bd-link-count">
-                    <span className="sr-only">, </span>
-                    {p.openCount}
-                    <span className="sr-only"> task belum selesai</span>
-                  </span>
-                  <SidebarCount count={due?.byProject[p.id] ?? 0} meaning={DUE_MEANING} className="bd-link-due" />
-                </button>
-              </li>
+              <ProjectLink
+                key={p.id}
+                project={p}
+                current={current === p.id}
+                due={due?.byProject[p.id] ?? 0}
+                onSelect={select}
+                onRequest={requestPanel}
+              />
             ))}
           </ul>
         )}
@@ -306,6 +376,7 @@ export function BoardScreen() {
             onOpenTask={(taskId) => setOpenTask({ projectId: currentProject.id, taskId })}
             onProjectsChanged={projectsChanged}
             onLost={projectLost}
+            request={boardRequest}
           />
         )}
         {lostShown && (

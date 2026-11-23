@@ -40,6 +40,12 @@ export type TaskCard = {
   trackedSecs: number;
   // Waktu mulai (RFC 3339) setiap timer yang masih berjalan, semua orang.
   timersRunningSince: string[];
+  // v0.4 menu klik kanan: saya boleh mengubah task ini (hak tulis di proyek),
+  // boleh menghapusnya, dan timer saya sedang berjalan di task ini. Opsional
+  // supaya data uji lama tetap sah; inti Rust selalu mengirimnya.
+  canEdit?: boolean;
+  canDelete?: boolean;
+  myTimerRunning?: boolean;
 };
 
 export type Column = { id: ColumnId; name: string; tasks: TaskCard[] };
@@ -121,6 +127,7 @@ export type TaskDetail = TaskCard & {
   updatedAt: string;
   comments: Comment[];
   activity: Activity[];
+  // Di inti Rust kedua field ini milik kartu; di detail selalu ada.
   canEdit: boolean;
   canDelete: boolean;
   canComment: boolean;

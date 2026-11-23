@@ -10,6 +10,14 @@
 // task terpisah lewat menu Lainnya, lihat Task saya, ambil screenshot terang dan
 // gelap, restart, dan pastikan semuanya tetap tersimpan.
 //
+// Setelah restart: menu klik kanan board (v0.4) dengan klik kanan sungguhan
+// (page.mouse tombol kanan lewat CDP): Task baru dari menu kolom, Pindahkan ke
+// lewat sub-menu, Tugaskan ke (Anda), Salin kode ke papan klip, Hapus task
+// dengan konfirmasi (Batal lalu Hapus), Shift+F10 dan panah kanan/kiri, klik
+// kanan tidak memulai seret, menu proyek (Anggota proyek), menu subtask di
+// dialog task, dan Task saya > Pindahkan ke. Screenshot menu ini masuk ke
+// CTX_SHOTS (bawaan: <folder screenshot>/v04-ctx-board).
+//
 // Pakai:  node scripts/board-e2e.mjs <path mira.exe> <folder screenshot> [folder induk data]
 // Dengan MIRA_E2E_OS_MOUSE=1, setelah restart satu kartu juga diseret dengan
 // kursor Windows sungguhan (kursor pengguna ikut bergerak; jangan pakai mouse).
@@ -25,7 +33,9 @@ import { mainNav, newOffice } from "./e2e-onboarding.mjs";
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
 const parent = resolve(process.argv[4] ?? tmpdir());
+const ctxShots = resolve(process.env.CTX_SHOTS ?? join(shots, "v04-ctx-board"));
 mkdirSync(shots, { recursive: true });
+mkdirSync(ctxShots, { recursive: true });
 mkdirSync(parent, { recursive: true });
 const dataDir = mkdtempSync(join(parent, "mira-board-"));
 // Geser semua port (debug WebView2 dan QUIC) supaya bisa jalan berdampingan dengan uji lain di PC yang sama.
@@ -299,6 +309,60 @@ async function osMouseDrag(app, page, title, colName) {
     ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, String(app.child.pid), px(from.x), px(from.y), px(to.x), px(to.y)],
     { stdio: "pipe", timeout: 30000 },
   );
+}
+
+// --- Menu klik kanan (v0.4) ---
+// Menu bersama: role=menu bernama label, item role=menuitem dengan data-menu-item.
+const menuNamed = (page, name) => page.getByRole("menu", { name, exact: true });
+const anyMenu = (page) => page.getByRole("menu");
+
+// Klik kanan sungguhan (mousePressed/mouseReleased tombol kanan lewat CDP) di
+// titik dekat kiri elemen. Hasil: titik kursor dalam koordinat halaman.
+async function rightClick(page, locator) {
+  await locator.scrollIntoViewIfNeeded();
+  const b = await locator.boundingBox();
+  const at = { x: b.x + Math.min(30, b.width / 2), y: b.y + b.height / 2 };
+  await page.mouse.click(at.x, at.y, { button: "right" });
+  return at;
+}
+
+const cardTitle = (page, title) => page.locator("section.pb-col [data-open-task]", { hasText: title });
+
+async function openCardMenu(page, title, code) {
+  const at = await rightClick(page, cardTitle(page, title));
+  const menu = menuNamed(page, `Aksi untuk ${code}`);
+  await menu.waitFor({ timeout: 5000 });
+  return { menu, at };
+}
+
+// Jarak kursor ke kotak menu (0 kalau kursor di dalam kotak).
+async function distanceToMenu(menu, at) {
+  const b = await menu.boundingBox();
+  const dx = Math.max(b.x - at.x, 0, at.x - (b.x + b.width));
+  const dy = Math.max(b.y - at.y, 0, at.y - (b.y + b.height));
+  return Math.round(Math.hypot(dx, dy));
+}
+
+const focused = (page) =>
+  page.evaluate(() => {
+    const a = document.activeElement;
+    return {
+      role: a?.getAttribute("role") ?? null,
+      item: a?.getAttribute("data-menu-item") ?? null,
+      text: a?.textContent?.trim() ?? "",
+      openTask: a?.getAttribute("data-open-task") ?? null,
+      menu: a?.closest("[role=menu]")?.getAttribute("aria-label") ?? null,
+    };
+  });
+
+// Label item saja (data-label), tanpa alasan nonaktif dan tanda sub-menu.
+const menuItemNames = async (menu) => menu.getByRole("menuitem").evaluateAll((els) => els.map((el) => el.getAttribute("data-label") ?? ""));
+
+async function closeMenus(page) {
+  for (let i = 0; i < 3 && (await anyMenu(page).count()) > 0; i++) {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(150);
+  }
 }
 
 let app = null;
@@ -637,6 +701,359 @@ try {
       check("Seret kursor Windows sungguhan memindah task ke Dikerjakan", false, String(err?.message ?? err).slice(0, 200));
     }
   }
+
+  // ===== Menu klik kanan board (v0.4), klik kanan sungguhan =====
+  // Tiap bagian berdiri sendiri: kalau satu gagal, menu ditutup dan bagian
+  // berikutnya tetap berjalan.
+  async function part(name, fn) {
+    try {
+      await fn();
+    } catch (err) {
+      check(name, false, String(err?.message ?? err).slice(0, 300));
+      await page.screenshot({ path: join(shots, `gagal-ctx-${results.length}.png`) }).catch(() => {});
+      await closeMenus(page).catch(() => {});
+      for (const d of [page.getByRole("dialog", { name: /^Hapus task/ }), taskDialog(page)]) {
+        if ((await d.count()) > 0) await page.keyboard.press("Escape").catch(() => {});
+      }
+    }
+  }
+  const boardTasks = async () => (await must(page, "board_get_board", { projectId: proj.id })).columns.flatMap((c) => c.tasks.map((t) => ({ ...t, col: c.id })));
+  const CTX_A = "Uji menu kartu";
+  const CTX_B = "Uji hapus lewat menu";
+  let codeA = "";
+  let codeB = "";
+  let idA = "";
+  let idB = "";
+
+  await setTheme(page, "Terang");
+  await openProject(page);
+
+  // Kolom: klik kanan judul kolom > "Task baru di To do" membuka isian, lalu dua task dibuat.
+  await part("Klik kanan kolom: Task baru di To do", async () => {
+    const at = await rightClick(page, column(page, "To do").locator("h3.pb-colh"));
+    const colMenu = menuNamed(page, "Aksi untuk kolom To do");
+    await colMenu.waitFor({ timeout: 5000 });
+    const items = await menuItemNames(colMenu);
+    const dist = await distanceToMenu(colMenu, at);
+    await colMenu.getByRole("menuitem", { name: "Task baru di To do" }).click();
+    const input = column(page, "To do").getByLabel(/Judul task baru/);
+    await input.waitFor({ timeout: 5000 });
+    const inputFocused = await input.evaluate((el) => el === document.activeElement);
+    check(
+      "Klik kanan kolom: menu 'Aksi untuk kolom To do' di dekat kursor, 'Task baru di To do' membuka isian terfokus",
+      items.length === 1 && items[0] === "Task baru di To do" && dist <= 24 && inputFocused,
+      `item=${items.join(" | ")}, jarak=${dist}px, fokus=${inputFocused}`,
+    );
+    for (const t of [CTX_A, CTX_B]) {
+      await input.fill(t);
+      await input.press("Enter");
+      await page.waitForTimeout(300);
+    }
+    await input.press("Escape");
+  });
+  {
+    const tasks = await boardTasks();
+    const a = tasks.find((t) => t.title === CTX_A);
+    const b = tasks.find((t) => t.title === CTX_B);
+    if (!a || !b) {
+      // Cadangan: buat lewat IPC supaya langkah menu kartu tetap bisa diuji.
+      if (!a) await must(page, "board_create_task", { projectId: proj.id, input: { columnId: "todo", title: CTX_A } });
+      if (!b) await must(page, "board_create_task", { projectId: proj.id, input: { columnId: "todo", title: CTX_B } });
+      await page.getByRole("navigation", { name: "Task saya dan proyek" }).getByRole("button", { name: /Task saya/ }).click();
+      await openProject(page);
+    }
+    const again = await boardTasks();
+    ({ code: codeA, id: idA } = again.find((t) => t.title === CTX_A));
+    ({ code: codeB, id: idB } = again.find((t) => t.title === CTX_B));
+  }
+
+  // a. Klik kanan kartu > Pindahkan ke > Dikerjakan.
+  await part("Klik kanan kartu: Pindahkan ke > Dikerjakan", async () => {
+    const { menu, at } = await openCardMenu(page, CTX_A, codeA);
+    const dist = await distanceToMenu(menu, at);
+    const items = await menuItemNames(menu);
+    const first = await focused(page);
+    check(
+      `Klik kanan kartu: menu 'Aksi untuk ${codeA}' muncul di dekat kursor, item pertama terfokus`,
+      dist <= 24 && first.role === "menuitem" && first.item === "open" && items[0] === "Buka task" && items.includes(`Salin kode ${codeA}`),
+      `jarak=${dist}px, fokus=${first.item}, item=${items.join(" | ")}`,
+    );
+    check(
+      "Klik kanan kartu membuka satu menu saja dan tidak membuka detail task",
+      (await anyMenu(page).count()) === 1 && (await taskDialog(page).count()) === 0,
+    );
+    await page.screenshot({ path: join(ctxShots, "01-kartu-menu-terang.png") });
+    const moveItem = menu.locator('[data-menu-item="move"]');
+    const hasPopup = await moveItem.getAttribute("aria-haspopup");
+    await moveItem.click();
+    const sub = menuNamed(page, `Pindahkan ${codeA} ke`);
+    await sub.waitFor({ timeout: 5000 });
+    const subItems = await menuItemNames(sub);
+    const subFocus = await focused(page);
+    const subDist = await distanceToMenu(sub, at);
+    check(
+      `Sub-menu 'Pindahkan ${codeA} ke' menggantikan menu di tempat: Kembali di atas, fokus di pilihan pertama sesudahnya`,
+      hasPopup === "menu" &&
+        (await menu.count()) === 0 &&
+        subItems[0] === "Kembali" &&
+        ["To do", "Dikerjakan", "Selesai"].every((c) => subItems.includes(c)) &&
+        subFocus.menu === `Pindahkan ${codeA} ke` &&
+        subFocus.item === "move-todo" &&
+        subDist <= 24,
+      `aria-haspopup=${hasPopup}, item=${subItems.join(" | ")}, fokus=${subFocus.item}, jarak=${subDist}px`,
+    );
+    const todoDisabled = await sub.locator('[data-menu-item="move-todo"]').getAttribute("aria-disabled");
+    check("Sub-menu Pindahkan: kolom sekarang (To do) nonaktif", todoDisabled === "true", `aria-disabled=${todoDisabled}`);
+    await page.screenshot({ path: join(ctxShots, "02-kartu-submenu-pindah-terang.png") });
+    await sub.getByRole("menuitem", { name: "Dikerjakan", exact: true }).click();
+    await page.waitForTimeout(700);
+    const inCore = (await boardTasks()).find((t) => t.id === idA)?.col;
+    check(
+      `Pindahkan ke > Dikerjakan: ${codeA} pindah kolom di layar dan di inti (board_get_board)`,
+      (await cardTitles(page, "Dikerjakan")).includes(CTX_A) && !(await cardTitles(page, "To do")).includes(CTX_A) && inCore === "doing" && (await anyMenu(page).count()) === 0,
+      `inti=${inCore}`,
+    );
+  });
+
+  // b. Tugaskan ke > (Anda).
+  await part("Klik kanan kartu: Tugaskan ke (Anda)", async () => {
+    const before = (await boardTasks()).find((t) => t.id === idA);
+    const { menu } = await openCardMenu(page, CTX_A, codeA);
+    await menu.locator('[data-menu-item="assign"]').click();
+    const sub = menuNamed(page, `Tugaskan ${codeA} ke`);
+    await sub.waitFor({ timeout: 5000 });
+    const subItems = await menuItemNames(sub);
+    const subFocus = await focused(page);
+    await sub.getByRole("menuitem", { name: /\(Anda\)$/ }).click();
+    const av = cardOf(page, CTX_A).locator(".tc-av");
+    await av.waitFor({ timeout: 5000 });
+    const avTitle = await av.getAttribute("title");
+    const after = (await boardTasks()).find((t) => t.id === idA);
+    check(
+      "Tugaskan ke > Rina Uji (Anda): avatar tampil di kartu dan penanggung jawab di inti berubah",
+      !before.assignee &&
+        subItems[0] === "Kembali" &&
+        subItems[1] === "Rina Uji (Anda)" &&
+        subFocus.item === `assign-${me}` &&
+        avTitle === "Rina Uji" &&
+        after.assignee?.publicKey === me,
+      `item=${subItems.join(" | ")}, avatar=${avTitle}, inti=${after.assignee?.name ?? "-"}`,
+    );
+  });
+
+  // c. Salin kode ke papan klip sungguhan.
+  await part("Klik kanan kartu: Salin kode", async () => {
+    await page.evaluate(() => navigator.clipboard.writeText("isi lama").catch(() => {}));
+    const { menu } = await openCardMenu(page, CTX_A, codeA);
+    await menu.getByRole("menuitem", { name: `Salin kode ${codeA}` }).click();
+    await page.waitForTimeout(400);
+    const copied = await page.evaluate(() => navigator.clipboard.readText().catch((e) => `gagal: ${e}`));
+    const back = await focused(page);
+    check(
+      `Salin kode ${codeA}: papan klip berisi kode, menu tertutup, fokus kembali ke judul kartu`,
+      copied === codeA && (await anyMenu(page).count()) === 0 && back.openTask === idA,
+      `papan klip=${copied}, fokus=${back.openTask === idA ? "judul kartu" : JSON.stringify(back)}`,
+    );
+  });
+
+  // d. Hapus task: Batal tidak mengubah apa pun, lalu Hapus.
+  await part("Klik kanan kartu: Hapus task", async () => {
+    const confirm = page.getByRole("dialog", { name: `Hapus task ${codeB}?` });
+    let { menu } = await openCardMenu(page, CTX_B, codeB);
+    const del = menu.locator('[data-menu-item="delete"]');
+    const delText = await del.getAttribute("data-label");
+    await del.click();
+    await confirm.waitFor({ timeout: 5000 });
+    const body = (await confirm.innerText()).replace(/\s+/g, " ");
+    await page.screenshot({ path: join(ctxShots, "03-konfirmasi-hapus-terang.png") });
+    await confirm.getByRole("button", { name: "Batal", exact: true }).click();
+    await confirm.waitFor({ state: "detached", timeout: 5000 });
+    await page.waitForTimeout(300);
+    const keptCore = (await call(page, "board_get_task", { projectId: proj.id, taskId: idB })).ok;
+    const keptDom = (await cardTitles(page, "To do")).includes(CTX_B);
+    check(
+      `Hapus task ${codeB}: dialog konfirmasi, Batal tidak mengubah apa pun`,
+      delText === "Hapus task" && body.includes(CTX_B) && keptCore && keptDom && (await anyMenu(page).count()) === 0,
+      `isi="${body.slice(0, 120)}", inti=${keptCore}, layar=${keptDom}`,
+    );
+    ({ menu } = await openCardMenu(page, CTX_B, codeB));
+    await menu.locator('[data-menu-item="delete"]').click();
+    await confirm.waitFor({ timeout: 5000 });
+    await confirm.getByRole("button", { name: `Hapus ${codeB}`, exact: true }).click();
+    await confirm.waitFor({ state: "detached", timeout: 10000 });
+    await page.waitForTimeout(600);
+    const goneCore = !(await boardTasks()).some((t) => t.id === idB) && !(await call(page, "board_get_task", { projectId: proj.id, taskId: idB })).ok;
+    const goneDom = (await page.locator("[data-open-task]", { hasText: CTX_B }).count()) === 0;
+    check(`Hapus ${codeB} dikonfirmasi: kartu hilang dan task terhapus di inti`, goneCore && goneDom, `inti=${goneCore}, layar=${goneDom}`);
+  });
+
+  // e. Keyboard: Shift+F10, panah kanan/kiri, Esc.
+  await part("Keyboard: Shift+F10 di kartu", async () => {
+    await cardTitle(page, CTX_A).focus();
+    await page.keyboard.press("Shift+F10");
+    const menu = menuNamed(page, `Aksi untuk ${codeA}`);
+    await menu.waitFor({ timeout: 5000 });
+    const f1 = await focused(page);
+    await page.keyboard.press("ArrowDown");
+    const f2 = await focused(page);
+    await page.keyboard.press("ArrowRight");
+    const sub = menuNamed(page, `Pindahkan ${codeA} ke`);
+    await sub.waitFor({ timeout: 5000 });
+    const f3 = await focused(page);
+    check(
+      "Shift+F10 di judul kartu membuka menu dengan item terfokus; panah kanan di Pindahkan ke membuka sub-menu",
+      f1.role === "menuitem" && f1.item === "open" && f2.item === "move" && f3.menu === `Pindahkan ${codeA} ke` && f3.item === "move-todo",
+      `${f1.item} > ${f2.item} > ${f3.menu}: ${f3.item}`,
+    );
+    await page.keyboard.press("ArrowLeft");
+    await menu.waitFor({ timeout: 5000 });
+    const f4 = await focused(page);
+    check("Panah kiri di sub-menu kembali ke menu utama dengan fokus di Pindahkan ke", f4.menu === `Aksi untuk ${codeA}` && f4.item === "move", JSON.stringify(f4));
+    await page.keyboard.press("ArrowRight");
+    await sub.waitFor({ timeout: 5000 });
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    const f5 = await focused(page);
+    check(
+      "Esc di sub-menu menutup semua menu dan fokus kembali ke judul kartu",
+      (await anyMenu(page).count()) === 0 && f5.openTask === idA,
+      JSON.stringify(f5),
+    );
+  });
+
+  // f. Klik kanan tidak memulai seret; seret tombol kiri tetap jalan sesudah menu dipakai.
+  await part("Klik kanan tidak memulai seret", async () => {
+    const from = await grabPoint(page, CTX_A);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(from.x + 12, from.y + 6, { steps: 4 });
+    const to = await dropPoint(page, "Selesai");
+    await page.mouse.move(to.x, to.y, { steps: 20 });
+    await page.waitForTimeout(150);
+    const mid = {
+      ghost: await page.locator(".tc-ghost").count(),
+      dragging: await page.evaluate(() => document.documentElement.classList.contains("card-dragging")),
+      over: await column(page, "Selesai").evaluate((el) => el.classList.contains("pb-col-over")),
+    };
+    await page.mouse.up({ button: "right" });
+    await page.waitForTimeout(500);
+    await closeMenus(page);
+    const col = (await boardTasks()).find((t) => t.id === idA)?.col;
+    check(
+      "Klik kanan + gerak dengan tombol kanan: tidak ada bayangan seret, kartu tidak pindah",
+      mid.ghost === 0 && !mid.dragging && !mid.over && (await cardTitles(page, "Dikerjakan")).includes(CTX_A) && col === "doing",
+      `${JSON.stringify(mid)}, inti=${col}`,
+    );
+    const r = await mouseDrag(page, CTX_A, "To do");
+    const col2 = (await boardTasks()).find((t) => t.id === idA)?.col;
+    check(
+      "Seret tombol kiri sesudah menu klik kanan tetap memindah kartu (Dikerjakan ke To do)",
+      r.ghost && r.highlighted && (await cardTitles(page, "To do")).includes(CTX_A) && col2 === "todo",
+      `${JSON.stringify(r)}, inti=${col2}`,
+    );
+  });
+
+  // g. Proyek di daftar kiri: Anggota proyek.
+  await part("Klik kanan proyek: Anggota proyek", async () => {
+    const link = page.getByRole("navigation", { name: "Task saya dan proyek" }).getByRole("button", { name: /Proyek A/ });
+    const at = await rightClick(page, link);
+    const menu = menuNamed(page, "Aksi untuk proyek PA Proyek A");
+    await menu.waitFor({ timeout: 5000 });
+    const items = await menuItemNames(menu);
+    const dist = await distanceToMenu(menu, at);
+    await page.screenshot({ path: join(ctxShots, "06-proyek-menu-terang.png") });
+    await menu.getByRole("menuitem", { name: "Anggota proyek" }).click();
+    const panel = page.getByRole("dialog", { name: "Anggota proyek" });
+    await panel.waitFor({ timeout: 5000 });
+    const panelText = await panel.innerText();
+    check(
+      "Klik kanan proyek > Anggota proyek membuka panel anggota",
+      items.includes("Buka board") && items.includes("Anggota proyek") && dist <= 24 && panelText.includes("Rina Uji"),
+      `item=${items.join(" | ")}, jarak=${dist}px`,
+    );
+    await page.keyboard.press("Escape");
+    await panel.waitFor({ state: "detached", timeout: 5000 });
+  });
+
+  // g. Task saya > Pindahkan ke > Selesai.
+  await part("Klik kanan Task saya: Pindahkan ke", async () => {
+    await page.getByRole("navigation", { name: "Task saya dan proyek" }).getByRole("button", { name: /Task saya/ }).click();
+    const row = page.locator("li").filter({ has: page.locator(".mt-row", { hasText: CTX_A }) });
+    await row.first().waitFor({ timeout: 5000 });
+    await rightClick(page, row.first().locator(".mt-row"));
+    const menu = menuNamed(page, `Aksi untuk ${codeA}`);
+    await menu.waitFor({ timeout: 5000 });
+    await menu.locator('[data-menu-item="move"]').click();
+    const sub = menuNamed(page, `Pindahkan ${codeA} ke`);
+    await sub.waitFor({ timeout: 5000 });
+    await page.screenshot({ path: join(ctxShots, "07-task-saya-submenu-terang.png") });
+    await sub.getByRole("menuitem", { name: "Selesai", exact: true }).click();
+    let col = "";
+    for (let i = 0; i < 20 && col !== "done"; i++) {
+      col = (await boardTasks()).find((t) => t.id === idA)?.col;
+      if (col !== "done") await page.waitForTimeout(250);
+    }
+    // Baris pindah ke kelompok Selesai, yang tertutup (tidak dirender) sampai tombolnya dibuka.
+    const openRow = row;
+    let leftOpen = false;
+    for (let i = 0; i < 20 && !leftOpen; i++) {
+      leftOpen = (await openRow.count()) === 0;
+      if (!leftOpen) await page.waitForTimeout(250);
+    }
+    await page.locator('button[aria-controls$="-done-list"]').click();
+    await row.first().waitFor({ timeout: 5000 });
+    const rowText = (await row.first().innerText().catch(() => "")).replace(/\s+/g, " ");
+    check(
+      "Task saya > Pindahkan ke > Selesai: task pindah di inti, baris keluar dari daftar terbuka dan tampil di kelompok Selesai",
+      col === "done" && leftOpen && rowText.includes("Selesai"),
+      `inti=${col}, keluar=${leftOpen}, baris="${rowText.slice(0, 100)}"`,
+    );
+  });
+
+  // Mode gelap: menu kartu dan menu subtask di dialog task.
+  await setTheme(page, "Gelap");
+  await openProject(page);
+  await part("Mode gelap: menu kartu", async () => {
+    const { menu } = await openCardMenu(page, "Review kontrak proyek A", (await boardTasks()).find((t) => t.title === "Review kontrak proyek A").code);
+    await page.screenshot({ path: join(ctxShots, "04-kartu-menu-gelap.png") });
+    const n = (await menuItemNames(menu)).length;
+    await page.keyboard.press("Escape");
+    check("Mode gelap: menu kartu terbuka dan tertutup dengan Esc", n >= 7 && (await anyMenu(page).count()) === 0, `${n} item`);
+  });
+  await part("Klik kanan subtask di dialog task", async () => {
+    const dlg = await openTaskDialog(page, "Review kontrak proyek A");
+    const box = dlg.getByRole("checkbox", { name: "Cek pasal pembayaran", exact: true });
+    await box.waitFor({ timeout: 5000 });
+    const at = await rightClick(page, box);
+    const menu = menuNamed(page, "Aksi untuk subtask Cek pasal pembayaran");
+    await menu.waitFor({ timeout: 5000 });
+    const items = await menuItemNames(menu);
+    const dist = await distanceToMenu(menu, at);
+    const inDialog = await menu.evaluate((el) => !!el.closest("[role=dialog]"));
+    await page.screenshot({ path: join(ctxShots, "05-subtask-menu-gelap.png") });
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    check(
+      "Klik kanan subtask: menu subtask di dalam dialog; Esc hanya menutup menu, dialog task tetap terbuka",
+      items.includes("Tandai belum selesai") && items.includes("Hapus subtask") && inDialog && dist <= 24 && (await anyMenu(page).count()) === 0 && (await taskDialog(page).count()) === 1,
+      `item=${items.join(" | ")}, jarak=${dist}px`,
+    );
+    // Aksi dari menu subtask: Tandai belum selesai, lewat klik kanan di baris (bukan kolom judul).
+    await rightClick(page, box);
+    await menu.waitFor({ timeout: 5000 });
+    await menu.getByRole("menuitem", { name: "Tandai belum selesai" }).click();
+    let done = true;
+    for (let i = 0; i < 20 && done; i++) {
+      done = (await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId })).subtasks.find((s) => s.title === "Cek pasal pembayaran")?.done;
+      if (done) await page.waitForTimeout(250);
+    }
+    check(
+      "Menu subtask > Tandai belum selesai mengubah subtask di inti, dialog tetap terbuka",
+      done === false && !(await box.isChecked()) && (await taskDialog(page).count()) === 1,
+    );
+    await closeTaskDialog(page);
+  });
+
   await stop(app);
   app = null;
 } catch (err) {

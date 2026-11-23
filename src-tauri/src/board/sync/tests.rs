@@ -120,11 +120,21 @@ fn view_json(l: &Laptop, project: &str) -> serde_json::Value {
             let o = v.as_object_mut().unwrap();
             o.remove("canEdit");
             o.remove("canDelete");
+            o.remove("myTimerRunning");
             v
         })
         .collect();
+    let mut columns = serde_json::to_value(&board.columns).unwrap();
+    for c in columns.as_array_mut().unwrap() {
+        for t in c["tasks"].as_array_mut().unwrap() {
+            let o = t.as_object_mut().unwrap();
+            o.remove("canEdit");
+            o.remove("canDelete");
+            o.remove("myTimerRunning");
+        }
+    }
     serde_json::json!({
-        "columns": board.columns,
+        "columns": columns,
         "openCount": board.project.open_count,
         "taskCount": board.project.task_count,
         "details": details,

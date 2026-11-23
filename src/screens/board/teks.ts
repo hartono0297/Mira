@@ -3,7 +3,8 @@
 // - TEKS di bawah: kartu board dan format durasi;
 // - teksDialog.ts: dialog detail task (properti, tenggat, label, Lainnya, tab);
 // - teksSubtask.ts: daftar subtask;
-// - teksWaktu.ts: timer dan bagian Waktu.
+// - teksWaktu.ts: timer dan bagian Waktu;
+// - teksMenu.ts: menu klik kanan board.
 // Semuanya diekspor ulang dari sini. Kalimat yang memuat angka ditulis sebagai
 // fungsi kecil. Teks sebelum v0.4 masih ada di format.ts dan komponennya.
 
@@ -33,5 +34,6 @@ export const TEKS = {
 } as const;
 
 export * from "./teksDialog";
+export * from "./teksMenu";
 export * from "./teksSubtask";
 export * from "./teksWaktu";

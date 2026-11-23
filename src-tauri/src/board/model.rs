@@ -149,6 +149,14 @@ pub struct TaskCard {
     pub tracked_secs: i64,
     /// Start (RFC 3339) of every running timer, everyone's.
     pub timers_running_since: Vec<String>,
+    /// The viewer may change this task (the project's write right, never a
+    /// guest).
+    pub can_edit: bool,
+    /// The viewer may delete this task (creator or project manager, never
+    /// a guest).
+    pub can_delete: bool,
+    /// The viewer has a running timer on this task.
+    pub my_timer_running: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -280,8 +288,6 @@ pub struct TaskDetail {
     pub updated_at: String,
     pub comments: Vec<Comment>,
     pub activity: Vec<Activity>,
-    pub can_edit: bool,
-    pub can_delete: bool,
     /// Guests read comments but cannot write them.
     pub can_comment: bool,
     pub subtasks: Vec<Subtask>,
