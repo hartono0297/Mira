@@ -17,6 +17,7 @@ import { DocsScreen } from "../docs/DocsScreen";
 import { OrgScreen } from "../org/OrgScreen";
 import { SettingsScreen, type SettingsPart } from "../settings/SettingsScreen";
 import { SignScreen } from "../sign/SignScreen";
+import { UpdateDot } from "../../updates/UpdateDot";
 import { NetworkPanel } from "./NetworkPanel";
 import { NetworkProvider } from "./NetworkContext";
 import "./shell.css";
@@ -67,6 +68,7 @@ export function Shell({ state, onRefresh }: Props) {
                   >
                     <NavIcon size={18} aria-hidden="true" />
                     {label}
+                    {id === "settings" && <UpdateDot />}
                   </button>
                 </li>
               ))}
