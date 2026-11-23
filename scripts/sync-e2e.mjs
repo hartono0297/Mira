@@ -1,28 +1,29 @@
-// Uji ujung ke ujung sinkron dokumen dan tanda tangan antara dua "laptop"
-// Mira di satu PC.
+// Uji ujung ke ujung sinkron dokumen dan tanda tangan antar tiga "laptop"
+// Mira di satu PC, lewat transport jaringan sungguhan (QUIC di 127.0.0.1,
+// penemuan mDNS). Tidak ada jembatan uji dan tidak ada command debug.
 //
-// Dua instance mira.exe berjalan dengan folder data (MIRA_DATA_DIR), port QUIC
-// (MIRA_PORT), dan port debug WebView2 sendiri, lalu dikendalikan lewat Chrome
-// DevTools Protocol. Keanggotaan organisasi memakai jaringan Tahap 1 yang asli
-// (seperti e2e-multi.mjs). Record fitur ("docs", "sign") dan file belum lewat
-// transport asli: keduanya dijalankan dengan MIRA_TEST_BRIDGE_DIR, dan skrip
-// ini menjalankan pompa di latar (src-tauri/src/feature_bridge.rs):
+// Tiga instance mira.exe hasil build release berjalan dengan folder data
+// (MIRA_DATA_DIR), port QUIC (MIRA_PORT), dan port debug WebView2 sendiri,
+// lalu dikendalikan lewat Chrome DevTools Protocol. Organisasi disiapkan lewat
+// command Tauri (seperti e2e-fitur-multi.mjs). Sinkron berjalan saat ada
+// perubahan, ditambah cadangan berkala 60 detik, jadi batas tunggu longgar.
 //
-//   - record: untuk setiap topik dan pasangan (X, Y), debug_feature_offer di X
-//     lalu debug_feature_ingest di Y;
-//   - file: setiap wants/<pkY>/<hash> dilayani laptop lain lewat debug_blob_serve;
-//   - offline: pompa dijeda dan file peers/<pk> dihapus; saat tersambung lagi
-//     file dibuat ulang dan debug_peer_connected dipanggil.
+//   A  Ayu Uji    superadmin, anggota Tim Proyek
+//   B  Budi Uji   Anggota Tim Proyek
+//   C  Citra Uji  Anggota Tim Lain; dikeluarkan dari organisasi di akhir uji
 //
-//   A  Ayu Uji   membuat organisasi
-//   B  Budi Uji  bergabung sebagai Anggota
+// "Offline" = instance rekan dimatikan: bentrok dibuat dengan mematikan B dan
+// C, A mengedit, A dimatikan, B dinyalakan dan mengedit sendirian, lalu A
+// dinyalakan lagi.
 //
 // Pakai:  node scripts/sync-e2e.mjs <path mira.exe> <folder screenshot>
+// Build dulu: npx tauri build --no-bundle
 // Butuh:  playwright-core, pdf-lib. MIRA_E2E_KEEP=1 menyimpan folder sementara.
 
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  createWriteStream,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -30,6 +31,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -37,30 +39,34 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, PDFName, StandardFonts, rgb } from "pdf-lib";
 
-const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
+const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/sinkron");
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 mkdirSync(shots, { recursive: true });
 const root = mkdtempSync(join(tmpdir(), "mira-sinkron-"));
-const bridge = join(root, "jembatan");
-mkdirSync(bridge, { recursive: true });
 
 const XLSX = "RAB-proyek-a.xlsx";
 const XLSX_SRC = join(repo, "test-files", "docs", XLSX);
 const BIG = "gambar-kerja-proyek.zip";
 const BIG_SIZE = 21 * 1024 * 1024; // di atas batas salin otomatis 20 MB
+const AFTER_REMOVAL = "notulen-setelah-citra-keluar.txt";
 const PDF_TITLE = "kontrak-sinkron";
 const pdfPath = join(root, `${PDF_TITLE}.pdf`);
 const PIN = "246810";
 
+// Port sendiri (bukan 4786x/936x milik e2e-fitur-multi.mjs), supaya tidak
+// bentrok dengan uji lain yang mungkin berjalan di PC yang sama.
 const NODES = {
-  A: { name: "Ayu Uji", port: 47861, cdp: 9361, dir: join(root, "laptop-a") },
-  B: { name: "Budi Uji", port: 47862, cdp: 9362, dir: join(root, "laptop-b") },
+  A: { name: "Ayu Uji", port: 47871, cdp: 9371, dir: join(root, "laptop-a") },
+  B: { name: "Budi Uji", port: 47872, cdp: 9372, dir: join(root, "laptop-b") },
+  C: { name: "Citra Uji", port: 47873, cdp: 9373, dir: join(root, "laptop-c") },
 };
 const addr = (id) => `127.0.0.1:${NODES[id].port}`;
-const other = (id) => (id === "A" ? "B" : "A");
+// Satu putaran sinkron cadangan (60 dtk) ditambah sedikit jeda.
+const FULL_ROUND_MS = 70000;
+const SYNC_MS = 150000;
 const pk = {};
 
 function miraCredentials() {
@@ -78,8 +84,10 @@ function check(name, ok, detail = "") {
   results.push({ name, ok: Boolean(ok), detail });
   console.log(`${ok ? "LULUS" : "GAGAL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
+const note = (msg) => console.log(`CATATAN  ${msg}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmt = (v) => (typeof v === "string" ? v : JSON.stringify(v))?.slice(0, 300);
+const secs = (since) => `${Math.round((Date.now() - since) / 1000)} dtk`;
 
 // ---------------------------------------------------------------------------
 // Instance
@@ -89,17 +97,18 @@ const running = {};
 async function launch(id) {
   const node = NODES[id];
   mkdirSync(node.dir, { recursive: true });
+  const log = createWriteStream(join(root, `${id}-stderr.log`), { flags: "a" });
   const child = spawn(exe, [], {
     env: {
       ...process.env,
       MIRA_DATA_DIR: node.dir,
       MIRA_PORT: String(node.port),
-      MIRA_TEST_BRIDGE_DIR: bridge,
       MIRA_TEST_NO_LAUNCH: "1",
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${node.cdp}`,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
   });
+  child.stderr.pipe(log);
   let browser;
   for (let i = 0; i < 80 && !browser; i++) {
     await sleep(500);
@@ -116,10 +125,14 @@ async function launch(id) {
     if (!page) await sleep(250);
   }
   if (!page) throw new Error(`Jendela ${id} tidak ditemukan lewat CDP`);
+  const consoleLines = [];
+  page.on("console", (m) => {
+    if (m.type() === "error" || m.type() === "warning") consoleLines.push(`[${m.type()}] ${m.text()}`);
+  });
   await page.waitForLoadState("domcontentloaded");
   await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
   await page.setViewportSize({ width: 1280, height: 860 }).catch(() => {});
-  running[id] = { child, browser, page };
+  running[id] = { child, browser, page, consoleLines };
   return running[id];
 }
 
@@ -156,7 +169,7 @@ async function must(id, cmd, args) {
   return r.value;
 }
 
-async function waitFor(desc, fn, timeoutMs = 45000) {
+async function waitFor(desc, fn, timeoutMs = SYNC_MS, everyMs = 1000) {
   const start = Date.now();
   let last;
   while (Date.now() - start < timeoutMs) {
@@ -166,111 +179,29 @@ async function waitFor(desc, fn, timeoutMs = 45000) {
     } catch (e) {
       last = String(e?.message ?? e);
     }
-    await sleep(500);
+    await sleep(everyMs);
   }
-  const pumpNote = pump.lastError ? `; galat pompa terakhir: ${pump.lastError}` : "";
-  throw new Error(`Menunggu terlalu lama: ${desc} (terakhir: ${fmt(last)}${pumpNote})`);
+  throw new Error(`Menunggu terlalu lama: ${desc} (terakhir: ${fmt(last)})`);
 }
+// Seperti waitFor, tapi kegagalan dikembalikan sebagai teks, bukan dilempar.
+const settle = (desc, fn, timeoutMs) => waitFor(desc, fn, timeoutMs).catch((e) => String(e.message));
 
-// ---------------------------------------------------------------------------
-// Pompa jembatan fitur
+const onlineNames = async (id) =>
+  (await must(id, "get_network_status")).peers.filter((p) => p.online).map((p) => p.displayName).sort();
 
-const TOPICS = ["docs", "sign"];
-const PAIRS = [
-  ["A", "B"],
-  ["B", "A"],
-];
-const pump = {
-  on: false,
-  paused: false,
-  busy: false,
-  loop: null,
-  lastError: null,
-  stats: { accepted: 0, rejected: 0, dropped: 0, served: 0 },
-};
-
-async function pumpOnce() {
-  for (const topic of TOPICS) {
-    for (const [x, y] of PAIRS) {
-      const offer = await call(x, "debug_feature_offer", { topic, peer: pk[y] });
-      if (!offer.ok) {
-        pump.lastError = `${x} debug_feature_offer ${topic}: ${fmt(offer.error)}`;
-        continue;
-      }
-      if (!offer.value.length) continue;
-      const got = await call(y, "debug_feature_ingest", { topic, from: pk[x], records: offer.value });
-      if (!got.ok) {
-        pump.lastError = `${y} debug_feature_ingest ${topic}: ${fmt(got.error)}`;
-        continue;
-      }
-      const { accepted, rejected, dropped } = got.value;
-      pump.stats.accepted += accepted;
-      pump.stats.rejected += rejected;
-      pump.stats.dropped += dropped;
-      if (rejected || dropped) {
-        console.log(`  pompa: ${y} menolak ${rejected} dan membuang ${dropped} record ${topic} dari ${x}`);
-      }
-    }
-  }
-  // File yang ditunggu Y dilayani X (yang memeriksa izinnya sendiri).
-  for (const [x, y] of PAIRS) {
-    let wants = [];
-    try {
-      wants = readdirSync(join(bridge, "wants", pk[y])).filter((h) => /^[0-9a-f]{64}$/.test(h));
-    } catch {
-      /* folder belum ada */
-    }
-    for (const hash of wants) {
-      if (existsSync(join(bridge, "blobs", hash))) continue;
-      const r = await call(x, "debug_blob_serve", { peer: pk[y], hash });
-      if (!r.ok) pump.lastError = `${x} debug_blob_serve: ${fmt(r.error)}`;
-      else if (r.value) pump.stats.served += 1;
-    }
-  }
-}
-
-function startPump() {
-  pump.on = true;
-  pump.loop = (async () => {
-    while (pump.on) {
-      if (!pump.paused && running.A && running.B) {
-        pump.busy = true;
-        try {
-          await pumpOnce();
-        } catch (e) {
-          pump.lastError = String(e?.message ?? e);
-        } finally {
-          pump.busy = false;
-        }
-      }
-      await sleep(700);
-    }
-  })();
-}
-
-async function stopPump() {
-  pump.on = false;
-  await pump.loop?.catch(() => {});
-}
-
-// Offline: pompa berhenti dan kedua laptop tidak saling melihat.
-async function goOffline() {
-  pump.paused = true;
-  await waitFor("putaran pompa yang berjalan selesai", async () => !pump.busy, 30000);
-  for (const id of ["A", "B"]) rmSync(join(bridge, "peers", pk[id]), { force: true });
-}
-
-async function goOnline() {
-  for (const id of ["A", "B"]) writeFileSync(join(bridge, "peers", pk[id]), "");
-  for (const id of ["A", "B"]) await must(id, "debug_peer_connected", { peer: pk[other(id)] });
-  pump.paused = false;
+async function waitOnline(id, ids) {
+  const want = ids.map((x) => NODES[x].name);
+  return settle(`${id} melihat ${want.join(", ")} online`, async () => {
+    const names = await onlineNames(id);
+    return want.every((n) => names.includes(n));
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Bantuan tampilan
 
 const page = (id) => running[id].page;
-const shot = (id, name) => page(id).screenshot({ path: join(shots, name) });
+const shot = (id, name) => page(id).screenshot({ path: join(shots, name) }).catch(() => {});
 
 async function refocus(id) {
   await page(id).evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -288,11 +219,16 @@ async function setTheme(id, label) {
   await sleep(400);
 }
 
+// Memuat ulang layar setelah organisasi berubah lewat command.
 async function reload(id) {
   await page(id).reload();
   await page(id).waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+  await settleUi(id);
+}
+
+// Menunggu layar utama siap. Langkah firewall Tahap 1 (kalau tampil) dilewati.
+async function settleUi(id) {
   await sleep(1500);
-  // Langkah firewall Tahap 1 (kalau tampil) dilewati.
   const skip = page(id).getByRole("button", { name: /Lewati, atur nanti/ });
   if (await skip.isVisible().catch(() => false)) await skip.click();
   await page(id).getByRole("button", { name: "Pengaturan", exact: true }).waitFor({ timeout: 20000 });
@@ -309,6 +245,7 @@ async function clickUntil(desc, button, target, timeoutMs = 30000) {
       return target.isVisible().catch(() => false);
     },
     timeoutMs,
+    300,
   );
 }
 
@@ -338,16 +275,22 @@ async function simulateExcelSave(working, extra, who) {
   unlinkSync(lock);
 }
 
-async function editOffline(id, docId, extra) {
+// Memulai edit (salinan kerja disiapkan, tanda "Sedang diedit" dikirim).
+async function beginEdit(id, docId) {
   await must(id, "start_edit", { documentId: docId, fromVersionId: null });
   const working = join(NODES[id].dir, "working", docId, XLSX);
   await waitFor(`salinan kerja ${id} disiapkan`, async () => existsSync(working), 15000);
+  return working;
+}
+
+// Menyimpan lewat pola Excel, lalu menunggu versi baru dan sesi edit selesai.
+async function saveEdit(id, working, extra, before) {
   await simulateExcelSave(working, extra, NODES[id].name);
   return waitFor(
-    `${id} menyimpan versi 2 dan sesi edit selesai`,
+    `${id} menyimpan versi baru dan sesi edit selesai`,
     async () => {
       const d = await docByName(id, XLSX);
-      return d && d.versionCount >= 2 && d.editing.length === 0 ? d : null;
+      return d && d.versionCount > before && d.editing.length === 0 ? d : null;
     },
     30000,
   );
@@ -370,6 +313,32 @@ async function showConflict(id) {
     .click({ timeout: 15000 });
   await p.getByRole("heading", { name: /versi tersimpan berdampingan/ }).first().waitFor({ timeout: 15000 });
   await sleep(600);
+}
+
+// Mencari file di folder data yang isinya sama persis (untuk blob yang diterima).
+function findFileWithBody(dir, want) {
+  const stack = [dir];
+  while (stack.length) {
+    const d = stack.pop();
+    let entries = [];
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) stack.push(p);
+      else {
+        try {
+          if (statSync(p).size === want.length && readFileSync(p).equals(want)) return p;
+        } catch {
+          /* terkunci */
+        }
+      }
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +414,99 @@ async function signThroughUi(id, requestId, doneText) {
 
 const getRequest = (id, requestId) => must(id, "sign_get_request", { id: requestId });
 
+// Membaca ujung file seperti stamp.ts (readXrefTail): offset xref terakhir dan
+// nomor objek pertama yang belum dipakai.
+function xrefTail(bytes) {
+  const text = bytes.toString("latin1");
+  const at = text.lastIndexOf("startxref");
+  const startxref = Number(/^startxref\s*(\d+)/.exec(text.slice(at, at + 40))[1]);
+  let maxObject = 0;
+  for (const hit of text.matchAll(/(\d+)\s+\d+\s+obj\b/g)) {
+    const n = Number(hit[1]);
+    if (n > maxObject && n < 10_000_000) maxObject = n;
+  }
+  const size = Number(/\/Size\s+(\d+)/.exec(text.slice(text.lastIndexOf("trailer")))?.[1] ?? 0);
+  return { startxref, firstFree: Math.max(size, maxObject + 1) };
+}
+
+// Versi "bertanda tangan" palsu: incremental update yang sah bentuknya (byte
+// versi lama utuh di depan, xref klasik dengan /Prev), tetapi isi halaman 1
+// diganti seluruhnya dengan kotak hitam. Bukan stempel: harus ditolak.
+async function tamperedVersion(bytes) {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const tail = xrefTail(bytes);
+  doc.context.largestObjectNumber = Math.max(doc.context.largestObjectNumber, tail.firstFree - 1);
+  const pageNode = doc.getPage(0);
+  const stream = doc.context.stream("0 0 0 rg 60 300 475 460 re f");
+  const streamRef = doc.context.register(stream);
+  pageNode.node.set(PDFName.of("Contents"), streamRef);
+
+  const serialize = (obj) => {
+    const out = new Uint8Array(obj.sizeInBytes());
+    obj.copyBytesInto(out, 0);
+    return Buffer.from(out);
+  };
+  const chunks = [bytes];
+  let length = bytes.length;
+  const push = (b) => {
+    chunks.push(b);
+    length += b.length;
+  };
+  if (bytes[bytes.length - 1] !== 0x0a) push(Buffer.from("\n"));
+  const entries = [];
+  for (const [ref, obj] of [
+    [pageNode.ref, pageNode.node],
+    [streamRef, stream],
+  ]) {
+    entries.push({ num: ref.objectNumber, gen: ref.generationNumber, offset: length });
+    push(Buffer.from(`${ref.objectNumber} ${ref.generationNumber} obj\n`, "latin1"));
+    push(serialize(obj));
+    push(Buffer.from("\nendobj\n"));
+  }
+  const xrefAt = length;
+  let xref = "xref\n";
+  for (const e of entries.sort((a, b) => a.num - b.num)) {
+    xref += `${e.num} 1\n${String(e.offset).padStart(10, "0")} ${String(e.gen).padStart(5, "0")} n\r\n`;
+  }
+  push(Buffer.from(`${xref}trailer\n`, "latin1"));
+  const { Root, Info, ID } = doc.context.trailerInfo;
+  const trailer = doc.context.obj({
+    Size: Math.max(tail.firstFree, streamRef.objectNumber + 1),
+    Root,
+    Info,
+    ID,
+    Prev: tail.startxref,
+  });
+  push(serialize(trailer));
+  push(Buffer.from(`\nstartxref\n${xrefAt}\n%%EOF\n`));
+  return Buffer.concat(chunks);
+}
+
+// sign_complete dengan isi mentah dan header, seperti signingApi.complete di layar.
+async function submitVersion(id, requestId, token, baseHash, bytes) {
+  return page(id).evaluate(
+    async ([body, headers]) => {
+      try {
+        return {
+          ok: true,
+          value: await window.__TAURI_INTERNALS__.invoke("sign_complete", new Uint8Array(body), { headers }),
+        };
+      } catch (error) {
+        return { ok: false, error };
+      }
+    },
+    [Array.from(bytes), { "x-mira-request": requestId, "x-mira-token": token, "x-mira-base-hash": baseHash }],
+  );
+}
+
+async function readSignFile(id, requestId, hash) {
+  const arr = await page(id).evaluate(
+    async ([rid, h]) => Array.from(new Uint8Array(await window.__TAURI_INTERNALS__.invoke("sign_read_file", { id: rid, hash: h }))),
+    [requestId, hash],
+  );
+  return Buffer.from(arr);
+}
+
 // ---------------------------------------------------------------------------
 // Skenario
 
@@ -465,141 +527,221 @@ async function scenario(name, fn) {
 }
 
 let docId = null;
+let team = null;
 
 const ok1 = await scenario("Organisasi", async () => {
   if (!existsSync(exe)) throw new Error(`mira.exe tidak ditemukan: ${exe}`);
   if (!existsSync(XLSX_SRC)) throw new Error(`File uji tidak ditemukan: ${XLSX_SRC}`);
-  for (const id of ["A", "B"]) await launch(id);
-  for (const id of ["A", "B"]) await must(id, "save_display_name", { name: NODES[id].name });
-  for (const id of ["A", "B"]) pk[id] = (await must(id, "get_app_state")).identity.publicKey;
-  check(
-    "Kedua laptop mendaftar di folder jembatan uji",
-    ["A", "B"].every((id) => existsSync(join(bridge, "peers", pk[id]))),
-    readdirSync(join(bridge, "peers")).length + " file peers",
-  );
+  for (const id of Object.keys(NODES)) await launch(id);
+  for (const id of Object.keys(NODES)) await must(id, "save_display_name", { name: NODES[id].name });
+  for (const id of Object.keys(NODES)) pk[id] = (await must(id, "get_app_state")).identity.publicKey;
 
   await must("A", "create_organization", { name: "Kantor Uji Sinkron" });
-  const team = await must("A", "create_team", { name: "Tim Proyek" });
-  const invite = await must("A", "create_invite", { teamId: team.id, role: "member", validity: "24h", projectIds: [] });
-  const joined = await waitFor("B bergabung lewat alamat A", async () => {
-    const r = await call("B", "join_with_code", { code: invite.code, address: addr("A") });
-    return r.ok || r.error?.code !== "no_peer_found" ? r : null;
-  });
-  check("B (Budi Uji) bergabung sebagai Anggota", joined.ok && joined.value.role === "member", fmt(joined.ok ? joined.value.role : joined.error));
+  team = await must("A", "create_team", { name: "Tim Proyek" });
+  const lain = await must("A", "create_team", { name: "Tim Lain" });
+  await must("A", "add_team_member", { teamId: team.id, publicKey: pk.A });
+  const invB = await must("A", "create_invite", { teamId: team.id, role: "member", validity: "24h", projectIds: [] });
+  const invC = await must("A", "create_invite", { teamId: lain.id, role: "member", validity: "24h", projectIds: [] });
+  const joinOne = (id, code) =>
+    waitFor(`${id} bergabung lewat alamat A`, async () => {
+      const r = await call(id, "join_with_code", { code, address: addr("A") });
+      return r.ok || r.error?.code !== "no_peer_found" ? r : null;
+    }, 60000);
+  const joinB = await joinOne("B", invB.code);
+  const joinC = await joinOne("C", invC.code);
+  check(
+    "B (Tim Proyek) dan C (Tim Lain) bergabung sebagai Anggota",
+    joinB.ok && joinB.value.role === "member" && joinC.ok && joinC.value.role === "member",
+    `B ${fmt(joinB.ok ? joinB.value.role : joinB.error)}, C ${fmt(joinC.ok ? joinC.value.role : joinC.error)}`,
+  );
 
-  const seen = await waitFor("A dan B saling tercatat aktif di direktori", async () => {
+  const seen = await settle("A melihat B di Tim Proyek dan C di Tim Lain, B melihat A", async () => {
     const [da, db] = [await must("A", "get_directory"), await must("B", "get_directory")];
-    const has = (d, key) => d.members.some((m) => m.publicKey === key && m.status !== "removed");
-    return has(da, pk.B) && has(db, pk.A);
-  }).catch((e) => String(e.message));
-  check("A dan B saling melihat di direktori organisasi", seen === true, seen === true ? "" : seen);
+    const inTeam = (d, t, k) => d.teams.find((x) => x.id === t)?.members.some((m) => m.publicKey === k);
+    return inTeam(da, team.id, pk.B) && inTeam(da, lain.id, pk.C) && inTeam(db, team.id, pk.A);
+  });
+  check("Direktori: A dan B di Tim Proyek, C di Tim Lain", seen === true, seen === true ? "" : seen);
 
-  for (const id of ["A", "B"]) {
-    const want = NODES[other(id)].name;
-    const online = await waitFor(`${id} melihat ${want} online`, async () => {
-      const st = await must(id, "get_network_status");
-      return st.peers.some((p) => p.online && p.displayName === want);
-    }).catch((e) => String(e.message));
-    check(`${id} melihat ${want} online di jaringan kantor`, online === true, online === true ? "" : online);
+  for (const id of Object.keys(NODES)) {
+    const others = Object.keys(NODES).filter((x) => x !== id);
+    const online = await waitOnline(id, others);
+    check(`${id} melihat dua rekan online lewat jaringan kantor`, online === true, online === true ? "" : online);
   }
 
-  for (const id of ["A", "B"]) {
+  for (const id of Object.keys(NODES)) {
     await reload(id);
     await setTheme(id, "Terang");
   }
-  startPump();
 });
 
 if (ok1) {
-  // Dokumen: salin otomatis, lalu bentrok dari dua laptop yang offline.
-  await scenario("Dokumen dan bentrok", async () => {
+  // Dokumen baru, tanda "Sedang diedit", dan versi baru dari A sampai ke B.
+  const ok2 = await scenario("Dokumen", async () => {
+    const since = Date.now();
     const [added] = await must("A", "add_documents", { paths: [XLSX_SRC], projectId: null });
     docId = added.id;
-    const atB = await waitFor(
-      "B menerima dokumen dan isinya tersalin otomatis",
-      async () => {
-        const d = await docByName("B", XLSX);
-        return d?.current.available ? d : null;
-      },
-      60000,
-    ).catch((e) => String(e.message));
+    const atB = await settle("B menerima dokumen dan isinya tersalin otomatis", async () => {
+      const d = await docByName("B", XLSX);
+      return d?.current.available ? d : null;
+    });
     const okB = typeof atB === "object";
-    check("B melihat RAB-proyek-a.xlsx dari A", okB && atB.id === docId && atB.current.received, okB ? "" : atB);
     check(
-      "Isi versi 1 tersalin otomatis ke B (available true)",
-      okB && atB.current.available,
-      okB ? `ukuran ${atB.current.size} B, dari ${atB.createdBy.displayName}` : "",
+      "B melihat RAB-proyek-a.xlsx dari A",
+      okB && atB.id === docId && atB.current.received && atB.createdBy.displayName === NODES.A.name,
+      okB ? `${secs(since)}, dari ${atB.createdBy.displayName}` : atB,
+    );
+    let sameBytes = false;
+    if (okB) {
+      const out = join(root, "ekspor-b.xlsx");
+      await must("B", "export_version", { documentId: docId, versionId: null, destination: out });
+      sameBytes = existsSync(out) && readFileSync(out).equals(readFileSync(XLSX_SRC));
+    }
+    check(
+      "Isi versi 1 tersalin otomatis ke B dan sama persis dengan file asli",
+      okB && atB.current.available && sameBytes,
+      okB ? `ukuran ${atB.current.size} B, ekspor sama=${sameBytes}` : "",
     );
     await nav("B", "Dokumen");
     await refocus("B");
     await page("B").getByText(XLSX).first().waitFor({ timeout: 10000 });
     await shot("B", "sinkron-01-dokumen-diterima-b.png");
 
-    // Keduanya mengedit saat tidak tersambung.
-    await goOffline();
-    try {
-      const editA = await editOffline("A", docId, "revisi harga semen (Ayu)");
-      const editB = await editOffline("B", docId, "revisi volume besi (Budi)");
+    // Pustaka Umum terbuka untuk semua anggota aktif, juga tim lain: kontrol
+    // positif untuk uji anggota yang dikeluarkan di akhir.
+    const atC = await settle("C menerima dokumen Pustaka Umum", async () => {
+      const d = await docByName("C", XLSX);
+      return d?.current.available ? d : null;
+    });
+    check(
+      "C (Tim Lain) menerima dokumen Pustaka Umum (semua anggota aktif berhak)",
+      typeof atC === "object" && atC.id === docId,
+      typeof atC === "object" ? "" : atC,
+    );
+
+    // Tanda "Sedang diedit".
+    const editAt = Date.now();
+    const working = await beginEdit("A", docId);
+    const pb = page("B");
+    await nav("B", "Dokumen");
+    const mark = await settle("B menampilkan Sedang diedit Ayu Uji", async () => {
+      await refocus("B");
+      const d = await docByName("B", XLSX);
+      const remote = d?.editing.find((e) => !e.local && e.editor.displayName === NODES.A.name);
+      if (!remote) return null;
+      return (await pb.getByText(new RegExp(`Sedang diedit ${escapeRe(NODES.A.name)}`)).first().isVisible().catch(() => false)) || null;
+    });
+    check(`Tanda "Sedang diedit ${NODES.A.name}" tampil di layar B`, mark === true, mark === true ? secs(editAt) : mark);
+    await shot("B", "sinkron-11-sedang-diedit-b.png");
+
+    // Versi baru.
+    const v2a = await saveEdit("A", working, "revisi harga semen (Ayu)", 1);
+    const verAt = Date.now();
+    const v2b = await settle("B menerima versi 2 beserta isinya", async () => {
+      const d = await docByName("B", XLSX);
+      return d && d.versionCount === 2 && d.current.blobHash === v2a.current.blobHash && d.current.available ? d : null;
+    });
+    const okV = typeof v2b === "object";
+    check(
+      "Versi baru A tampil di B dan isinya tersalin",
+      okV && v2b.current.author.displayName === NODES.A.name && !v2b.conflict,
+      okV ? `${secs(verAt)}, versi ${v2b.current.number} dari ${v2b.current.author.displayName}` : v2b,
+    );
+    // Tanda selesai edit adalah record sendiri; bisa datang di sesi sinkron berikutnya.
+    const cleared = await settle("tanda Sedang diedit hilang di B", async () => {
+      const d = await docByName("B", XLSX);
+      return d && d.editing.length === 0;
+    });
+    check(
+      'Tanda "Sedang diedit" hilang di B setelah A selesai menyimpan',
+      cleared === true,
+      cleared === true ? secs(verAt) : cleared,
+    );
+    await refocus("B");
+    await shot("B", "sinkron-12-versi-baru-b.png");
+  });
+
+  // Bentrok: A dan B masing-masing menyimpan versi saat tidak tersambung.
+  if (ok2) {
+    await scenario("Bentrok", async () => {
+      // C ikut dimatikan supaya tidak meneruskan versi A ke B.
+      await stop("C");
+      await stop("B");
+      const workA = await beginEdit("A", docId);
+      const editA = await saveEdit("A", workA, "revisi volume besi (Ayu, offline)", 2);
+      await stop("A");
+      await launch("B");
+      await settleUi("B");
+      const workB = await beginEdit("B", docId);
+      const editB = await saveEdit("B", workB, "revisi volume besi (Budi, offline)", 2);
       check(
-        "A dan B masing-masing menyimpan versi baru saat offline",
+        "A dan B masing-masing menyimpan versi 3 saat tidak tersambung",
         editA.current.origin === "edited" && editB.current.origin === "edited" && editA.current.blobHash !== editB.current.blobHash,
         `A ${editA.current.blobHash.slice(0, 8)}, B ${editB.current.blobHash.slice(0, 8)}`,
       );
-    } finally {
-      // Tersambung lagi juga saat gagal, supaya skenario berikutnya tetap jalan.
-      await goOnline();
-    }
+      const backAt = Date.now();
+      await launch("A");
+      await settleUi("A");
+      const online = await waitOnline("A", ["B"]);
+      note(`A menyala lagi dan melihat B online: ${online === true ? secs(backAt) : online}`);
 
-    for (const id of ["A", "B"]) {
-      const rekan = NODES[other(id)].name;
-      const c = await waitFor(
-        `${id} melihat bentrok dengan versi ${rekan}`,
-        async () => conflictFrom(await docByName(id, XLSX), rekan),
-        60000,
-      ).catch((e) => String(e.message));
-      const okC = typeof c === "object";
-      check(
-        `${id} menandai bentrok: dua kepala, versi rekan dari ${rekan}`,
-        okC,
-        okC ? `versi ${c.mine.number} milik sendiri, versi ${c.theirs.number} dari ${rekan}` : c,
-      );
-    }
-    const bothHere = await waitFor(
-      "isi kedua versi bentrok ada di kedua laptop",
-      async () => {
+      for (const id of ["A", "B"]) {
+        const rekan = NODES[id === "A" ? "B" : "A"].name;
+        const c = await settle(`${id} melihat bentrok dengan versi ${rekan}`, async () =>
+          conflictFrom(await docByName(id, XLSX), rekan),
+        );
+        const okC = typeof c === "object";
+        check(
+          `${id} menandai bentrok: dua kepala, versi rekan dari ${rekan}`,
+          okC,
+          okC ? `${secs(backAt)}, versi ${c.mine.number} milik sendiri, versi ${c.theirs.number} dari ${rekan}` : c,
+        );
+      }
+      const bothHere = await settle("isi kedua versi bentrok ada di kedua laptop", async () => {
         for (const id of ["A", "B"]) {
           const d = await docByName(id, XLSX);
-          if (!d?.conflictVersions.every((v) => v.available)) return false;
+          if (!d?.conflictVersions.length || !d.conflictVersions.every((v) => v.available)) return false;
         }
         return true;
-      },
-      60000,
-    ).catch((e) => String(e.message));
-    check("Isi versi rekan yang bentrok tersalin otomatis di kedua laptop", bothHere === true, bothHere === true ? "" : bothHere);
+      });
+      check("Isi versi rekan yang bentrok tersalin otomatis di kedua laptop", bothHere === true, bothHere === true ? "" : bothHere);
 
-    for (const [id, file] of [
-      ["A", "sinkron-02-bentrok-dari-rekan-a.png"],
-      ["B", "sinkron-03-bentrok-dari-rekan-b.png"],
-    ]) {
-      await showConflict(id);
-      const rekan = NODES[other(id)].name;
-      const shown = await page(id)
-        .getByText(new RegExp(`Versi \\d+ dari ${escapeRe(rekan)}`))
-        .first()
-        .isVisible()
-        .catch(() => false);
-      check(`Layar Dokumen ${id} menampilkan bentrok dengan nama ${rekan}`, shown);
-      await shot(id, file);
+      for (const [id, file] of [
+        ["A", "sinkron-02-bentrok-dari-rekan-a.png"],
+        ["B", "sinkron-03-bentrok-dari-rekan-b.png"],
+      ]) {
+        await showConflict(id);
+        const rekan = NODES[id === "A" ? "B" : "A"].name;
+        const shown = await page(id)
+          .getByText(new RegExp(`Versi \\d+ dari ${escapeRe(rekan)}`))
+          .first()
+          .isVisible()
+          .catch(() => false);
+        check(`Layar Dokumen ${id} menampilkan bentrok dengan nama ${rekan}`, shown);
+        await shot(id, file);
+      }
+    });
+  }
+
+  // C dinyalakan lagi (kalau skenario bentrok mematikannya) untuk uji berikutnya.
+  for (const id of Object.keys(NODES)) {
+    if (!running[id]) {
+      await launch(id);
+      await settleUi(id);
     }
-  });
+  }
+  for (const id of Object.keys(NODES)) {
+    const others = Object.keys(NODES).filter((x) => x !== id);
+    const online = await waitOnline(id, others);
+    if (online !== true) note(`${id} belum melihat semua rekan online: ${online}`);
+  }
 
   // Dokumen besar: tidak disalin otomatis, diunduh lewat tombol di B.
   await scenario("Dokumen besar", async () => {
     const bigPath = join(root, BIG);
     writeFileSync(bigPath, randomBytes(BIG_SIZE));
     const [big] = await must("A", "add_documents", { paths: [bigPath], projectId: null });
-    const atB = await waitFor("B menerima dokumen besar", async () => docByName("B", BIG), 60000);
-    await sleep(4000); // beri waktu kalau ternyata ikut disalin otomatis
+    const atB = await waitFor("B menerima dokumen besar", async () => docByName("B", BIG));
+    await sleep(5000); // beri waktu kalau ternyata ikut disalin otomatis
     const still = await docByName("B", BIG);
     check(
       "File 21 MB dari A tampil di B tanpa disalin otomatis",
@@ -616,28 +758,31 @@ if (ok1) {
     await shot("B", "sinkron-04-file-besar-sebelum-unduh-b.png");
 
     await button.click();
-    const done = await waitFor(
-      "isi file besar ada di B setelah diunduh",
-      async () => {
-        const d = await docByName("B", BIG);
-        if (d?.current.available) return d;
-        const err = await p.getByText("File belum bisa diunduh").first().isVisible().catch(() => false);
-        if (err) throw new Error(`layar B: ${(await p.locator("body").innerText()).replace(/\s+/g, " ").slice(0, 300)}`);
-        return null;
-      },
-      120000,
-    ).catch((e) => String(e.message));
+    const since = Date.now();
+    const done = await settle("isi file besar ada di B setelah diunduh", async () => {
+      const d = await docByName("B", BIG);
+      if (d?.current.available) return d;
+      const err = await p.getByText("File belum bisa diunduh").first().isVisible().catch(() => false);
+      if (err) throw new Error(`layar B: ${(await p.locator("body").innerText()).replace(/\s+/g, " ").slice(0, 300)}`);
+      return null;
+    });
+    let sameBytes = false;
+    if (typeof done === "object") {
+      const out = join(root, "ekspor-besar-b.zip");
+      await must("B", "export_version", { documentId: big.id, versionId: null, destination: out });
+      sameBytes = readFileSync(out).equals(readFileSync(bigPath));
+    }
     check(
-      "Unduh dari rekan menyalin file 21 MB ke B",
-      typeof done === "object" && done.current.size === BIG_SIZE,
-      typeof done === "object" ? `${done.current.size} B` : done,
+      "Unduh dari rekan menyalin file 21 MB ke B, isinya sama persis",
+      typeof done === "object" && done.current.size === BIG_SIZE && sameBytes,
+      typeof done === "object" ? `${done.current.size} B dalam ${secs(since)}, ekspor sama=${sameBytes}` : done,
     );
     await refocus("B");
     await button.waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
     await shot("B", "sinkron-05-file-besar-sesudah-unduh-b.png");
   });
 
-  // Tanda tangan berurutan: B lalu A.
+  // Tanda tangan berurutan: B lalu A. C tidak terlibat.
   await scenario("Tanda tangan", async () => {
     await makePdf();
     const pa = page("A");
@@ -663,20 +808,17 @@ if (ok1) {
       created.mode === "sequential" && order.join(",") === `${NODES.B.name},${NODES.A.name}`,
       order.join(" lalu "),
     );
+    const sentAt = Date.now();
 
-    const atB = await waitFor(
-      "B menerima permintaan dan filenya",
-      async () => {
-        const r = (await must("B", "sign_overview")).requests.find((x) => x.id === req.id);
-        return r?.fileAvailable && r.myState === "your_turn" ? r : null;
-      },
-      60000,
-    ).catch((e) => String(e.message));
+    const atB = await settle("B menerima permintaan dan filenya", async () => {
+      const r = (await must("B", "sign_overview")).requests.find((x) => x.id === req.id);
+      return r?.fileAvailable && r.myState === "your_turn" ? r : null;
+    });
     const okB = typeof atB === "object";
     check(
       "B menerima permintaan dari A, giliran B, file tersalin",
       okB && atB.fromPeer && atB.requestedByName === NODES.A.name,
-      okB ? `fromPeer ${atB.fromPeer}, requestedByName ${atB.requestedByName}` : atB,
+      okB ? `${secs(sentAt)}, fromPeer ${atB.fromPeer}, requestedByName ${atB.requestedByName}` : atB,
     );
 
     const pb = page("B");
@@ -693,24 +835,42 @@ if (ok1) {
     check("B menandatangani lewat layar dengan PIN", bSigned.signedCount === 1 && bSigned.status === "in_progress", `${bSigned.signedCount}/${bSigned.signerCount}`);
     await shot("B", "sinkron-07-tanda-tangan-b-tersimpan.png");
 
-    const aTurn = await waitFor(
-      "A menerima versi bertanda tangan B dan gilirannya tiba",
-      async () => {
-        const d = await getRequest("A", req.id);
-        const me = d.signers.find((s) => s.isMe);
-        return me?.canSignNow && d.fileAvailable && !d.pending ? d : null;
-      },
-      60000,
-    ).catch((e) => String(e.message));
+    const signedAt = Date.now();
+    const aTurn = await settle("A menerima versi bertanda tangan B dan gilirannya tiba", async () => {
+      const d = await getRequest("A", req.id);
+      const me = d.signers.find((s) => s.isMe);
+      return me?.canSignNow && d.fileAvailable && !d.pending ? d : null;
+    });
     const okA = typeof aTurn === "object";
     check(
       "A menerima versi bertanda tangan B, lalu giliran A",
       okA && aTurn.signedCount === 1 && aTurn.currentHash === bSigned.currentHash && aTurn.rejected.length === 0,
-      okA ? `hash ${aTurn.currentHash.slice(0, 8)}, ditolak ${aTurn.rejected.length}` : aTurn,
+      okA ? `${secs(signedAt)}, hash ${aTurn.currentHash.slice(0, 8)}, ditolak ${aTurn.rejected.length}` : aTurn,
     );
 
     await openSignList("A");
     await createSignature("A");
+
+    // Versi palsu: isi halaman diganti, bukan hanya stempel. Inti Rust harus
+    // menolaknya sebelum disimpan atau dikirim ke rekan.
+    if (okA) {
+      const base = await readSignFile("A", req.id, aTurn.currentHash);
+      const bad = await tamperedVersion(base);
+      const { token } = await must("A", "sign_unlock", { pin: PIN });
+      const r = await submitVersion("A", req.id, token, aTurn.currentHash, bad);
+      check(
+        "Versi yang mengubah isi selain stempel ditolak (version_changes_content)",
+        !r.ok && r.error?.code === "version_changes_content",
+        r.ok ? "diterima" : `${r.error?.code}: ${fmt(r.error?.message)}`,
+      );
+      const afterA = await getRequest("A", req.id);
+      check(
+        "Versi palsu tidak tersimpan di A (hash dan jumlah tanda tangan tetap)",
+        afterA.currentHash === aTurn.currentHash && afterA.signedCount === 1,
+        `hash ${afterA.currentHash.slice(0, 8)}, ${afterA.signedCount}/${afterA.signerCount}`,
+      );
+    }
+
     await signThroughUi("A", req.id, "Semua sudah menandatangani. Dokumen dikunci dan halaman catatan ditambahkan.");
     await shot("A", "sinkron-08-tanda-tangan-selesai-a.png");
 
@@ -720,19 +880,16 @@ if (ok1) {
       finalA.status === "completed" && finalA.sealValid === true && finalA.signedCount === 2,
       `status ${finalA.status}, sealValid ${finalA.sealValid}`,
     );
-    const finalB = await waitFor(
-      "B menerima versi final dan kuncinya sah",
-      async () => {
-        const d = await getRequest("B", req.id);
-        return d.status === "completed" && d.sealValid === true && d.fileAvailable ? d : null;
-      },
-      60000,
-    ).catch((e) => String(e.message));
+    const doneAt = Date.now();
+    const finalB = await settle("B menerima versi final dan kuncinya sah", async () => {
+      const d = await getRequest("B", req.id);
+      return d.status === "completed" && d.sealValid === true && d.fileAvailable ? d : null;
+    });
     const okF = typeof finalB === "object";
     check(
-      "B: permintaan selesai, kunci sah, versi final sama dengan A",
-      okF && finalB.currentHash === finalA.currentHash,
-      okF ? `hash ${finalB.currentHash.slice(0, 8)}` : finalB,
+      "B: permintaan selesai, kunci sah, versi final sama dengan A, tanpa versi ditolak",
+      okF && finalB.currentHash === finalA.currentHash && finalB.rejected.length === 0,
+      okF ? `${secs(doneAt)}, hash ${finalB.currentHash.slice(0, 8)}, ditolak ${finalB.rejected.length}` : finalB,
     );
     check(
       "Jejak audit sah di kedua laptop",
@@ -745,6 +902,56 @@ if (ok1) {
     await pb.locator("canvas").first().waitFor({ timeout: 30000 });
     await sleep(1500);
     await shot("B", "sinkron-09-tanda-tangan-selesai-b.png");
+
+    // C bukan pengirim dan bukan penanda tangan: tidak menerima apa pun,
+    // setelah paling sedikit satu putaran sinkron cadangan penuh.
+    await sleep(Math.max(0, FULL_ROUND_MS - (Date.now() - sentAt)));
+    const cOverview = await must("C", "sign_overview");
+    const cHas = cOverview.requests.some((r) => r.id === req.id || r.title === PDF_TITLE);
+    const cGet = await call("C", "sign_get_request", { id: req.id });
+    check(
+      "C (Tim Lain, tidak terlibat) tidak menerima permintaan tanda tangan",
+      !cHas && !cGet.ok,
+      `di daftar=${cHas}, sign_get_request=${cGet.ok ? "terbuka" : cGet.error?.code}, ${secs(sentAt)} sejak dibuat`,
+    );
+  });
+
+  // Anggota yang dikeluarkan: tidak menerima dokumen baru.
+  await scenario("Anggota dikeluarkan", async () => {
+    await must("A", "remove_member", { publicKey: pk.C });
+    const removed = await settle("B mencatat C dikeluarkan", async () => {
+      const d = await must("B", "get_directory");
+      return d.members.find((m) => m.publicKey === pk.C)?.status === "removed";
+    });
+    check("A mengeluarkan C, B ikut mencatatnya", removed === true, removed === true ? "" : removed);
+
+    const txt = join(root, AFTER_REMOVAL);
+    writeFileSync(txt, "Notulen rapat setelah Citra keluar (data uji).\n");
+    const [doc] = await must("A", "add_documents", { paths: [txt], projectId: null });
+    const addedAt = Date.now();
+    const atB = await settle("B menerima dokumen baru", async () => {
+      const d = await docByName("B", AFTER_REMOVAL);
+      return d?.current.available ? d : null;
+    });
+    check("B menerima dokumen baru dari A", typeof atB === "object" && atB.id === doc.id, typeof atB === "object" ? secs(addedAt) : atB);
+
+    await sleep(Math.max(0, FULL_ROUND_MS - (Date.now() - addedAt)));
+    const list = await call("C", "list_documents", { projectId: null });
+    const cHas = list.ok && list.value.some((d) => d.id === doc.id || d.name === AFTER_REMOVAL);
+    const cState = await call("C", "get_app_state");
+    // Layar dan daftar C bisa kosong hanya karena C sudah dikeluarkan, jadi isi
+    // folder data C juga diperiksa: file kecil (di bawah 20 MB) yang diterima
+    // selalu tersalin ke sana. Kontrol: file XLSX yang diterima C sebelumnya ada.
+    const oldOnDisk = findFileWithBody(NODES.C.dir, readFileSync(XLSX_SRC));
+    const newOnDisk = findFileWithBody(NODES.C.dir, readFileSync(txt));
+    check(
+      "C yang dikeluarkan tidak menerima dokumen baru (daftar dan folder data)",
+      !cHas && Boolean(oldOnDisk) && !newOnDisk,
+      `list_documents=${list.ok ? `${list.value.length} dokumen` : list.error?.code}, keanggotaan C=${cState.ok ? cState.value.membership : "?"}, ` +
+        `XLSX lama di disk C=${Boolean(oldOnDisk)}, file baru di disk C=${Boolean(newOnDisk)}, ${secs(addedAt)} sejak ditambah`,
+    );
+    await refocus("C");
+    await shot("C", "sinkron-13-dikeluarkan-c.png");
   });
 
   // Satu screenshot mode gelap: bentrok di laptop A.
@@ -756,18 +963,39 @@ if (ok1) {
     await shot("A", "sinkron-10-bentrok-gelap-a.png");
   });
 
-  check(
-    "Tidak ada record sinkron yang ditolak atau dibuang penerima",
-    pump.stats.rejected === 0 && pump.stats.dropped === 0,
-    `diterima ${pump.stats.accepted}, ditolak ${pump.stats.rejected}, dibuang ${pump.stats.dropped}, file dilayani ${pump.stats.served}`,
-  );
+  // Penolakan record sinkron dicatat inti di log yang sama dengan perubahan
+  // keanggotaan (kode docs_* dan sign_*).
+  for (const id of ["A", "B"]) {
+    const r = await call(id, "get_rejected_changes");
+    const rows = r.ok ? r.value.filter((x) => /^(docs|sign)_/.test(x.code)) : [];
+    check(
+      `${id}: tidak ada record dokumen atau tanda tangan yang ditolak`,
+      r.ok && rows.length === 0,
+      r.ok ? rows.map((x) => `${x.code}: ${x.detail}`).join("; ").slice(0, 300) : fmt(r.error),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Bersih-bersih: hanya proses, kunci uji, dan folder dari run ini.
 
-await stopPump();
-for (const id of Object.keys(running)) await stop(id);
+const failedSoFar = results.some((r) => !r.ok);
+for (const id of Object.keys(running)) {
+  if (failedSoFar && running[id].consoleLines.length) {
+    console.log(`Konsol ${id} (error/peringatan, terakhir):\n${running[id].consoleLines.slice(-15).join("\n")}`);
+  }
+  await stop(id);
+}
+if (failedSoFar) {
+  for (const id of Object.keys(NODES)) {
+    try {
+      const log = readFileSync(join(root, `${id}-stderr.log`), "utf8").trim();
+      if (log) console.log(`stderr ${id} (akhir):\n${log.slice(-1500)}`);
+    } catch {
+      /* tidak ada log */
+    }
+  }
+}
 for (const target of miraCredentials()) {
   if (!credentialsBefore.has(target)) {
     try {
