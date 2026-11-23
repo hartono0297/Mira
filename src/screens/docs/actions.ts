@@ -16,6 +16,10 @@ export type DocActions = {
   resolve: (doc: DocumentSummary, keep: DocumentVersion) => void;
   showConflict: (doc: DocumentSummary) => void;
   download: (doc: DocumentSummary, version: DocumentVersion) => void;
+  // Pilih file dan pindahkan fokus ke riwayat versinya di panel detail.
+  showVersions: (doc: DocumentSummary) => void;
+  // Salin nama file ke clipboard; hasilnya dikabarkan di atas daftar.
+  copyName: (doc: DocumentSummary) => void;
 };
 
 // Tombol `key` sedang berjalan.

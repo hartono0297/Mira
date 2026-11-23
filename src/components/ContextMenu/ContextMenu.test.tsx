@@ -181,7 +181,7 @@ describe("useContextMenu", () => {
     await user.pointer({ keys: "[MouseRight]", target: rowButton });
     await user.keyboard("{Enter}");
     const again = screen.getByRole("dialog", { name: "Keluarkan Ayu?" });
-    await user.click(screen.getAllByRole("button", { name: "Keluarkan" }).at(-1)!);
+    await user.click(screen.getAllByRole("button", { name: "Keluarkan" }).slice(-1)[0]);
     expect(remove).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(again).not.toBeInTheDocument());
   });

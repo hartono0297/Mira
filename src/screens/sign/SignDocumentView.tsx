@@ -25,6 +25,7 @@ import { PinDialog } from "./pad/PinDialog";
 import { SignatureSetupDialog } from "./pad/SignatureSetupDialog";
 import { AuditTrail, HashText } from "./AuditTrail";
 import {
+  CANCEL_CONFIRM,
   coolingText,
   downloadLabel,
   exportNoticeText,
@@ -52,7 +53,14 @@ import {
 } from "./signFlow";
 import "./document.css";
 
-type Props = { requestId: string; onBack: () => void; onChanged?: () => void };
+type Props = {
+  requestId: string;
+  onBack: () => void;
+  onChanged?: () => void;
+  // Dibuka dari "Tandatangani" di menu baris: begitu halaman siap, kotak tanda
+  // tangan langsung ditempatkan. Kalau belum bisa, fokus ke tombol langkah berikutnya.
+  startSigning?: boolean;
+};
 
 type Loaded = { detail: RequestDetail; overview: SignOverview };
 
@@ -174,7 +182,7 @@ function guarded(off: boolean, fn: () => void) {
 
 type PendingFocus = "box" | "place" | "done" | null;
 
-export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
+export function SignDocumentView({ requestId, onBack, onChanged, startSigning = false }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<AppError | null>(null);
@@ -217,6 +225,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
   const titleFocused = useRef(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const placeBtnRef = useRef<HTMLButtonElement>(null);
+  const setupBtnRef = useRef<HTMLButtonElement>(null);
+  // Niat "Tandatangani" dari daftar dijalankan sekali saja.
+  const autoSign = useRef(startSigning);
   const doneRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const exportHintId = useId();
@@ -352,6 +363,33 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
         if (el.isConnected) el.focus();
       }, 0);
     }
+  });
+
+  // Niat "Tandatangani" dari daftar. Menunggu data dan file siap; kalau giliran
+  // tidak ada, niatnya dibuang dan layar dibuka seperti biasa.
+  useEffect(() => {
+    if (!autoSign.current || !detail) return;
+    if (!canSign) {
+      autoSign.current = false;
+      return;
+    }
+    if (!saved) {
+      autoSign.current = false;
+      setupBtnRef.current?.focus();
+      return;
+    }
+    if (cooling) {
+      autoSign.current = false;
+      placeBtnRef.current?.focus();
+      return;
+    }
+    if (file.status === "error" || file.status === "missing") {
+      autoSign.current = false;
+      return;
+    }
+    if (!fileReady || pages.length === 0) return;
+    autoSign.current = false;
+    startPlacing();
   });
 
   // Setelah menandatangani, area halaman digulir ke stempel begitu versi baru tampil.
@@ -694,7 +732,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
         <div>
           <strong>Anda belum punya tanda tangan tersimpan</strong>
           <p>Buat sekali dengan mouse, pena, atau gambar hasil pindai. Setelah itu cukup masukkan PIN setiap kali menandatangani.</p>
-          <button type="button" className="btn btn-sm sdoc-notice-btn" onClick={() => setSetupOpen(true)}>
+          <button ref={setupBtnRef} type="button" className="btn btn-sm sdoc-notice-btn" onClick={() => setSetupOpen(true)}>
             Buat tanda tangan
           </button>
         </div>
@@ -1190,9 +1228,9 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
       <ConfirmDialog
         open={cancelOpen}
         onOpenChange={setCancelOpen}
-        title="Batalkan permintaan ini?"
-        confirmLabel="Batalkan permintaan"
-        busyLabel="Membatalkan..."
+        title={CANCEL_CONFIRM.title}
+        confirmLabel={CANCEL_CONFIRM.confirmLabel}
+        busyLabel={CANCEL_CONFIRM.busyLabel}
         busy={cancelling}
         onConfirm={() => void confirmCancel()}
         error={
@@ -1203,10 +1241,7 @@ export function SignDocumentView({ requestId, onBack, onChanged }: Props) {
           )
         }
       >
-        <p>
-          Penanda tangan yang belum menandatangani tidak bisa menandatangani lagi. Tanda tangan yang sudah ada tetap tercatat di
-          jejak audit. Pembatalan tidak bisa diurungkan.
-        </p>
+        <p>{CANCEL_CONFIRM.body}</p>
       </ConfirmDialog>
     </main>
   );

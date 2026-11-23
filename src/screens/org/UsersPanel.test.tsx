@@ -78,6 +78,11 @@ async function openTab(ue: ReturnType<typeof userEvent.setup>) {
   await ue.click(await screen.findByRole("button", { name: "Pengguna" }));
 }
 
+// Teks peran di bawah nama, dipakai sebagai sasaran klik kanan.
+function roleTextOf(name: string): string {
+  return { Sari: "Anggota", Penguji: "Superadmin", Yusuf: "Tamu" }[name] ?? "Anggota";
+}
+
 function rowOf(name: string): HTMLElement {
   const row = screen
     .getAllByRole("row")
@@ -93,7 +98,12 @@ async function ready(ue: ReturnType<typeof userEvent.setup>) {
 
 async function openMenuItem(ue: ReturnType<typeof userEvent.setup>, who: string, item: string) {
   await ue.click(screen.getByRole("button", { name: `Aksi untuk ${who}` }));
-  await ue.click(screen.getByRole("button", { name: item }));
+  await ue.click(screen.getByRole("menuitem", { name: item }));
+}
+
+// Id item di menu yang sedang terbuka, berurutan.
+function menuIds(): (string | null)[] {
+  return within(screen.getByRole("menu")).getAllByRole("menuitem").map((el) => el.getAttribute("data-menu-item"));
 }
 
 beforeEach(() => {
@@ -284,13 +294,14 @@ describe("Pengguna: menu aksi", () => {
     toggle.focus();
     await ue.keyboard("{Enter}");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: "Ubah departemen" })).toBeVisible();
-    await ue.tab();
-    expect(screen.getByRole("button", { name: "Ubah departemen" })).toHaveFocus();
+    expect(screen.getByRole("menu", { name: "Aksi untuk Sari" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ubah departemen" })).toHaveFocus();
+    await ue.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Ubah peran" })).toHaveFocus();
     await ue.keyboard("{Escape}");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveFocus();
-    expect(screen.queryByRole("button", { name: "Ubah departemen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Ubah departemen" })).not.toBeInTheDocument();
   });
 
   it("klik di luar menutup menu", async () => {
@@ -301,21 +312,74 @@ describe("Pengguna: menu aksi", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     await ue.click(screen.getByRole("heading", { name: "Pengguna" }));
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("Tamu tidak punya Ubah departemen dan Ubah peran; diri sendiri tidak punya Keluarkan", async () => {
     const ue = renderUsers();
     await ready(ue);
     await ue.click(screen.getByRole("button", { name: "Aksi untuk Yusuf" }));
-    expect(screen.getByRole("button", { name: "Keluarkan dari organisasi" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Ubah departemen" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Ubah peran" })).not.toBeInTheDocument();
+    expect(menuIds()).toEqual(["remove"]);
+    expect(screen.getByRole("menuitem", { name: "Keluarkan dari organisasi" })).toBeInTheDocument();
     await ue.keyboard("{Escape}");
 
     await ue.click(screen.getByRole("button", { name: "Aksi untuk Penguji" }));
-    expect(screen.getByRole("button", { name: "Ubah departemen" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ubah peran" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Keluarkan dari organisasi" })).not.toBeInTheDocument();
+    expect(menuIds()).toEqual(["move", "role"]);
+    expect(screen.queryByRole("menuitem", { name: "Keluarkan dari organisasi" })).not.toBeInTheDocument();
+  });
+
+  it("klik kanan di baris membuka menu yang sama dengan tombol titik tiga", async () => {
+    const ue = renderUsers();
+    await ready(ue);
+    for (const who of ["Sari", "Penguji", "Yusuf"]) {
+      await ue.click(screen.getByRole("button", { name: `Aksi untuk ${who}` }));
+      const fromButton = menuIds();
+      await ue.keyboard("{Escape}");
+
+      await ue.pointer({ keys: "[MouseRight]", target: within(rowOf(who)).getByText(roleTextOf(who)) });
+      expect(screen.getByRole("menu", { name: `Aksi untuk ${who}` })).toBeInTheDocument();
+      expect(menuIds()).toEqual(fromButton);
+      await ue.keyboard("{Escape}");
+    }
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("klik kanan lalu Keluarkan membuka konfirmasi yang sudah ada", async () => {
+    const ue = renderUsers();
+    await ready(ue);
+    await ue.pointer({ keys: "[MouseRight]", target: within(rowOf("Sari")).getByText("LAPTOP-DRAFT-02") });
+    const remove = screen.getByRole("menuitem", { name: "Keluarkan dari organisasi" });
+    expect(remove).toHaveClass("cmenu-danger");
+    await ue.click(remove);
+    const dialog = await screen.findByRole("dialog", { name: "Keluarkan Sari dari organisasi?" });
+    await ue.click(within(dialog).getByRole("button", { name: "Batal" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(invoke).not.toHaveBeenCalledWith("remove_member", expect.anything());
+    expect(screen.getByRole("button", { name: "Aksi untuk Sari" })).toHaveFocus();
+  });
+
+  it("Shift+F10 dari baris yang terfokus membuka menu, Escape mengembalikan fokus", async () => {
+    const ue = renderUsers();
+    await ready(ue);
+    const toggle = screen.getByRole("button", { name: "Aksi untuk Wulan" });
+    toggle.focus();
+    await ue.keyboard("{Shift>}{F10}{/Shift}");
+    expect(screen.getByRole("menu", { name: "Aksi untuk Wulan" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ubah departemen" })).toHaveFocus();
+    expect(menuIds()).toEqual(["move", "role", "remove"]);
+    await ue.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(toggle).toHaveFocus();
+  });
+
+  it("orang yang sudah dikeluarkan tidak punya menu", async () => {
+    const ue = renderUsers();
+    await ready(ue);
+    await ue.selectOptions(screen.getByRole("combobox", { name: "Status" }), "Dikeluarkan");
+    const dimas = rowOf("Dimas");
+    await ue.pointer({ keys: "[MouseRight]", target: within(dimas).getByText("Anggota") });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(within(dimas).queryByRole("button")).not.toBeInTheDocument();
   });
 });
 
@@ -370,6 +434,19 @@ describe("Pengguna: ubah departemen", () => {
     await ready(ue);
     await openMenuItem(ue, "Sari", "Ubah departemen");
     await screen.findByRole("dialog");
+    await ue.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Aksi untuk Sari" })).toHaveFocus();
+  });
+});
+
+describe("Pengguna: ubah departemen lewat klik kanan", () => {
+  it("dialog dibuka dari menu klik kanan dan fokus kembali ke tombol aksi baris", async () => {
+    const ue = renderUsers();
+    await ready(ue);
+    await ue.pointer({ keys: "[MouseRight]", target: within(rowOf("Sari")).getByText("Desain") });
+    await ue.click(screen.getByRole("menuitem", { name: "Ubah departemen" }));
+    await screen.findByRole("dialog", { name: "Ubah departemen Sari" });
     await ue.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Aksi untuk Sari" })).toHaveFocus();

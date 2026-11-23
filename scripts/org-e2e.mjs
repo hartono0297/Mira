@@ -232,7 +232,7 @@ try {
   // Masukkan diri sendiri ke Desain.
   await openTab("A", "Pengguna");
   await pa.getByRole("button", { name: "Aksi untuk Ayu Uji", exact: true }).click();
-  await pa.getByRole("button", { name: "Ubah departemen", exact: true }).click();
+  await pa.getByRole("menuitem", { name: "Ubah departemen", exact: true }).click();
   let dlg = dialog("A");
   await dlg.getByLabel("Pindah ke").selectOption({ label: "Desain" });
   await dlg.getByRole("button", { name: "Pindahkan", exact: true }).click();
@@ -287,7 +287,7 @@ try {
 
   // 4. Pindahkan Budi ke Desain lewat menu aksi.
   await pa.getByRole("button", { name: "Aksi untuk Budi Uji", exact: true }).click();
-  await pa.getByRole("button", { name: "Ubah departemen", exact: true }).click();
+  await pa.getByRole("menuitem", { name: "Ubah departemen", exact: true }).click();
   dlg = dialog("A");
   await dlg.getByLabel("Pindah ke").selectOption({ label: "Desain" });
   await dlg.getByRole("button", { name: "Pindahkan", exact: true }).click();
@@ -364,7 +364,7 @@ try {
 
     await pa.getByRole("button", { name: "Aksi untuk Budi Uji", exact: true }).click();
     await shot("A", `menu-aksi-${suffix}.png`);
-    await pa.getByRole("button", { name: "Ubah departemen", exact: true }).click();
+    await pa.getByRole("menuitem", { name: "Ubah departemen", exact: true }).click();
     await dialog("A").getByLabel("Pindah ke").selectOption({ label: "Drafting Gambar" });
     await shot("A", `ubah-departemen-${suffix}.png`);
     await closeDialog("A");

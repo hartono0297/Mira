@@ -364,3 +364,95 @@ describe("Label: atur orang", () => {
     expect(calls("org_set_label_assigned")).toHaveLength(0);
   });
 });
+
+describe("Label: menu klik kanan", () => {
+  function rowOf(name: string) {
+    const row = screen.getByText(name, { selector: ".lbl-lab" }).closest<HTMLElement>("li");
+    if (!row) throw new Error(`Baris ${name} tidak ada`);
+    return row;
+  }
+
+  function menuIds() {
+    return within(screen.getByRole("menu"))
+      .getAllByRole("menuitem")
+      .map((el) => el.getAttribute("data-menu-item"));
+  }
+
+  it("klik kanan label aktif: Atur orang, Ganti nama, Hapus (merah)", async () => {
+    const user = await openLabels();
+    await screen.findByRole("list", { name: "Label aktif" });
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByText("Drafter", { selector: ".lbl-lab" }) });
+    const menu = screen.getByRole("menu", { name: "Aksi untuk label Drafter" });
+    expect(menuIds()).toEqual(["assign", "rename", "delete"]);
+    expect(within(menu).getByRole("menuitem", { name: "Atur orang" })).toHaveFocus();
+    expect(within(menu).getByRole("menuitem", { name: "Hapus" })).toHaveClass("cmenu-danger");
+  });
+
+  it("Atur orang lewat menu membuka pemilih; Escape mengembalikan fokus ke baris", async () => {
+    const user = await openLabels();
+    await screen.findByRole("list", { name: "Label aktif" });
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Drafter") });
+    await user.click(screen.getByRole("menuitem", { name: "Atur orang" }));
+    expect(screen.getByRole("dialog", { name: "Atur orang untuk label Drafter" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Atur orang, label Drafter" })).toHaveFocus();
+  });
+
+  it("Ganti nama lewat menu membuka dialog yang sama", async () => {
+    const user = await openLabels();
+    await screen.findByRole("list", { name: "Label aktif" });
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Arsitek") });
+    await user.click(screen.getByRole("menuitem", { name: "Ganti nama" }));
+    const dialog = screen.getByRole("dialog", { name: "Ganti nama label Arsitek" });
+    expect(within(dialog).getByLabelText("Nama label")).toHaveValue("Arsitek");
+  });
+
+  it("Shift+F10 dari baris terfokus, Hapus meminta konfirmasi lalu mengarsipkan", async () => {
+    const user = await openLabels();
+    const rename = await screen.findByRole("button", { name: "Ganti nama, label Drafter" });
+    rename.focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(screen.getByRole("menu", { name: "Aksi untuk label Drafter" })).toBeInTheDocument();
+    await user.keyboard("{End}{Enter}");
+    const dialog = screen.getByRole("dialog", { name: "Hapus label Drafter?" });
+    expect(calls("org_set_label_archived")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Hapus Drafter" }));
+    expect(invoke).toHaveBeenCalledWith("org_set_label_archived", { labelId: LABEL_1, archived: true });
+  });
+
+  it("label yang dihapus: Pulihkan lewat menu, lalu fokus pindah ke Atur orang", async () => {
+    let labels = [...LABELS, label(LABEL_3, "Lama", [PK_B], { archived: true })];
+    const user = await openLabels({
+      org_labels: () => labels,
+      org_set_label_archived: (args: { labelId: string; archived: boolean }) => {
+        labels = labels.map((l) => (l.id === args.labelId ? { ...l, archived: args.archived } : l));
+        return null;
+      },
+    });
+    await user.click(await screen.findByText("Dihapus (1)"));
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Lama") });
+    const menu = screen.getByRole("menu", { name: "Aksi untuk label Lama" });
+    expect(menuIds()).toEqual(["restore"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Pulihkan" }));
+    expect(invoke).toHaveBeenCalledWith("org_set_label_archived", { labelId: LABEL_3, archived: false });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Atur orang, label Lama" })).toHaveFocus());
+  });
+
+  it("selama aksi lain berjalan, item menu nonaktif dengan alasan", async () => {
+    const user = await openLabels({
+      org_labels: [...LABELS, label(LABEL_3, "Lama", [PK_B], { archived: true })],
+      org_set_label_archived: () => new Promise(() => {}),
+    });
+    await user.click(await screen.findByText("Dihapus (1)"));
+    await user.click(screen.getByRole("button", { name: "Pulihkan label Lama" }));
+    await user.pointer({ keys: "[MouseRight]", target: rowOf("Drafter") });
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    for (const item of items) {
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription("Tunggu perubahan yang sedang disimpan.");
+    }
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});

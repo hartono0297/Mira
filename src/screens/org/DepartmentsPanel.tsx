@@ -5,6 +5,7 @@ import { formatDate } from "../../api/format";
 import { orgApi, type DepartmentView, type PersonView } from "../../api/org";
 import { validateTeamName } from "../../api/validation";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
@@ -13,6 +14,17 @@ import { useOrgLive } from "./useOrgLive";
 import "./departments.css";
 
 type Data = { departments: DepartmentView[]; people: PersonView[] };
+
+// Teks menu klik kanan baris departemen. Label item sama dengan tombol di baris.
+const MENU = {
+  label: (name: string) => `Aksi untuk departemen ${name}`,
+  rename: "Ganti nama",
+  admins: "Atur admin",
+  archive: "Arsipkan",
+  restore: "Pulihkan",
+  busy: "Tunggu perubahan yang sedang disimpan.",
+  notEmpty: (n: number) => `Masih ada ${n} orang. Pindahkan dulu lewat tab Pengguna.`,
+};
 
 // Sama dengan channel_name_for di src-tauri/src/permissions/format.rs:
 // nama departemen (sudah dirapikan) huruf kecil, setiap spasi menjadi "-".
@@ -92,6 +104,17 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
   function openArchive(id: string) {
     setArchiveError(null);
     setArchiveId(id);
+  }
+
+  async function restore(d: DepartmentView) {
+    const ok = await page.act(
+      `restore:${d.id}`,
+      () => orgApi.setDepartmentArchived(d.id, false),
+      `Departemen ${d.name} dipulihkan.`,
+      "Departemen belum dipulihkan",
+    );
+    // Tombol Pulihkan hilang bersama barisnya: fokus pindah ke baris yang dipulihkan.
+    if (ok) setReturnTo(d.id);
   }
 
   // Dipanggil langsung (bukan lewat page.act) supaya error tampil di dalam dialog,
@@ -210,75 +233,23 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
                         <RenameForm dept={d} page={page} onDone={() => closeEdit(d.id)} />
                       </td>
                     </tr>
+                  ) : manage ? (
+                    <ManagedDeptRow
+                      key={d.id}
+                      dept={d}
+                      page={page}
+                      busy={busy}
+                      renameRef={(el) => {
+                        if (el) renameButtons.current.set(d.id, el);
+                        else renameButtons.current.delete(d.id);
+                      }}
+                      onRename={() => setEditing(d.id)}
+                      onAdmins={() => setAdminId(d.id)}
+                      onArchive={() => openArchive(d.id)}
+                    />
                   ) : (
-                    <tr key={d.id} role="row" className={manage ? "dept-row dept-row-act" : "dept-row"}>
-                      <td role="cell" className="dept-name-cell">
-                        <span className="dept-name">
-                          <span className="row-name">{d.name}</span>
-                          {page.overview.departmentId === d.id && <span className="chip chip-on">Departemen Anda</span>}
-                        </span>
-                      </td>
-                      <td role="cell" className="dept-count">
-                        <span className="dept-k" aria-hidden="true">
-                          Orang
-                        </span>
-                        <span className="dept-num">{d.memberCount}</span>
-                      </td>
-                      <td role="cell" className="dept-admins">
-                        <span className="dept-k" aria-hidden="true">
-                          Admin departemen
-                        </span>
-                        {d.admins.length > 0 ? (
-                          <span>{d.admins.map((a) => a.displayName).join(", ")}</span>
-                        ) : (
-                          <span className="dept-muted">Belum ada</span>
-                        )}
-                      </td>
-                      <td role="cell" className="dept-channel">
-                        <span className="dept-k" aria-hidden="true">
-                          Channel
-                        </span>
-                        <span className="dept-muted">{d.channelName ? `# ${d.channelName}` : "Belum ada"}</span>
-                      </td>
-                      {manage && (
-                        <td role="cell" className="dept-actions-cell">
-                          <div className="row-actions">
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              disabled={busy}
-                              aria-label={`Ganti nama ${d.name}`}
-                              ref={(el) => {
-                                if (el) renameButtons.current.set(d.id, el);
-                                else renameButtons.current.delete(d.id);
-                              }}
-                              onClick={() => setEditing(d.id)}
-                            >
-                              Ganti nama
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              disabled={busy}
-                              aria-label={`Atur admin ${d.name}`}
-                              onClick={() => setAdminId(d.id)}
-                            >
-                              Atur admin
-                            </button>
-                            {d.memberCount === 0 && (
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm"
-                                disabled={busy}
-                                aria-label={`Arsipkan ${d.name}`}
-                                onClick={() => openArchive(d.id)}
-                              >
-                                Arsipkan
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      )}
+                    <tr key={d.id} role="row" className="dept-row">
+                      <DeptCells dept={d} page={page} />
                     </tr>
                   ),
                 )}
@@ -294,41 +265,9 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
             Diarsipkan ({archived.length})
           </summary>
           <ul className="row-list">
-            {archived.map((d) => {
-              const key = `restore:${d.id}`;
-              return (
-                <li key={d.id} className="row">
-                  <div className="row-main">
-                    <span className="row-name">{d.name}</span>
-                    <span className="row-sub">
-                      {d.archivedAt ? `Diarsipkan ${formatDate(d.archivedAt)}` : "Diarsipkan"}
-                      {d.channelName ? `. Channel # ${d.channelName}, hanya-baca.` : "."}
-                    </span>
-                  </div>
-                  <div className="row-actions">
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      disabled={busy}
-                      aria-busy={page.pending === key || undefined}
-                      aria-label={`Pulihkan ${d.name}`}
-                      onClick={async () => {
-                        const ok = await page.act(
-                          key,
-                          () => orgApi.setDepartmentArchived(d.id, false),
-                          `Departemen ${d.name} dipulihkan.`,
-                          "Departemen belum dipulihkan",
-                        );
-                        // Tombol Pulihkan hilang bersama barisnya: fokus pindah ke baris yang dipulihkan.
-                        if (ok) setReturnTo(d.id);
-                      }}
-                    >
-                      {page.pending === key ? "Memulihkan..." : "Pulihkan"}
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
+            {archived.map((d) => (
+              <ArchivedDeptRow key={d.id} dept={d} page={page} busy={busy} onRestore={() => void restore(d)} />
+            ))}
           </ul>
         </details>
       )}
@@ -375,6 +314,162 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
         />
       )}
     </section>
+  );
+}
+
+function DeptCells({ dept, page }: { dept: DepartmentView; page: OrgPage }) {
+  return (
+    <>
+      <td role="cell" className="dept-name-cell">
+        <span className="dept-name">
+          <span className="row-name">{dept.name}</span>
+          {page.overview.departmentId === dept.id && <span className="chip chip-on">Departemen Anda</span>}
+        </span>
+      </td>
+      <td role="cell" className="dept-count">
+        <span className="dept-k" aria-hidden="true">
+          Orang
+        </span>
+        <span className="dept-num">{dept.memberCount}</span>
+      </td>
+      <td role="cell" className="dept-admins">
+        <span className="dept-k" aria-hidden="true">
+          Admin departemen
+        </span>
+        {dept.admins.length > 0 ? (
+          <span>{dept.admins.map((a) => a.displayName).join(", ")}</span>
+        ) : (
+          <span className="dept-muted">Belum ada</span>
+        )}
+      </td>
+      <td role="cell" className="dept-channel">
+        <span className="dept-k" aria-hidden="true">
+          Channel
+        </span>
+        <span className="dept-muted">{dept.channelName ? `# ${dept.channelName}` : "Belum ada"}</span>
+      </td>
+    </>
+  );
+}
+
+// Baris departemen aktif untuk superadmin. Menu klik kanan berisi aksi yang
+// sama dengan tombol di baris, jadi tidak perlu tombol "...". Arsipkan tetap
+// tampil di menu walaupun tombolnya tersembunyi, nonaktif dengan alasannya.
+function ManagedDeptRow({
+  dept,
+  page,
+  busy,
+  renameRef,
+  onRename,
+  onAdmins,
+  onArchive,
+}: {
+  dept: DepartmentView;
+  page: OrgPage;
+  busy: boolean;
+  renameRef: (el: HTMLButtonElement | null) => void;
+  onRename: () => void;
+  onAdmins: () => void;
+  onArchive: () => void;
+}) {
+  const wait = busy ? MENU.busy : undefined;
+  const menu = useContextMenu({
+    label: MENU.label(dept.name),
+    items: menuItems(
+      { id: "rename", label: MENU.rename, disabled: wait, onSelect: onRename },
+      { id: "admins", label: MENU.admins, disabled: wait, onSelect: onAdmins },
+      SEPARATOR,
+      {
+        id: "archive",
+        label: MENU.archive,
+        disabled: dept.memberCount > 0 ? MENU.notEmpty(dept.memberCount) : wait,
+        onSelect: onArchive,
+      },
+    ),
+  });
+
+  return (
+    <tr role="row" className="dept-row dept-row-act" {...menu.triggerProps}>
+      <DeptCells dept={dept} page={page} />
+      <td role="cell" className="dept-actions-cell">
+        <div className="row-actions">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={busy}
+            aria-label={`Ganti nama ${dept.name}`}
+            ref={renameRef}
+            onClick={onRename}
+          >
+            Ganti nama
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={busy}
+            aria-label={`Atur admin ${dept.name}`}
+            onClick={onAdmins}
+          >
+            Atur admin
+          </button>
+          {dept.memberCount === 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={busy}
+              aria-label={`Arsipkan ${dept.name}`}
+              onClick={onArchive}
+            >
+              Arsipkan
+            </button>
+          )}
+        </div>
+        {menu.element}
+      </td>
+    </tr>
+  );
+}
+
+function ArchivedDeptRow({
+  dept,
+  page,
+  busy,
+  onRestore,
+}: {
+  dept: DepartmentView;
+  page: OrgPage;
+  busy: boolean;
+  onRestore: () => void;
+}) {
+  const working = page.pending === `restore:${dept.id}`;
+  const menu = useContextMenu({
+    label: MENU.label(dept.name),
+    items: menuItems({ id: "restore", label: MENU.restore, disabled: busy ? MENU.busy : undefined, onSelect: onRestore }),
+  });
+
+  return (
+    <li className="row" {...menu.triggerProps}>
+      <div className="row-main">
+        <span className="row-name">{dept.name}</span>
+        <span className="row-sub">
+          {dept.archivedAt ? `Diarsipkan ${formatDate(dept.archivedAt)}` : "Diarsipkan"}
+          {dept.channelName ? `. Channel # ${dept.channelName}, hanya-baca.` : "."}
+        </span>
+      </div>
+      <div className="row-actions">
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          disabled={busy}
+          aria-busy={working || undefined}
+          aria-label={`Pulihkan ${dept.name}`}
+          onClick={onRestore}
+        >
+          {working ? "Memulihkan..." : "Pulihkan"}
+        </button>
+      </div>
+      {menu.element}
+    </li>
   );
 }
 

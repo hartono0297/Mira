@@ -26,6 +26,8 @@ import { readLocation, resolveLocation, writeLocation, type DocsLocation } from 
 import {
   addedText,
   appName,
+  COPY_FAILED_TITLE,
+  copiedText,
   emptyTitle,
   errorHint,
   errorMessage,
@@ -81,6 +83,7 @@ export function DocsScreen() {
   const [pending, setPending] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [focusConflict, setFocusConflict] = useState(0);
+  const [focusVersions, setFocusVersions] = useState(0);
   const [restore, setRestore] = useState<RestoreTarget | null>(null);
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [restoreError, setRestoreError] = useState<AppError | null>(null);
@@ -351,6 +354,19 @@ export function DocsScreen() {
       download: (doc, version) => {
         void download(doc, version);
       },
+      showVersions: (doc) => {
+        setSelectedId(doc.id);
+        setFocusVersions((n) => n + 1);
+      },
+      copyName: (doc) => {
+        const write = navigator.clipboard
+          ? navigator.clipboard.writeText(doc.name)
+          : Promise.reject(new Error("Clipboard tidak tersedia di jendela ini."));
+        write.then(
+          () => setFeedback({ kind: "ok", text: copiedText(doc.name) }),
+          (err: unknown) => setFeedback({ kind: "error", title: COPY_FAILED_TITLE, error: toAppError(err), hint: null }),
+        );
+      },
     }),
     [pending, downloads, run, download],
   );
@@ -551,6 +567,7 @@ export function DocsScreen() {
               onRetry={() => void detail.reload()}
               actions={actions}
               focusConflict={focusConflict}
+              focusVersions={focusVersions}
               now={now}
             />
           )}

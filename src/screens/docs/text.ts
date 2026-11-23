@@ -118,6 +118,29 @@ export function downloadLabel(v: DocumentVersion): string {
   return `Unduh dari rekan (${formatSize(v.size)})`;
 }
 
+// Menu klik kanan dan tombol "..." di baris file.
+export const menuLabel = (name: string) => `Aksi untuk ${name}`;
+export const menuButtonLabel = (name: string) => `Aksi lain untuk ${name}`;
+export const OPEN_READONLY_LABEL = "Buka hanya baca";
+export const HISTORY_LABEL = "Lihat riwayat versi";
+export const EXPORT_LABEL = "Simpan salinan";
+export const COPY_NAME_LABEL = "Salin nama";
+export const WAIT_REASON = "Menunggu aksi lain selesai";
+export const COPY_FAILED_TITLE = "Nama file belum bisa disalin";
+export const copiedText = (name: string) => `Nama ${name} disalin.`;
+
+// Simpan salinan butuh isi versi sekarang di laptop ini.
+export function exportBlockedReason(state: FetchState): string {
+  switch (state) {
+    case "copying":
+      return "Isinya masih disalin dari laptop rekan";
+    case "waiting":
+      return "Isinya menunggu laptop rekan tersambung";
+    case "manual":
+      return "Unduh dulu isinya dari rekan";
+  }
+}
+
 export type StatusKind = "normal" | "mine" | "rekan" | "conflict" | "fetch";
 export type StatusLine = { kind: StatusKind; text: string };
 

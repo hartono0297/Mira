@@ -28,6 +28,8 @@ type Props = {
   actions: DocActions;
   // Berubah setiap kali tombol "Selesaikan bentrok" di daftar ditekan.
   focusConflict: number;
+  // Berubah setiap kali "Lihat riwayat versi" di menu baris dipilih.
+  focusVersions: number;
   now: Date;
 };
 
@@ -288,7 +290,23 @@ function VersionRow({
   );
 }
 
-export function DocumentDetail({ summary, detail, loading, error, onRetry, actions, focusConflict, now }: Props) {
+export function DocumentDetail({
+  summary,
+  detail,
+  loading,
+  error,
+  onRetry,
+  actions,
+  focusConflict,
+  focusVersions,
+  now,
+}: Props) {
+  const historyRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusVersions === 0) return;
+    historyRef.current?.focus();
+    historyRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [focusVersions]);
   // Ringkasan dari daftar dipakai sampai detail file ini selesai dimuat.
   const doc: DocumentSummary = detail && detail.id === summary.id ? detail : summary;
   const versions = detail && detail.id === summary.id ? detail.versions : null;
@@ -314,7 +332,9 @@ export function DocumentDetail({ summary, detail, loading, error, onRetry, actio
         <ConflictBox doc={doc} actions={actions} focusToken={focusConflict} now={now} />
       )}
 
-      <h3 className="detail-label">Riwayat versi</h3>
+      <h3 className="detail-label" tabIndex={-1} ref={historyRef}>
+        Riwayat versi
+      </h3>
       {editingHere && doc.can.restore && (
         <p className="hint">Versi lama bisa dipulihkan setelah Anda menekan Selesai mengedit.</p>
       )}

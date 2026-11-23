@@ -706,3 +706,39 @@ describe("SignDocumentView", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("SignDocumentView: dibuka dari Tandatangani di daftar", () => {
+  function open(d: RequestDetail = detail(), o: SignOverview = overview()) {
+    api.getRequest.mockResolvedValue(d);
+    api.overview.mockResolvedValue(o);
+    api.readFile.mockResolvedValue(new Uint8Array([37, 80, 68, 70]));
+    render(<SignDocumentView requestId="req-uji" onBack={vi.fn()} startSigning />);
+  }
+
+  it("giliran saya: kotak tanda tangan langsung ditempatkan dan difokus", async () => {
+    open();
+    const box = await screen.findByRole("group", { name: "Kotak tanda tangan Penanda Uji" });
+    await waitFor(() => expect(box).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Selesai dan tanda tangani" })).toBeInTheDocument();
+  });
+
+  it("belum punya tanda tangan tersimpan: fokus ke Buat tanda tangan", async () => {
+    open(detail(), overview({ saved: null }));
+    const btn = await screen.findByRole("button", { name: "Buat tanda tangan" });
+    await waitFor(() => expect(btn).toHaveFocus());
+  });
+
+  it("bukan giliran saya: layar dibuka biasa, fokus di judul", async () => {
+    open(
+      detail({
+        signers: [
+          signer({ position: 1, publicKey: OTHER, displayName: "Rekan Uji", isMe: false, canSignNow: false }),
+          signer({ position: 2, canSignNow: false }),
+        ],
+      }),
+    );
+    const title = await screen.findByRole("heading", { level: 1, name: "Kontrak uji" });
+    await waitFor(() => expect(title).toHaveFocus());
+    expect(screen.queryByRole("group", { name: /Kotak tanda tangan/ })).not.toBeInTheDocument();
+  });
+});

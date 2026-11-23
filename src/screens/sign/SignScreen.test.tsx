@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   createRequest: vi.fn(),
   verifyFile: vi.fn(),
   downloadFile: vi.fn(),
+  exportFile: vi.fn(),
+  cancel: vi.fn(),
 }));
 vi.mock("../../api/signing", async (orig) => ({
   ...(await orig<typeof import("../../api/signing")>()),
@@ -37,9 +39,10 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: tauriEvent.listen }));
 
 // Layar dokumen dibuat terpisah; di sini cukup tiruan dengan props yang sama.
 vi.mock("./SignDocumentView", () => ({
-  SignDocumentView: (p: { requestId: string; onBack: () => void; onChanged?: () => void }) => (
+  SignDocumentView: (p: { requestId: string; onBack: () => void; onChanged?: () => void; startSigning?: boolean }) => (
     <div>
       <p>Layar dokumen {p.requestId}</p>
+      {p.startSigning && <p>Langsung ke langkah tanda tangan</p>}
       <button type="button" onClick={p.onBack}>
         Kembali ke daftar
       </button>
@@ -328,9 +331,9 @@ describe("SignScreen: daftar dokumen", () => {
     await screen.findByText("Giliran Uji");
     const titles = Array.from(document.querySelectorAll(".sign-row-title")).map((el) => el.textContent);
     expect(titles).toEqual(["Giliran Uji", "Menunggu Uji", "Selesai Uji", "Batal Uji"]);
-    expect(screen.getByRole("button", { name: /Giliran Uji.*1 dari 2 sudah tanda tangan.*Giliran Anda/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Selesai Uji.*Selesai, terkunci/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Batal Uji.*Dibatalkan/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Giliran Uji.*1 dari 2 sudah tanda tangan.*Giliran Anda/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Selesai Uji.*Selesai, terkunci/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Batal Uji.*Dibatalkan/ })).toBeInTheDocument();
     expect(screen.getByText("1 dokumen menunggu tanda tangan Anda")).toBeInTheDocument();
   });
 
@@ -349,7 +352,7 @@ describe("SignScreen: daftar dokumen", () => {
     const titles = Array.from(document.querySelectorAll(".sign-row-title")).map((el) => el.textContent);
     expect(titles).toEqual(["Giliran Uji", "Menunggu Uji", "Berubah Uji"]);
     expect(screen.getByText("1 dokumen menunggu tanda tangan Anda")).toBeInTheDocument();
-    const changed = screen.getByRole("button", { name: /Berubah Uji/ });
+    const changed = screen.getByRole("button", { name: /^Berubah Uji/ });
     expect(changed.querySelector(".chip")).not.toHaveClass("chip-on");
     expect(changed.querySelector(".chip")).not.toHaveTextContent("Giliran Anda");
   });
@@ -370,20 +373,20 @@ describe("SignScreen: daftar dokumen", () => {
     expect(screen.getByText(integrityLabel("missing"))).toBeInTheDocument();
     expect(screen.getByText("Salinan PDF yang disimpan di luar Mira berubah")).toBeInTheDocument();
     expect(screen.getByText("3 dokumen perlu diperiksa")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Utuh Uji/ })).not.toHaveClass("sign-row-warn");
+    expect(screen.getByRole("button", { name: /^Utuh Uji/ })).not.toHaveClass("sign-row-warn");
   });
 
   it("membuka dokumen dengan Enter, lalu kembali ke daftar dan fokus ke baris", async () => {
     api.overview.mockResolvedValue(overview({ requests: [summary({ id: "doc1", title: "Buka Uji" })] }));
     const user = userEvent.setup();
     render(<SignScreen />);
-    const row = await screen.findByRole("button", { name: /Buka Uji/ });
+    const row = await screen.findByRole("button", { name: /^Buka Uji/ });
     row.focus();
     await user.keyboard("{Enter}");
     expect(screen.getByText("Layar dokumen doc1")).toBeInTheDocument();
     const calls = api.overview.mock.calls.length;
     await user.click(screen.getByRole("button", { name: "Kembali ke daftar" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /Buka Uji/ })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Buka Uji/ })).toHaveFocus());
     expect(api.overview.mock.calls.length).toBeGreaterThan(calls);
   });
 
@@ -484,7 +487,7 @@ describe("SignScreen: permintaan dari rekan", () => {
     expect(titles).toEqual(["Giliran Rekan Uji", "Menunggu Rekan Uji"]);
     expect(within(wait).getAllByText("Diminta oleh Rekan Pengirim")).toHaveLength(2);
     expect(
-      within(wait).getByRole("button", { name: /Giliran Rekan Uji.*Diminta oleh Rekan Pengirim.*Giliran Anda/ }),
+      within(wait).getByRole("button", { name: /^Giliran Rekan Uji.*Diminta oleh Rekan Pengirim.*Giliran Anda/ }),
     ).toBeInTheDocument();
 
     const docs = screen.getByRole("region", { name: "Dokumen" });
@@ -652,5 +655,221 @@ describe("SignScreen: permintaan dari rekan", () => {
     const list = [summary({ id: "x", status: "completed" }), summary({ id: "y", myState: "your_turn" })];
     expect(sortRequests(list).map((r) => r.id)).toEqual(["y", "x"]);
     expect(list.map((r) => r.id)).toEqual(["x", "y"]);
+  });
+});
+
+describe("SignScreen: menu baris", () => {
+  const peer = (extra: Partial<RequestSummary>) => summary({ fromPeer: true, requestedByName: "Rekan Pengirim", ...extra });
+
+  function itemIds(menu: HTMLElement): (string | undefined)[] {
+    return within(menu)
+      .getAllByRole("menuitem")
+      .map((el) => el.dataset.menuItem);
+  }
+
+  async function rightClick(user: ReturnType<typeof userEvent.setup>, title: string) {
+    const row = await screen.findByRole("button", { name: new RegExp(`^${title}`) });
+    await user.pointer({ keys: "[MouseRight]", target: row });
+    return screen.getByRole("menu", { name: `Aksi untuk ${title}` });
+  }
+
+  it("permintaan saya, giliran saya: Buka, Tandatangani, Simpan salinan, Periksa keaslian, Batalkan", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "m1", title: "Milik Uji", myState: "your_turn" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Milik Uji");
+    expect(itemIds(menu)).toEqual(["open", "sign", "export", "verify", "cancel"]);
+    expect(within(menu).getByRole("menuitem", { name: "Buka" })).toHaveFocus();
+    expect(within(menu).getByRole("menuitem", { name: "Tandatangani" })).not.toHaveAttribute("aria-disabled");
+    expect(within(menu).getByRole("menuitem", { name: "Batalkan permintaan" })).toHaveClass("cmenu-danger");
+  });
+
+  it("Tandatangani lewat menu membuka dokumen langsung ke langkah tanda tangan", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "m1", title: "Milik Uji", myState: "your_turn" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Milik Uji");
+    await user.click(within(menu).getByRole("menuitem", { name: "Tandatangani" }));
+    expect(screen.getByText("Layar dokumen m1")).toBeInTheDocument();
+    expect(screen.getByText("Langsung ke langkah tanda tangan")).toBeInTheDocument();
+  });
+
+  it("Buka lewat menu membuka dokumen tanpa langkah tanda tangan", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "m1", title: "Milik Uji", myState: "your_turn" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Milik Uji");
+    await user.click(within(menu).getByRole("menuitem", { name: "Buka" }));
+    expect(screen.getByText("Layar dokumen m1")).toBeInTheDocument();
+    expect(screen.queryByText("Langsung ke langkah tanda tangan")).not.toBeInTheDocument();
+  });
+
+  it("belum giliran: Tandatangani nonaktif dengan alasan dan tidak membuka dokumen", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [peer({ id: "p1", title: "Antre Uji", myState: "waiting_others" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Antre Uji");
+    const sign = within(menu).getByRole("menuitem", { name: /^Tandatangani/ });
+    expect(sign).toHaveAttribute("aria-disabled", "true");
+    expect(sign).toHaveAccessibleDescription("Belum giliran Anda");
+    await user.click(sign);
+    expect(screen.queryByText("Layar dokumen p1")).not.toBeInTheDocument();
+  });
+
+  it("giliran saya tetapi file belum ada: Tandatangani dan Simpan salinan nonaktif dengan alasan", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [peer({ id: "p2", title: "Jauh Uji", myState: "your_turn", fileAvailable: false, integrity: "missing" })],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Jauh Uji");
+    expect(within(menu).getByRole("menuitem", { name: /^Tandatangani/ })).toHaveAccessibleDescription(
+      "File belum ada di laptop ini",
+    );
+    expect(within(menu).getByRole("menuitem", { name: /^Simpan salinan PDF/ })).toHaveAccessibleDescription(
+      "File belum ada di laptop ini",
+    );
+  });
+
+  it("sudah menandatangani atau selesai: Tandatangani tidak tampil", async () => {
+    api.overview.mockResolvedValue(
+      overview({
+        requests: [
+          summary({ id: "s1", title: "Sudah Uji", myState: "signed" }),
+          summary({ id: "s2", title: "Tutup Uji", status: "completed", myState: "signed", completedAt: "2026-11-22T03:00:00Z" }),
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    expect(itemIds(await rightClick(user, "Sudah Uji"))).not.toContain("sign");
+    await user.keyboard("{Escape}");
+    const done = await rightClick(user, "Tutup Uji");
+    expect(itemIds(done)).not.toContain("sign");
+    // Permintaan yang sudah selesai tidak bisa dibatalkan lagi.
+    expect(itemIds(done)).not.toContain("cancel");
+  });
+
+  it("permintaan dari rekan: Batalkan tidak tampil", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [peer({ id: "p3", title: "Kiriman Uji", myState: "your_turn" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Kiriman Uji");
+    expect(itemIds(menu)).toEqual(["open", "sign", "export", "verify"]);
+  });
+
+  it("Batalkan lewat menu: konfirmasi, lalu permintaan dibatalkan dan daftar dimuat ulang", async () => {
+    const mineReq = summary({ id: "c1", title: "Batalkan Uji" });
+    api.overview.mockResolvedValue(overview({ requests: [mineReq] }));
+    api.cancel.mockResolvedValue({ ...mineReq, status: "cancelled" } as RequestDetail);
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Batalkan Uji");
+    await user.click(within(menu).getByRole("menuitem", { name: "Batalkan permintaan" }));
+    const dialog = await screen.findByRole("dialog", { name: "Batalkan permintaan ini?" });
+    expect(api.cancel).not.toHaveBeenCalled();
+    expect(within(dialog).getByText(/Pembatalan tidak bisa diurungkan\./)).toBeInTheDocument();
+    const calls = api.overview.mock.calls.length;
+    await user.click(within(dialog).getByRole("button", { name: "Batalkan permintaan" }));
+    await waitFor(() => expect(api.cancel).toHaveBeenCalledWith("c1"));
+    expect(await screen.findByText("Permintaan Batalkan Uji dibatalkan.")).toBeInTheDocument();
+    expect(api.overview.mock.calls.length).toBeGreaterThan(calls);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("Batalkan gagal: pesan error tampil di dialog konfirmasi", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "c2", title: "Gagal Uji" })] }));
+    api.cancel.mockRejectedValue({ code: "request_closed", message: "Permintaan sudah ditutup." });
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Gagal Uji");
+    await user.click(within(menu).getByRole("menuitem", { name: "Batalkan permintaan" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Batalkan permintaan" }));
+    expect(await within(dialog).findByText("Permintaan sudah ditutup.")).toBeInTheDocument();
+  });
+
+  it("Simpan salinan PDF lewat menu: lokasi salinan tampil", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "e1", title: "Salin Uji" })] }));
+    api.exportFile.mockResolvedValue({ path: "C:\\Unduhan\\Salin Uji.pdf" });
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Salin Uji");
+    await user.click(within(menu).getByRole("menuitem", { name: "Simpan salinan PDF" }));
+    expect(api.exportFile).toHaveBeenCalledWith("e1");
+    expect(await screen.findByText("Salinan Salin Uji tersimpan di C:\\Unduhan\\Salin Uji.pdf")).toBeInTheDocument();
+  });
+
+  it("Simpan salinan PDF gagal: pesan error tampil di atas daftar", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "e2", title: "Salin Gagal Uji" })] }));
+    api.exportFile.mockRejectedValue({ code: "io", message: "Folder Unduhan tidak bisa ditulis." });
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Salin Gagal Uji");
+    await user.click(within(menu).getByRole("menuitem", { name: "Simpan salinan PDF" }));
+    expect(await screen.findByText("Salinan belum tersimpan")).toBeInTheDocument();
+    expect(screen.getByText("Folder Unduhan tidak bisa ditulis.")).toBeInTheDocument();
+  });
+
+  it("file berubah: Simpan salinan nonaktif dengan alasan", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "e3", title: "Ubah Uji", integrity: "changed" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Ubah Uji");
+    const item = within(menu).getByRole("menuitem", { name: /^Simpan salinan PDF/ });
+    expect(item).toHaveAccessibleDescription("Isi file tidak cocok dengan catatan Mira");
+    await user.click(item);
+    expect(api.exportFile).not.toHaveBeenCalled();
+  });
+
+  it("Periksa keaslian file membuka dialog periksa, bukan dokumennya", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "v1", title: "Periksa Uji" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Periksa Uji");
+    await user.click(within(menu).getByRole("menuitem", { name: "Periksa keaslian file" }));
+    expect(await screen.findByRole("dialog", { name: "Periksa file PDF" })).toBeInTheDocument();
+    expect(screen.queryByText("Layar dokumen v1")).not.toBeInTheDocument();
+  });
+
+  it("file besar dari rekan: Unduh file ada di menu dan menjalankan unduhan", async () => {
+    const big = peer({ id: "d1", title: "Unduh Uji", fileAvailable: false, integrity: "missing", fileSize: 32 * 1024 * 1024 });
+    api.overview.mockResolvedValue(overview({ requests: [big] }));
+    api.downloadFile.mockResolvedValue({ ...big, fileAvailable: true } as RequestDetail);
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const menu = await rightClick(user, "Unduh Uji");
+    expect(itemIds(menu)).toEqual(["open", "sign", "download", "export", "verify"]);
+    await user.click(within(menu).getByRole("menuitem", { name: "Unduh file (32 MB)" }));
+    expect(api.downloadFile).toHaveBeenCalledWith("d1");
+    expect(await screen.findByText("File Unduh Uji sudah ada di laptop ini.")).toBeInTheDocument();
+  });
+
+  it("tombol ... membuka menu yang sama", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "m1", title: "Titik Uji", myState: "your_turn" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const more = await screen.findByRole("button", { name: "Aksi lain untuk Titik Uji" });
+    await user.click(more);
+    const menu = screen.getByRole("menu", { name: "Aksi untuk Titik Uji" });
+    expect(itemIds(menu)).toEqual(["open", "sign", "export", "verify", "cancel"]);
+    expect(screen.queryByText("Layar dokumen m1")).not.toBeInTheDocument();
+  });
+
+  it("Shift+F10 dari baris terfokus membuka menu, Escape mengembalikan fokus ke baris", async () => {
+    api.overview.mockResolvedValue(overview({ requests: [summary({ id: "m1", title: "Kunci Uji", myState: "your_turn" })] }));
+    const user = userEvent.setup();
+    render(<SignScreen />);
+    const row = await screen.findByRole("button", { name: /^Kunci Uji/ });
+    row.focus();
+    await user.keyboard("{Shift>}{F10}{/Shift}");
+    expect(screen.getByRole("menu", { name: "Aksi untuk Kunci Uji" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Buka" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(row).toHaveFocus();
+    expect(screen.queryByText("Layar dokumen m1")).not.toBeInTheDocument();
   });
 });

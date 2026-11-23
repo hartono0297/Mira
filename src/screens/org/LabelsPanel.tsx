@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type React
 import { toAppError, type AppError } from "../../api";
 import { orgApi, type LabelView, type PersonView } from "../../api/org";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
@@ -16,6 +17,16 @@ import "./labels.css";
 const MAX_NAME = 30;
 
 type Data = { labels: LabelView[]; people: PersonView[] };
+
+// Teks menu klik kanan baris label. Label item sama dengan tombol di baris.
+const MENU = {
+  label: (name: string) => `Aksi untuk label ${name}`,
+  assign: "Atur orang",
+  rename: "Ganti nama",
+  remove: "Hapus",
+  restore: "Pulihkan",
+  busy: "Tunggu perubahan yang sedang disimpan.",
+};
 
 type DialogState =
   | { kind: "create" }
@@ -164,53 +175,21 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
 
       {data && active.length > 0 && (
         <ul className="row-list" aria-label="Label aktif">
-          {active.map((l) => {
-            const n = countOf(l);
-            return (
-              <li key={l.id} className="lbl-row">
-                <div className="lbl-main">
-                  <span className="lab lbl-lab">{l.name}</span>
-                  <span className="lbl-count">{n === 0 ? "Belum dipasang ke siapa pun" : `${n} orang`}</span>
-                </div>
-                <div className="lbl-actions">
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={busy}
-                    ref={(el) => {
-                      if (el) assignButtons.current.set(l.id, el);
-                      else assignButtons.current.delete(l.id);
-                    }}
-                    onClick={() => setDialog({ kind: "assign", label: l })}
-                  >
-                    <span>
-                      Atur orang
-                      <span className="sr-only">, label {l.name}</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={busy}
-                    onClick={() => setDialog({ kind: "rename", label: l })}
-                  >
-                    <span>
-                      Ganti nama
-                      <span className="sr-only">, label {l.name}</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm lbl-del"
-                    disabled={busy}
-                    onClick={() => setDialog({ kind: "delete", label: l })}
-                  >
-                    Hapus <span className="sr-only">label {l.name}</span>
-                  </button>
-                </div>
-              </li>
-            );
-          })}
+          {active.map((l) => (
+            <LabelRow
+              key={l.id}
+              label={l}
+              count={countOf(l)}
+              busy={busy}
+              assignRef={(el) => {
+                if (el) assignButtons.current.set(l.id, el);
+                else assignButtons.current.delete(l.id);
+              }}
+              onAssign={() => setDialog({ kind: "assign", label: l })}
+              onRename={() => setDialog({ kind: "rename", label: l })}
+              onDelete={() => setDialog({ kind: "delete", label: l })}
+            />
+          ))}
         </ul>
       )}
 
@@ -225,30 +204,16 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
             memakainya.
           </p>
           <ul className="row-list" aria-label="Label yang dihapus">
-            {removed.map((l) => {
-              const n = countOf(l);
-              const key = `label-restore:${l.id}`;
-              return (
-                <li key={l.id} className="lbl-row">
-                  <div className="lbl-main">
-                    <span className="lab lbl-lab lbl-lab-gone">{l.name}</span>
-                    <span className="lbl-count">{n === 0 ? "Tidak ada orang tersimpan" : `${n} orang tersimpan`}</span>
-                  </div>
-                  <div className="lbl-actions">
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      disabled={busy}
-                      aria-busy={page.pending === key || undefined}
-                      onClick={() => void restore(l)}
-                    >
-                      {page.pending === key ? "Memulihkan... " : "Pulihkan "}
-                      <span className="sr-only">label {l.name}</span>
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
+            {removed.map((l) => (
+              <RemovedLabelRow
+                key={l.id}
+                label={l}
+                count={countOf(l)}
+                busy={busy}
+                working={page.pending === `label-restore:${l.id}`}
+                onRestore={() => void restore(l)}
+              />
+            ))}
           </ul>
         </details>
       )}
@@ -272,6 +237,106 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
         <AssignDialog page={page} label={dialog.label} people={people} onClose={close} />
       )}
     </section>
+  );
+}
+
+// Baris label aktif. Menu klik kanan berisi aksi yang sama dengan tombol di
+// baris, jadi tidak perlu tombol "...".
+function LabelRow({
+  label,
+  count,
+  busy,
+  assignRef,
+  onAssign,
+  onRename,
+  onDelete,
+}: {
+  label: LabelView;
+  count: number;
+  busy: boolean;
+  assignRef: (el: HTMLButtonElement | null) => void;
+  onAssign: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  const wait = busy ? MENU.busy : undefined;
+  const menu = useContextMenu({
+    label: MENU.label(label.name),
+    items: menuItems(
+      { id: "assign", label: MENU.assign, disabled: wait, onSelect: onAssign },
+      { id: "rename", label: MENU.rename, disabled: wait, onSelect: onRename },
+      SEPARATOR,
+      // Dialog konfirmasi Hapus milik layar ini yang dibuka, bukan konfirmasi bawaan menu.
+      { id: "delete", label: MENU.remove, danger: true, disabled: wait, onSelect: onDelete },
+    ),
+  });
+
+  return (
+    <li className="lbl-row" {...menu.triggerProps}>
+      <div className="lbl-main">
+        <span className="lab lbl-lab">{label.name}</span>
+        <span className="lbl-count">{count === 0 ? "Belum dipasang ke siapa pun" : `${count} orang`}</span>
+      </div>
+      <div className="lbl-actions">
+        <button type="button" className="btn btn-ghost btn-sm" disabled={busy} ref={assignRef} onClick={onAssign}>
+          <span>
+            Atur orang
+            <span className="sr-only">, label {label.name}</span>
+          </span>
+        </button>
+        <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onRename}>
+          <span>
+            Ganti nama
+            <span className="sr-only">, label {label.name}</span>
+          </span>
+        </button>
+        <button type="button" className="btn btn-ghost btn-sm lbl-del" disabled={busy} onClick={onDelete}>
+          Hapus <span className="sr-only">label {label.name}</span>
+        </button>
+      </div>
+      {menu.element}
+    </li>
+  );
+}
+
+function RemovedLabelRow({
+  label,
+  count,
+  busy,
+  working,
+  onRestore,
+}: {
+  label: LabelView;
+  count: number;
+  busy: boolean;
+  working: boolean;
+  onRestore: () => void;
+}) {
+  const menu = useContextMenu({
+    label: MENU.label(label.name),
+    items: menuItems({ id: "restore", label: MENU.restore, disabled: busy ? MENU.busy : undefined, onSelect: onRestore }),
+  });
+
+  return (
+    <li className="lbl-row" {...menu.triggerProps}>
+      <div className="lbl-main">
+        <span className="lab lbl-lab lbl-lab-gone">{label.name}</span>
+        <span className="lbl-count">{count === 0 ? "Tidak ada orang tersimpan" : `${count} orang tersimpan`}</span>
+      </div>
+      <div className="lbl-actions">
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          disabled={busy}
+          aria-busy={working || undefined}
+          onClick={onRestore}
+        >
+          {working ? "Memulihkan... " : "Pulihkan "}
+          <span className="sr-only">label {label.name}</span>
+        </button>
+      </div>
+      {menu.element}
+    </li>
   );
 }
 

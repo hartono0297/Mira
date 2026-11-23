@@ -222,11 +222,7 @@
   border-color: var(--text-sec);
 }
 
-/* Menu aksi per baris (disclosure). */
-.users-menu-wrap {
-  position: relative;
-}
-
+/* Tombol titik tiga per baris. Menunya komponen bersama ContextMenu. */
 .users-menu-btn {
   width: 36px;
   min-height: 36px;
@@ -236,62 +232,6 @@
 
 .users-menu-btn[aria-expanded="true"] {
   background: var(--hover);
-}
-
-/* Bayangan menandai menu yang melayang di atas baris lain. */
-.users-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 20;
-  width: max-content;
-  min-width: 230px;
-  padding: 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--bg);
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--text) 16%, transparent);
-}
-
-.users-menu[hidden] {
-  display: none;
-}
-
-.users-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-
-.users-menu-item svg {
-  flex: none;
-  color: var(--text-sec);
-}
-
-.users-menu-item:hover {
-  background: var(--hover);
-}
-
-.users-menu-danger,
-.users-menu-danger svg {
-  color: var(--danger);
-}
-
-.users-menu-sep {
-  margin: 6px 4px;
-  border: 0;
-  border-top: 1px solid var(--border);
 }
 
 /* Dialog Ubah departemen dan Ubah peran */
