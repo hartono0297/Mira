@@ -835,7 +835,7 @@ describe("Board: muat ulang saat board berubah", () => {
 
     expect(await screen.findByRole("heading", { name: "Proyek PA Proyek Alfa tidak tersedia lagi" })).toBeInTheDocument();
     expect(
-      screen.getByText("Anda tidak lagi menjadi anggota proyek ini. Pengelola proyek mengeluarkan Anda, atau Anda keluar sendiri."),
+      screen.getByText("Anda tidak bisa membuka proyek ini lagi. Biasanya karena pengelola proyek mengeluarkan Anda dari anggotanya."),
     ).toBeInTheDocument();
     expect(screen.getByText("Kalau masih perlu, minta pengelola proyek menambahkan Anda lagi.")).toBeInTheDocument();
     // Diumumkan ke pembaca layar, dan fokus yang tertinggal di board pindah ke penjelasannya.

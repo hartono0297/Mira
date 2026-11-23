@@ -827,7 +827,7 @@ describe("Lokasi dokumen untuk Tamu", () => {
     expect(select).toHaveAccessibleDescription("File di proyek PA Gudang hanya terlihat oleh anggota proyek itu.");
     expect(screen.queryByText(/kecuali Tamu/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Tambah file" })).toBeNull();
-    expect(docsApi.listDocuments).not.toHaveBeenCalledWith(null);
+    expect(docsApi.listDocuments).toHaveBeenLastCalledWith("p1");
   });
 
   it("Tamu tanpa proyek melihat penjelasan, bukan Pustaka Umum", async () => {
@@ -845,7 +845,8 @@ describe("Lokasi dokumen untuk Tamu", () => {
     expect(screen.queryByRole("combobox", { name: "Lokasi" })).toBeNull();
     expect(screen.queryByText(/kecuali Tamu/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Tambah file" })).toBeNull();
-    await waitFor(() => expect(docsApi.listDocuments).not.toHaveBeenCalledWith(null));
+    expect(screen.queryByRole("heading", { name: "Pustaka Umum masih kosong" })).toBeNull();
+    expect(screen.queryByText("laporan-bulanan.docx", { selector: ".doc-name" })).toBeNull();
   });
 
   it("proyek Tamu yang tidak tersedia lagi: pindah ke proyek lain dengan catatan", async () => {

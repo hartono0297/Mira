@@ -37,7 +37,13 @@ describe("teks lokasi dokumen", () => {
   });
 
   it("catatan proyek yang tidak tersedia lagi", () => {
-    expect(goneNote("PA Gudang")).toBe("Proyek PA Gudang tidak tersedia lagi untuk Anda. Menampilkan Pustaka Umum.");
+    expect(goneNote("PA Gudang", null)).toBe(
+      "Proyek PA Gudang tidak tersedia lagi untuk Anda. Menampilkan Pustaka Umum.",
+    );
+    expect(goneNote("PX Lama", "PA Gudang")).toBe(
+      "Proyek PX Lama tidak tersedia lagi untuk Anda. Menampilkan proyek PA Gudang.",
+    );
+    expect(goneNote("PX Lama")).toBe("Proyek PX Lama tidak tersedia lagi untuk Anda.");
   });
 });
 

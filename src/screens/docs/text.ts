@@ -35,10 +35,20 @@ export function visibilityHint(label: string | null): string {
 }
 
 // Proyek yang diingat tidak ada lagi di daftar proyek saya (dikeluarkan, atau
-// proyeknya hilang dari laptop ini).
-export function goneNote(label: string): string {
-  return `Proyek ${label} tidak tersedia lagi untuk Anda. Menampilkan ${LIBRARY_LABEL}.`;
+// proyeknya hilang dari laptop ini). `next` = lokasi yang sekarang tampil
+// (label proyek, atau null untuk Pustaka Umum); undefined = tidak ada lokasi
+// lain (Tamu tanpa proyek).
+export function goneNote(label: string, next?: string | null): string {
+  const gone = `Proyek ${label} tidak tersedia lagi untuk Anda.`;
+  return next === undefined ? gone : `${gone} Menampilkan ${placeText(next)}.`;
 }
+
+// Tamu tidak melihat Pustaka Umum dan tidak bisa menambah file (documents::access).
+export const GUEST_NO_PROJECT_TITLE = "Belum ada proyek yang bisa Anda buka";
+export const GUEST_NO_PROJECT_TEXT =
+  "Sebagai Tamu, Anda hanya melihat file di proyek tempat Anda diundang. Minta pengelola proyek menambahkan Anda.";
+export const GUEST_EMPTY_TEXT =
+  "File yang ditambahkan anggota proyek muncul di sini. Tamu bisa membuka file, tetapi tidak menambahkannya.";
 
 export function person(p: PersonRef): string {
   return p.isMe ? "Anda" : p.displayName;
