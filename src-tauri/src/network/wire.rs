@@ -448,9 +448,80 @@ pub fn op_id(op: &WireOp) -> String {
     blake3::hash(op.payload.as_bytes()).to_hex().to_string()
 }
 
+/// The few payload fields the network peeks at (0.5.1) to keep a
+/// suspended laptop from feeding its own ops in. Unverified: the backend
+/// still checks every op it ingests. Unknown fields are ignored.
+#[derive(Deserialize)]
+struct PayloadPeek {
+    #[serde(default)]
+    author: Option<String>,
+    #[serde(default)]
+    body: Option<BodyPeek>,
+}
+
+#[derive(Deserialize)]
+struct BodyPeek {
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
+    #[serde(default)]
+    member: Option<String>,
+}
+
+fn peek(op: &WireOp) -> Option<PayloadPeek> {
+    serde_json::from_str(&op.payload).ok()
+}
+
+/// The `author` field of the op's payload, unverified. `None` when the
+/// payload does not parse or has none.
+pub fn op_author(op: &WireOp) -> Option<String> {
+    peek(op)?.author
+}
+
+/// `true` when the op is a `member_suspend`, `member_reinstate` or
+/// `member_remove` whose `member` is `pk`, judging from the unverified
+/// payload.
+pub fn is_membership_op_for(op: &WireOp, pk: &str) -> bool {
+    peek(op).and_then(|p| p.body).is_some_and(|b| {
+        b.member.as_deref() == Some(pk)
+            && matches!(
+                b.kind.as_deref(),
+                Some("member_suspend" | "member_reinstate" | "member_remove")
+            )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payload_peek_reads_author_and_membership_target() {
+        let w = |p: &str| WireOp {
+            payload: p.into(),
+            sig: String::new(),
+        };
+        let me = "a".repeat(64);
+        let other = "b".repeat(64);
+        let suspend = w(&format!(
+            "{{\"v\":1,\"author\":\"{other}\",\"body\":{{\"type\":\"member_suspend\",\"member\":\"{me}\"}}}}"
+        ));
+        assert_eq!(op_author(&suspend).as_deref(), Some(other.as_str()));
+        assert!(is_membership_op_for(&suspend, &me));
+        assert!(!is_membership_op_for(&suspend, &other));
+        for kind in ["member_reinstate", "member_remove"] {
+            let op = w(&format!(
+                "{{\"body\":{{\"type\":\"{kind}\",\"member\":\"{me}\"}}}}"
+            ));
+            assert!(is_membership_op_for(&op, &me), "{kind}");
+        }
+        let team = w(&format!(
+            "{{\"body\":{{\"type\":\"team_move\",\"member\":\"{me}\",\"team\":\"x\"}}}}"
+        ));
+        assert!(!is_membership_op_for(&team, &me));
+        assert!(!is_membership_op_for(&w("not json"), &me));
+        assert_eq!(op_author(&w("{}")), None);
+        assert_eq!(op_author(&w("[1]")), None);
+    }
 
     fn sample_ops() -> Vec<Msg> {
         vec![

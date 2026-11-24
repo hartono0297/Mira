@@ -87,6 +87,14 @@ async fn pair(a: u8, b: u8) -> (Node, Node) {
     (na, nb)
 }
 
+/// A membership op about `member` in the payload shape the network peeks
+/// at (`body.type`, `body.member`).
+fn member_op(kind: &str, member: &str) -> WireOp {
+    op(&format!(
+        "{{\"body\":{{\"type\":\"{kind}\",\"member\":\"{member}\"}}}}"
+    ))
+}
+
 async fn wait_for(what: &str, cond: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
@@ -263,7 +271,7 @@ async fn removed_peer_receives_removed_then_is_disconnected() {
 #[tokio::test(flavor = "multi_thread")]
 async fn removed_peer_dialing_in_gets_removed_op() {
     let (a, b) = pair(33, 34).await;
-    let removal = op("{\"type\":\"member_remove\",\"x\":2}");
+    let removal = member_op("member_remove", &b.pk);
     let removal_id = super::wire::op_id(&removal);
     a.backend.with(|s| {
         s.auth.insert(
@@ -1247,10 +1255,7 @@ async fn suspended_pair(sa: u8, sb: u8) -> SuspendedPair {
     let (a, b) = pair(sa, sb).await;
     let org_op = a.backend.add_op(op("{\"type\":\"team_create\",\"n\":1}"));
     let team_op = a.backend.add_op(op("{\"type\":\"project_create\",\"team\":\"x\"}"));
-    let suspension = op(&format!(
-        "{{\"type\":\"member_suspend\",\"member\":\"{}\"}}",
-        b.pk
-    ));
+    let suspension = member_op("member_suspend", &b.pk);
     a.backend.add_op(suspension.clone());
     a.backend.with(|s| s.team_ops.insert(team_op.clone()));
     a.backend.suspend(&b.pk, Some(suspension.clone()));
@@ -1337,15 +1342,9 @@ async fn member_suspended_while_connected_gets_the_op_then_comes_back_limited_an
     b.backend.know(Some(&a.pk), a.addr);
     connect(&a, &b).await;
 
-    let suspension = op(&format!(
-        "{{\"type\":\"member_suspend\",\"member\":\"{}\"}}",
-        b.pk
-    ));
+    let suspension = member_op("member_suspend", &b.pk);
     let suspension_id = super::wire::op_id(&suspension);
-    let reinstate = op(&format!(
-        "{{\"type\":\"member_reinstate\",\"member\":\"{}\"}}",
-        b.pk
-    ));
+    let reinstate = member_op("member_reinstate", &b.pk);
     let reinstate_id = super::wire::op_id(&reinstate);
     // b learns that it is reinstated from the op it ingests. It does not
     // act on the suspension op yet: had it closed the connection itself
@@ -1429,10 +1428,7 @@ async fn removing_a_suspended_laptop_works_like_a_removal() {
     })
     .await;
 
-    let removal = op(&format!(
-        "{{\"type\":\"member_remove\",\"member\":\"{}\"}}",
-        b.pk
-    ));
+    let removal = member_op("member_remove", &b.pk);
     let removal_id = super::wire::op_id(&removal);
     b.backend.with(|s| {
         s.on_ingest = Some(Box::new(|s, _from, ops| {
@@ -1497,4 +1493,98 @@ async fn two_suspended_laptops_do_not_sync_back_and_forth() {
     let before = offers();
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert!(offers() <= before + 2, "sync ping-pong: {before} -> {}", offers());
+}
+
+// ----- 0.5.1: review fixes -------------------------------------------------
+
+/// A modified suspended laptop offers ops it authored itself: the office
+/// stores none of them, only ops of others it still holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn office_drops_ops_a_suspended_laptop_authored_itself() {
+    let p = suspended_pair(227, 228).await;
+    let (a, b) = (&p.a, &p.b);
+    let own: Vec<String> = (0..5)
+        .map(|n| {
+            b.backend.add_op(op(&format!(
+                "{{\"author\":\"{}\",\"n\":{n}}}",
+                b.pk
+            )))
+        })
+        .collect();
+    let foreign = b.backend.add_op(op(&format!("{{\"author\":\"{}\",\"n\":9}}", pk_of(43))));
+    b.net.refresh();
+    wait_for("the foreign op reaches the office", || a.backend.has_op(&foreign)).await;
+    b.net.sync_with(&a.pk);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    for id in &own {
+        assert!(!a.backend.has_op(id), "own op of the suspended laptop stored");
+    }
+    let ingested: HashSet<String> = a.backend.with(|s| {
+        s.ingested
+            .iter()
+            .flat_map(|(_, ids)| ids.clone())
+            .collect()
+    });
+    assert!(own.iter().all(|id| !ingested.contains(id)));
+}
+
+/// The office syncs back to a suspended laptop at most once per
+/// `SYNC_BACK_MIN`, however often the laptop syncs.
+#[tokio::test(flavor = "multi_thread")]
+async fn sync_back_to_a_suspended_laptop_is_rate_limited() {
+    let p = suspended_pair(229, 230).await;
+    let (a, b) = (&p.a, &p.b);
+    b.net.refresh();
+    wait_for("limited link and org ops", || b.backend.has_op(&p.org_op)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let before = a.backend.with(|s| s.offers);
+    for _ in 0..4 {
+        b.net.sync_with(&a.pk);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let after = a.backend.with(|s| s.offers);
+    assert!(
+        after - before <= 1,
+        "sync backs within {:?}: {}",
+        node::SYNC_BACK_MIN,
+        after - before
+    );
+}
+
+/// Both sides become active again without a `recheck_peers`: the next
+/// stream upgrades the limited link on each side.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_upgrades_a_stale_limited_link() {
+    let p = suspended_pair(231, 232).await;
+    let (a, b) = (&p.a, &p.b);
+    b.net.refresh();
+    wait_for("limited link", || {
+        a.net.is_linked(&b.pk) && b.backend.has_op(&p.org_op)
+    })
+    .await;
+    // Reinstated in both backends, no refresh.
+    a.backend.add_member(&b.pk);
+    b.backend.set_self_suspended(false);
+    b.net.sync_with(&a.pk);
+    wait_for("full link both ways", || {
+        a.connected_to(b) && b.connected_to(a)
+    })
+    .await;
+}
+
+/// One check at a time, and a check soon after the last one does not
+/// reset the backoff or dial again.
+#[tokio::test(flavor = "multi_thread")]
+async fn membership_checks_run_one_at_a_time_and_redial_at_most_every_few_seconds() {
+    let p = suspended_pair(233, 234).await;
+    let b = &p.b;
+    let (r1, r2) = tokio::join!(
+        b.net.check_membership(Duration::from_secs(4)),
+        b.net.check_membership(Duration::from_secs(4))
+    );
+    assert_eq!(b.net.check_redials(), 1);
+    assert_eq!((r1, r2), (1, 1));
+    // Soon after: no redial, still reports the office.
+    assert_eq!(b.net.check_membership(Duration::from_secs(4)).await, 1);
+    assert_eq!(b.net.check_redials(), 1);
 }

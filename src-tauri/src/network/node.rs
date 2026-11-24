@@ -57,6 +57,17 @@ const REMOVED_LINGER: Duration = Duration::from_secs(3);
 pub(crate) const LIMITED_IDLE: Duration = Duration::from_secs(60);
 /// How often `check_membership` looks at the sync marks.
 const CHECK_POLL: Duration = Duration::from_millis(50);
+/// A check started this soon after the previous one neither resets the
+/// dial backoff nor dials again.
+const CHECK_REDIAL_MIN: Duration = Duration::from_secs(5);
+/// At most one sync back to a suspended laptop per this long. The office
+/// still pushes new ops to it right away (`sync_all`), so a check counts a
+/// sync from it within this long as current.
+pub(crate) const SYNC_BACK_MIN: Duration = Duration::from_secs(10);
+/// Ids a responder asks a suspended laptop for in one session. It cannot
+/// author ops that count, so a small number covers what it may still hold
+/// from others and bounds the work a modified laptop can cause.
+const MAX_WANTED_FROM_SUSPENDED: usize = 2_000;
 /// Connections (established plus handshaking) at once.
 const MAX_CONNECTIONS: usize = 128;
 /// Incoming connections from one IP that are not (yet) registered members:
@@ -241,6 +252,13 @@ pub(crate) struct Inner {
     sync: Mutex<SyncState>,
     /// Op sync completions per registered peer (`check_membership`).
     sync_marks: Mutex<HashMap<String, SyncMarks>>,
+    /// When a sync back to each suspended peer last started.
+    sync_backs: Mutex<HashMap<String, Instant>>,
+    /// One `check_membership` at a time; when the last one started.
+    check_gate: tokio::sync::Mutex<Option<Instant>>,
+    /// Tests: checks that reset the backoff and dialed.
+    #[cfg(test)]
+    pub(crate) check_redials: std::sync::atomic::AtomicUsize,
     /// Tests: (peer, application close code) of registered connections the
     /// peer closed.
     #[cfg(test)]
@@ -332,6 +350,10 @@ impl Inner {
             peers: Mutex::new(HashMap::new()),
             sync: Mutex::new(SyncState::default()),
             sync_marks: Mutex::new(HashMap::new()),
+            sync_backs: Mutex::new(HashMap::new()),
+            check_gate: tokio::sync::Mutex::new(None),
+            #[cfg(test)]
+            check_redials: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             peer_closes: Mutex::new(Vec::new()),
             disc: Discovery::new(),
@@ -476,6 +498,13 @@ impl Inner {
             .get(pk)
             .filter(|e| e.conn.stable_id() == conn_id)
             .map(|e| e.limited)
+    }
+
+    /// What a fresh reading says a connection with `pk` should be: limited
+    /// unless both this laptop and `pk` are active members.
+    fn should_be_limited(&self, pk: &str) -> bool {
+        !(matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. })
+            && self.backend.org_id().is_some())
     }
 
     /// The live full member connection to `pk`, if any. Never a limited
@@ -769,6 +798,11 @@ impl Inner {
             self.emit(NetEvent::StatusChanged);
             self.feature_peer_up(&pk);
         }
+        // Membership may have changed during the handshake (a reinstate or
+        // suspension ingested meanwhile): let `recheck_peers` fix the flag.
+        if self.should_be_limited(&pk) != limited {
+            self.recheck_peers();
+        }
         Ok(pk)
     }
 
@@ -1017,11 +1051,19 @@ impl Inner {
     }
 
     /// Uni streams from the peer. The only push is `Removed`, accepted once.
+    /// 0.5.1: unless the connection is a registered full one, only a
+    /// suspension, reinstatement or removal of this laptop is ingested (what
+    /// an office laptop pushes); a suspended peer cannot push anything else.
     async fn read_pushes(self: Arc<Self>, conn: Connection, pk: String) {
         let mut removed_seen = false;
+        let conn_id = conn.stable_id();
         while let Ok(mut recv) = conn.accept_uni().await {
             match wire::read_msg_timeout(&mut recv, MAX_PUSH_FRAME, READ_TIMEOUT).await {
-                Ok(Some(Msg::Removed { op })) if !removed_seen => {
+                Ok(Some(Msg::Removed { op }))
+                    if !removed_seen
+                        && (self.link_limited(&pk, conn_id) == Some(false)
+                            || wire::is_membership_op_for(&op, &self.me)) =>
+                {
                     removed_seen = true;
                     self.ingest_from(&pk, vec![op]).await;
                 }
@@ -1056,9 +1098,16 @@ impl Inner {
         // Feature data only on a registered full connection with a member.
         // A connection that is not (or no longer) the registered one counts
         // as limited.
-        let full = !peer_suspended && self.link_limited(pk, conn_id) == Some(false);
-        if peer_suspended && self.link_limited(pk, conn_id) == Some(false) {
+        let link_limited = self.link_limited(pk, conn_id);
+        let full = !peer_suspended && link_limited == Some(false);
+        if peer_suspended && link_limited == Some(false) {
             // Suspended since the connection was made: cut it.
+            self.recheck_peers();
+        }
+        if !peer_suspended && link_limited == Some(true) && self.backend.org_id().is_some() {
+            // Both sides active again but the link is still limited (a
+            // reinstatement `recheck_peers` has not seen yet): upgrade it.
+            // This stream is still served as limited.
             self.recheck_peers();
         }
         let first = wire::read_msg_timeout(&mut recv, MAX_FIRST_FRAME, READ_TIMEOUT).await;
@@ -1076,7 +1125,7 @@ impl Inner {
                 };
                 let done = tokio::time::timeout(
                     SYNC_SESSION_TIMEOUT,
-                    self.respond_sync(pk, ids, &mut send, &mut recv),
+                    self.respond_sync(pk, peer_suspended, ids, &mut send, &mut recv),
                 )
                 .await;
                 let _ = send.finish();
@@ -1085,9 +1134,11 @@ impl Inner {
                     // A suspended laptop cannot ask for ops, only offer its
                     // own: answer its session with ours (org ops only, as
                     // the backend filters them) so "Periksa lagi" sees the
-                    // current log. Never between two suspended laptops,
-                    // which would sync back and forth forever.
-                    if peer_suspended && self.backend.org_id().is_some() {
+                    // current log. At most once per `SYNC_BACK_MIN`, and
+                    // never between two suspended laptops, which would sync
+                    // back and forth forever.
+                    if peer_suspended && self.backend.org_id().is_some() && self.sync_back_due(pk)
+                    {
                         self.schedule_sync(pk);
                     }
                 }
@@ -1135,18 +1186,24 @@ impl Inner {
     /// we lack, ingest `SyncOps` that contain only ops we asked for. `true`
     /// when the initiator finished its side normally.
     ///
-    /// 0.5.1: ops offered by a suspended laptop are ingested too. They are
-    /// signed ops of the organization that the fold checks like any other
-    /// (a suspended author's new ops are refused there), and taking them is
-    /// what lets an office laptop learn about ops only the suspended laptop
-    /// still holds.
+    /// 0.5.1: from a suspended peer (`peer_suspended`) at most
+    /// `MAX_WANTED_FROM_SUSPENDED` ids are asked for, and ops it authored
+    /// itself are dropped unread. Ops of others it still holds are taken:
+    /// they are signed ops of the organization that the fold checks like
+    /// any other, and they may be ones this laptop missed.
     async fn respond_sync(
         self: &Arc<Self>,
         pk: &str,
+        peer_suspended: bool,
         first: Vec<String>,
         send: &mut SendStream,
         recv: &mut RecvStream,
     ) -> bool {
+        let max_wanted = if peer_suspended {
+            MAX_WANTED_FROM_SUSPENDED
+        } else {
+            MAX_WANTED_PER_SESSION
+        };
         let mut wanted: HashSet<String> = HashSet::new();
         let mut have = Some(first);
         loop {
@@ -1167,7 +1224,7 @@ impl Inner {
                     .collect();
                 want.sort();
                 want.dedup();
-                if wanted.len() + want.len() > MAX_WANTED_PER_SESSION {
+                if wanted.len() + want.len() > max_wanted {
                     return false;
                 }
                 wanted.extend(want.iter().cloned());
@@ -1185,6 +1242,9 @@ impl Inner {
                     let ops: Vec<WireOp> = ops
                         .into_iter()
                         .filter(|op| wanted.remove(&wire::op_id(op)))
+                        .filter(|op| {
+                            !peer_suspended || wire::op_author(op).as_deref() != Some(pk)
+                        })
                         .collect();
                     if !ops.is_empty() {
                         self.ingest_from(pk, ops).await;
@@ -1205,19 +1265,51 @@ impl Inner {
         *which(marks.entry(pk.to_owned()).or_default()) = Some(Instant::now());
     }
 
-    /// See `Network::check_membership`.
+    /// `true` (and noted) when no sync back to the suspended peer `pk`
+    /// started within `SYNC_BACK_MIN`.
+    fn sync_back_due(&self, pk: &str) -> bool {
+        let now = Instant::now();
+        let mut backs = lock(&self.sync_backs);
+        backs.retain(|_, t| now.saturating_duration_since(*t) < SYNC_BACK_MIN);
+        if backs.contains_key(pk) {
+            return false;
+        }
+        backs.insert(pk.to_owned(), now);
+        true
+    }
+
+    /// See `Network::check_membership`. One check runs at a time; a check
+    /// within `CHECK_REDIAL_MIN` of the previous one does not dial again.
     pub(crate) async fn check_membership(self: &Arc<Self>, limit: Duration) -> usize {
         let start = Instant::now();
         let deadline = start + limit;
         if self.is_closing() {
             return 0;
         }
+        let Ok(mut gate) = tokio::time::timeout(limit, self.check_gate.lock()).await else {
+            return 0;
+        };
         let suspended = matches!(
             self.blocking(|b| b.org_id().is_none()).await,
             Some(true)
         );
-        self.disc.reset_backoff();
-        discovery::dial_pass(self);
+        let redial = gate.is_none_or(|last| start.saturating_duration_since(last) >= CHECK_REDIAL_MIN);
+        *gate = Some(start);
+        if redial {
+            #[cfg(test)]
+            self.check_redials
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.disc.reset_backoff();
+            discovery::dial_pass(self);
+        }
+        // An office syncs back to a suspended laptop at most once per
+        // `SYNC_BACK_MIN` and pushes new ops at once, so a sync from it
+        // within that long is as current as asking again.
+        let fresh_since = if suspended {
+            start.checked_sub(SYNC_BACK_MIN).unwrap_or(start)
+        } else {
+            start
+        };
         let mut asked: HashSet<String> = HashSet::new();
         let mut reached: HashSet<String> = HashSet::new();
         loop {
@@ -1229,11 +1321,11 @@ impl Inner {
             }
             {
                 let marks = lock(&self.sync_marks);
-                let after = |t: Option<Instant>| t.is_some_and(|t| t >= start);
+                let after = |t: Option<Instant>, since: Instant| t.is_some_and(|t| t >= since);
                 for pk in &linked {
-                    if marks
-                        .get(pk)
-                        .is_some_and(|m| after(m.received) || (!suspended && after(m.sent)))
+                    if marks.get(pk).is_some_and(|m| {
+                        after(m.received, fresh_since) || (!suspended && after(m.sent, start))
+                    })
                     {
                         reached.insert(pk.clone());
                     }
@@ -1383,6 +1475,11 @@ impl Inner {
                 self.schedule_sync(&pk);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn schedule_sync_for_test(self: &Arc<Self>, pk: &str) {
+        self.schedule_sync(pk);
     }
 
     /// Runs a sync session with `pk`, coalescing requests that arrive while

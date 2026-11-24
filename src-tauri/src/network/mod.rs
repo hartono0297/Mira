@@ -9,7 +9,9 @@
 //! mDNS and remembered or manual addresses (`discovery`).
 //!
 //! This module knows nothing about SQLite or the op format beyond the op id
-//! (BLAKE3 of the payload). Everything else is decided by the backend.
+//! (BLAKE3 of the payload), plus an unverified peek at `author` and
+//! `body.type`/`body.member` (0.5.1) to keep a suspended laptop from feeding
+//! in its own ops. Everything else is decided by the backend.
 
 mod discovery;
 pub mod feature;
@@ -544,6 +546,20 @@ impl Network {
     #[cfg(test)]
     pub(crate) fn is_linked(&self, pk: &str) -> bool {
         self.inner.is_linked(pk)
+    }
+
+    /// Tests: start an op sync session with `pk` now.
+    #[cfg(test)]
+    pub(crate) fn sync_with(&self, pk: &str) {
+        self.inner.schedule_sync_for_test(pk);
+    }
+
+    /// Tests: `check_membership` calls that reset the backoff and dialed.
+    #[cfg(test)]
+    pub(crate) fn check_redials(&self) -> usize {
+        self.inner
+            .check_redials
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Redeems an invite on a laptop that is already a member. Candidates are
