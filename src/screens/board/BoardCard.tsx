@@ -1,7 +1,7 @@
 import { IconCalendarDue, IconClock, IconGitMerge, IconMessage, IconSquareCheck } from "@tabler/icons-react";
 import { useId, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import type { TaskCard } from "../../api/board";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { isMac } from "../../platform";
 import type { Direction } from "./boardMoves";
 import { cardDragActive } from "./cardMenu";
@@ -118,10 +118,15 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
       <div id={metaId} className="tc-meta">
         <span className="tc-code">{task.code}</span>
         {task.assignee ? (
-          <span className="avatar tc-av" title={task.assignee.name}>
-            <span aria-hidden="true">{initials(task.assignee.name)}</span>
+          <>
+            <Avatar
+              className="avatar tc-av"
+              title={task.assignee.name}
+              name={task.assignee.name}
+              publicKey={task.assignee.publicKey}
+            />
             <span className="sr-only">{TEKS.kartu.untukSr(task.assignee.name)}</span>
-          </span>
+          </>
         ) : (
           <span className="sr-only">{TEKS.kartu.tanpaPenanggungJawabSr}</span>
         )}

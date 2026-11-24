@@ -2,7 +2,7 @@ import { IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { Person } from "../../api/chat";
 import { orgApi } from "../../api/org";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import { PersonName } from "./PersonName";
 
@@ -155,9 +155,7 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
                     onChange={(e) => toggle(p.publicKey, e.target.checked)}
                     disabled={disabled}
                   />
-                  <span className="pick-av" aria-hidden="true">
-                    {initials(p.name)}
-                  </span>
+                  <Avatar className="pick-av" name={p.name} publicKey={p.publicKey} />
                   <span className="pick-who">
                     <span className="pick-name">
                       <PersonName person={p} />

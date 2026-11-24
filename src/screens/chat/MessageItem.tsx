@@ -2,7 +2,7 @@ import { IconArrowBackUp, IconAt, IconChecks, IconCopy, IconDots, IconTrash } fr
 import { useRef, type MouseEvent } from "react";
 import type { ConversationSummary, MessageView } from "../../api/chat";
 import { MenuButton, menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { CHAT, CHAT_TEXT } from "../../i18n/chat";
 import { useConversationActions, usePersonMenu } from "./ChatActions";
 import { DeliveryStatus, type DeliveryStatusHandle } from "./DeliveryStatus";
@@ -137,9 +137,12 @@ export function MessageItem({
             {time}
           </time>
         ) : (
-          <span className="conv-avatar" aria-hidden="true" onContextMenu={showPerson ? avatarMenu : undefined}>
-            {initials(message.author.name)}
-          </span>
+          <Avatar
+            className="conv-avatar"
+            name={message.author.name}
+            publicKey={message.author.publicKey}
+            onContextMenu={showPerson ? avatarMenu : undefined}
+          />
         )}
       </div>
       <div className="conv-msg-body">

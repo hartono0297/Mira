@@ -27,6 +27,7 @@ pub mod org_screen;
 pub mod paths;
 pub mod peers;
 pub mod permissions;
+pub mod profile;
 pub mod qr;
 pub mod runnable;
 pub mod settings;
@@ -156,6 +157,9 @@ pub fn run() {
             // attachment downloader.
             let chat = chat::runtime::ChatRuntime::install(app.handle());
             app.manage(chat);
+            // Profile photos: topic `profile`, photo blobs and their downloader.
+            let profile = profile::runtime::ProfileRuntime::install(app.handle());
+            app.manage(profile);
             // Keep instances apart even when the env folder could not be prepared.
             let instance_dir = match &data_dir {
                 Ok(d) => d.from_env.then(|| d.path.clone()),
@@ -298,6 +302,13 @@ pub fn run() {
             chat::commands::chat_group_rename,
             chat::commands::chat_project,
             chat::commands::chat_set_folded,
+            profile::commands::profile_photos,
+            profile::commands::profile_photo_data,
+            profile::commands::profile_my_photo,
+            profile::commands::profile_pick_photo,
+            profile::commands::profile_set_photo,
+            profile::commands::profile_clear_photo,
+            profile::commands::profile_admin_remove_photo,
             updater::update_info,
             updater::update_check,
             updater::update_download,

@@ -5,7 +5,7 @@ import type { Person } from "../../api/chat";
 import { orgApi, subscribeOrg, type PersonView } from "../../api/org";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { PROFILE } from "../../i18n/chat-dialogs";
 import { useChatActions } from "./ChatActions";
@@ -76,7 +76,7 @@ export type ProfileDialogProps = {
 };
 
 // Profil singkat seseorang: nama dan label, peran, departemen, sidik jari kunci.
-// Hanya data dari organisasi (orgApi.people()); tidak ada foto, email, atau telepon.
+// Hanya data dari organisasi (orgApi.people()) dan foto profil; tidak ada email atau telepon.
 export function ProfileDialog({ person, onOpenChange }: ProfileDialogProps) {
   return (
     <Dialog open={person !== null} onOpenChange={onOpenChange} title={person ? PROFILE.title(person.name) : ""}>
@@ -139,7 +139,7 @@ function ProfileBody({ person, onOpenChange }: { person: Person; onOpenChange: (
   } else if (!load.person) {
     content = (
       <>
-        <ProfileHead name={person.name} isMe={isMe} />
+        <ProfileHead name={person.name} publicKey={person.publicKey} isMe={isMe} />
         <p className="prof-state">{PROFILE.notFound(person.name)}</p>
       </>
     );
@@ -147,7 +147,7 @@ function ProfileBody({ person, onOpenChange }: { person: Person; onOpenChange: (
     const p = load.person;
     content = (
       <>
-        <ProfileHead name={p.displayName} isMe={isMe} labels={p.labels} />
+        <ProfileHead name={p.displayName} publicKey={person.publicKey} isMe={isMe} labels={p.labels} />
         <dl className="prof-facts">
           <div>
             <dt>{PROFILE.role}</dt>
@@ -197,12 +197,10 @@ function ProfileBody({ person, onOpenChange }: { person: Person; onOpenChange: (
   );
 }
 
-function ProfileHead({ name, isMe, labels = [] }: { name: string; isMe: boolean; labels?: PersonView["labels"] }) {
+function ProfileHead({ name, publicKey, isMe, labels = [] }: { name: string; publicKey: string; isMe: boolean; labels?: PersonView["labels"] }) {
   return (
     <div className="prof-head">
-      <span className="prof-av" aria-hidden="true">
-        {initials(name)}
-      </span>
+      <Avatar className="prof-av" name={name} publicKey={publicKey} />
       {/* Semua label tampil di profil; di daftar lain dibatasi tiga. */}
       <NameWithLabels className="prof-name" name={name} labels={labels} max={labels.length} suffix={isMe ? PROFILE.me : undefined} />
     </div>

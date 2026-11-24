@@ -3,7 +3,7 @@ import { useId, useMemo, useState } from "react";
 import { ROLE_LABELS, TEAM_ROLE_LABELS } from "../../api";
 import { orgApi, type PersonView } from "../../api/org";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { getLang } from "../../i18n/core";
 import { ORG_TEXT } from "../../i18n/org";
@@ -130,9 +130,7 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
                 const self = page.isMe(p.publicKey);
                 return (
                   <li key={p.publicKey} className="row">
-                    <span className="users-av" aria-hidden="true">
-                      {initials(p.displayName)}
-                    </span>
+                    <Avatar className="users-av" name={p.displayName} publicKey={p.publicKey} />
                     <div className="row-main">
                       <NameWithLabels
                         className="row-name"

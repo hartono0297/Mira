@@ -3,7 +3,7 @@ import { toAppError, type AppError } from "../../api";
 import { chatApi, type ConversationSummary, type Person } from "../../api/chat";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 
 type Props = {
@@ -87,9 +87,7 @@ export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props)
                     disabled={busyKey !== null}
                     aria-busy={busyKey === p.publicKey || undefined}
                   >
-                    <span className="chat-av" aria-hidden="true">
-                      {initials(p.name)}
-                    </span>
+                    <Avatar className="chat-av" name={p.name} publicKey={p.publicKey} />
                     <span className="chat-person-name">{p.name}</span>
                     {busyKey === p.publicKey && <span className="chat-person-busy">{T.opening}</span>}
                   </button>

@@ -851,6 +851,8 @@ function backend(overrides: Record<string, Answer> = {}) {
     },
     join_device: { laptop: "LAPTOP-NW-01", os: "Windows 11", appVersion: "0.4.0", account: "alex", addresses: ["192.168.1.10"] },
     join_outgoing: null,
+    profile_photos: [],
+    profile_my_photo: { hash: null, removedByAdmin: false },
     ...overrides,
   };
   invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
@@ -1046,9 +1048,9 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
     const user = userEvent.setup();
     renderApp();
     await openSection(user, "settings");
-    const parts = ["Tampilan", "Bahasa", "Jaringan", "Laptop ini", "Tentang dan pembaruan"];
-    const waits: (string | null)[] = [null, "English", "10.8.0.5:47800", "AAAA BBBB CCCC DDDD", "Mira 0.4.0"];
-    const anchors = ["Appearance", "Language", "Network", "Data folder", "Check for updates"];
+    const parts = ["Profil", "Tampilan", "Bahasa", "Jaringan", "Laptop ini", "Tentang dan pembaruan"];
+    const waits: (string | null)[] = ["Change photo", null, "English", "10.8.0.5:47800", "AAAA BBBB CCCC DDDD", "Mira 0.4.0"];
+    const anchors = ["Profile", "Appearance", "Language", "Network", "Data folder", "Check for updates"];
     const all: string[] = [];
     for (let i = 0; i < parts.length; i += 1) {
       const links = await waitFor(() => {

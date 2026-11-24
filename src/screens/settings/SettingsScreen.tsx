@@ -5,12 +5,13 @@ import { AppearanceSection } from "./AppearanceSection";
 import { DeviceSection } from "./DeviceSection";
 import { LanguageSection } from "./LanguageSection";
 import { NetworkSection } from "./NetworkSection";
+import { ProfileSection } from "./ProfileSection";
 import "./settings.css";
 
-export type SettingsPart = "appearance" | "language" | "network" | "device" | "about";
+export type SettingsPart = "profile" | "appearance" | "language" | "network" | "device" | "about";
 
 // Urutan menu. Labelnya dibaca dari T.parts saat render, supaya ikut bahasa aktif.
-const PARTS: readonly SettingsPart[] = ["appearance", "language", "network", "device", "about"];
+const PARTS: readonly SettingsPart[] = ["profile", "appearance", "language", "network", "device", "about"];
 
 type Props = {
   state: AppState & { organization: OrgInfo };
@@ -47,6 +48,7 @@ export function SettingsScreen({ state, part, onPart }: Props) {
           </ul>
         </nav>
         <div className="settings-body">
+          {current === "profile" && <ProfileSection state={state} />}
           {current === "appearance" && <AppearanceSection />}
           {current === "language" && <LanguageSection />}
           {current === "network" && <NetworkSection />}

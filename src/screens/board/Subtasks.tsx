@@ -39,7 +39,7 @@ import {
 import { toAppError } from "../../api";
 import { boardApi, type Person, type Subtask, type TaskDetail } from "../../api/board";
 import { menuItems, SEPARATOR } from "../../components/ContextMenu";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { MenuList, Popover, type MenuItem } from "./TaskPopover";
 import { useLocalEscape } from "./TimerMini";
 import { TEKS_MENU } from "./teksMenu";
@@ -644,9 +644,11 @@ export function Subtasks({ task, me, assignees, canEdit, onChange, onError }: Su
         </span>
         {who && s.assignee ? (
           <span className="td-who td-who-static" title={who}>
-            <span className={`td-av td-av-sm${isFormer(s.assignee) ? " td-av-former" : ""}`} aria-hidden="true">
-              {initials(s.assignee.name)}
-            </span>
+            <Avatar
+              className={`td-av td-av-sm${isFormer(s.assignee) ? " td-av-former" : ""}`}
+              name={s.assignee.name}
+              publicKey={s.assignee.publicKey}
+            />
             <span className="sr-only">{T.whoStatic(who)}</span>
           </span>
         ) : (
@@ -836,9 +838,11 @@ function WhoMenu({ subtask: s, assignees, nameOf, open, waiting, onOpen, onPick 
       value: p.publicKey,
       label: nameOf(p),
       icon: (
-        <span className={`td-av td-av-sm${p === former ? " td-av-former" : ""}`} aria-hidden="true">
-          {initials(p.name)}
-        </span>
+        <Avatar
+          className={`td-av td-av-sm${p === former ? " td-av-former" : ""}`}
+          name={p.name}
+          publicKey={p.publicKey}
+        />
       ),
     })),
   ];
@@ -874,9 +878,11 @@ function WhoMenu({ subtask: s, assignees, nameOf, open, waiting, onOpen, onPick 
         }}
       >
         {s.assignee ? (
-          <span className={`td-av td-av-sm${former ? " td-av-former" : ""}`} aria-hidden="true">
-            {initials(s.assignee.name)}
-          </span>
+          <Avatar
+            className={`td-av td-av-sm${former ? " td-av-former" : ""}`}
+            name={s.assignee.name}
+            publicKey={s.assignee.publicKey}
+          />
         ) : (
           <IconUserPlus size={16} className="td-who-add" aria-hidden="true" />
         )}

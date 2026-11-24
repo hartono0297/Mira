@@ -66,6 +66,11 @@ pub fn save_dialog_title(lang: UiLang) -> &'static str {
     lang.pick("Simpan file", "Save file")
 }
 
+/// Title of the file picker for a profile photo.
+pub fn photo_dialog_title(lang: UiLang) -> &'static str {
+    lang.pick("Pilih foto profil", "Choose profile photo")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +121,7 @@ mod tests {
         assert_eq!(attach_dialog_title(UiLang::En), "Attach files");
         assert_eq!(save_dialog_title(UiLang::Id), "Simpan file");
         assert_eq!(save_dialog_title(UiLang::En), "Save file");
+        assert_eq!(photo_dialog_title(UiLang::Id), "Pilih foto profil");
+        assert_eq!(photo_dialog_title(UiLang::En), "Choose profile photo");
     }
 }

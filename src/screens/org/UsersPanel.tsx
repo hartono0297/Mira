@@ -16,7 +16,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { MenuButton, menuItems, SEPARATOR, useContextMenu, type MenuEntry } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { useLang } from "../../i18n/core";
 import { ORG_TEXT, USERS_TEXT as T } from "../../i18n/org";
@@ -703,9 +703,7 @@ function UserRow({
       {...menu.triggerProps}
     >
       <td role="cell" className="ut-name">
-        <span className="users-av" aria-hidden="true">
-          {initials(u.displayName)}
-        </span>
+        <Avatar className="users-av" name={u.displayName} publicKey={u.publicKey} />
         <span className="ut-who">
           <NameWithLabels className="ut-n" name={u.displayName} labels={u.labels} suffix={u.isMe ? ORG_TEXT.you : undefined} />
           <span className="ut-sub">{roleText(u)}</span>

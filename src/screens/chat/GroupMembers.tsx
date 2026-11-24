@@ -6,7 +6,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { MenuButton } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import {
   ChatActionsContext,
@@ -129,9 +129,7 @@ export function MemberRow({ person, me, department, chip, onRemove, children }: 
   const menu = usePersonMenu(person, { onRemove });
   return (
     <li className="conv-member" {...menu.triggerProps}>
-      <span className="pick-av" aria-hidden="true">
-        {initials(person.name)}
-      </span>
+      <Avatar className="pick-av" name={person.name} publicKey={person.publicKey} />
       <span className="pick-who">
         <span className="pick-name">
           <PersonName person={person} me={me} />

@@ -58,6 +58,8 @@ lopdf = { version = "=0.47.0", default-features = false }
 crypto_box = { version = "0.9.1", features = ["seal"] }
 # Pembaruan dari dalam aplikasi lewat GitHub Releases (docs/plans/updater.md).
 tauri-plugin-updater = "2.14.1"
+# Foto profil: dekode PNG/JPEG/WebP, potong, perkecil, encode JPEG tanpa metadata.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
