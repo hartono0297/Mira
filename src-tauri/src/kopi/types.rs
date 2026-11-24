@@ -23,6 +23,22 @@ pub const FUTURE_SKEW_SECS: i64 = 600;
 pub const WORK_SNAPSHOT_MAX: usize = 1500;
 /// Longest chat message id accepted in a target.
 pub const TARGET_ID_MAX: usize = 128;
+/// Gives signed before this instant never count (the feature did not exist
+/// then; a give with an earlier `at` was backdated by a changed clock).
+pub const KOPI_EPOCH: &str = "2026-11-24T00:00:00Z";
+/// Kopi one giver may give to the same recipient per local calendar month
+/// (the month of the signed `at`).
+pub const PAIR_MONTHLY_LIMIT: usize = 4;
+/// A due date further than this many days after the day it was set (UTC)
+/// earns no Kopi for finishing on time.
+pub const ON_TIME_HORIZON_DAYS: i64 = 14;
+/// Gives one author may have stored per local day; more are refused at
+/// ingest (retried later). Twice the daily limit leaves room for duplicates
+/// that the fold drops anyway.
+pub const GIVE_STORED_DAILY_MAX: usize = 2 * GIVE_DAILY_LIMIT;
+/// `hide` plus `settings` records one superadmin may have stored per UTC
+/// day; more are refused at ingest (retried later).
+pub const ADMIN_STORED_DAILY_MAX: usize = 200;
 
 /// Payload of a Kopi record, the `p` of the signed envelope. The author
 /// (`a`) is the giver, the superadmin, or the person whose work it lists.
@@ -123,6 +139,9 @@ pub struct WorkTask {
     /// Time of the last move into Selesai, `Some` only when the task is in
     /// Selesai now.
     pub done_at: Option<String>,
+    /// Actor of that last move into Selesai. Kopi from work only goes to an
+    /// assignee who moved the task there themself.
+    pub done_by: Option<String>,
     /// `YYYY-MM-DD` when set.
     pub due: Option<String>,
     /// When the current due date was set (latest `due` activity, or
