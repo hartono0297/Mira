@@ -17,6 +17,7 @@ pub mod firewall;
 pub mod identity;
 pub mod join_commands;
 pub mod join_sync;
+pub mod kopi;
 pub mod net_backend;
 pub mod network;
 pub mod network_commands;
