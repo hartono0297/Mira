@@ -50,7 +50,7 @@ const en: Dict<typeof id> = {
 
     // Deskripsi
     deskripsi: "Description",
-    deskripsiPlaceholder: "Add a description: what needs doing and what the result looks like",
+    deskripsiPlaceholder: "Write a description: the goal, the steps, or links the team should know about",
     belumAdaDeskripsi: "No description yet.",
     simpanDeskripsi: "Save description",
     batalkanPerubahan: "Discard changes",

@@ -16,6 +16,7 @@ import { cycleDone, deleteEntryLabel, historySummary, SAY, startedAt, TW } from 
 import { ForgotTag, useAnnounce, useLocalEscape, type TimeProps } from "./TimerMini";
 import { formatDuration, formatDurationLong, liveStatusSecs, parseMinutes, runningSecs } from "./timeFormat";
 import { useNow } from "./useNow";
+import "./field.css";
 import "./time.css";
 
 const COLUMN_ICONS: Record<ColumnId, typeof IconCircle> = {
@@ -251,7 +252,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
         {canEdit && (
           <button
             type="button"
-            className="td-link-btn td-log-open"
+            className="btn btn-ghost btn-sm td-link-btn td-log-open"
             ref={logBtnRef}
             aria-expanded={showLog}
             aria-controls={showLog ? `${id}-log` : undefined}
@@ -283,7 +284,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
                 id={`${id}-dur`}
                 ref={durRef}
                 type="text"
-                className="td-input"
+                className="td-input td-box td-box-text"
                 inputMode="text"
                 autoComplete="off"
                 value={dur}
@@ -302,7 +303,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
               <input
                 id={`${id}-note`}
                 type="text"
-                className="td-input"
+                className="td-input td-box td-box-text"
                 maxLength={200}
                 autoComplete="off"
                 value={note}

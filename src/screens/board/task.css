@@ -192,8 +192,11 @@
   background: var(--card);
 }
 
-.td-kept .td-textarea {
-  background: var(--bg);
+/* Salinan draf hanya bisa disalin, tidak diubah: tanpa bingkai isian. */
+.td-textarea[readonly] {
+  border-color: transparent;
+  background: var(--col);
+  resize: none;
 }
 
 /* Rekan mengubah field yang sedang Anda ketik. Teks biasa, bukan error. */
@@ -215,15 +218,19 @@
   font-weight: 700;
 }
 
-/* Judul: tampak seperti teks, jadi kolom isian saat disorot atau difokus. */
+/* Judul yang bisa diedit: tetap besar dan tenang, tapi garis bawah putus-putus
+   selalu terlihat sebagai tanda bisa diubah. Saat disorot atau difokus jadi
+   kolom berbingkai penuh, sama dengan .td-box di field.css. Judul hanya-baca
+   (.td-title-text) tanpa garis. */
 .td-title {
   display: block;
-  width: calc(100% + 16px);
+  width: 100%;
   min-height: 0;
-  margin: 0 -8px;
+  margin: 0;
   padding: 4px 8px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-bottom: 1px dashed var(--border-strong);
+  border-radius: 0;
   background: transparent;
   font-size: 24px;
   line-height: 1.3;
@@ -234,13 +241,16 @@
   field-sizing: content;
 }
 
-.td-title:hover {
-  background: var(--hover);
+/* --border-strong di atas --field-hover hanya 2,93:1, jadi garis berganti --text-sec. */
+.td-title:hover,
+.td-title:focus {
+  border: 1px solid var(--text-sec);
+  border-radius: 6px;
+  background: var(--field-hover);
 }
 
 .td-title:focus {
-  background: var(--bg);
-  border-color: var(--border-strong);
+  border-color: var(--focus);
 }
 
 .td-title:focus-visible {
@@ -249,7 +259,8 @@
 }
 
 .td-title[aria-invalid="true"] {
-  border-color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
 }
 
 .td-title-text {
@@ -264,7 +275,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: 24px;
-  row-gap: 2px;
+  row-gap: 4px;
   margin: 0;
 }
 
@@ -291,33 +302,36 @@
   min-width: 0;
 }
 
-.td-pv,
+/* Nilai yang bisa diubah: bingkai, lebar penuh, dan ikon kanan dari .td-box
+   (field.css). Selektor ganda supaya urutan impor CSS tidak menentukan. Ikon
+   tetap sebaris dengan nilainya; nilai yang panjang (banyak label) yang
+   membungkus ke baris berikutnya. */
+.td-pv.td-box {
+  flex-wrap: nowrap;
+}
+
+.td-pv-val {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Nilai tanpa hak ubah: teks biasa, tanpa bingkai dan tanpa ikon aksi. */
 .td-pv-text {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 8px;
-  max-width: calc(100% + 8px);
+  max-width: 100%;
   min-height: 34px;
-  padding: 5px 8px;
-  margin-left: -8px;
+  padding: 5px 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
   overflow-wrap: anywhere;
-}
-
-.td-pv {
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.td-pv:hover,
-.td-pv[aria-expanded="true"] {
-  background: var(--hover);
 }
 
 .td-pv-ic {
@@ -330,27 +344,23 @@
   color: var(--text-sec);
 }
 
+/* Tenggat di dalam bingkai sempit turun baris jadi "Sabtu, 28 Nov" lalu "4 hari lagi".
+   Titik pemisah disembunyikan supaya tidak menggantung di ujung baris pertama;
+   warna --text-sec sudah membedakan keduanya. */
+.td-pv.td-box .td-pv-sub {
+  white-space: nowrap;
+}
+
+.td-pv.td-box .td-pv-val > span:has(+ .td-pv-sub) {
+  white-space: nowrap;
+}
+
+.td-pv.td-box .td-pv-sub[aria-hidden="true"] {
+  display: none;
+}
+
 .td-pv-empty {
   color: var(--text-sec);
-}
-
-/* Panah muncul saat disorot atau difokus, supaya baris tetap tenang saat dibaca. */
-.td-pv-caret {
-  flex: none;
-  color: var(--text-sec);
-  opacity: 0;
-}
-
-.td-pv:hover .td-pv-caret,
-.td-pv:focus-visible .td-pv-caret,
-.td-pv[aria-expanded="true"] .td-pv-caret {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .td-pv-caret {
-    opacity: 1;
-  }
 }
 
 /* Terlambat: teks "terlambat 2 hari" sudah membawa artinya. Warnanya sama dengan
@@ -406,7 +416,7 @@
 .td-pop {
   position: absolute;
   top: calc(100% + 4px);
-  left: -8px;
+  left: 0;
   z-index: 5;
   min-width: min(224px, calc(100vw - 64px));
   max-width: min(300px, calc(100vw - 64px));
@@ -583,22 +593,34 @@
   outline-offset: 2px;
 }
 
-/* Isian berbingkai hanya untuk tempat mengetik: komentar, tanggal lain, label baru. */
+/* Isian ketik bersama: komentar, tanggal lain, label baru, juga Subtask dan
+   Waktu. Sudut, garis, sorot, dan fokusnya sama dengan .td-box (field.css),
+   supaya semua yang bisa diubah di dialog terlihat sejenis. */
 .td-input,
 .td-textarea {
   width: 100%;
-  min-height: 38px;
-  padding: 7px 10px;
+  min-height: 34px;
+  padding: 4px 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: 6px;
   background: var(--bg);
   font-size: 14px;
   color: var(--text);
 }
 
 .td-textarea {
+  padding: 6px 8px;
   resize: vertical;
   line-height: 1.55;
+}
+
+/* --border-strong di atas --field-hover hanya 2,93:1, jadi garis berganti --text-sec.
+   Isian yang tidak bisa diisi (penuh, atau salinan draf hanya-baca) tidak ikut menyala,
+   dan isian yang sedang difokus tetap bergaris --focus. */
+.td-input:not([aria-disabled="true"]):not([readonly]):not([aria-invalid="true"]):not(:focus):hover,
+.td-textarea:not([readonly]):not([aria-invalid="true"]):not(:focus):hover {
+  background: var(--field-hover);
+  border-color: var(--text-sec);
 }
 
 .td-input:focus-visible,
@@ -693,11 +715,19 @@
 }
 
 .td-readonly-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   padding: 8px 12px;
   border-radius: 12px;
   background: var(--col);
   font-size: 13px;
   font-weight: 600;
+}
+
+.td-readonly-note > svg {
+  flex: none;
+  margin-top: 1px;
 }
 
 .td-pre {
@@ -742,35 +772,16 @@
   color: var(--text-sec);
 }
 
-/* Deskripsi: tanpa kotak sampai disorot atau difokus. */
-.td-desc {
+/* Deskripsi yang bisa diedit: kotak berbingkai lebar penuh. Bingkai, sorot,
+   dan fokus dari .td-box .td-box-text (field.css); di sini hanya ukuran kotak
+   teks panjang. Selektor ganda supaya urutan impor CSS tidak menentukan. */
+.td-desc.td-box {
   display: block;
-  width: calc(100% + 20px);
   min-height: 76px;
-  margin: 0 -10px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  font-size: 14px;
+  padding: 6px 8px;
   line-height: 1.6;
-  color: var(--text);
   resize: none;
   field-sizing: content;
-}
-
-.td-desc:hover {
-  background: var(--hover);
-}
-
-.td-desc:focus {
-  background: var(--bg);
-  border-color: var(--border-strong);
-}
-
-.td-desc:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
 }
 
 /* Tab Komentar dan Aktivitas. Tab aktif bergaris bawah token text, supaya
@@ -952,7 +963,7 @@
 
   /* Satu kolom: semua pilihan kembali rata kiri. */
   .td-props > .td-prop:nth-child(2n):not(.td-prop-wide) .td-pop {
-    left: -8px;
+    left: 0;
     right: auto;
   }
 }
@@ -977,7 +988,8 @@
   .td-icon-btn,
   .td-tab,
   .td-mi,
-  .td-pv {
+  .td-pv,
+  .td-pv.td-box {
     min-height: 44px;
   }
 

@@ -1,6 +1,8 @@
 /* Pelacakan waktu di detail task (Board v0.4, design/v04-detail-task.html arah A).
    Kelas bersama dialog (.td-sec, .td-sec-head, .td-sh, .td-av, .td-label, .td-field,
-   .td-input, .td-del) hanya ditulis di task.css; berkas ini memuat yang khusus waktu.
+   .td-input, .td-del) hanya ditulis di task.css, kolom berbingkai (.td-box) di
+   field.css; berkas ini memuat yang khusus waktu. Isian yang bisa diubah berbingkai,
+   hasil hitung (total, per orang, per status, jam berjalan) tetap teks biasa.
    Warna hanya dari token tema. */
 
 /* ---------- Bersama ---------- */
@@ -107,8 +109,10 @@
   font-weight: 800;
 }
 
-/* Tombol teks: aksi sekunder tanpa kotak, warna accent-text. */
-.td-link-btn {
+/* Tombol teks: aksi sekunder tanpa kotak, warna accent-text. Tidak berlaku untuk
+   tombol yang juga memakai .btn: Catat waktu manual sejak v0.4.1 berbentuk tombol
+   (.btn .btn-ghost .btn-sm) dan hanya menyimpan kelas ini untuk selektor lama. */
+.td-link-btn:not(.btn) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -124,18 +128,50 @@
   cursor: pointer;
 }
 
-.td-link-btn:hover {
+.td-link-btn:not(.btn):hover {
   background: var(--hover);
 }
 
-.td-link-btn:focus-visible {
+.td-link-btn:not(.btn):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 0;
 }
 
-/* Tombol Catat waktu manual di ujung kanan kepala bagian. */
+/* Tombol Catat waktu manual di ujung kanan kepala bagian. Bentuknya sama dengan
+   Mulai timer (tombol garis kecil) supaya terbaca sebagai aksi, bukan nilai.
+   Saat form terbuka latarnya tetap --hover sebagai tanda keadaan terbuka. */
 .td-waktu .td-log-open {
   margin-left: auto;
+  white-space: nowrap;
+}
+
+/* Tombol garis (Catat waktu manual, Mulai timer, Batal) saat disorot atau terbuka:
+   garis berganti --text-sec, karena --border-strong di atas --hover hanya 2,63:1
+   di tema terang. Pasangan yang dicek (terang / gelap):
+   - --text-sec di atas --hover: 5,03 / 6,93.
+   - --text di atas --hover: 13,22 / 12,25.
+   - cincin --focus di atas --hover: 4,47 / 5,88. */
+.td-waktu .td-log-open[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+.td-waktu .td-log-open[aria-expanded="true"],
+.td-waktu .btn-ghost:hover:not(:disabled),
+.td-mini .btn-ghost:hover:not(:disabled) {
+  border-color: var(--text-sec);
+}
+
+/* Isian berbingkai di form catat waktu dan kotak catatan timer. .td-box (field.css)
+   memberi garis --border-strong, sorotan --field-hover dengan garis --text-sec, dan
+   cincin fokus; di sini hanya ukurannya, supaya tidak bergantung pada urutan muat
+   task.css (.td-input) dan field.css. Sudut 6px sama dengan kolom berbingkai lain,
+   lebih kecil dari tombol (10px) supaya nilai dan tombol mudah dibedakan. */
+.td-waktu .td-input.td-box,
+.td-stop-form .td-input.td-box {
+  display: block;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 6px;
 }
 
 /* Form catat manual */
@@ -368,6 +404,17 @@
 .td-confirm-q {
   font-size: 13px;
   font-weight: 700;
+}
+
+/* Layar sentuh: tombol dan isian di bagian Waktu dan timer minimal 44 px. */
+@media (pointer: coarse) {
+  .td-mini .btn,
+  .td-waktu .btn,
+  .td-waktu .td-input.td-box,
+  .td-stop-form .td-input.td-box,
+  .td-entries summary {
+    min-height: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

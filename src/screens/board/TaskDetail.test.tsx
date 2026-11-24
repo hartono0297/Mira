@@ -694,6 +694,66 @@ describe("Detail task: hanya-baca", () => {
   });
 });
 
+describe("Detail task: kolom berbingkai", () => {
+  function icon(el: HTMLElement) {
+    return el.querySelector(".td-box-ic")?.getAttribute("data-icon");
+  }
+
+  it("nilai yang bisa diubah berbingkai dengan ikon sesuai jenisnya", async () => {
+    renderDetail();
+    await openDialog();
+    for (const label of ["Status", "Prioritas", "Penanggung jawab"]) {
+      expect(prop(label)).toHaveClass("td-pv", "td-box");
+      expect(icon(prop(label))).toBe("chevron");
+    }
+    expect(prop("Tenggat")).toHaveClass("td-box");
+    expect(icon(prop("Tenggat"))).toBe("calendar");
+    expect(prop("Label")).toHaveClass("td-box");
+    expect(icon(prop("Label"))).toBe("plus");
+    // Chip label tetap di dalam bingkai.
+    expect(within(prop("Label")).getByText("kontrak")).toHaveClass("td-lbl");
+    expect(prop("Label").querySelector(".td-box-ic")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("deskripsi kosong berbingkai dan mengajak menulis", async () => {
+    board.getTask.mockResolvedValue(task({ description: "" }));
+    renderDetail();
+    await openDialog();
+    const desc = screen.getByLabelText("Deskripsi");
+    expect(desc).toHaveClass("td-desc", "td-box", "td-box-text");
+    expect(desc).toHaveAttribute("placeholder", "Tulis deskripsi: tujuan, langkah, atau tautan yang perlu diketahui tim");
+  });
+
+  it("Dibuat oleh hanya dibaca: ikon gembok, tanpa bingkai", async () => {
+    renderDetail();
+    await openDialog();
+    const made = screen.getByText(/Dibuat oleh Anda/).closest("p");
+    expect(made).toHaveClass("td-ro");
+    expect(made).not.toHaveClass("td-box");
+    expect(made?.querySelector('svg[data-icon="lock"]')).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("Tamu: tidak ada bingkai atau ikon aksi sama sekali", async () => {
+    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false, canComment: false }));
+    renderDetail();
+    const note = await screen.findByText(/Anda hanya bisa melihat task ini/);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector(".td-box")).toBeNull();
+    expect(dialog.querySelector(".td-box-ic")).toBeNull();
+    expect(note.closest(".td-readonly-note")?.querySelector('svg[data-icon="lock"]')).not.toBeNull();
+    expect(screen.getByText(/Dibuat oleh Anda/).closest("p")).toHaveClass("td-ro");
+  });
+
+  it("boleh berkomentar saja: hanya kolom komentar yang berbingkai, nilai tetap teks", async () => {
+    board.getTask.mockResolvedValue(task({ canEdit: false, canDelete: false, canComment: true }));
+    renderDetail();
+    await screen.findByText(/bisa membaca dan mengomentari task ini/);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector(".td-box")).toBeNull();
+    expect(screen.getByLabelText("Tulis komentar")).toHaveClass("td-textarea");
+  });
+});
+
 describe("Detail task: menutup", () => {
   it("tombol Tutup memanggil onClose", async () => {
     const user = userEvent.setup();

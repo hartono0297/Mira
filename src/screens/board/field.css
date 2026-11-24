@@ -1,0 +1,97 @@
+/* Kolom berbingkai di dialog detail task (desain A, v0.4.1).
+   Aturannya satu: yang bisa diubah tampil berbingkai, yang tidak bisa diubah
+   tampil sebagai teks biasa. Tombol aksi (Simpan, Catat waktu, Kirim) tetap
+   memakai .btn; bingkai hanya untuk nilai.
+
+   - .td-box        nilai yang bisa diubah (tombol pilihan atau kolom teks).
+   - .td-box-ic     ikon jenis aksi di kanan: panah bawah (pilihan), kalender
+                    (tenggat), plus (label). Hanya ada di .td-box.
+   - .td-box-text   varian kolom teks (textarea, input), kursor teks.
+   - .td-ro         keterangan yang hanya dibaca, misalnya "Dibuat oleh".
+
+   Pasangan warna yang dicek (check_contrast, terang / gelap):
+   - garis --border-strong di atas --bg: 3,19 / 4,18 (non-teks, lolos 3:1).
+   - saat disorot garis berganti --text-sec, karena --border-strong di atas
+     --field-hover hanya 2,93 di tema terang. --text-sec di atas --field-hover:
+     5,61 / 7,61, juga lolos sebagai teks.
+   - teks --text di atas --field-hover: 14,74 terang.
+   - cincin fokus --focus di atas --field-hover: 4,98 / 6,45. */
+
+.td-box {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.td-box:hover,
+.td-box[aria-expanded="true"] {
+  background: var(--field-hover);
+  border-color: var(--text-sec);
+}
+
+.td-box:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.td-box[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.td-box:disabled {
+  cursor: default;
+}
+
+.td-box-ic {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-sec);
+}
+
+.td-box-text {
+  font-weight: 400;
+  line-height: 1.55;
+  cursor: text;
+}
+
+.td-box-text::placeholder {
+  color: var(--text-sec);
+  opacity: 1;
+}
+
+.td-ro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.td-ro > svg {
+  flex: none;
+}
+
+/* Layar sentuh: target sentuh minimal 44 px. */
+@media (pointer: coarse) {
+  .td-box {
+    min-height: 44px;
+  }
+}

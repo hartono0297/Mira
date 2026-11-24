@@ -237,6 +237,40 @@ describe("TimerMini", () => {
     expect(screen.queryByRole("button", { name: "Hentikan timer" })).not.toBeInTheDocument();
   });
 
+  describe("kolom berbingkai (desain A)", () => {
+    it("Mulai dan Hentikan tetap tombol; jam berjalan teks biasa tanpa bingkai", () => {
+      const { unmount } = setup(task());
+      expect(screen.getByRole("button", { name: "Mulai timer" })).toHaveClass("btn");
+      unmount();
+
+      setup(runningTask());
+      expect(screen.getByRole("button", { name: "Hentikan timer" })).toHaveClass("btn");
+      const clock = screen.getByText("00:42:00");
+      expect(clock.tagName).toBe("SPAN");
+      expect(clock).not.toHaveClass("td-box");
+      expect(document.querySelectorAll(".td-box")).toHaveLength(0);
+    });
+
+    it("catatan saat menghentikan timer berbingkai, tombolnya tetap tombol", async () => {
+      const { user } = setup(runningTask());
+      await user.click(screen.getByRole("button", { name: "Hentikan timer" }));
+      const box = screen.getByRole("dialog", { name: "Hentikan timer" });
+      expect(within(box).getByLabelText("Catatan sesi ini (opsional)")).toHaveClass("td-input", "td-box", "td-box-text");
+      for (const name of ["Simpan dan hentikan", "Hentikan tanpa catatan"]) {
+        const b = within(box).getByRole("button", { name });
+        expect(b).toHaveClass("btn");
+        expect(b).not.toHaveClass("td-box");
+      }
+    });
+
+    it("tanpa hak ubah: jam tetap tampil, tanpa bingkai dan tanpa tombol", () => {
+      setup(runningTask(), false);
+      expect(screen.getByText("00:42:00")).toBeInTheDocument();
+      expect(document.querySelectorAll(".td-box, input")).toHaveLength(0);
+      expect(screen.queryAllByRole("button")).toHaveLength(0);
+    });
+  });
+
   it("error dari inti diteruskan ke onError", async () => {
     board.startTimer.mockRejectedValue({ code: "forbidden", message: "Anda tidak bisa mengubah task ini." });
     const { user, onError, onChange } = setup(task());
