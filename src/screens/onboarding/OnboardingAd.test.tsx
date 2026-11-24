@@ -41,7 +41,7 @@ const MCF = office({
 });
 const OTHER = office({ key: "org-lain:fp", orgId: "l".repeat(32), name: "Kantor Lain", fingerprint: "LAIN-0002" });
 const SUGGEST: AdDeptSuggestion = { teamId: "t-keu", source: "attribute", adDepartment: "Keuangan", inMira: true };
-const AD_TEXT = /akun Windows|Domain kantor|Dari AD|Dari OU|Active Directory|Kantor utama|Yang dikirim ke admin/;
+const AD_TEXT = /akun Windows|Domain kantor|Dari akun|Active Directory|Kantor utama|Kantor Anda ditemukan/;
 
 function fresh(displayName: string | null = "Rina Wijaya"): AppState {
   const base = appState({ organization: null, membership: "none" });
@@ -200,8 +200,10 @@ describe("Onboarding AD: kantor dan departemen", () => {
     });
     setup();
 
-    expect(await searchUntil(u, "Kantor ditemukan: MCF")).toHaveFocus();
+    expect(await searchUntil(u, "Kantor Anda ditemukan")).toHaveFocus();
     expect(officeRadios()).toHaveLength(0);
+    // Nama kantor hanya di ringkasan, tidak diulang di judul.
+    expect(screen.getAllByText(/MCF \(/)).toHaveLength(1);
     const summary = screen.getByTestId("onb-ad-office-summary");
     expect(summary).toHaveTextContent("Kantor: MCF (MACF.co.id)");
     expect(screen.getByText("MCF1-0001")).toBeInTheDocument();
@@ -220,10 +222,13 @@ describe("Onboarding AD: kantor dan departemen", () => {
     const u = user();
     commands({ join_ad_profile: AD, join_search: searchResult({ offices: [MCF] }), join_ad_suggest: SUGGEST });
     setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
+    await searchUntil(u, "Kantor Anda ditemukan");
     const summary = screen.getByTestId("onb-ad-office-summary");
     expect(summary).toHaveTextContent("Kantor: MCF (macf.co.id)");
     expect(within(summary).queryByRole("button")).toBeNull();
+    // Domain di pengumuman kantor tidak terverifikasi: sidiknya tetap tampil.
+    expect(screen.getByText("Sidik organisasi")).toBeInTheDocument();
+    expect(screen.getByText("MCF1-0001")).toBeInTheDocument();
   });
 
   it("beberapa kantor dengan domain sama: yang dibuat paling awal jadi kantor utama dan terpilih", async () => {
@@ -244,10 +249,15 @@ describe("Onboarding AD: kantor dan departemen", () => {
     const radios = officeRadios();
     expect(radios.map((r) => r.getAttribute("value"))).toEqual(["org-mcf:fp", "org-mcf2:fp", "org-lain:fp"]);
     expect(radios[0]).toBeChecked();
-    expect(screen.getByTestId("onb-ad-office-primary")).toHaveTextContent("Kantor utama untuk macf.co.id");
-    expect(screen.getByTestId("onb-ad-office-later")).toHaveTextContent(
-      "Domainnya sama, tapi dibuat setelah kantor utama. Pilih hanya kalau admin kantor memintanya.",
+    expect(screen.getByTestId("onb-ad-office-primary")).toHaveTextContent(
+      "Kantor utama untuk macf.co.id (dibuat paling awal menurut catatan kantor itu)",
     );
+    expect(screen.getByTestId("onb-ad-office-later")).toHaveTextContent(
+      "Domainnya sama, tapi menurut catatannya dibuat lebih baru. Pilih hanya kalau admin kantor memintanya, dan cocokkan sidiknya dulu.",
+    );
+    // Sidik tiap kantor tetap tampil untuk dicocokkan.
+    expect(screen.getByText("MCF1-0001")).toBeInTheDocument();
+    expect(screen.getByText("MCF2-0002")).toBeInTheDocument();
     expect(screen.queryByTestId("onb-ad-office-summary")).toBeNull();
     await u.click(radios[1]);
     expect(radios[1]).toBeChecked();
@@ -262,23 +272,25 @@ describe("Onboarding AD: kantor dan departemen", () => {
       join_send_request: outgoing({ ad: { domain: "macf.co.id", user: "rina", dn: DN, name: null, department: null } }),
     });
     setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
+    await searchUntil(u, "Kantor Anda ditemukan");
 
     await waitFor(() => expect(screen.getByLabelText("Departemen")).toHaveValue("t-keu"));
     expect(invoke).toHaveBeenCalledWith("join_ad_suggest", { officeKey: "org-mcf:fp" });
-    expect(screen.getByText("Dari AD: Keuangan")).toBeInTheDocument();
+    expect(screen.getByText("Dari akun Windows Anda: Keuangan")).toBeInTheDocument();
     await u.type(screen.getByLabelText("Keterangan untuk admin (opsional)"), "NIK 2041");
 
     const box = screen.getByTestId("onb-ad-box");
-    expect(within(box).getByText("Yang dikirim ke admin")).toBeInTheDocument();
+    expect(within(box).getByText("Yang dilihat admin")).toBeInTheDocument();
     expect(within(box).getByText("Rina Wijaya")).toBeInTheDocument();
     expect(within(box).getByText("Keuangan")).toBeInTheDocument();
-    expect(within(box).getByText("macf.co.id\\rina")).toBeInTheDocument();
+    expect(within(box).getByText("rina@macf.co.id")).toBeInTheDocument();
     expect(within(box).getByText("Lokasi di Active Directory")).toBeInTheDocument();
     expect(within(box).getByText("Kantor Pusat › Keuangan")).toBeInTheDocument();
     expect(within(box).getByText("NIK 2041")).toBeInTheDocument();
     expect(screen.queryByTestId("onb-ad-partial")).toBeNull();
-    expect(screen.getByText(/data akun Windows di kotak ini tersimpan di catatan kantor/)).toBeInTheDocument();
+    expect(within(box).getByTestId("onb-ad-stored")).toHaveTextContent(
+      "Nama, departemen, akun Windows, dan lokasi di Active Directory ikut tersimpan di catatan kantor dan bisa dilihat anggota kantor.",
+    );
 
     await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
     await waitFor(() =>
@@ -292,7 +304,12 @@ describe("Onboarding AD: kantor dan departemen", () => {
     );
     // Layar menunggu: admin melihat akun Windows.
     expect(await screen.findByRole("heading", { name: "Menunggu persetujuan" })).toBeInTheDocument();
-    expect(screen.getByTestId("onb-ad-waiting-account")).toHaveTextContent("macf.co.id\\rina");
+    const waitingBox = screen.getByText("Yang dilihat admin").closest(".onb-box") as HTMLElement;
+    expect(within(waitingBox).getByTestId("onb-ad-waiting-account")).toHaveTextContent("rina@macf.co.id");
+    // Akun Windows menggantikan baris akun login, juga di luar kotak.
+    expect(screen.queryByText("Akun login")).toBeNull();
+    expect(screen.queryByText("Akun login laptop ini")).toBeNull();
+    expect(screen.queryByText("desain03")).toBeNull();
   });
 
   it("pilihan departemen orangnya sendiri tidak ditimpa usulan AD", async () => {
@@ -304,11 +321,11 @@ describe("Onboarding AD: kantor dan departemen", () => {
       join_ad_suggest: () => new Promise<AdDeptSuggestion>((r) => (answer = r)),
     });
     setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
+    await searchUntil(u, "Kantor Anda ditemukan");
     await u.selectOptions(screen.getByLabelText("Departemen"), "IT Development");
     await act(async () => answer(SUGGEST));
     expect(screen.getByLabelText("Departemen")).toHaveValue("t-dev");
-    expect(screen.getByText("Dari AD: Keuangan")).toBeInTheDocument();
+    expect(screen.getByText("Dari akun Windows Anda: Keuangan")).toBeInTheDocument();
   });
 
   it("usulan dari OU di AD", async () => {
@@ -319,10 +336,10 @@ describe("Onboarding AD: kantor dan departemen", () => {
       join_ad_suggest: { teamId: "t-dev", source: "ou_map", adDepartment: "IT-Development", inMira: true },
     });
     setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
+    await searchUntil(u, "Kantor Anda ditemukan");
     await waitFor(() => expect(screen.getByLabelText("Departemen")).toHaveValue("t-dev"));
     const caption = screen.getByTestId("onb-ad-dept");
-    expect(caption).toHaveTextContent("Dari OU di AD: IT-Development");
+    expect(caption).toHaveTextContent("Dari akun Windows Anda: IT-Development");
     expect(screen.getByLabelText("Departemen").getAttribute("aria-describedby")).toContain(caption.id);
   });
 
@@ -334,9 +351,9 @@ describe("Onboarding AD: kantor dan departemen", () => {
       join_ad_suggest: { teamId: null, source: null, adDepartment: "Pajak", inMira: false },
     });
     setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
+    await searchUntil(u, "Kantor Anda ditemukan");
     expect(
-      await screen.findByText("Departemen di AD: Pajak belum ada di Mira. Pilih departemen Anda."),
+      await screen.findByText("Departemen Anda di akun Windows (Pajak) belum ada di Mira. Pilih departemen yang paling dekat, atau tanya admin kantor."),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Departemen")).toHaveValue("");
     expect(within(screen.getByTestId("onb-ad-box")).getByText("Belum dipilih")).toBeInTheDocument();
@@ -351,12 +368,12 @@ describe("Onboarding AD: kantor dan departemen", () => {
       join_send_request: outgoing(),
     });
     setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
+    await searchUntil(u, "Kantor Anda ditemukan");
     const box = screen.getByTestId("onb-ad-box");
-    expect(within(box).getByText("macf.co.id\\rina")).toBeInTheDocument();
+    expect(within(box).getByText("rina@macf.co.id")).toBeInTheDocument();
     expect(within(box).queryByText("Lokasi di Active Directory")).toBeNull();
     expect(within(box).getByTestId("onb-ad-partial")).toHaveTextContent(
-      "Sebagian data AD tidak terbaca karena server domain tidak terjangkau. Admin akan memeriksa ulang.",
+      "Sebagian data akun Windows tidak terbaca karena server kantor tidak terjangkau. Admin akan memeriksanya lagi.",
     );
     await u.selectOptions(screen.getByLabelText("Departemen"), "Keuangan");
     await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
@@ -372,7 +389,7 @@ describe("Onboarding AD: kantor dan departemen", () => {
       join_send_request: outgoing(),
     });
     setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
+    await searchUntil(u, "Kantor Anda ditemukan");
     expect(screen.getByTestId("onb-ad-skipped")).toHaveTextContent(
       "Data akun Windows Anda tidak ikut dikirim karena Mira di sebagian laptop kantor belum diperbarui.",
     );
@@ -429,16 +446,18 @@ describe("Onboarding: satu domain, satu kantor", () => {
     expect(
       await screen.findByRole("heading", { name: "Kantor ditemukan, tapi belum bisa menerima permintaan" }),
     ).toBeInTheDocument();
+    // "Versi lama" hanya sekali, di judul catatan.
+    expect(within(screen.getByRole("main")).getAllByText(/versi lama/)).toHaveLength(1);
     expect(screen.queryByText("Kantor belum ditemukan")).toBeNull();
     const legacy = screen.getByTestId("onb-legacy-offices");
     expect(within(legacy).getByText("Kantor dengan Mira versi lama")).toBeInTheDocument();
     expect(within(legacy).getByText("Biro Lama (2 laptop)")).toBeInTheDocument();
-    expect(within(legacy).getByText("Kantor Mira versi lama (1 laptop)")).toBeInTheDocument();
+    expect(within(legacy).getByText("Kantor tanpa nama (1 laptop)")).toBeInTheDocument();
     expect(within(legacy).getByText(/menjalankan lagi perintah pasang Mira/)).toBeInTheDocument();
-    expect(within(legacy).getByText(/minta kode undangan ke superadmin/)).toBeInTheDocument();
+    expect(within(legacy).getByText(/minta kode undangan ke admin kantor/)).toBeInTheDocument();
 
     await u.click(screen.getByText("Untuk admin IT"));
-    expect(screen.getByText(/Kantor yang terlihat: Biro Lama, Kantor Mira versi lama\./)).toBeVisible();
+    expect(screen.getByText(/Kantor yang terlihat: Biro Lama, Kantor tanpa nama\./)).toBeVisible();
     expect(screen.getByRole("button", { name: "Tetap siapkan kantor baru" })).toBeInTheDocument();
   });
 
@@ -473,7 +492,7 @@ describe("Onboarding: satu domain, satu kantor", () => {
       await screen.findByRole("heading", { name: "Periksa dulu sebelum menyiapkan kantor baru" }),
     ).toHaveFocus();
     expect(screen.getByText(/Kantor yang terlihat: Biro Contoh\./)).toBeInTheDocument();
-    await u.type(screen.getByLabelText(/Ketik kantor baru untuk melanjutkan/), "kantor baru");
+    await u.type(screen.getByLabelText(/Ketik "kantor baru" untuk melanjutkan/), "kantor baru");
     await u.click(screen.getByRole("button", { name: "Tetap siapkan kantor baru" }));
     expect(await screen.findByRole("heading", { name: "Siapkan Mira untuk kantor baru" })).toHaveFocus();
   });
@@ -532,7 +551,7 @@ describe("Onboarding AD: kantor baru", () => {
     await waitFor(() => expect(domain).toHaveValue("macf.co.id"));
     expect(screen.getByLabelText("Nama organisasi")).toHaveValue("macf.co.id");
     expect(screen.getByTestId("onb-new-office-domain-source")).toHaveTextContent(
-      "Diisi dari domain kantor laptop ini. Ubah kalau perlu.",
+      "Diisi dari domain kantor. Ganti dengan nama yang dikenal rekan, misalnya MACF.",
     );
     expect(screen.getByText(/mengenali laptop kantor dan mengisi nama serta departemen orang baru/)).toBeInTheDocument();
 
@@ -608,18 +627,18 @@ describe("Onboarding AD: bahasa Inggris", () => {
     });
     await u.click(screen.getByRole("button", { name: "Continue" }));
     await advance(GRACE_MS + 500);
-    await screen.findByRole("heading", { name: "Office found: MCF" });
+    await screen.findByRole("heading", { name: "Your office was found" });
 
     expect(screen.getByTestId("onb-ad-office-summary")).toHaveTextContent("Office: MCF (macf.co.id)");
     expect(screen.getByRole("button", { name: "Change office" })).toBeInTheDocument();
-    expect(await screen.findByText("From AD: Keuangan")).toBeInTheDocument();
+    expect(await screen.findByText("From your Windows account: Keuangan")).toBeInTheDocument();
     const box = screen.getByTestId("onb-ad-box");
-    expect(within(box).getByText("What gets sent to the admin")).toBeInTheDocument();
+    expect(within(box).getByText("What the admin sees")).toBeInTheDocument();
     expect(within(box).getByText("Windows account")).toBeInTheDocument();
     expect(within(box).getByText("Location in Active Directory")).toBeInTheDocument();
     expect(within(box).getByTestId("onb-ad-partial")).toHaveTextContent(
-      "Some AD data couldn't be read because the domain server is out of reach. The admin will check it again.",
+      "Some Windows account details couldn't be read because the office server is out of reach. The admin will check them again.",
     );
-    expect(document.body.textContent).not.toMatch(/Diisi dari|Yang dikirim|Akun Windows|Lokasi di|Dari AD/);
+    expect(document.body.textContent).not.toMatch(/Diisi dari|Yang dilihat|Akun Windows|Lokasi di|Dari akun/);
   });
 });

@@ -78,17 +78,16 @@ const id = {
     searchAgain: "Cari lagi",
     // Hanya kantor versi lama yang terlihat (onboarding-ad bagian 6).
     headingLegacy: "Kantor ditemukan, tapi belum bisa menerima permintaan",
-    leadLegacy: "Ada kantor Mira di jaringan ini, tapi laptop kantornya masih memakai Mira versi lama.",
   },
   // Kantor dengan laptop Mira 0.1 atau 0.2: terlihat, tapi belum bisa menerima permintaan.
   legacy: {
     title: "Kantor dengan Mira versi lama",
-    unnamed: "Kantor Mira versi lama",
+    unnamed: "Kantor tanpa nama",
     item: (name: string, laptops: number) => `${name} (${laptops} laptop)`,
-    body: "Laptop kantor ini memakai Mira versi lama, jadi belum bisa menerima permintaan bergabung. Supaya Anda bisa bergabung:",
+    body: "Supaya Anda bisa bergabung:",
     update:
-      "Minta superadmin atau rekan di kantor itu memperbarui Mira di laptopnya dengan menjalankan lagi perintah pasang Mira, lalu tekan Cari lagi.",
-    invite: "Atau minta kode undangan ke superadmin, lalu pilih Pakai kode undangan.",
+      "Minta admin kantor atau rekan di kantor itu memperbarui Mira di laptopnya dengan menjalankan lagi perintah pasang Mira, lalu tekan Cari lagi.",
+    invite: "Atau minta kode undangan ke admin kantor, lalu pilih Pakai kode undangan.",
   },
   adminIt: {
     summary: "Untuk admin IT",
@@ -104,8 +103,8 @@ const id = {
     joinSeen: "Minta bergabung ke kantor itu",
     // Frasa yang diketik untuk tetap membuat kantor baru.
     confirmPhrase: "kantor baru",
-    confirmLabel: (phrase: string) => `Tetap perlu kantor baru? Ketik ${phrase} untuk melanjutkan.`,
-    confirmMismatch: (phrase: string) => `Ketik ${phrase} persis, lalu tekan tombolnya lagi.`,
+    confirmLabel: (phrase: string) => `Tetap perlu kantor baru? Ketik "${phrase}" untuk melanjutkan.`,
+    confirmMismatch: (phrase: string) => `Ketik "${phrase}" persis, lalu tekan tombolnya lagi.`,
     confirmButton: "Tetap siapkan kantor baru",
     // Domain AD laptop ini sama dengan domain kantor yang terlihat: tanpa kantor baru.
     sameDomain: (domain: string, names: string) =>
@@ -133,6 +132,8 @@ const id = {
     pickOffice: "Pilih kantor Anda dulu.",
     pickTeam: "Pilih departemen Anda dulu.",
     headingOne: (name: string) => `Kantor ditemukan: ${name}`,
+    // Kantor dipakai langsung karena domainnya sama; namanya ada di ringkasan.
+    headingMine: "Kantor Anda ditemukan",
     headingMany: "Beberapa kantor ditemukan",
     subOne: "Kantor ini memakai Mira di jaringan yang sama dengan laptop Anda.",
     leadMany: (n: number) =>
@@ -168,14 +169,16 @@ const id = {
       changeOffice: "Ubah",
       changeOfficeLabel: "Ubah kantor",
       // Beberapa kantor dengan domain sama: yang dibuat paling awal.
-      primary: (domain: string) => `Kantor utama untuk ${domain}`,
-      laterSameDomain: "Domainnya sama, tapi dibuat setelah kantor utama. Pilih hanya kalau admin kantor memintanya.",
-      // Departemen usulan dari atribut department di Active Directory.
-      deptAttribute: (dept: string) => `Dari AD: ${dept}`,
-      // Departemen usulan dari OU tempat akun berada.
-      deptOu: (ou: string) => `Dari OU di AD: ${ou}`,
-      deptMissing: (dept: string) => `Departemen di AD: ${dept} belum ada di Mira. Pilih departemen Anda.`,
-      boxTitle: "Yang dikirim ke admin",
+      // Waktu dibuat ditulis sendiri oleh pembuat kantor, jadi tidak terdengar pasti.
+      primary: (domain: string) => `Kantor utama untuk ${domain} (dibuat paling awal menurut catatan kantor itu)`,
+      laterSameDomain:
+        "Domainnya sama, tapi menurut catatannya dibuat lebih baru. Pilih hanya kalau admin kantor memintanya, dan cocokkan sidiknya dulu.",
+      // Departemen usulan dari atribut department atau OU di Active Directory.
+      deptFromAccount: (dept: string) => `Dari akun Windows Anda: ${dept}`,
+      deptMissing: (dept: string) =>
+        `Departemen Anda di akun Windows (${dept}) belum ada di Mira. Pilih departemen yang paling dekat, atau tanya admin kantor.`,
+      // Sama dengan judul kotak di layar menunggu; tidak mengklaim daftar lengkap.
+      boxTitle: "Yang dilihat admin",
       name: "Nama",
       team: "Departemen",
       teamNone: "Belum dipilih",
@@ -183,7 +186,7 @@ const id = {
       location: "Lokasi di Active Directory",
       note: "Keterangan",
       partial:
-        "Sebagian data AD tidak terbaca karena server domain tidak terjangkau. Admin akan memeriksa ulang.",
+        "Sebagian data akun Windows tidak terbaca karena server kantor tidak terjangkau. Admin akan memeriksanya lagi.",
       skip: {
         noDomain:
           "Data akun Windows Anda tidak ikut dikirim karena kantor ini belum mengatur domain kantor. Admin memeriksa permintaan seperti biasa.",
@@ -194,8 +197,9 @@ const id = {
         noUser:
           "Data akun Windows Anda tidak ikut dikirim karena nama akunnya belum terbaca. Admin memeriksa permintaan seperti biasa.",
       },
-      shared:
-        "Nama Anda, nama laptop, nama akun login laptop ini, alamat IP, keterangan, dan data akun Windows di kotak ini tersimpan di catatan kantor dan bisa dilihat admin kantor.",
+      // Di dalam kotak: data AD ikut op persetujuan yang disalin ke semua laptop anggota.
+      stored:
+        "Nama, departemen, akun Windows, dan lokasi di Active Directory ikut tersimpan di catatan kantor dan bisa dilihat anggota kantor.",
     },
   },
   waiting: {
@@ -297,7 +301,7 @@ const id = {
     back: "Kembali",
     submit: "Buat organisasi",
     saving: "Menyiapkan kantor...",
-    orgFromDomain: "Diisi dari domain kantor laptop ini. Ubah kalau perlu.",
+    orgFromDomain: "Diisi dari domain kantor. Ganti dengan nama yang dikenal rekan, misalnya MACF.",
     adLabel: "Domain Active Directory (opsional)",
     adPlaceholder: "contoh: kantor.co.id",
     adHint:

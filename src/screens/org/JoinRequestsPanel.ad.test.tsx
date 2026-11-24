@@ -87,40 +87,49 @@ describe("Kartu permintaan dengan data AD", () => {
     const block = within(rina).getByTestId("join-ad");
     expect(within(block).getByRole("heading", { name: "Active Directory", level: 4 })).toBeInTheDocument();
     expect(within(block).getByText("Dilaporkan laptop peminta, lalu diperiksa ulang dari laptop ini.")).toBeInTheDocument();
-    expect(fact(block, "Akun")).toHaveTextContent("kantor-uji.test\\rina");
+    expect(fact(block, "Akun")).toHaveTextContent(/^rina@kantor-uji\.test$/);
     expect(fact(block, "Akun")).toHaveClass("mono");
     expect(fact(block, "Nama di AD")).toHaveTextContent("Rina Wijaya");
     expect(fact(block, "Departemen di AD")).toHaveTextContent(/^Keuangan$/);
-    const ous = within(fact(block, "Lokasi OU (paling dalam dulu)")).getAllByRole("listitem");
-    expect(ous.map((li) => li.textContent)).toEqual(["Keuangan", "Jakarta"]);
+    // Dari OU paling luar ke paling dalam, seperti di layar peminta.
+    expect(fact(block, "Lokasi di Active Directory")).toHaveTextContent(/^Jakarta › Keuangan$/);
 
     const status = within(block).getByTestId("join-ad-status");
-    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status).not.toHaveAttribute("aria-live");
     expect(status).toHaveTextContent("Memeriksa ke AD...");
-    expect(within(block).getByText(/bukan bahwa peminta adalah pemilik akun itu/)).toBeInTheDocument();
+    // Kalimat batas: teks biasa tepat di bawah baris status.
+    const limit = within(block).getByText(/bukan bahwa peminta adalah pemilik akun itu/);
+    expect(limit).toHaveClass("req-ad-limit");
+    expect(limit).not.toHaveClass("hint");
+    expect(limit.previousElementSibling).toContainElement(status);
 
     answer(adCheck());
-    await waitFor(() => expect(status).toHaveTextContent("Cocok dengan AD"));
+    await waitFor(() => expect(status).toHaveTextContent("Akun ada dan aktif di AD, nama dan departemen sama"));
     expect(status).toHaveAttribute("data-status", "match");
+    expect(status).toHaveClass("req-ad-ok");
+    // Cek pertama saat kartu muncul tidak dibacakan.
+    expect(within(block).getByTestId("join-ad-live")).toBeEmptyDOMElement();
     expect(calls("org_join_ad_check")).toEqual([{ requestId: "r1", refresh: false }]);
     // Fajar tanpa AD tidak memicu cek.
     expect(within(await card("Fajar")).queryByTestId("join-ad")).not.toBeInTheDocument();
   });
 
-  it.each<[AdCheckStatus, string]>([
-    ["match", "Cocok dengan AD"],
-    ["mismatch", "Tidak cocok dengan AD"],
-    ["disabled", "Akun AD dinonaktifkan"],
-    ["not_found", "Akun tidak ditemukan di AD"],
-    ["unreachable", "AD tidak bisa dihubungi dari laptop ini"],
-    ["other_domain", "Laptop ini tidak tergabung di domain kantor-uji.test, jadi tidak bisa memeriksa"],
-    ["not_domain_machine", "Laptop ini tidak tergabung di domain, jadi tidak bisa memeriksa"],
-  ])("status %s tampil sebagai teks", async (status, text) => {
+  it.each<[AdCheckStatus, string, string]>([
+    ["match", "Akun ada dan aktif di AD, nama dan departemen sama", "ok"],
+    ["mismatch", "Berbeda dengan AD", "neutral"],
+    ["disabled", "Akun AD dinonaktifkan", "bad"],
+    ["not_found", "Akun tidak ditemukan di AD", "bad"],
+    ["unreachable", "AD tidak bisa dihubungi dari laptop ini", "neutral"],
+    ["other_domain", "Laptop ini tidak tergabung di domain kantor-uji.test, jadi tidak bisa memeriksa", "neutral"],
+    ["not_domain_machine", "Laptop ini tidak tergabung di domain, jadi tidak bisa memeriksa", "neutral"],
+  ])("status %s tampil sebagai teks", async (status, text, tone) => {
     setup([RINA], adCheck({ status }));
     const rina = await card("Rina W.");
     const el = within(rina).getByTestId("join-ad-status");
     await waitFor(() => expect(el).toHaveTextContent(text));
     expect(el).toHaveAttribute("data-status", status);
+    // Merah hanya untuk akun dinonaktifkan atau tidak ada.
+    expect(el).toHaveClass(`req-ad-${tone}`);
   });
 
   it("galat command dibaca sama dengan AD tidak bisa dihubungi", async () => {
@@ -147,7 +156,18 @@ describe("Kartu permintaan dengan data AD", () => {
     const rina = await card("Rina W.");
     expect(await within(rina).findByText("Nama di AD: Rina Wijaya, di permintaan: Rina W.")).toBeInTheDocument();
     expect(within(rina).getByText("Departemen di AD: Keuangan, di permintaan: Desain")).toBeInTheDocument();
-    expect(within(rina).getByTestId("join-ad-status")).toHaveTextContent("Tidak cocok dengan AD");
+    expect(within(rina).getByTestId("join-ad-status")).toHaveTextContent("Berbeda dengan AD");
+    expect(within(rina).getByText(/Peminta boleh mengubah nama tampilan/)).toBeInTheDocument();
+  });
+
+  it("hanya departemen yang berbeda: tanpa catatan nama tampilan", async () => {
+    setup(
+      [RINA],
+      adCheck({ status: "mismatch", mismatches: [{ field: "department", requested: "Desain", directory: "Keuangan" }] }),
+    );
+    const rina = await card("Rina W.");
+    expect(await within(rina).findByText("Departemen di AD: Keuangan, di permintaan: Desain")).toBeInTheDocument();
+    expect(within(rina).queryByText(/Peminta boleh mengubah nama tampilan/)).not.toBeInTheDocument();
   });
 
   it("Periksa lagi memanggil cek dengan refresh true", async () => {
@@ -157,9 +177,14 @@ describe("Kartu permintaan dengan data AD", () => {
     const rina = await card("Rina W.");
     const status = within(rina).getByTestId("join-ad-status");
     await waitFor(() => expect(status).toHaveTextContent("AD tidak bisa dihubungi"));
+    const live = within(rina).getByTestId("join-ad-live");
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toBeEmptyDOMElement();
     const button = within(rina).getByRole("button", { name: "Periksa lagi akun AD Rina W." });
     await user.click(button);
-    await waitFor(() => expect(status).toHaveTextContent("Cocok dengan AD"));
+    await waitFor(() => expect(status).toHaveTextContent("Akun ada dan aktif di AD, nama dan departemen sama"));
+    // Hasil "Periksa lagi" dibacakan.
+    expect(live).toHaveTextContent("Akun ada dan aktif di AD, nama dan departemen sama");
     expect(calls("org_join_ad_check")).toEqual([
       { requestId: "r1", refresh: false },
       { requestId: "r1", refresh: true },
@@ -174,7 +199,9 @@ describe("Kartu permintaan dengan data AD", () => {
     setup([req], adCheck({ departmentInMira: false, directoryDepartment: "Pajak" }));
     const sari = await card("Sari");
     expect(fact(within(sari).getByTestId("join-ad"), "Departemen di AD")).toHaveTextContent("Pajak (belum ada di Mira)");
-    expect(await within(sari).findByText("Departemen di AD, Pajak, belum ada di Mira.")).toBeInTheDocument();
+    await waitFor(() => expect(within(sari).getByTestId("join-ad-status")).toHaveAttribute("data-status", "match"));
+    // Departemen AD yang belum ada di Mira hanya disebut sekali.
+    expect(within(sari).getAllByText(/belum ada di Mira/)).toHaveLength(1);
   });
 
   it("data AD yang tidak dikirim tertulis Tidak dikirim", async () => {
@@ -183,7 +210,7 @@ describe("Kartu permintaan dengan data AD", () => {
     const block = within(await card("Tono")).getByTestId("join-ad");
     expect(fact(block, "Nama di AD")).toHaveTextContent("Tidak dikirim");
     expect(fact(block, "Departemen di AD")).toHaveTextContent("Tidak dikirim");
-    expect(fact(block, "Lokasi OU (paling dalam dulu)")).toHaveTextContent("Tidak dikirim");
+    expect(fact(block, "Lokasi di Active Directory")).toHaveTextContent("Tidak dikirim");
   });
 });
 
@@ -236,7 +263,7 @@ describe("Kartu permintaan dari Mira yang terlalu lama", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /Permintaan bergabung/ }));
     const rina = await card("Rina W.");
-    await waitFor(() => expect(within(rina).getByTestId("join-ad-status")).toHaveTextContent("Cocok dengan AD"));
+    await waitFor(() => expect(within(rina).getByTestId("join-ad-status")).toHaveAttribute("data-status", "match"));
     await user.click(screen.getByRole("button", { name: "Setujui permintaan Fajar" }));
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Fajar" })).not.toBeInTheDocument());
     expect(calls("org_join_ad_check")).toHaveLength(1);
@@ -261,11 +288,13 @@ describe("Blok AD dalam bahasa Inggris", () => {
     renderInLang(() => <JoinRequestsPanel page={page()} />, "en");
     const rina = await card("Rina W.");
     const block = within(rina).getByTestId("join-ad");
-    expect(fact(block, "Account")).toHaveTextContent("kantor-uji.test\\rina");
+    expect(fact(block, "Account")).toHaveTextContent("rina@kantor-uji.test");
     expect(fact(block, "Department in AD")).toHaveTextContent("Pajak (not in Mira yet)");
-    expect(within(block).getByText("OU location (innermost first)")).toBeInTheDocument();
-    await waitFor(() => expect(within(block).getByTestId("join-ad-status")).toHaveTextContent("Doesn't match AD"));
+    expect(fact(block, "Location in Active Directory")).toHaveTextContent("Jakarta › Keuangan");
+    await waitFor(() => expect(within(block).getByTestId("join-ad-status")).toHaveTextContent("Differs from AD"));
     expect(within(block).getByText("Name in AD: Rina Wijaya, in the request: Rina W.")).toBeInTheDocument();
+    expect(within(block).getByText(/The requester is allowed to change their display name/)).toBeInTheDocument();
+    expect(within(block).getByText(/not that the requester owns it/)).toHaveClass("req-ad-limit");
     expect(within(block).getByRole("button", { name: "Check Rina W.'s AD account again" })).toBeInTheDocument();
     expect(within(rina).getByTestId("join-requester-outdated")).toHaveTextContent(
       "Mira on the requesting laptop needs an update first",
@@ -274,7 +303,7 @@ describe("Blok AD dalam bahasa Inggris", () => {
   });
 
   it.each<[AdCheckStatus, string]>([
-    ["match", "Matches AD"],
+    ["match", "Account exists and is active in AD, name and department match"],
     ["disabled", "AD account is disabled"],
     ["not_found", "Account not found in AD"],
     ["unreachable", "Can't reach AD from this laptop"],

@@ -9,12 +9,12 @@ const en: Dict<typeof id> = {
     name: "Name in AD",
     department: "Department in AD",
     departmentMissing: (department: string) => `${department} (not in Mira yet)`,
-    ous: "OU location (innermost first)",
+    ous: "Location in Active Directory",
     notSent: "Not sent",
     checking: "Checking AD...",
     status: {
-      match: "Matches AD",
-      mismatch: "Doesn't match AD",
+      match: "Account exists and is active in AD, name and department match",
+      mismatch: "Differs from AD",
       disabled: "AD account is disabled",
       notFound: "Account not found in AD",
       unreachable: "Can't reach AD from this laptop",
@@ -24,7 +24,7 @@ const en: Dict<typeof id> = {
     mismatchName: (directory: string, requested: string) => `Name in AD: ${directory}, in the request: ${requested}`,
     mismatchDepartment: (directory: string, requested: string) =>
       `Department in AD: ${directory}, in the request: ${requested}`,
-    checkDepartmentMissing: (department: string) => `The AD department, ${department}, isn't in Mira yet.`,
+    nameNote: "The requester is allowed to change their display name, so a different name isn't necessarily a problem.",
     recheck: "Check again",
     recheckAria: (name: string) => `Check ${name}'s AD account again`,
     limit:
@@ -49,6 +49,7 @@ const en: Dict<typeof id> = {
     outdatedUnknown: (name: string) => `${name}, version not reported yet`,
     domainLabel: "AD domain",
     domainHint: "For example: office.example.com. Leave empty if the office doesn't use AD.",
+    errDomain: "Write the domain like office.co.id, without spaces or slashes.",
     useMachine: (domain: string) => `Use this laptop's domain: ${domain}`,
     mapTitle: "OU to department mapping",
     order:
@@ -81,10 +82,10 @@ const en: Dict<typeof id> = {
     names: (names: string) => `Offices seen: ${names}.`,
     more: (n: number) => ` and ${n} more`,
     sameDomain: (n: number) =>
-      `${n} of them ${plural(n, "uses", "use")} the same AD domain as this office, so there may be a duplicate office. A superadmin should tidy this up by asking the people in that office to join this one.`,
+      `${n} of them ${plural(n, "uses", "use")} the same AD domain as this office, so there may be a duplicate office. The superadmins of both offices need to decide which office to use.`,
     hint: "This is only a hint. Mira doesn't merge offices automatically.",
     older: {
-      title: "Another office for the same AD domain was created earlier",
+      title: "This AD domain is already used by another office that was created earlier",
       office: (name: string, date: string) => `${name}, created ${date}.`,
       fingerprint: "That office's fingerprint:",
       body: "That office counts as the main office for this domain, and new people will be directed there. The data of two offices can't be merged automatically, so you need to decide, for example by asking this office's members to join the main office.",

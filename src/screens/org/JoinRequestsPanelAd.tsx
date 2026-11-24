@@ -61,7 +61,7 @@ function statusIcon(status: AdCheckStatus): ReactNode {
     case "match":
       return <IconCircleCheck {...props} />;
     case "mismatch":
-      return <IconAlertTriangle {...props} />;
+      return <IconInfoCircle {...props} />;
     case "disabled":
       return <IconUserOff {...props} />;
     case "not_found":
@@ -73,10 +73,12 @@ function statusIcon(status: AdCheckStatus): ReactNode {
   }
 }
 
-// match: hijau; ketidakcocokan dan akun bermasalah: merah; laptop ini tidak bisa memeriksa: netral.
+// match: hijau; akun dinonaktifkan atau tidak ada: merah. Perbedaan nama atau
+// departemen netral, karena peminta boleh mengubah nama tampilan dan memilih
+// departemen lain; laptop ini tidak bisa memeriksa: netral.
 function tone(status: AdCheckStatus): "ok" | "bad" | "neutral" {
   if (status === "match") return "ok";
-  if (status === "mismatch" || status === "disabled" || status === "not_found") return "bad";
+  if (status === "disabled" || status === "not_found") return "bad";
   return "neutral";
 }
 
@@ -108,6 +110,9 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
   const headingId = useId();
   const [check, setCheck] = useState<AdCheck | null>(null);
   const [checking, setChecking] = useState(true);
+  // Hasil yang dibacakan pembaca layar. Cek pertama saat kartu muncul tidak
+  // dibacakan (N kartu akan jadi 2N pengumuman); hanya hasil "Periksa lagi".
+  const [announced, setAnnounced] = useState<AdCheckStatus | null>(null);
   const mounted = useRef(true);
   const seq = useRef(0);
   // Permintaan yang sudah diperiksa, supaya effect yang dijalankan ulang
@@ -118,6 +123,7 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
     async (refresh: boolean) => {
       const mine = ++seq.current;
       setChecking(true);
+      if (refresh) setAnnounced(null);
       let result: AdCheck;
       try {
         const answer = await orgApi.joinAdCheck(request.id, refresh);
@@ -128,6 +134,7 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
       if (!mounted.current || mine !== seq.current) return;
       setCheck(result);
       setChecking(false);
+      if (refresh) setAnnounced(result.status);
     },
     [request.id],
   );
@@ -144,7 +151,13 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
   }, [request.id, run]);
 
   const status = check?.status ?? null;
-  const ous = ad.ous.filter((o) => o.trim() !== "");
+  // ous datang dari yang paling dalam; dibaca orang dari luar ke dalam, seperti di layar peminta.
+  const location = ad.ous
+    .map((o) => o.trim())
+    .filter((o) => o !== "")
+    .reverse()
+    .join(" › ");
+  const nameDiffers = !!check && !checking && check.mismatches.some((m) => m.field === "name");
 
   return (
     <section className="req-ad" aria-labelledby={headingId} data-testid="join-ad">
@@ -158,7 +171,7 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
       <dl className="req-facts">
         <div>
           <dt>{T.account}</dt>
-          <dd className="mono">{`${ad.domain}\\${ad.user}`}</dd>
+          <dd className="mono">{`${ad.user}@${ad.domain}`}</dd>
         </div>
         <div>
           <dt>{T.name}</dt>
@@ -170,27 +183,14 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
         </div>
         <div>
           <dt>{T.ous}</dt>
-          <dd>
-            {ous.length > 0 ? (
-              <ol className="req-ad-ous">
-                {ous.map((ou, i) => (
-                  <li key={`${i}-${ou}`}>{ou}</li>
-                ))}
-              </ol>
-            ) : (
-              T.notSent
-            )}
-          </dd>
+          <dd>{location || T.notSent}</dd>
         </div>
       </dl>
 
       <div className="req-ad-check">
         <div className="req-ad-status-row">
-          {/* Hanya kalimat status yang dibacakan, sekali saat berubah. */}
           <div
             className={`req-ad-status req-ad-${status && !checking ? tone(status) : "neutral"}`}
-            aria-live="polite"
-            aria-atomic="true"
             data-testid="join-ad-status"
             data-status={checking || !status ? "checking" : status}
           >
@@ -218,6 +218,8 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
           </button>
         </div>
 
+        <p className="req-ad-limit">{T.limit}</p>
+
         {check && !checking && check.mismatches.length > 0 && (
           <ul className="req-ad-diff">
             {check.mismatches.map((m, i) => (
@@ -230,11 +232,12 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
           </ul>
         )}
 
-        {check && !checking && !check.departmentInMira && check.directoryDepartment && (
-          <p className="req-ad-note">{T.checkDepartmentMissing(check.directoryDepartment)}</p>
-        )}
+        {nameDiffers && <p className="req-ad-note">{T.nameNote}</p>}
 
-        <p className="hint">{T.limit}</p>
+        {/* Wilayah pengumuman terpisah dari teks yang terlihat: kosong sampai "Periksa lagi". */}
+        <span className="sr-only" aria-live="polite" aria-atomic="true" data-testid="join-ad-live">
+          {announced ? statusText(announced, ad.domain) : ""}
+        </span>
       </div>
     </section>
   );

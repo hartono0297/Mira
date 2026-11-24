@@ -37,9 +37,10 @@ function valid(v: unknown): OtherOfficesView | null {
 }
 
 // Petunjuk di halaman Organisasi: ada laptop di jaringan yang tergabung di kantor
-// Mira lain (docs/plans/onboarding-ad.md bagian 6 butir 3). Superadmin kantor yang
-// lebih baru untuk domain AD yang sama mendapat peringatan yang lebih tegas
-// (bagian 6.1 butir 3). Dimuat sekali saat halaman dibuka; galat diabaikan,
+// Mira lain (docs/plans/onboarding-ad.md bagian 6 butir 3). Anggota biasa (termasuk
+// Tamu) hanya melihat jumlah laptop. Superadmin juga melihat nama kantor dan
+// apakah domain AD-nya sama, dan superadmin kantor yang lebih baru untuk domain
+// yang sama mendapat peringatan kantor utama (bagian 6.1 butir 3). Dimuat sekali saat halaman dibuka; galat diabaikan,
 // karena ini hanya pelengkap. Tidak ada tombol: Mira tidak menyatukan kantor.
 export function OtherOfficesNotice({ superadmin }: { superadmin: boolean }) {
   const [view, setView] = useState<OtherOfficesView | null>(null);
@@ -63,11 +64,10 @@ export function OtherOfficesNotice({ superadmin }: { superadmin: boolean }) {
 
   const older = superadmin ? view.olderSameDomain : null;
   if (older) {
-    // Kotak merah (.alert): dua kantor untuk satu domain memisahkan data orang
-    // kantor, dan hanya superadmin yang bisa merapikannya.
+    // .notice (perlu tindakan, bukan error): superadmin yang memutuskan.
     return (
       <div className="org-pad org-narrow">
-        <div className="alert org-older" data-testid="org-older-office">
+        <div className="notice org-older" data-testid="org-older-office">
           <IconAlertTriangle size={18} aria-hidden="true" />
           <div>
             <strong>{T.older.title}</strong>
@@ -84,9 +84,9 @@ export function OtherOfficesNotice({ superadmin }: { superadmin: boolean }) {
 
   if (view.laptops === 0) return null;
 
-  const shown = view.names.slice(0, MAX_NAMES).join(", ");
+  const shown = superadmin ? view.names.slice(0, MAX_NAMES).join(", ") : "";
   const rest = view.names.length - MAX_NAMES;
-  const same = Math.min(view.sameDomainLaptops, view.laptops);
+  const same = superadmin ? Math.min(view.sameDomainLaptops, view.laptops) : 0;
 
   // Domain AD sama: pemberitahuan yang perlu tindakan (aksen). Selain itu kotak
   // netral, karena kantor lain di jaringan yang sama bisa wajar.

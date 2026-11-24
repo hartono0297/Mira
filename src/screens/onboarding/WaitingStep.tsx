@@ -91,8 +91,8 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
   const undelivered = Boolean(request.lastError);
   // Akun login ikut permintaan hanya bersama keterangan (bentuk v0.4). Permintaan
   // tanpa keterangan bisa berbentuk v0.3, jadi akunnya tidak diklaim terlihat admin.
-  // Permintaan dengan data AD selalu berbentuk baru, jadi akun login ikut.
-  const accountSent = (Boolean(request.note) || Boolean(request.ad)) && Boolean(device?.account);
+  // Permintaan dengan data AD menampilkan akun Windows; baris akun login tidak diulang.
+  const accountSent = Boolean(request.note) && Boolean(device?.account) && !request.ad;
   const adLocation = request.ad ? ouPath(request.ad.dn) : null;
 
   return (
@@ -124,7 +124,7 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
           {request.ad && (
             <>
               <dt>{WAITING.adAccount}</dt>
-              <dd className="mono" data-testid="onb-ad-waiting-account">{`${request.ad.domain}\\${request.ad.user}`}</dd>
+              <dd className="mono" data-testid="onb-ad-waiting-account">{`${request.ad.user}@${request.ad.domain}`}</dd>
               {adLocation && (
                 <>
                   <dt>{WAITING.adLocation}</dt>
@@ -141,7 +141,7 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
           <dd className="mono">{request.orgFingerprint}</dd>
         </dl>
       </div>
-      {device?.account && !accountSent && (
+      {device?.account && !accountSent && !request.ad && (
         <dl className="onb-kv">
           <dt>{WAITING.accountFact}</dt>
           <dd className="mono">{device.account}</dd>

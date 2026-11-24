@@ -218,6 +218,33 @@ describe("Pengaturan Active Directory: mengubah dan menyimpan", () => {
     expect(ouInput(2)).not.toHaveAttribute("aria-invalid");
   });
 
+  it("validasi domain: pesan di bawah isian, fokus ke isian, tidak menyimpan", async () => {
+    const { user } = setup(adSettings({ domain: "kantor-uji.test" }), { org_set_ad_settings: null });
+    const domain = await screen.findByRole("textbox", { name: "Domain AD" });
+    await user.clear(domain);
+    await user.type(domain, "kantor uji/test");
+    await user.click(screen.getByRole("button", { name: "Simpan pengaturan AD" }));
+    expect(calls("org_set_ad_settings")).toHaveLength(0);
+    expect(domain).toHaveAttribute("aria-invalid", "true");
+    expect(domain).toHaveAccessibleDescription(/Tulis domain seperti kantor\.co\.id, tanpa spasi atau garis miring\./);
+    expect(domain).toHaveFocus();
+
+    // Dibetulkan: pesan hilang, domain dirapikan (huruf kecil, tanpa titik di akhir) sebelum dikirim.
+    await user.clear(domain);
+    expect(domain).not.toHaveAttribute("aria-invalid");
+    await user.type(domain, "Kantor-Uji.TEST.");
+    await user.click(screen.getByRole("button", { name: "Simpan pengaturan AD" }));
+    await waitFor(() => expect(calls("org_set_ad_settings")).toEqual([{ domain: "kantor-uji.test", ouMap: [] }]));
+  });
+
+  it("domain kosong boleh: kantor tidak memakai AD", async () => {
+    const { user } = setup(adSettings({ domain: "kantor-uji.test" }), { org_set_ad_settings: null });
+    const domain = await screen.findByRole("textbox", { name: "Domain AD" });
+    await user.clear(domain);
+    await user.click(screen.getByRole("button", { name: "Simpan pengaturan AD" }));
+    await waitFor(() => expect(calls("org_set_ad_settings")).toEqual([{ domain: "", ouMap: [] }]));
+  });
+
   it("validateRows membandingkan OU tanpa beda huruf besar dan setelah dirapikan", () => {
     expect(
       validateRows([

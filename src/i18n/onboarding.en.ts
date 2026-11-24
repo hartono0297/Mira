@@ -73,16 +73,15 @@ const en: Dict<typeof id> = {
     inviteDesc: "A code from the office admin or a department admin.",
     searchAgain: "Search again",
     headingLegacy: "Office found, but it can't take join requests yet",
-    leadLegacy: "There's a Mira office on this network, but its laptops still run an older Mira.",
   },
   legacy: {
     title: "Office with an older Mira",
-    unnamed: "Office on an older Mira",
+    unnamed: "Unnamed office",
     item: (name: string, laptops: number) => `${name} (${laptops === 1 ? "1 laptop" : `${laptops} laptops`})`,
-    body: "This office's laptops run an older Mira, so they can't take join requests yet. To join:",
+    body: "To join:",
     update:
-      "Ask a superadmin or colleague in that office to update Mira on their laptop by running the Mira install command again, then press Search again.",
-    invite: "Or ask a superadmin for an invite code, then choose Use an invite code.",
+      "Ask the office admin or a colleague in that office to update Mira on their laptop by running the Mira install command again, then press Search again.",
+    invite: "Or ask the office admin for an invite code, then choose Use an invite code.",
   },
   adminIt: {
     summary: "For IT admins",
@@ -96,8 +95,8 @@ const en: Dict<typeof id> = {
       "A laptop on this network already belongs to a Mira office, even though it hasn't answered. Usually you only need to ask to join that office. A second office separates you from colleagues who already use Mira.",
     joinSeen: "Ask to join that office",
     confirmPhrase: "new office",
-    confirmLabel: (phrase: string) => `Still need a new office? Type ${phrase} to continue.`,
-    confirmMismatch: (phrase: string) => `Type ${phrase} exactly, then press the button again.`,
+    confirmLabel: (phrase: string) => `Still need a new office? Type "${phrase}" to continue.`,
+    confirmMismatch: (phrase: string) => `Type "${phrase}" exactly, then press the button again.`,
     confirmButton: "Set up a new office anyway",
     sameDomain: (domain: string, names: string) =>
       `This laptop uses the domain ${domain}, the same as the office ${names}. One office domain belongs to one Mira office, so ask to join that office.`,
@@ -120,6 +119,7 @@ const en: Dict<typeof id> = {
     pickOffice: "Choose your office first.",
     pickTeam: "Choose your department first.",
     headingOne: (name: string) => `Office found: ${name}`,
+    headingMine: "Your office was found",
     headingMany: "Several offices found",
     subOne: "This office uses Mira on the same network as your laptop.",
     leadMany: (n: number) =>
@@ -150,19 +150,21 @@ const en: Dict<typeof id> = {
       officeWithDomain: (name: string, domain: string) => `${name} (${domain})`,
       changeOffice: "Change",
       changeOfficeLabel: "Change office",
-      primary: (domain: string) => `Main office for ${domain}`,
-      laterSameDomain: "Same domain, but created after the main office. Choose it only if the office admin asks you to.",
-      deptAttribute: (dept: string) => `From AD: ${dept}`,
-      deptOu: (ou: string) => `From the AD OU: ${ou}`,
-      deptMissing: (dept: string) => `AD department ${dept} isn't in Mira yet. Choose your department.`,
-      boxTitle: "What gets sent to the admin",
+      primary: (domain: string) => `Main office for ${domain} (created first, according to that office's own records)`,
+      laterSameDomain:
+        "Same domain, but its records say it was created later. Choose it only if the office admin asks you to, and compare the fingerprint first.",
+      deptFromAccount: (dept: string) => `From your Windows account: ${dept}`,
+      deptMissing: (dept: string) =>
+        `Your department in your Windows account (${dept}) isn't in Mira yet. Choose the closest department, or ask the office admin.`,
+      boxTitle: "What the admin sees",
       name: "Name",
       team: "Department",
       teamNone: "Not chosen yet",
       account: "Windows account",
       location: "Location in Active Directory",
       note: "Note",
-      partial: "Some AD data couldn't be read because the domain server is out of reach. The admin will check it again.",
+      partial:
+        "Some Windows account details couldn't be read because the office server is out of reach. The admin will check them again.",
       skip: {
         noDomain:
           "Your Windows account details won't be sent because this office hasn't set its office domain yet. The admin reviews the request as usual.",
@@ -173,8 +175,8 @@ const en: Dict<typeof id> = {
         noUser:
           "Your Windows account details won't be sent because the account name couldn't be read. The admin reviews the request as usual.",
       },
-      shared:
-        "Your name, laptop name, this laptop's login account, IP address, note, and the Windows account details in this box are kept in the office records, where office admins can see them.",
+      stored:
+        "Your name, department, Windows account, and location in Active Directory are kept in the office records, where office members can see them.",
     },
   },
   waiting: {
@@ -272,7 +274,7 @@ const en: Dict<typeof id> = {
     back: "Back",
     submit: "Create organization",
     saving: "Setting up the office...",
-    orgFromDomain: "Filled in from this laptop's office domain. Change it if needed.",
+    orgFromDomain: "Filled in from the office domain. Replace it with the name colleagues know, for example MACF.",
     adLabel: "Active Directory domain (optional)",
     adPlaceholder: "e.g. office.co.id",
     adHint:

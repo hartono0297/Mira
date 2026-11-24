@@ -852,9 +852,9 @@ describe("Onboarding: kantor belum ditemukan", () => {
     // Tanpa kantor yang menjawab, tidak ada tombol bergabung.
     expect(within(guard).queryByRole("button", { name: "Minta bergabung ke kantor itu" })).toBeNull();
 
-    const input = screen.getByLabelText("Tetap perlu kantor baru? Ketik kantor baru untuk melanjutkan.");
+    const input = screen.getByLabelText('Tetap perlu kantor baru? Ketik "kantor baru" untuk melanjutkan.');
     await u.click(screen.getByRole("button", { name: "Tetap siapkan kantor baru" }));
-    expect(await screen.findByText("Ketik kantor baru persis, lalu tekan tombolnya lagi.")).toBeInTheDocument();
+    expect(await screen.findByText('Ketik "kantor baru" persis, lalu tekan tombolnya lagi.')).toBeInTheDocument();
     expect(input).toHaveFocus();
     expect(input).toHaveAttribute("aria-invalid", "true");
 

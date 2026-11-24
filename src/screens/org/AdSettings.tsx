@@ -5,6 +5,8 @@ import { orgApi, type AdSettingsView, type DepartmentView, type OuMapping } from
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { AD_TEXT } from "../../i18n/org-ad";
+// Aturan domain yang sama dengan layar kantor baru (normalize_domain di Rust).
+import { normalizeAdDomain } from "../onboarding/adProfile";
 import type { OrgPage } from "./context";
 import { useOrgLive } from "./useOrgLive";
 import "./ad-settings.css";
@@ -60,6 +62,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
   const [rows, setRows] = useState<Row[]>([]);
   const [dirty, setDirty] = useState(false);
   const [errors, setErrors] = useState<Map<number, RowError>>(new Map());
+  const [domainError, setDomainError] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<AppError | null>(null);
@@ -82,6 +85,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
     setDomain(data.domain ?? "");
     setRows(data.ouMap.map((m) => ({ key: nextKey.current++, ou: m.ou, team: m.team })));
     setErrors(new Map());
+    setDomainError(false);
     setShowSummary(false);
     setReady(true);
   }, [data, dirty]);
@@ -139,12 +143,19 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!editable || saving) return;
+    const trimmed = domain.trim();
+    const normalized = trimmed === "" ? "" : normalizeAdDomain(trimmed);
+    const badDomain = normalized === null;
     const found = validateRows(rows);
+    setDomainError(badDomain);
     setErrors(found);
-    if (found.size > 0) {
+    if (badDomain || found.size > 0) {
       setShowSummary(true);
-      const [index, err] = [...found.entries()][0];
-      pendingFocus.current = { key: rows[index].key, field: err.ou ? "ou" : "team" };
+      if (badDomain) pendingFocus.current = "domain";
+      else {
+        const [index, err] = [...found.entries()][0];
+        pendingFocus.current = { key: rows[index].key, field: err.ou ? "ou" : "team" };
+      }
       return;
     }
     setShowSummary(false);
@@ -152,7 +163,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
     setSaveError(null);
     const ouMap: OuMapping[] = rows.map((r) => ({ ou: r.ou.trim(), team: r.team }));
     try {
-      await orgApi.setAdSettings(domain.trim(), ouMap);
+      await orgApi.setAdSettings(normalized ?? "", ouMap);
       setDirty(false);
       synced.current = null;
       page.notify(T.saved);
@@ -246,10 +257,12 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                     value={domain}
                     autoComplete="off"
                     spellCheck={false}
-                    aria-describedby={`${id}-domain-hint`}
+                    aria-invalid={domainError ? true : undefined}
+                    aria-describedby={`${domainError ? `${id}-domain-err ` : ""}${id}-domain-hint`}
                     onChange={(e) => {
                       touch();
                       setDomain(e.target.value);
+                      if (domainError) setDomainError(false);
                     }}
                   />
                   {showMachine && machine && (
@@ -259,6 +272,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                       onClick={() => {
                         touch();
                         setDomain(machine);
+                        setDomainError(false);
                         pendingFocus.current = "domain";
                       }}
                     >
@@ -266,6 +280,11 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                     </button>
                   )}
                 </div>
+                {domainError && (
+                  <div id={`${id}-domain-err`}>
+                    <FieldError text={T.errDomain} />
+                  </div>
+                )}
                 <p id={`${id}-domain-hint`} className="hint">
                   {T.domainHint}
                 </p>
@@ -390,7 +409,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
               </div>
 
               <div aria-live="polite" className="ad-set-live">
-                {showSummary && errors.size > 0 && <FieldError text={T.errSummary} />}
+                {showSummary && (errors.size > 0 || domainError) && <FieldError text={T.errSummary} />}
                 {saveError && (
                   <ErrorAlert title={T.saveFail}>
                     <p>{saveError.message}</p>

@@ -228,7 +228,7 @@ export function OfficeStep({
   const autoOffice =
     ad !== null && mineCount === 1 && office !== null && isMine(office) && (single || !picking) ? office : null;
   const one = single || autoOffice !== null;
-  const heading = one ? T.headingOne((autoOffice ?? offices[0]).name) : T.headingMany;
+  const heading = autoOffice ? T.headingMine : one ? T.headingOne(offices[0].name) : T.headingMany;
   const draftNow = (): OfficeDraft => ({ officeKey, teamId, note, confirmedKey, picking });
   const deptCaption = shownSuggestion ? suggestionText(shownSuggestion, departments) : null;
   const location = adApplies && ad ? ouPath(ad.dn) : null;
@@ -441,7 +441,7 @@ export function OfficeStep({
             <dt>{T.ad.team}</dt>
             <dd>{departments.find((d) => d.id === teamId)?.name ?? T.ad.teamNone}</dd>
             <dt>{T.ad.account}</dt>
-            <dd className="mono">{`${ad.domain}\\${ad.user}`}</dd>
+            <dd className="mono">{`${ad.user}@${ad.domain}`}</dd>
             {location && (
               <>
                 <dt>{T.ad.location}</dt>
@@ -460,6 +460,9 @@ export function OfficeStep({
               {T.ad.partial}
             </p>
           )}
+          <p className="onb-box-foot" data-testid="onb-ad-stored">
+            {T.ad.stored}
+          </p>
         </div>
       )}
       {adState.kind === "skip" && ad && office && (
@@ -469,7 +472,7 @@ export function OfficeStep({
       )}
 
       <p id={ids.shared} className="hint">
-        {adApplies ? T.ad.shared : acceptsNote ? T.sharedWithNote : T.shared}
+        {acceptsNote ? T.sharedWithNote : T.shared}
       </p>
 
       <div aria-live="polite">
@@ -514,7 +517,7 @@ function suggestionText(s: AdDeptSuggestion, departments: JoinDepartment[]): str
   if (s.inMira && s.teamId) {
     const label = s.adDepartment?.trim() || departments.find((d) => d.id === s.teamId)?.name;
     if (!label) return null;
-    return s.source === "ou_map" || s.source === "ou_name" ? T.deptOu(label) : T.deptAttribute(label);
+    return T.deptFromAccount(label);
   }
   if (!s.inMira && s.adDepartment?.trim()) return T.deptMissing(s.adDepartment.trim());
   return null;

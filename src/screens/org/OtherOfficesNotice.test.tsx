@@ -46,9 +46,9 @@ describe("Pemberitahuan laptop di kantor Mira lain", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("menyebut jumlah laptop dan nama kantor, tanpa tombol", async () => {
+  it("superadmin: menyebut jumlah laptop dan nama kantor, tanpa tombol", async () => {
     mockOffices(otherOffices({ laptops: 3, offices: 2, names: ["Kantor Cabang", "Gudang"] }));
-    render(<OtherOfficesNotice superadmin={false} />);
+    render(<OtherOfficesNotice superadmin />);
     const box = await screen.findByTestId("org-other-offices");
     expect(box).toHaveTextContent("Ada 3 laptop di jaringan ini yang tergabung di kantor Mira lain.");
     expect(box).toHaveTextContent("Kantor yang terlihat: Kantor Cabang, Gudang.");
@@ -58,17 +58,26 @@ describe("Pemberitahuan laptop di kantor Mira lain", () => {
     expect(calls("org_other_offices")).toHaveLength(1);
   });
 
-  it("domain AD sama: menekankan kemungkinan kantor ganda", async () => {
+  it("superadmin, domain AD sama: menyebut kemungkinan kantor ganda dengan kalimat netral", async () => {
     mockOffices(otherOffices({ laptops: 2, offices: 1, sameDomainLaptops: 2, names: [] }));
-    render(<OtherOfficesNotice superadmin={false} />);
+    render(<OtherOfficesNotice superadmin />);
     const box = await screen.findByTestId("org-other-offices");
     expect(box).toHaveAttribute("data-same-domain", "true");
     expect(box).toHaveClass("notice");
     expect(box).toHaveTextContent(
-      "2 di antaranya memakai domain AD yang sama dengan kantor ini, jadi kemungkinan ada kantor ganda.",
+      "2 di antaranya memakai domain AD yang sama dengan kantor ini, jadi kemungkinan ada kantor ganda. Superadmin kedua kantor perlu memutuskan kantor mana yang dipakai.",
     );
-    expect(box).toHaveTextContent(/Superadmin sebaiknya merapikannya/);
     expect(box).not.toHaveTextContent("Kantor yang terlihat");
+  });
+
+  it("bukan superadmin (termasuk Tamu): hanya jumlah laptop, tanpa nama kantor dan domain", async () => {
+    mockOffices(otherOffices({ laptops: 2, offices: 1, sameDomainLaptops: 2, names: ["Kantor Cabang"] }));
+    render(<OtherOfficesNotice superadmin={false} />);
+    const box = await screen.findByTestId("org-other-offices");
+    expect(box).toHaveTextContent("Ada 2 laptop di jaringan ini yang tergabung di kantor Mira lain.");
+    expect(box).toHaveClass("org-other");
+    expect(box).not.toHaveAttribute("data-same-domain");
+    expect(box).not.toHaveTextContent(/Kantor Cabang|domain AD|Superadmin/);
   });
 
   it("galat diabaikan diam-diam", async () => {
@@ -86,8 +95,9 @@ describe("Pemberitahuan laptop di kantor Mira lain", () => {
     mockOffices(otherOffices({ laptops: 4, offices: 1, sameDomainLaptops: 4, olderSameDomain: OLDER }));
     render(<OtherOfficesNotice superadmin />);
     const box = await screen.findByTestId("org-older-office");
-    expect(box).toHaveClass("alert");
-    expect(box).toHaveTextContent("Ada kantor lain untuk domain AD yang sama yang dibuat lebih dulu");
+    expect(box).toHaveClass("notice");
+    expect(box).not.toHaveClass("alert");
+    expect(box).toHaveTextContent("Domain AD ini sudah dipakai kantor lain yang dibuat lebih dulu");
     expect(box).toHaveTextContent("Kantor Pusat Uji, dibuat 1 Oktober 2026.");
     expect(within(box).getByText("7KQ2-M9XD")).toHaveClass("mono");
     expect(box).toHaveTextContent(/dianggap kantor utama domain ini/);
@@ -106,11 +116,12 @@ describe("Pemberitahuan laptop di kantor Mira lain", () => {
 
   it("bahasa Inggris", async () => {
     mockOffices(otherOffices({ laptops: 1, offices: 1, sameDomainLaptops: 1, names: ["Branch"] }));
-    renderInLang(() => <OtherOfficesNotice superadmin={false} />, "en");
+    renderInLang(() => <OtherOfficesNotice superadmin />, "en");
     const box = await screen.findByTestId("org-other-offices");
     expect(box).toHaveTextContent("1 laptop on this network belongs to another Mira office.");
     expect(box).toHaveTextContent("Offices seen: Branch.");
     expect(box).toHaveTextContent("1 of them uses the same AD domain as this office");
+    expect(box).toHaveTextContent("The superadmins of both offices need to decide which office to use.");
     expect(box).toHaveTextContent("This is only a hint. Mira doesn't merge offices automatically.");
   });
 
@@ -118,7 +129,7 @@ describe("Pemberitahuan laptop di kantor Mira lain", () => {
     mockOffices(otherOffices({ laptops: 1, offices: 1, sameDomainLaptops: 1, olderSameDomain: OLDER }));
     renderInLang(() => <OtherOfficesNotice superadmin />, "en");
     const box = await screen.findByTestId("org-older-office");
-    expect(box).toHaveTextContent("Another office for the same AD domain was created earlier");
+    expect(box).toHaveTextContent("This AD domain is already used by another office that was created earlier");
     expect(box).toHaveTextContent("Kantor Pusat Uji, created 1 October 2026.");
     expect(box).toHaveTextContent("That office's fingerprint: 7KQ2-M9XD");
     expect(box).toHaveTextContent(/main office for this domain/);

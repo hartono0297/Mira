@@ -11,12 +11,14 @@ const id = {
     name: "Nama di AD",
     department: "Departemen di AD",
     departmentMissing: (department: string) => `${department} (belum ada di Mira)`,
-    ous: "Lokasi OU (paling dalam dulu)",
+    // Dari OU paling luar ke paling dalam, sama dengan layar peminta.
+    ous: "Lokasi di Active Directory",
     notSent: "Tidak dikirim",
     checking: "Memeriksa ke AD...",
     status: {
-      match: "Cocok dengan AD",
-      mismatch: "Tidak cocok dengan AD",
+      // Sengaja tidak "Cocok": cek ini bukan bukti bahwa peminta pemilik akun itu.
+      match: "Akun ada dan aktif di AD, nama dan departemen sama",
+      mismatch: "Berbeda dengan AD",
       disabled: "Akun AD dinonaktifkan",
       notFound: "Akun tidak ditemukan di AD",
       unreachable: "AD tidak bisa dihubungi dari laptop ini",
@@ -26,7 +28,7 @@ const id = {
     mismatchName: (directory: string, requested: string) => `Nama di AD: ${directory}, di permintaan: ${requested}`,
     mismatchDepartment: (directory: string, requested: string) =>
       `Departemen di AD: ${directory}, di permintaan: ${requested}`,
-    checkDepartmentMissing: (department: string) => `Departemen di AD, ${department}, belum ada di Mira.`,
+    nameNote: "Peminta boleh mengubah nama tampilan, jadi nama yang berbeda belum tentu masalah.",
     recheck: "Periksa lagi",
     recheckAria: (name: string) => `Periksa lagi akun AD ${name}`,
     limit:
@@ -51,6 +53,7 @@ const id = {
     outdatedUnknown: (name: string) => `${name}, versi belum dilaporkan`,
     domainLabel: "Domain AD",
     domainHint: "Contoh: kantor.co.id. Kosongkan kalau kantor tidak memakai AD.",
+    errDomain: "Tulis domain seperti kantor.co.id, tanpa spasi atau garis miring.",
     useMachine: (domain: string) => `Pakai domain laptop ini: ${domain}`,
     mapTitle: "Pemetaan OU ke departemen",
     order:
@@ -85,12 +88,12 @@ const id = {
     names: (names: string) => `Kantor yang terlihat: ${names}.`,
     more: (n: number) => ` dan ${n} lainnya`,
     sameDomain: (n: number) =>
-      `${n} di antaranya memakai domain AD yang sama dengan kantor ini, jadi kemungkinan ada kantor ganda. Superadmin sebaiknya merapikannya dengan meminta orang di kantor itu bergabung ke kantor ini.`,
+      `${n} di antaranya memakai domain AD yang sama dengan kantor ini, jadi kemungkinan ada kantor ganda. Superadmin kedua kantor perlu memutuskan kantor mana yang dipakai.`,
     hint: "Ini hanya petunjuk. Mira tidak menyatukan kantor secara otomatis.",
     // Hanya untuk superadmin: kantor lain dengan domain AD sama yang dibuat lebih dulu
     // (bagian 6.1 butir 3). Kantor itu dianggap kantor utama domain ini.
     older: {
-      title: "Ada kantor lain untuk domain AD yang sama yang dibuat lebih dulu",
+      title: "Domain AD ini sudah dipakai kantor lain yang dibuat lebih dulu",
       office: (name: string, date: string) => `${name}, dibuat ${date}.`,
       fingerprint: "Sidik kantor itu:",
       body: "Kantor itu dianggap kantor utama domain ini, dan orang baru akan diarahkan ke sana. Data dua kantor tidak bisa digabung otomatis, jadi Anda yang perlu memutuskan, misalnya meminta anggota kantor ini bergabung ke kantor utama.",

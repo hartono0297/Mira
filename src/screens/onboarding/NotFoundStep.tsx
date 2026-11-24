@@ -80,7 +80,8 @@ export function NotFoundStep({ end, seen, laptopDomain, onOffices, onInvite, onS
   return (
     <div className="onb-form">
       <StepHeading>{legacyFound ? T.headingLegacy : searched ? T.headingSearched : T.headingOther}</StepHeading>
-      <p className="onb-lead">{legacyFound ? T.leadLegacy : searched ? T.leadSearched : T.leadOther}</p>
+      {/* Kantor versi lama: judul dan catatan di bawahnya sudah menjelaskan. */}
+      {!legacyFound && <p className="onb-lead">{searched ? T.leadSearched : T.leadOther}</p>}
 
       <LegacyOffices legacy={legacy} />
 

@@ -256,23 +256,6 @@
   font-weight: 700;
 }
 
-/* OU paling dalam dulu, dipisah koma. Koma dari CSS supaya daftar tetap daftar
-   untuk pembaca layar. */
-.req-ad-ous {
-  display: inline;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.req-ad-ous li {
-  display: inline;
-}
-
-.req-ad-ous li + li::before {
-  content: ", ";
-}
-
 .req-ad-check {
   display: flex;
   flex-direction: column;
@@ -289,7 +272,8 @@
   gap: 8px 12px;
 }
 
-/* Status selalu berupa kalimat; ikon dan warna hanya pendukung. Warna teks
+/* Status selalu berupa kalimat; ikon dan warna hanya pendukung. Hijau hanya
+   untuk match, merah hanya untuk akun dinonaktifkan atau tidak ada. Warna teks
    dicek di atas --bg dan --card: --online 5,14:1 / 8,33:1, --danger 7,49:1 /
    8,65:1 (terang / gelap). */
 .req-ad-status {
@@ -342,6 +326,13 @@
 
 .req-ad-note {
   font-size: 13px;
+}
+
+/* Batas cek AD: teks biasa tepat di bawah status, bukan .hint kecil, supaya
+   admin membacanya bersama hasilnya. */
+.req-ad-limit {
+  font-size: 13px;
+  color: var(--text);
 }
 
 .req-ad .hint {
