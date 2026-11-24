@@ -286,6 +286,8 @@ function msg(id: string, extra: Partial<MessageView> = {}): MessageView {
     mine: false,
     status: null,
     canDelete: false,
+    reactions: [],
+    sticker: null,
     ...extra,
   };
 }
@@ -295,6 +297,7 @@ const MESSAGES: ConversationView = {
   members: [alex, sam, jordan],
   hasMore: true,
   events: [],
+  canReact: true,
   messages: [
     msg("m1", { at: at(1, 15, 5), author: jordan, text: "Site visit moved to Thursday." }),
     msg("m2", {

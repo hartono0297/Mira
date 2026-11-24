@@ -18,20 +18,29 @@
 //! - `read`, `view`: data for the chat screen (`src/api/chat.ts`).
 //! - `commands`, `runtime`: Tauri commands, hooks, downloader, registration
 //!   with the `FeatureHub`.
+//! - `reactions`, `stickers`, `sticker_file`, `compat` (v0.5.1): reactions,
+//!   office and own stickers, sticker image checks, and the version gate
+//!   for the new record kinds (docs/plans/chat-sticker.md).
 
 pub mod audience;
 pub mod commands;
+pub mod compat;
 pub mod fetch;
 pub mod files;
 pub mod groups;
 pub mod hooks;
 pub mod judge;
 pub mod model;
+pub mod reaction_schema;
+pub mod reactions;
 pub mod read;
 pub mod runtime;
 pub mod schema;
 pub mod seal;
 pub mod service;
+pub mod sticker_file;
+pub mod sticker_schema;
+pub mod stickers;
 pub mod store;
 pub mod sync;
 pub mod view;

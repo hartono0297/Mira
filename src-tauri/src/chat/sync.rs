@@ -172,7 +172,14 @@ fn may_offer(
     seen: &mut HashMap<String, bool>,
     ops_seen: &mut HashMap<String, HashSet<String>>,
 ) -> AppResult<bool> {
+    // v0.5.1 kinds only go to laptops that understand them (`compat`).
+    if !super::compat::peer_may_receive_kind(ctx, peer, &row.kind) {
+        return Ok(false);
+    }
     match row.kind.as_str() {
+        // Office stickers are for every active member (guests too: they
+        // see emotes in the conversations they are in).
+        "sticker_set" => Ok(true),
         "envelope" => Ok(row
             .recipient
             .as_deref()

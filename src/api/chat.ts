@@ -152,7 +152,75 @@ export type MessageView = {
   mine: boolean;
   status: MessageStatus | null; // hanya untuk pesan saya
   canDelete: boolean;
+  // v0.5.1: chip reaksi, urut reaksi pertama. Kosong kalau pesan dihapus.
+  reactions: ReactionView[];
+  // v0.5.1: pesan sticker (teks ":nama:" dan satu gambar "<nama>.sticker.<png|webp|gif>").
+  // Laptop lama menampilkan teks ":nama:" dan gambarnya sebagai lampiran biasa.
+  sticker: MessageSticker | null;
 };
+
+// Satu chip reaksi di bawah pesan. emoji: emoji Unicode, atau ":nama:" untuk emote kantor.
+export type ReactionView = { emoji: string; count: number; mine: boolean; people: Person[] };
+
+export type MessageSticker = {
+  hash: string;
+  name: string; // nama pendek tanpa titik dua
+  mime: string;
+  size: number;
+  ready: boolean; // gambar sudah ada di laptop ini dan lolos pemeriksaan
+  saved: boolean; // sudah ada di koleksi sticker saya
+};
+
+export type OfficeStickerState = "active" | "hidden" | "deleted";
+
+export type OfficeSticker = {
+  id: string; // 32 hex
+  pack: string;
+  name: string; // [a-z0-9_], 2 sampai 32 karakter, tanpa titik dua
+  keywords: string[];
+  hash: string;
+  mime: string;
+  size: number;
+  state: "active" | "hidden"; // yang dihapus tidak dikirim
+  ready: boolean; // gambar sudah ada di laptop ini
+  nameTaken: boolean; // sticker aktif lain yang lebih lama memakai nama ini (hanya superadmin)
+};
+
+export type MySticker = {
+  id: string;
+  name: string;
+  keywords: string[];
+  hash: string;
+  mime: string;
+  size: number;
+  addedAt: string;
+};
+
+export type StickerCatalog = {
+  office: OfficeSticker[]; // urut paket lalu nama; superadmin juga menerima yang disembunyikan
+  mine: MySticker[]; // terbaru dulu
+  canManage: boolean; // superadmin
+  recentEmoji: string[]; // emoji yang baru dipakai di laptop ini, terbaru dulu, paling banyak 24
+};
+
+// Gambar yang dipilih lewat dialog sticker milik Mira, sudah diperiksa inti Rust.
+export type PickedSticker = {
+  path: string;
+  name: string; // saran nama dari nama file, boleh kosong
+  size: number;
+  mime: string;
+  width: number;
+  height: number;
+  frames: number;
+};
+
+export type StickerSource = { kind: "office"; id: string } | { kind: "mine"; id: string };
+
+// Batas yang sama dengan inti Rust (chat/sticker_file.rs, chat/stickers.rs).
+export const STICKER_MAX_BYTES = 512 * 1024;
+export const STICKER_NAME_PATTERN = /^[a-z0-9_]{2,32}$/;
+export const STICKER_MAX_KEYWORDS = 8;
+export const STICKER_PACK_MAX_CHARS = 30;
 
 export type ConversationView = {
   conversation: ConversationSummary;
@@ -162,6 +230,8 @@ export type ConversationView = {
   // Kejadian grup dalam rentang waktu pesan yang dimuat (semua kejadian kalau !hasMore). Kosong
   // untuk channel dan chat pribadi.
   events: ConversationEvent[];
+  // v0.5.1: saya boleh memberi atau menghapus reaksi di sini (juga di channel hanya-baca).
+  canReact: boolean;
 };
 
 export type ReceiptView = { person: Person; state: DeliveryState };
@@ -225,6 +295,32 @@ export const chatApi = {
   groupRename: (conv: string, name: string) => call<null>("chat_group_rename", { conv, name }),
   // Chat proyek (kind "project"): anggota proyek sekarang. Anggota diubah lewat Board.
   projectChat: (conv: string) => call<ProjectChatView>("chat_project", { conv }),
+  // v0.5.1: reaksi. on true menambah, false menghapus reaksi saya dengan emoji itu.
+  react: (conv: string, messageId: string, emoji: string, on: boolean) =>
+    call<null>("chat_react", { conv, messageId, emoji, on }),
+  // Mencatat emoji yang baru dipakai (daftar "Sering dipakai" per laptop).
+  emojiUsed: (emoji: string) => call<null>("chat_emoji_used", { emoji }),
+  stickers: () => call<StickerCatalog>("chat_stickers"),
+  // Gambar sticker yang sudah diperiksa, sebagai URL data:. Gagal kalau belum ada atau tidak lolos.
+  stickerImage: (hash: string) => call<string>("chat_sticker_image", { hash }),
+  // Dialog pilih gambar milik Mira. null kalau dibatalkan.
+  pickSticker: () => call<PickedSticker | null>("chat_sticker_pick"),
+  addMySticker: (path: string, name: string, keywords: string[]) =>
+    call<MySticker>("chat_my_sticker_add", { path, name, keywords }),
+  saveSticker: (messageId: string) => call<MySticker>("chat_my_sticker_save", { messageId }),
+  removeMySticker: (id: string) => call<null>("chat_my_sticker_remove", { id }),
+  // Superadmin.
+  addOfficeSticker: (path: string, pack: string, name: string, keywords: string[]) =>
+    call<OfficeSticker>("chat_office_sticker_add", { path, pack, name, keywords }),
+  updateOfficeSticker: (
+    id: string,
+    pack: string,
+    name: string,
+    keywords: string[],
+    state: OfficeStickerState,
+  ) => call<null>("chat_office_sticker_update", { id, pack, name, keywords, state }),
+  sendSticker: (conv: string, source: StickerSource, replyTo: string | null) =>
+    call<MessageView>("chat_send_sticker", { conv, source, replyTo }),
 };
 
 // Berlangganan perubahan chat: event `mira://feature` dengan topik "chat".

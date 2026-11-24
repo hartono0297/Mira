@@ -52,17 +52,17 @@ pub enum Verdict {
     Reject(Rejection),
 }
 
-fn reject(code: &'static str, detail: &str) -> Verdict {
+pub(crate) fn reject(code: &'static str, detail: &str) -> Verdict {
     Verdict::Reject(Rejection::new(code, detail))
 }
 
-fn forbidden(detail: &str) -> Verdict {
+pub(crate) fn forbidden(detail: &str) -> Verdict {
     reject("forbidden", detail)
 }
 
 /// Where the author stood at the record's time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Standing {
+pub(crate) enum Standing {
     Active,
     RemovedBefore,
 }
@@ -81,7 +81,7 @@ fn standing(ctx: &Ctx, author: &str, at: OffsetDateTime) -> Result<Standing, Ver
     }
 }
 
-fn is_guest(ctx: &Ctx, pk: &str) -> bool {
+pub(crate) fn is_guest(ctx: &Ctx, pk: &str) -> bool {
     ctx.dir.member(pk).is_some_and(|m| m.guest)
 }
 
@@ -135,6 +135,8 @@ pub fn judge(ctx: &Ctx, rec: &VerifiedRecord, now: OffsetDateTime) -> AppResult<
         Body::GroupRemove { conv, .. } | Body::GroupRename { conv, .. } => {
             group_op(ctx, rec, st, conv, &[])
         }
+        Body::Reaction { .. } => super::reactions::judge(ctx, rec, st),
+        Body::StickerSet { .. } => super::stickers::judge(ctx, rec, st),
     }
 }
 
@@ -172,7 +174,7 @@ fn envelope(
 }
 
 /// Message and receipt rights: a member of the conversation.
-fn may_post(
+pub(crate) fn may_post(
     ctx: &Ctx,
     info: &ConvInfo,
     author: &str,

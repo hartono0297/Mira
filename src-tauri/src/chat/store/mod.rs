@@ -84,7 +84,7 @@ fn target_of(body: &Body) -> Option<&str> {
 }
 
 /// Inserts the record row; `keep_body` false stores it purged.
-fn insert_record(
+pub(crate) fn insert_record(
     conn: &Connection,
     rec: &VerifiedRecord,
     keep_body: bool,
@@ -112,7 +112,7 @@ fn insert_record(
 }
 
 /// Removes a stored body, keeping the row as a marker.
-fn purge_record(conn: &Connection, id: &str) -> AppResult<()> {
+pub(crate) fn purge_record(conn: &Connection, id: &str) -> AppResult<()> {
     conn.execute("UPDATE chat_records SET body = NULL WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -204,6 +204,8 @@ pub fn apply(
             }
             fx.visible = true;
         }
+        Body::Reaction { .. } => super::reactions::apply(ctx, rec, from, now, fx)?,
+        Body::StickerSet { .. } => super::stickers::apply(ctx, rec, from, now, fx)?,
     }
     Ok(())
 }

@@ -283,6 +283,7 @@ impl ChatSync {
                 messages,
                 has_more,
                 events,
+                can_react: super::reactions::can_react(ctx, &info)?,
             })
         })
     }
