@@ -204,6 +204,7 @@ const id = {
       settingsWaitForLaptops: "Pengaturan AD baru bisa disimpan setelah semua laptop kantor memakai Mira versi terbaru.",
       requesterOutdated: "Mira di laptop peminta terlalu lama untuk kantor yang memakai pengaturan AD. Minta peminta memperbarui Mira dulu, lalu mengirim permintaan lagi.",
       oldVersionAd: "Kantor ini masih punya laptop Mira versi lama. Kirim ulang permintaan tanpa data AD.",
+      requestNoAd: "Permintaan bergabung ini tidak membawa data AD.",
     },
     misc: {
       initIncomplete: "Inisialisasi Mira tidak selesai.",
@@ -449,6 +450,7 @@ const id = {
     pinWrongLeft: (left: string) => `PIN salah. Sisa ${left} kali lagi sebelum dikunci sementara.`,
     adOuDeptMissing: (ou: string) => `Departemen untuk OU "${ou}" tidak ditemukan atau sudah dihapus.`,
     adOuDuplicate: (ou: string) => `OU "${ou}" tercantum lebih dari sekali. Satu OU hanya bisa dipetakan ke satu departemen.`,
+    adDomainOfficeExists: (office: string, domain: string) => `Kantor "${office}" sudah memakai domain AD ${domain} di jaringan ini. Satu domain cukup satu kantor Mira, jadi kantor baru tidak dibuat. Bergabunglah ke kantor itu dengan mengirim permintaan bergabung.`,
   },
 };
 

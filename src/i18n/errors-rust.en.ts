@@ -201,6 +201,7 @@ const en: Dict<typeof id> = {
       settingsWaitForLaptops: "AD settings can be saved once every office laptop runs the latest Mira version.",
       requesterOutdated: "The requester's Mira is too old for an office that uses AD settings. Ask them to update Mira first, then send the request again.",
       oldVersionAd: "This office still has laptops on an older Mira version. Send the request again without AD data.",
+      requestNoAd: "This join request has no AD data.",
     },
     misc: {
       initIncomplete: "Mira didn't finish starting up.",
@@ -446,6 +447,7 @@ const en: Dict<typeof id> = {
     pinWrongLeft: (left: string) => `Wrong PIN. ${left} more ${plural(Number(left), "try", "tries")} before it's locked for a while.`,
     adOuDeptMissing: (ou: string) => `The department for OU "${ou}" wasn't found or has been deleted.`,
     adOuDuplicate: (ou: string) => `OU "${ou}" is listed more than once. Each OU can map to only one department.`,
+    adDomainOfficeExists: (office: string, domain: string) => `The office "${office}" already uses the AD domain ${domain} on this network. One domain needs only one Mira office, so no new office was created. Join that office by sending a join request instead.`,
   },
 };
 

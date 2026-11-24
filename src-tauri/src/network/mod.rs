@@ -171,7 +171,8 @@ pub enum JoinStatusWire {
     Unknown,
 }
 
-/// A laptop announcing an organization over mDNS (TXT `org`, `on`, `j`).
+/// A laptop announcing an organization over mDNS (TXT `org`, `on`, `j`,
+/// `ad`).
 /// Hints only: nothing here is authenticated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfficeHint {
@@ -182,6 +183,9 @@ pub struct OfficeHint {
     pub org_name: Option<String>,
     /// TXT `j` = `"1"`: an active non-guest member that takes join requests.
     pub accepts_join: bool,
+    /// TXT `ad`: the organization's AD domain, normalized; `None` when not
+    /// announced or not a valid domain (onboarding-ad).
+    pub ad_domain: Option<String>,
 }
 
 /// What the backend says about a key proven in a handshake.
@@ -306,6 +310,12 @@ pub trait SyncBackend: Send + Sync + 'static {
     /// `join_info_get` and `join_request` (v0.3). Default: no.
     fn accepts_join_requests(&self) -> bool {
         false
+    }
+
+    /// TXT `ad`: the organization's AD domain, when it has one
+    /// (onboarding-ad). Default: none.
+    fn ad_domain(&self) -> Option<String> {
+        None
     }
 
     /// Answer to `join_info_get`; `None` when this laptop does not take join

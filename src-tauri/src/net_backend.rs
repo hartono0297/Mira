@@ -120,6 +120,27 @@ pub struct MiraBackend {
     /// recent enough Mira (`permissions::join::join_ad_allowed`,
     /// `join_extras_allowed`), 0 otherwise.
     join_extras: Option<u32>,
+    /// Announce and answer like Mira 0.1/0.2 ([`LEGACY_ADVERT_ENV`]).
+    legacy_advert: bool,
+}
+
+/// Debug builds only: `MIRA_TEST_LEGACY_ADVERT=1` makes this laptop look
+/// like Mira 0.1/0.2 to others, for the e2e "old office" scenario. Its mDNS
+/// advertisement carries only `org` (no `on`, `j` or `ad`), and `join_info`
+/// is refused with `not_member` the way a member that takes no requests
+/// answers. A real 0.2 laptop cannot parse `join_info_get` and closes the
+/// stream instead; either way the requester gets no verified office.
+/// Release builds never read the variable.
+pub const LEGACY_ADVERT_ENV: &str = "MIRA_TEST_LEGACY_ADVERT";
+
+#[cfg(debug_assertions)]
+fn legacy_advert_from_env() -> bool {
+    std::env::var(LEGACY_ADVERT_ENV).is_ok_and(|v| v.trim() == "1")
+}
+
+#[cfg(not(debug_assertions))]
+fn legacy_advert_from_env() -> bool {
+    false
 }
 
 impl MiraBackend {
@@ -128,7 +149,15 @@ impl MiraBackend {
             state,
             net: OnceLock::new(),
             join_extras: None,
+            legacy_advert: legacy_advert_from_env(),
         }
+    }
+
+    /// Behaves as if `MIRA_TEST_LEGACY_ADVERT=1` were set.
+    #[cfg(test)]
+    pub(crate) fn with_legacy_advert(mut self) -> Self {
+        self.legacy_advert = true;
+        self
     }
 
     /// Answers `join_info` with this `extras` whatever the members run
@@ -294,6 +323,9 @@ impl SyncBackend for MiraBackend {
     }
 
     fn org_name(&self) -> Option<String> {
+        if self.legacy_advert {
+            return None;
+        }
         self.state
             .with_core(|c| {
                 if permissions::membership(&c.db, &c.identity)? != Membership::Active {
@@ -306,6 +338,9 @@ impl SyncBackend for MiraBackend {
     }
 
     fn accepts_join_requests(&self) -> bool {
+        if self.legacy_advert {
+            return false;
+        }
         self.state
             .with_core(|c| permissions::join_info(&c.db))
             .ok()
@@ -313,7 +348,25 @@ impl SyncBackend for MiraBackend {
             .is_some()
     }
 
+    fn ad_domain(&self) -> Option<String> {
+        if self.legacy_advert {
+            return None;
+        }
+        self.state
+            .with_core(|c| {
+                if permissions::membership(&c.db, &c.identity)? != Membership::Active {
+                    return Ok(None);
+                }
+                Ok(permissions::load_state(&c.db)?.and_then(|s| s.ad.domain))
+            })
+            .ok()
+            .flatten()
+    }
+
     fn join_info(&self) -> Option<JoinInfoWire> {
+        if self.legacy_advert {
+            return None;
+        }
         let r = self.state.with_core(|c| permissions::join_info(&c.db));
         log_err("join_info", r).flatten().map(|info| {
             let extras = if info.accepts_ad {
@@ -573,3 +626,62 @@ pub use network::NetState;
 #[cfg(test)]
 #[path = "net_backend_tests.rs"]
 mod integration_tests;
+
+#[cfg(test)]
+mod advert_tests {
+    use super::*;
+    use crate::identity::MemoryKeyStore;
+
+    /// A founder whose office has the AD domain `macf.co.id`.
+    fn office_with_ad() -> (tempfile::TempDir, MiraState) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let state = MiraState::new(
+            Ok(dir.path().to_path_buf()),
+            Box::new(MemoryKeyStore::new()),
+        );
+        state
+            .with_core(|c| {
+                crate::identity::save_display_name(&mut c.db, &mut c.identity, "Andi")?;
+                crate::org::create_organization(&mut c.db, &c.identity, "MCF")?;
+                permissions::create_team(&mut c.db, &c.identity, "Keuangan", clock::now())?;
+                permissions::ensure_device_op(
+                    &mut c.db,
+                    &c.identity,
+                    &crate::device::current(),
+                    clock::now(),
+                )?;
+                permissions::set_ad_settings(
+                    &mut c.db,
+                    &c.identity,
+                    "macf.co.id",
+                    Vec::new(),
+                    clock::now(),
+                )
+            })
+            .expect("office with AD");
+        (dir, state)
+    }
+
+    #[test]
+    fn member_announces_the_ad_domain() {
+        let (_dir, state) = office_with_ad();
+        let b = MiraBackend::new(state);
+        assert!(b.org_id().is_some());
+        assert_eq!(b.org_name().as_deref(), Some("MCF"));
+        assert!(b.accepts_join_requests());
+        assert_eq!(b.ad_domain().as_deref(), Some("macf.co.id"));
+        assert!(b.join_info().is_some());
+    }
+
+    #[test]
+    fn legacy_advert_looks_like_mira_0_2() {
+        let (_dir, state) = office_with_ad();
+        let b = MiraBackend::new(state).with_legacy_advert();
+        // TXT `org` only; no `on`, `j` or `ad`, and no `join_info` answer.
+        assert!(b.org_id().is_some());
+        assert_eq!(b.org_name(), None);
+        assert!(!b.accepts_join_requests());
+        assert_eq!(b.ad_domain(), None);
+        assert_eq!(b.join_info(), None);
+    }
+}

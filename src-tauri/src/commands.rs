@@ -7,8 +7,9 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::identity::{self, IdentityInfo};
+use crate::join_commands::JoinClient;
 use crate::org::{self, OrgInfo};
 use crate::permissions::{self, Membership};
 use crate::settings;
@@ -49,6 +50,49 @@ pub fn organization(state: &MiraState, name: &str) -> AppResult<OrgInfo> {
     state.with_core(|core| org::create_organization(&mut core.db, &core.identity, name))
 }
 
+/// `create_organization` with the AD domain (onboarding-ad): `ad_domain`
+/// empty or `None` means none. A bad domain is refused before anything is
+/// written. One domain, one office: refused when `client` knows a verified
+/// office whose AD domain is `machine_domain` (this computer's) or the one
+/// typed. After the organization is made, the founder's device profile is
+/// published first (the version gate of `ad_settings_set` reads it), then
+/// the domain is written as an `ad_settings_set` op. A failure there only
+/// logs: the office exists and the superadmin can set the domain later in
+/// Organisasi. (docs/plans/onboarding-ad.md section 6 item 2.)
+pub fn organization_with_ad(
+    state: &MiraState,
+    client: &JoinClient,
+    name: &str,
+    ad_domain: Option<&str>,
+    machine_domain: Option<&str>,
+) -> AppResult<OrgInfo> {
+    let domain = match ad_domain.map(str::trim).filter(|d| !d.is_empty()) {
+        None => None,
+        Some(d) => Some(crate::ad::dn::normalize_domain(d).ok_or_else(|| {
+            AppError::InvalidInput("Domain tidak valid. Contoh: kantor.co.id".into())
+        })?),
+    };
+    let mine: Vec<&str> = machine_domain.into_iter().chain(domain.as_deref()).collect();
+    if let Some((office, d)) = client.office_with_ad_domain(&mine) {
+        return Err(AppError::InvalidInput(format!(
+            "Kantor \"{office}\" sudah memakai domain AD {d} di jaringan ini. Satu domain cukup satu kantor Mira, jadi kantor baru tidak dibuat. Bergabunglah ke kantor itu dengan mengirim permintaan bergabung."
+        )));
+    }
+    let info = organization(state, name)?;
+    state.with_core(|c| {
+        // v0.3: the founder's name, OS and version for the user list now.
+        crate::join_commands::publish_device(c);
+        if let Some(d) = &domain
+            && let Err(e) =
+                permissions::set_ad_settings(&mut c.db, &c.identity, d, vec![], crate::clock::now())
+        {
+            eprintln!("Mira: domain AD kantor belum tersimpan [{}]: {e}", e.code());
+        }
+        Ok(())
+    })?;
+    Ok(info)
+}
+
 pub fn setting(state: &MiraState, key: &str) -> AppResult<Option<String>> {
     state.with_core(|core| settings::get(&core.db, key))
 }
@@ -78,17 +122,28 @@ pub async fn save_display_name(
 pub async fn create_organization(
     state: State<'_, MiraState>,
     net: State<'_, crate::net_backend::AppNet>,
+    client: State<'_, JoinClient>,
     app: tauri::AppHandle,
     name: String,
+    ad_domain: Option<String>,
 ) -> AppResult<OrgInfo> {
-    let info = organization(&state, &name)?;
-    // v0.3: the founder's name, OS and version for the user list now.
-    state.with_core(|c| {
-        crate::join_commands::publish_device(c);
-        Ok(())
-    })?;
+    let machine = crate::ad::machine_domain();
+    let info = organization_with_ad(
+        &state,
+        &client,
+        &name,
+        ad_domain.as_deref(),
+        machine.as_deref(),
+    )?;
     crate::net_backend::after_change(&net, &app).await;
     Ok(info)
+}
+
+/// `machine_ad_domain`: the AD domain this computer is joined to, `null`
+/// for none (macOS, a computer without a domain).
+#[tauri::command]
+pub async fn machine_ad_domain() -> Option<String> {
+    crate::ad::machine_domain()
 }
 
 #[tauri::command]
@@ -148,5 +203,90 @@ mod tests {
         assert!(json["organization"]["createdAt"].is_string());
         assert!(json["dataDir"].is_string());
         assert_eq!(json["membership"], "active");
+    }
+
+    fn named_state(tmp: &tempfile::TempDir) -> MiraState {
+        let state = MiraState::new(
+            Ok(tmp.path().to_path_buf()),
+            Box::new(MemoryKeyStore::new()),
+        );
+        display_name(&state, "Sari").unwrap();
+        state
+    }
+
+    fn ad_domain_in_log(state: &MiraState) -> (Option<String>, bool) {
+        state
+            .with_core(|c| {
+                let st = permissions::load_state(&c.db)?.unwrap();
+                Ok((st.ad.domain.clone(), st.ad.set))
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn create_organization_writes_the_ad_domain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = named_state(&tmp);
+        let client = JoinClient::default();
+        let err = organization_with_ad(&state, &client, "MCF", Some("bukan domain"), None)
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_input");
+        assert_eq!(err.to_string(), "Domain tidak valid. Contoh: kantor.co.id");
+        assert_eq!(
+            app_state(&state).unwrap().organization,
+            None,
+            "nothing made before the domain is checked"
+        );
+
+        let org =
+            organization_with_ad(&state, &client, "MCF", Some(" MACF.co.id. "), None).unwrap();
+        assert_eq!(org.name, "MCF");
+        assert_eq!(ad_domain_in_log(&state), (Some("macf.co.id".into()), true));
+    }
+
+    #[test]
+    fn create_organization_without_a_domain_writes_no_ad_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = named_state(&tmp);
+        let client = JoinClient::default();
+        organization_with_ad(&state, &client, "MCF", Some("  "), Some("macf.co.id")).unwrap();
+        assert_eq!(ad_domain_in_log(&state), (None, false));
+    }
+
+    #[test]
+    fn create_organization_refuses_a_second_office_for_a_domain() {
+        use crate::network::JOIN_INFO_EXTRAS_AD;
+        let tmp = tempfile::tempdir().unwrap();
+        let state = named_state(&tmp);
+        let client = JoinClient::default();
+        client.add_test_office(
+            crate::join_commands::test_genesis(9, "MCF Pusat", "2026-01-05T08:00:00Z"),
+            JOIN_INFO_EXTRAS_AD,
+            Some("macf.co.id"),
+        );
+        // This computer is in that domain.
+        let err = organization_with_ad(&state, &client, "MCF 2", None, Some("MACF.co.id"))
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_input");
+        assert_eq!(
+            err.to_string(),
+            "Kantor \"MCF Pusat\" sudah memakai domain AD macf.co.id di jaringan ini. Satu domain cukup satu kantor Mira, jadi kantor baru tidak dibuat. Bergabunglah ke kantor itu dengan mengirim permintaan bergabung."
+        );
+        // The domain typed for the new office is that domain.
+        let err = organization_with_ad(&state, &client, "MCF 2", Some("macf.co.id"), None)
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_input");
+        assert_eq!(app_state(&state).unwrap().organization, None);
+
+        // Another domain is fine.
+        organization_with_ad(
+            &state,
+            &client,
+            "Lain",
+            Some("lain.co.id"),
+            Some("lain.co.id"),
+        )
+        .unwrap();
+        assert_eq!(ad_domain_in_log(&state), (Some("lain.co.id".into()), true));
     }
 }
