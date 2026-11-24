@@ -188,9 +188,16 @@ try {
     }
     check(`${id} melihat ${others.join(" dan ")} online`, Array.isArray(names), Array.isArray(names) ? "" : names);
     await reload(id);
-    await sleep(2000);
-    const body = await running[id].page.locator("body").innerText();
-    check(`Daftar "Di jaringan" di layar ${id} menampilkan kedua rekan`, others.every((n) => body.includes(n)));
+    // Panel jaringan membaca status secara berkala setelah dimuat ulang; tunggu
+    // sampai kedua rekan tampil (paling lama 20 detik), bukan jeda tetap.
+    const shownAt = Date.now();
+    let shown = false;
+    while (!shown && Date.now() - shownAt < 20000) {
+      const body = await running[id].page.locator("body").innerText();
+      shown = others.every((n) => body.includes(n));
+      if (!shown) await sleep(500);
+    }
+    check(`Daftar "Di jaringan" di layar ${id} menampilkan kedua rekan`, shown, `${((Date.now() - shownAt) / 1000).toFixed(1)} dtk`);
     await running[id].page.screenshot({ path: join(shots, `di-jaringan-${id.toLowerCase()}.png`) });
   }
   // Screenshot untuk laporan (tidak dihitung sebagai pemeriksaan): halaman

@@ -171,7 +171,9 @@ async function screenText(page) {
   return page.evaluate(() => {
     const skip = (el) => Boolean(el.closest('[lang="id"]:not(html)'));
     let text = document.body.innerText;
-    for (const el of document.body.querySelectorAll('[lang="id"]')) {
+    // Perintah yang disalin apa adanya (mis. perintah PowerShell aturan firewall
+    // di Pengaturan > Jaringan) adalah kode, bukan teks tampilan.
+    for (const el of document.body.querySelectorAll('[lang="id"], pre, code, kbd, samp')) {
       const inner = el.innerText ?? "";
       if (inner) text = text.replace(inner, " ");
     }

@@ -31,7 +31,8 @@ export function LanguagePicker({ variant = "full" }: Props) {
   return (
     <div className={`lang-picker lang-picker-${variant}`}>
       <fieldset className="lang-fieldset">
-        <legend className={variant === "full" ? "set-label" : "lang-legend"}>{T.legend}</legend>
+        {/* Di Pengaturan judul bagian sudah "Bahasa", jadi legend hanya untuk pembaca layar. */}
+        <legend className={variant === "full" ? "sr-only" : "lang-legend"}>{T.legend}</legend>
         <div className="lang-options">{options}</div>
       </fieldset>
       {variant === "full" && (

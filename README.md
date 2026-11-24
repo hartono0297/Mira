@@ -59,7 +59,7 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 ### Tampilan
 
-Tema Bata dengan mode Terang, Gelap, dan Ikuti Windows. Seluruh antarmuka berbahasa Indonesia.
+Tema Bata dengan mode Terang, Gelap, dan Ikuti Windows. Antarmuka berbahasa Indonesia (bawaan) atau Inggris, dipilih di Pengaturan > Bahasa atau di langkah pertama onboarding. Pilihan berlaku per laptop dan langsung tanpa memulai ulang. Isi yang ditulis rekan tidak diterjemahkan.
 
 ## Prinsip: hanya LAN
 
@@ -208,6 +208,7 @@ Skrip menjalankan `mira.exe` sungguhan dan mengendalikannya lewat DevTools Proto
 | `npm run test:e2e:docs` | debug | Dokumen: tambah, edit, versi, pulihkan, restart |
 | `npm run test:e2e-ttd` | debug | Tanda tangan: gambar, tempatkan, PIN, kunci, deteksi perubahan |
 | `npm run test:e2e-chat` | debug | Chat di satu laptop |
+| `npm run test:e2e-english` | debug | Ganti ke bahasa Inggris di onboarding dan Pengaturan, cek layar utama tanpa teks Indonesia, pilihan tetap setelah restart |
 
 Dua skrip board belum punya perintah npm: `node scripts/board-e2e.mjs <mira.exe> <folder screenshot>` dan `node scripts/board-sync-e2e.mjs <mira.exe> <folder screenshot>`.
 
@@ -239,6 +240,7 @@ src/                 tampilan React + TypeScript
   screens/           layar: board, chat, docs, onboarding, org, settings, shell, sign
   components/        komponen bersama, termasuk penampil PDF
   api/               pembungkus command Tauri
+  i18n/              kamus bahasa Indonesia dan Inggris per modul
   theme/             token warna tema Bata
 src-tauri/src/       inti Rust
 src-tauri/nsis/      teks installer bahasa Indonesia

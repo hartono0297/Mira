@@ -80,6 +80,15 @@ Keputusan desain yang sudah berlaku, dikumpulkan dari PRD dan laporan tahap. Ala
 
 Rinciannya di [[macOS]].
 
+## Bahasa tampilan (24 November 2026)
+
+- Mira punya dua bahasa tampilan: Indonesia (bawaan) dan Inggris. Dipilih per laptop di Pengaturan > Bahasa atau di onboarding, berlaku tanpa restart.
+- Kamus bertipe buatan sendiri di `src/i18n`, tanpa pustaka i18n. Kunci yang hilang gagal di `tsc`.
+- Hanya tampilan yang diterjemahkan. Data yang disimpan atau disinkronkan (nama kolom bawaan, isi jejak audit) dan teks di PDF bertanda tangan tetap seperti tercatat.
+- Error dari inti Rust tetap berbahasa Indonesia di Rust; tampilan memetakan kodenya ke bahasa Inggris.
+
+Rinciannya di `docs/progress/v04-english.md`.
+
 ## Yang masih terbuka
 
 | Keputusan | Keadaan sekarang |
