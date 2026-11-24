@@ -388,6 +388,48 @@ describe("TimeSection", () => {
     expect(screen.getByLabelText("Durasi")).toHaveValue("30");
   });
 
+  describe("kolom berbingkai (desain A)", () => {
+    it("Catat waktu manual berbentuk tombol, kelas lama tetap ada", () => {
+      setup(task());
+      const open = screen.getByRole("button", { name: "Catat waktu manual" });
+      expect(open).toHaveClass("btn", "btn-ghost", "btn-sm", "td-link-btn", "td-log-open");
+      expect(open).not.toHaveClass("td-box");
+    });
+
+    it("form catat: durasi dan catatan berbingkai, Simpan dan Batal tetap tombol", async () => {
+      const { user } = setup(task());
+      await user.click(screen.getByRole("button", { name: "Catat waktu manual" }));
+      const form = screen.getByRole("form", { name: "Catat waktu manual" });
+      for (const name of ["Durasi", "Catatan (opsional)"]) {
+        expect(within(form).getByLabelText(name)).toHaveClass("td-input", "td-box", "td-box-text");
+      }
+      for (const name of ["Simpan catatan", "Batal"]) {
+        const b = within(form).getByRole("button", { name });
+        expect(b).toHaveClass("btn");
+        expect(b).not.toHaveClass("td-box");
+      }
+    });
+
+    it("ringkasan waktu adalah hasil hitung: teks biasa tanpa bingkai", async () => {
+      const { user } = setup(task());
+      await openHistory(user);
+      expect(section().querySelectorAll(".td-box")).toHaveLength(0);
+      const total = row("Per orang", "Total task").querySelector(".v")!;
+      expect(total).toHaveTextContent("1j 40m");
+      expect(total.tagName).toBe("SPAN");
+      expect(row("Per status", "Dikerjakan").querySelector(".v")).not.toHaveClass("td-box");
+      // Hapus catatan sendiri tetap tombol ikon.
+      expect(screen.getByRole("button", { name: /^Hapus catatan 1 jam, / })).toHaveClass("td-del");
+    });
+
+    it("tanpa hak ubah: tidak ada bingkai dan tidak ada tombol aksi", async () => {
+      const { user } = setup(task({ canEdit: false }), false);
+      await openHistory(user);
+      expect(section().querySelectorAll(".td-box, input, textarea")).toHaveLength(0);
+      expect(within(section()).queryAllByRole("button")).toHaveLength(0);
+    });
+  });
+
   it("error saat hapus diteruskan ke onError", async () => {
     board.deleteTimeEntry.mockRejectedValue({ code: "forbidden", message: "Hanya pemilik catatan yang bisa menghapusnya." });
     const { user, onError } = setup(task());

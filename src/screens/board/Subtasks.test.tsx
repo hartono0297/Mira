@@ -650,6 +650,57 @@ describe("Subtask: penanggung jawab", () => {
   });
 });
 
+describe("Subtask: kolom berbingkai", () => {
+  it("tombol penanggung jawab berbingkai dengan ikon panah, terisi maupun kosong", () => {
+    setup([sub("s1", "Ukur dinding", { assignee: satu }), sub("s2", "Kirim PDF")]);
+    const filled = screen.getByRole("button", { name: "Ganti penanggung jawab subtask Ukur dinding (sekarang Anggota Satu)" });
+    const empty = screen.getByRole("button", { name: "Tetapkan penanggung jawab subtask Kirim PDF" });
+    for (const btn of [filled, empty]) {
+      expect(btn).toHaveClass("td-who", "td-box");
+      const caret = btn.querySelector('.td-box-ic[data-icon="chevron"]');
+      expect(caret).not.toBeNull();
+      expect(caret).toHaveAttribute("aria-hidden", "true");
+    }
+  });
+
+  it("kotak centang, pegangan, hapus, dan tombol tambah tidak diberi bingkai nilai", () => {
+    setup();
+    const r = row("s1");
+    expect(r.querySelector(".td-check")).not.toHaveClass("td-box");
+    expect(r.querySelector("[data-handle]")).not.toHaveClass("td-box");
+    expect(r.querySelector(".td-del")).not.toHaveClass("td-box");
+    expect(screen.getByRole("button", { name: "Tambah subtask" })).not.toHaveClass("td-box");
+    expect(document.querySelectorAll(".td-subs-sec .td-box")).toHaveLength(3);
+  });
+
+  it("judul subtask tetap kolom td-sub-title yang bisa diedit", async () => {
+    const user = setup();
+    const title = screen.getByRole("textbox", { name: "Judul subtask 1 dari 3" });
+    expect(title).toHaveClass("td-sub-title");
+    expect(title).not.toHaveAttribute("readonly");
+    await user.clear(title);
+    await user.type(title, "Ukur dinding timur{Enter}");
+    await waitFor(() => expect(board.updateSubtask).toHaveBeenCalledWith(P, T, "s1", { title: "Ukur dinding timur" }));
+  });
+
+  it("kolom subtask baru berbingkai sebagai kolom teks", async () => {
+    const user = setup();
+    await user.click(screen.getByRole("button", { name: "Tambah subtask" }));
+    const input = screen.getByRole("textbox", { name: "Judul subtask baru" });
+    expect(input).toHaveClass("td-sub-input", "td-input");
+  });
+
+  it("Tamu: tanpa bingkai dan tanpa ikon aksi di bagian subtask", () => {
+    setup([sub("s1", "Ukur dinding", { assignee: satu }), sub("s2", "Kirim PDF", { done: true })], false);
+    const sec = document.querySelector(".td-subs-sec")!;
+    expect(sec.querySelector(".td-box")).toBeNull();
+    expect(sec.querySelector(".td-box-ic")).toBeNull();
+    expect(sec.querySelector("[data-icon]")).toBeNull();
+    expect(sec.querySelector(".td-sub-title")).toBeNull();
+    expect(sec.querySelector(".td-who-static")).not.toBeNull();
+  });
+});
+
 describe("Subtask: Tamu hanya baca", () => {
   it("tanpa pegangan, hapus, tambah, dan kolom judul; centang nonaktif; tanpa sorot dan catatan ganda", () => {
     setup([sub("s1", "Ukur dinding", { assignee: satu }), sub("s2", "Kirim PDF", { done: true })], false);

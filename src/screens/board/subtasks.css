@@ -13,7 +13,14 @@
    - isi bar --accent di atas jalur --border: 4,12 dan 5,13 (non-teks, lolos 3:1).
    - cincin fokus --focus di atas --hover: 4,47 dan 5,88.
    - pesan error --danger di atas --bg: 7,49 dan 8,65; di atas --hover (baris
-     yang disorot): 6,18 dan 7,08. */
+     yang disorot): 6,18 dan 7,08; di atas --field-hover: 6,89 dan 7,77.
+   Kolom berbingkai (desain A, v0.4.1), terang / gelap:
+   - garis judul dan bingkai --border-strong di atas --bg: 3,19 / 4,18.
+   - di baris yang disorot garis berganti --text-sec: di atas --hover 5,03 / 6,93
+     (--border-strong di sana 2,63 / 3,42, gagal di tema terang).
+   - judul atau kolom baru yang disorot: garis --text-sec di atas --field-hover
+     5,61 / 7,61.
+   - cincin fokus --focus di atas --bg 5,42 / 7,18, di atas --hover 4,47 / 5,88. */
 
 .td-progress {
   display: inline-flex;
@@ -97,31 +104,31 @@
   touch-action: none;
 }
 
+/* Pegangan dan hapus adalah kontrol, bukan nilai: tetap tenang sampai baris
+   disorot atau difokus. Penanggung jawab selalu terlihat karena nilainya bisa
+   diubah (desain A: yang bisa diubah berbingkai). */
 .td-handle,
-.td-sub .td-del,
-.td-who-empty {
+.td-sub .td-del {
   opacity: 0;
 }
 
 .td-sub:hover .td-handle,
 .td-sub:focus-within .td-handle,
 .td-sub:hover .td-del,
-.td-sub:focus-within .td-del,
-.td-sub:hover .td-who-empty,
-.td-sub:focus-within .td-who-empty,
-.td-who-empty[aria-expanded="true"] {
+.td-sub:focus-within .td-del {
   opacity: 1;
 }
 
 @media (hover: none) {
   .td-handle,
-  .td-sub .td-del,
-  .td-who-empty {
+  .td-sub .td-del {
     opacity: 1;
   }
 }
 
-/* Judul: tampak seperti teks, jadi kolom isian saat difokus. */
+/* Judul yang bisa diedit: garis bawah putus-putus seperti judul task, supaya
+   daftar tetap ringan tetapi jelas bisa diketik. Saat disorot bingkai penuh,
+   saat difokus bingkai --focus. Judul hanya-baca (.td-sub-text) tanpa garis. */
 .td-sub-title,
 .td-sub-text {
   width: 100%;
@@ -141,14 +148,33 @@
   overflow-wrap: anywhere;
 }
 
-.td-sub-title:focus {
+.td-sub-title {
+  border-bottom: 1px dashed var(--border-strong);
+  border-radius: 6px 6px 0 0;
+  cursor: text;
+}
+
+/* Baris disorot berlatar --hover: --border-strong di sana hanya 2,63:1, jadi
+   garis judul dan bingkai penanggung jawab berganti --text-sec (5,03 / 6,93). */
+.td-sub.is-editable:hover .td-sub-title {
+  border-bottom-color: var(--text-sec);
+}
+
+.td-sub.is-editable .td-sub-title:hover {
+  border: 1px solid var(--text-sec);
+  border-radius: 6px;
+  background: var(--field-hover);
+}
+
+.td-sub.is-editable .td-sub-title:focus {
+  border: 1px solid var(--focus);
+  border-radius: 6px;
   background: var(--bg);
-  border-color: var(--border-strong);
 }
 
 .td-sub-title:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 0;
+  outline-offset: 1px;
 }
 
 .td-sub.is-done .td-sub-title,
@@ -170,33 +196,51 @@
 }
 
 .td-who {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-sec);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  color: var(--text-sec);
 }
 
+/* Hanya-baca: avatar saja, tanpa bingkai dan tanpa ikon aksi. */
 .td-who-static {
+  width: 28px;
+  height: 28px;
   cursor: default;
 }
 
-.td-who-empty {
-  width: 24px;
-  height: 24px;
-  margin: 2px;
-  border: 1.5px dashed var(--text-sec);
+/* Bisa diubah: .td-box versi ringkas (avatar atau ikon tambah orang, lalu panah
+   bawah), sekitar 50 px supaya judul subtask tetap lega. Garis, latar, sorot,
+   dan fokus datang dari .td-box di field.css; di sini hanya ukuran. */
+.td-who.td-box {
+  width: auto;
+  min-height: 30px;
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 2px 4px 2px 3px;
 }
 
-.td-who-empty:hover {
+.td-who.td-box .td-box-ic {
+  margin-left: 0;
+}
+
+.td-sub.is-editable:hover .td-who.td-box {
+  border-color: var(--text-sec);
+}
+
+.td-sub.is-editable .td-who.td-box:focus-visible {
+  border-color: var(--focus);
+}
+
+.td-who-add {
+  flex: none;
+  margin: 3px;
+  color: var(--text-sec);
+}
+
+.td-who.td-box:hover .td-who-add,
+.td-who.td-box[aria-expanded="true"] .td-who-add {
   color: var(--text);
-  border-color: var(--text);
 }
 
 /* Bukan anggota proyek lagi: garis putus-putus, keterangan ada di nama aksesibel dan tooltip. */
@@ -250,6 +294,36 @@
 
 .td-sub-new {
   grid-template-columns: 24px 22px minmax(0, 1fr);
+}
+
+/* Kolom subtask baru: bingkai sama dengan .td-box (sudut 6 px, garis
+   --border-strong, sorot --field-hover dengan garis --text-sec). Ukuran sama
+   dengan isian satu baris lain: teks masuk 9 px dari tepi termasuk garis. */
+.td-sub-new .td-sub-input {
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.td-sub-new .td-sub-input:hover {
+  border-color: var(--text-sec);
+  background: var(--field-hover);
+}
+
+.td-sub-new .td-sub-input:focus {
+  border-color: var(--focus);
+  background: var(--bg);
+}
+
+.td-sub-new .td-sub-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.td-sub-new .td-sub-input[aria-invalid="true"] {
+  border-color: var(--danger);
 }
 
 .td-sub-input[aria-busy="true"] {
@@ -310,5 +384,17 @@
     flex: none;
     width: 14px;
     height: 14px;
+  }
+}
+
+/* Layar sentuh: kolom yang bisa diketuk setinggi 44 px, sama dengan .td-box di
+   field.css. Selektor sengaja lebih spesifik dari aturan dasarnya supaya tidak
+   bergantung pada urutan file. Baris grid ikut tumbuh; semua sel tetap di
+   tengah karena .td-sub memakai align-items: center. */
+@media (pointer: coarse) {
+  .td-sub .td-who.td-box,
+  .td-sub .td-sub-title,
+  .td-sub.td-sub-new .td-sub-input {
+    min-height: 44px;
   }
 }

@@ -17,6 +17,7 @@
 import {
   IconArrowDown,
   IconArrowUp,
+  IconChevronDown,
   IconGripVertical,
   IconPencil,
   IconPlus,
@@ -45,6 +46,7 @@ import { TEKS_MENU } from "./teksMenu";
 import { SUBTASK_MAX, SUBTASK_TITLE_MAX, teksSubtask as T } from "./teksSubtask";
 import { boardMenuItems, submenu, useBoardMenu, type BoardMenuEntry } from "./useBoardMenu";
 import { useListDrag } from "./useListDrag";
+import "./field.css";
 import "./subtasks.css";
 
 export type SubtasksProps = {
@@ -815,7 +817,8 @@ type WhoMenuProps = {
   onPick: (p: Person | null) => void;
 };
 
-// Tombol avatar penanggung jawab dengan menu pilihan satu orang, memakai
+// Tombol penanggung jawab berbingkai (avatar atau ikon tambah orang, lalu panah
+// bawah) dengan menu pilihan satu orang, memakai
 // Popover dan MenuList yang sama dengan menu properti dialog. Panah memilih,
 // Enter atau Spasi menetapkan, Escape menutup menu saja dan fokus kembali ke tombol.
 const NONE = "";
@@ -852,7 +855,7 @@ function WhoMenu({ subtask: s, assignees, nameOf, open, waiting, onOpen, onPick 
       <button
         ref={buttonRef}
         type="button"
-        className={`td-who${s.assignee ? "" : " td-who-empty"}`}
+        className="td-who td-box"
         data-part="who"
         aria-label={label}
         title={s.assignee ? nameOf(s.assignee) : T.whoEmptyLabel(s.title)}
@@ -875,8 +878,9 @@ function WhoMenu({ subtask: s, assignees, nameOf, open, waiting, onOpen, onPick 
             {initials(s.assignee.name)}
           </span>
         ) : (
-          <IconUserPlus size={14} aria-hidden="true" />
+          <IconUserPlus size={16} className="td-who-add" aria-hidden="true" />
         )}
+        <IconChevronDown size={14} className="td-box-ic" data-icon="chevron" aria-hidden="true" />
       </button>
       {open && (
         <Popover id={menuId} anchorRef={buttonRef} align="end" onDismiss={() => onOpen(false)}>

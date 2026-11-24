@@ -13,6 +13,7 @@ export const TOKEN_ROLES = [
   "border", // garis pemisah
   "border-strong", // garis kolom isian dan tombol sekunder (lolos 3:1)
   "hover", // latar baris menu saat disorot kursor
+  "field-hover", // latar kolom berbingkai (nilai yang bisa diubah) saat disorot
   "card", // kartu dan kolom isian
   "col", // kolom board
   "accent", // tombol aksi, pilihan aktif
@@ -63,6 +64,7 @@ const bata: ThemeDef = {
     border: "#F0DDD2",
     "border-strong": "#A88A7C",
     hover: "#F7E6DC",
+    "field-hover": "#FBF4F0",
     card: "#FFF9F6",
     col: "#FFF4EE",
     accent: "#B4472A",
@@ -87,6 +89,7 @@ const bata: ThemeDef = {
     border: "#3E302A",
     "border-strong": "#8F766A",
     hover: "#33271F",
+    "field-hover": "#2A201C",
     card: "#2A201C",
     col: "#261D19",
     accent: "#F08A64",

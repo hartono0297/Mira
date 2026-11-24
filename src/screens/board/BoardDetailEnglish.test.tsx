@@ -1,13 +1,14 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectSummary } from "../../api/board";
+import type { BoardView, ProjectSummary, TaskDetail as Task } from "../../api/board";
 import type { PersonView, ProjectMembersView, ProjectMemberView } from "../../api/org";
 import { setLang } from "../../i18n/core";
 import { renderInLang } from "../../test/i18n";
 import { describePicked, PeoplePicker } from "./PeoplePicker";
 import { ProjectMembersPanel, useProjectMembers } from "./ProjectMembersPanel";
 import { RenameProjectDialog } from "./RenameProjectDialog";
+import { TaskDetail } from "./TaskDetail";
 
 const org = vi.hoisted(() => ({
   projectMembers: vi.fn(),
@@ -15,6 +16,18 @@ const org = vi.hoisted(() => ({
   addProjectMember: vi.fn(),
   removeProjectMember: vi.fn(),
 }));
+
+const boardMock = vi.hoisted(() => ({ getTask: vi.fn(), getBoard: vi.fn() }));
+
+vi.mock("../../api/board", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../api/board")>();
+  return { ...real, boardApi: { ...real.boardApi, ...boardMock }, subscribeBoard: () => () => {} };
+});
+
+// Subtask, Waktu, dan timer punya tes bahasa sendiri.
+vi.mock("./Subtasks", () => ({ Subtasks: () => null }));
+vi.mock("./TimeSection", () => ({ TimeSection: () => null }));
+vi.mock("./TimerMini", () => ({ TimerMini: () => null }));
 
 vi.mock("../../api/org", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/org")>()),
@@ -137,6 +150,70 @@ describe("Detail board dalam bahasa Inggris", () => {
     setLang("en");
     expect(describePicked([PEOPLE[0]])).toBe("1 person from 1 department");
     expect(describePicked(PEOPLE)).toBe("1 person from 1 department, 1 person without a department, and 1 guest");
+  });
+
+  it("detail task: deskripsi kosong, Dibuat oleh, dan catatan hanya-baca memakai teks Inggris", async () => {
+    const me = { publicKey: ME, name: "Rina Uji" };
+    const t: Task = {
+      id: "2".repeat(32),
+      code: "PA-12",
+      title: "Review the contract",
+      columnId: "todo",
+      assignee: null,
+      due: null,
+      priority: "none",
+      labels: [],
+      commentCount: 0,
+      merged: false,
+      subtaskDone: 0,
+      subtaskTotal: 0,
+      trackedSecs: 0,
+      timersRunningSince: [],
+      projectId: P1,
+      description: "",
+      createdBy: me,
+      createdAt: "2026-11-20T02:00:00Z",
+      updatedAt: "2026-11-20T02:00:00Z",
+      comments: [],
+      activity: [],
+      canEdit: true,
+      canDelete: true,
+      canComment: true,
+      subtasks: [],
+      timeEntries: [],
+      timeTotals: [],
+      myRunningEntry: null,
+      statusTime: {
+        closedSecs: { todo: 0, doing: 0, done: 0 },
+        currentColumn: "todo",
+        currentSince: "2026-11-20T02:00:00Z",
+        cycleSecs: null,
+        clockWarning: false,
+      },
+    };
+    const board: BoardView = {
+      project: { id: P1, code: "PA", name: "Pameran", teamId: DEPT, teamName: "Desain", openCount: 1, taskCount: 1, canManage: true },
+      columns: [
+        { id: "todo", name: "To do", tasks: [] },
+        { id: "doing", name: "Dikerjakan", tasks: [] },
+        { id: "done", name: "Selesai", tasks: [] },
+      ],
+      assignees: [me],
+      me: ME,
+      canCreate: true,
+    };
+    boardMock.getTask.mockResolvedValue(t);
+    boardMock.getBoard.mockResolvedValue(board);
+    const view = renderInLang(() => <TaskDetail projectId={P1} taskId={t.id} onClose={() => {}} onChanged={() => {}} />);
+    const desc = await screen.findByLabelText("Description");
+    expect(desc).toHaveAttribute("placeholder", "Write a description: the goal, the steps, or links the team should know about");
+    expect(screen.getByText(/^Created by You,/).closest("p")).toHaveClass("td-ro");
+    view.unmount();
+
+    boardMock.getTask.mockResolvedValue({ ...t, canEdit: false, canDelete: false, canComment: false });
+    renderInLang(() => <TaskDetail projectId={P1} taskId={t.id} onClose={() => {}} onChanged={() => {}} />);
+    expect(await screen.findByText(/You can only view this task/)).toBeInTheDocument();
+    expect(screen.getByRole("dialog").querySelector(".td-box")).toBeNull();
   });
 
   it("dialog ubah nama proyek memakai teks Inggris", () => {

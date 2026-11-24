@@ -4,6 +4,7 @@ import {
   IconCircle,
   IconCircleCheck,
   IconGitMerge,
+  IconLock,
   IconProgress,
   IconUserOff,
   IconX,
@@ -47,6 +48,7 @@ import { MAX_LABEL_LEN, MAX_LABELS, TEKS_DIALOG as T, teksDialog } from "./teksD
 import { TimeSection } from "./TimeSection";
 import { TimerMini } from "./TimerMini";
 import { useHeld } from "./useHeld";
+import "./field.css";
 import "./task.css";
 
 type Field = "title" | "description" | "status" | "assignee" | "due" | "priority" | "labels" | "comment";
@@ -716,7 +718,12 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       <>
         <div className="td-top">
           {mode !== "gone" && topNotes(t)}
-          {mode === "read" && <p className="td-readonly-note">{readOnlyNote(t)}</p>}
+          {mode === "read" && (
+            <p className="td-readonly-note">
+              <IconLock size={16} data-icon="lock" aria-hidden="true" />
+              <span>{readOnlyNote(t)}</span>
+            </p>
+          )}
           {kept.length > 0 && (
             <section className="td-kept" aria-labelledby={`${ids}-kept`}>
               <h3 id={`${ids}-kept`} className="td-sh">
@@ -741,11 +748,15 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
           )}
           {edit ? titleEditor(t) : <p className="td-title-text">{t.title}</p>}
           {properties(t, edit)}
-          <p className="hint">
-            {teksDialog.dibuatOleh(
-              t.createdBy.publicKey === me ? T.anda : t.createdBy.name,
-              formatDateTime(t.createdAt),
-            )}
+          {/* Keterangan, bukan isian: tanpa bingkai, gembok menandai tidak bisa diubah. */}
+          <p className="td-ro">
+            <IconLock size={14} data-icon="lock" aria-hidden="true" />
+            <span>
+              {teksDialog.dibuatOleh(
+                t.createdBy.publicKey === me ? T.anda : t.createdBy.name,
+                formatDateTime(t.createdAt),
+              )}
+            </span>
           </p>
         </div>
         <div className="td-slot">
@@ -861,7 +872,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
       </>
     );
     const priorityValue =
-      edit && priority === "none" ? empty(PRIORITY_LABELS.none) : <PriorityChip priority={priority} />;
+      priority === "none" ? empty(PRIORITY_LABELS.none) : <PriorityChip priority={priority} />;
     const assigneeValue = assignee ? (
       <>
         {avatar(assignee, true)}
@@ -978,6 +989,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
           />
           <PropertyRow
             label={T.tenggat}
+            icon="calendar"
             value={dueValue}
             editor={editor("due", "dialog", () => (
               <DuePicker
@@ -1002,6 +1014,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
           <PropertyRow
             label={T.label}
             wide
+            icon="plus"
             value={labelsValue}
             editor={editor("labels", "dialog", () => (
               <LabelPicker
@@ -1060,7 +1073,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
         </h3>
         <textarea
           ref={descRef}
-          className="td-desc"
+          className="td-desc td-box td-box-text"
           aria-labelledby={headId}
           value={descValue}
           placeholder={T.deskripsiPlaceholder}

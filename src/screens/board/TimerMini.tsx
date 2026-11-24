@@ -6,6 +6,7 @@ import { formatDateTime } from "./format";
 import { runningSinceSr, SAY, stopTitleSr, TW } from "./teksWaktu";
 import { formatClock, formatDurationLong, runningSecs } from "./timeFormat";
 import { useNow } from "./useNow";
+import "./field.css";
 import "./time.css";
 
 export type TimeProps = {
@@ -257,7 +258,7 @@ export function TimerMini({ task, canEdit, onChange, onError }: TimeProps) {
                   id={`${id}-note`}
                   ref={noteRef}
                   type="text"
-                  className="td-input"
+                  className="td-input td-box td-box-text"
                   maxLength={200}
                   value={note}
                   onChange={(e) => setNote(e.target.value)}

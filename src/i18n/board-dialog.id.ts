@@ -52,7 +52,7 @@ const id = {
 
     // Deskripsi
     deskripsi: "Deskripsi",
-    deskripsiPlaceholder: "Tambah deskripsi: apa yang perlu dikerjakan dan seperti apa hasilnya",
+    deskripsiPlaceholder: "Tulis deskripsi: tujuan, langkah, atau tautan yang perlu diketahui tim",
     belumAdaDeskripsi: "Belum ada deskripsi.",
     simpanDeskripsi: "Simpan deskripsi",
     batalkanPerubahan: "Batalkan perubahan",
