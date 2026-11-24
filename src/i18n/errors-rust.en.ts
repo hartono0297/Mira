@@ -124,6 +124,8 @@ const en: Dict<typeof id> = {
       addressNotMember: "The laptop at this address isn't an organization member.",
       removedRefused: "Connection refused: the laptop was removed from the organization.",
       addressRemoved: "The laptop at this address was removed from the organization.",
+      selfSuspended: "Your account on this laptop is deactivated. Only the member list is synced.",
+      suspendedDropped: "A deactivated member was disconnected; their laptop may only sync the membership log.",
       badGreeting: "The colleague's laptop didn't send a valid greeting.",
       greetingKey: "The key in the greeting differs from the proven key.",
       otherOrg: "The colleague's laptop belongs to another organization.",

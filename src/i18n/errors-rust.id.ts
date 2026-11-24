@@ -126,6 +126,8 @@ const id = {
       addressNotMember: "Laptop di alamat ini bukan anggota organisasi.",
       removedRefused: "Koneksi dari laptop yang sudah dikeluarkan dari organisasi ditolak.",
       addressRemoved: "Laptop di alamat ini sudah dikeluarkan dari organisasi.",
+      selfSuspended: "Akun di laptop ini sedang dinonaktifkan. Hanya daftar anggota yang disinkronkan.",
+      suspendedDropped: "Anggota yang dinonaktifkan diputus; laptopnya hanya boleh menyinkronkan log keanggotaan.",
       badGreeting: "Laptop rekan tidak mengirim salam yang benar.",
       greetingKey: "Kunci di salam berbeda dari kunci yang dibuktikan.",
       otherOrg: "Laptop rekan berada di organisasi lain.",
