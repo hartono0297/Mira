@@ -357,6 +357,8 @@ mod tests {
             seen_by_name: Some("Budi".into()),
             note: None,
             account: None,
+            ad: None,
+            requester_outdated: false,
         }
     }
 

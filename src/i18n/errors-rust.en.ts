@@ -193,6 +193,17 @@ const en: Dict<typeof id> = {
       requestNotFound: "Join request not found.",
       requestNotHere: "Join request not found on this laptop. It may have been decided on another laptop.",
     },
+    ad: {
+      domainInvalid: "The domain isn't valid. Example: company.co.id",
+      ouMapMax: "The OU mapping can have at most 100 rows.",
+      ouNameRule: "OU names must be 1 to 64 characters, without line breaks, tabs, or invisible characters.",
+      ouMapTooLong: "The OU mapping is too long to save. Remove some rows or shorten the OU names.",
+      settingsWaitForLaptops: "AD settings can be saved once every office laptop runs the latest Mira version.",
+      requesterOutdated: "The requester's Mira is too old for an office that uses AD settings. Ask them to update Mira first, then send the request again.",
+      oldVersionAd: "This office still has laptops on an older Mira version. Send the request again without AD data.",
+      claimGateClosed: "This request carries AD data, but some office laptops still run an older Mira version. Update Mira on those laptops first, or reject this request and ask the requester to send it again.",
+      requestNoAd: "This join request has no AD data.",
+    },
     misc: {
       initIncomplete: "Mira didn't finish starting up.",
       internalBefore: "Mira hit an internal error earlier. Close and reopen the app.",
@@ -435,6 +446,9 @@ const en: Dict<typeof id> = {
     pinWrongLocked: (minutes: string) => `Wrong PIN. Your signature is locked for a while. Try again in about ${minutes} ${plural(Number(minutes), "minute", "minutes")}.`,
     updateFailed: (detail: string) => `The update failed: ${detail}.`,
     pinWrongLeft: (left: string) => `Wrong PIN. ${left} more ${plural(Number(left), "try", "tries")} before it's locked for a while.`,
+    adOuDeptMissing: (ou: string) => `The department for OU "${ou}" wasn't found or has been deleted.`,
+    adOuDuplicate: (ou: string) => `OU "${ou}" is listed more than once. Each OU can map to only one department.`,
+    adDomainOfficeExists: (office: string, domain: string) => `The office "${office}" already uses the AD domain ${domain} on this network. One domain needs only one Mira office, so no new office was created. Join that office by sending a join request instead.`,
   },
 };
 

@@ -1,0 +1,104 @@
+import { plural, type Dict } from "./core";
+import type id from "./org-ad.id";
+
+const en: Dict<typeof id> = {
+  card: {
+    title: "Active Directory",
+    reported: "Reported by the requesting laptop, not confirmed by AD.",
+    verified: "Checked against AD from this laptop.",
+    emptyInDirectory: "Empty in AD",
+    claimValue: (value: string) => `Reported by the requesting laptop: ${value}`,
+    usedByTitle: (name: string) => `${name} in this office already uses this AD account.`,
+    usedByBody: "Make sure it's the same person before approving.",
+    account: "Account",
+    name: "Name in AD",
+    department: "Department in AD",
+    departmentMissing: (department: string) => `${department} (not in Mira yet)`,
+    ous: "Location in Active Directory",
+    notSent: "Not sent",
+    checking: "Checking AD...",
+    status: {
+      match: "Account exists and is active in AD, name and department match",
+      exists: "Account exists and is active in AD, but the name and department can't be compared",
+      mismatch: "Differs from AD",
+      claimMismatch: (fields: string) => `AD data from the requesting laptop doesn't match AD: ${fields}`,
+      disabled: "AD account is disabled",
+      notFound: "Account not found in AD",
+      unreachable: "Can't reach AD from this laptop",
+      otherDomain: (domain: string) => `This laptop isn't joined to the ${domain} domain, so it can't check`,
+      notDomainMachine: "This laptop isn't joined to a domain, so it can't check",
+    },
+    mismatchName: (directory: string, requested: string) => `Name in AD: ${directory}, in the request: ${requested}`,
+    mismatchDepartment: (directory: string, requested: string) =>
+      `Department in AD: ${directory}, in the request: ${requested}`,
+    nameNote: "The requester is allowed to change their display name, so a different name isn't necessarily a problem.",
+    claimFields: { name: "name", department: "department", location: "location" },
+    recheck: "Check again",
+    recheckAria: (name: string) => `Check ${name}'s AD account again`,
+    limit:
+      "This check confirms the account exists and is active in AD, not that the requester owns it. Still compare the match code below.",
+    outdatedTitle: "Mira on the requesting laptop needs an update first",
+    outdatedBody: (name: string) =>
+      `This office uses Active Directory settings, and the Mira version on ${name}'s laptop is too old for them. Ask ${name} to update Mira, then approve. Until then, Approve will be refused.`,
+  },
+  settings: {
+    title: "Active Directory",
+    intro:
+      "Laptops signed in with an office domain account fill in the name and department from AD when they ask to join. An admin still approves every request.",
+    loading: "Loading Active Directory settings...",
+    loadErrorTitle: "Couldn't read Active Directory settings",
+    loadErrorEmpty: "The Mira core didn't send the Active Directory settings.",
+    retry: "Try again",
+    readOnly: "Only a superadmin can change these settings.",
+    blockedTitle: "AD settings can't be changed yet",
+    blockedBody:
+      "Every member laptop needs a newer Mira first, so no one is left behind when these settings go out. Laptops still waiting:",
+    outdatedVersion: (name: string, version: string) => `${name}, version ${version}`,
+    outdatedUnknown: (name: string) => `${name}, version not reported yet`,
+    domainLabel: "AD domain",
+    domainHint: "For example: office.example.com. Leave empty if the office doesn't use AD.",
+    errDomain: "Write the domain like office.co.id, without spaces or slashes.",
+    useMachine: (domain: string) => `Use this laptop's domain: ${domain}`,
+    mapTitle: "OU to department mapping",
+    order:
+      "Mira uses the department attribute in AD first. If that attribute is empty, Mira matches the account's OUs from the innermost out: against this table, then against a department with the same name. Departments are never created automatically.",
+    caption: "OU to department mapping",
+    colOu: "OU name",
+    colDept: "Department",
+    colActions: "Actions",
+    cellLabel: (column: string, n: number) => `${column}, row ${n}`,
+    choose: "Choose a department",
+    archivedOption: (name: string) => `${name} (archived)`,
+    unknownOption: "Unknown department",
+    remove: "Remove",
+    removeAria: (n: number) => `Remove row ${n}`,
+    add: "Add row",
+    limit: (max: number) => `${max} rows at most.`,
+    empty: "No mappings yet. Without a mapping, Mira only matches an OU to a department with the same name.",
+    errOuEmpty: "Enter an OU name.",
+    errOuDuplicate: (row: number) => `This OU is already in row ${row}.`,
+    errDepartment: "Choose a department.",
+    errSummary: "Check the marked fields, then save again.",
+    save: "Save AD settings",
+    saving: "Saving...",
+    saved: "Active Directory settings saved.",
+    saveFail: "AD settings not saved",
+  },
+  otherOffices: {
+    title: (n: number) =>
+      `${n} ${plural(n, "laptop", "laptops")} on this network ${plural(n, "belongs", "belong")} to another Mira office.`,
+    names: (names: string) => `Offices seen: ${names}.`,
+    more: (n: number) => ` and ${n} more`,
+    sameDomain: (n: number) =>
+      `${n} of them ${plural(n, "uses", "use")} the same AD domain as this office, so there may be a duplicate office. The superadmins of both offices need to decide which office to use.`,
+    hint: "This is only a hint. Mira doesn't merge offices automatically.",
+    older: {
+      title: "This AD domain is already used by another office that was created earlier",
+      office: (name: string, date: string) => `${name}, created ${date}.`,
+      fingerprint: "That office's fingerprint:",
+      body: "That office counts as the main office for this domain, and new people will be directed there. The data of two offices can't be merged automatically, so you need to decide, for example by asking this office's members to join the main office.",
+    },
+  },
+};
+
+export default en;

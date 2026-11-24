@@ -28,7 +28,7 @@ fn state_of(c: &Core) -> AppResult<permissions::OrgState> {
     permissions::require_state(&c.db)
 }
 
-async fn mutate<T>(
+pub(crate) async fn mutate<T>(
     state: &MiraState,
     net: &AppNet,
     app: &AppHandle,

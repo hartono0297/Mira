@@ -16,17 +16,17 @@ use crate::permissions::{
     OutgoingStatus, SignedJoinRequest,
 };
 
-struct Node {
-    _tmp: tempfile::TempDir,
-    conn: Connection,
-    id: Identity,
+pub(super) struct Node {
+    pub(super) _tmp: tempfile::TempDir,
+    pub(super) conn: Connection,
+    pub(super) id: Identity,
 }
 
-fn now() -> OffsetDateTime {
+pub(super) fn now() -> OffsetDateTime {
     OffsetDateTime::now_utc()
 }
 
-fn device() -> DeviceProfile {
+pub(super) fn device() -> DeviceProfile {
     DeviceProfile {
         laptop: "LAPTOP-DESAIN-03".into(),
         os: "Windows 11".into(),
@@ -34,12 +34,12 @@ fn device() -> DeviceProfile {
     }
 }
 
-fn ip(s: &str) -> Option<IpAddr> {
+pub(super) fn ip(s: &str) -> Option<IpAddr> {
     Some(s.parse().unwrap())
 }
 
 impl Node {
-    fn new(name: &str) -> Node {
+    pub(super) fn new(name: &str) -> Node {
         let tmp = tempfile::tempdir().unwrap();
         let mut conn = db::open(tmp.path()).unwrap();
         let mut id = identity::ensure_identity(&conn, &MemoryKeyStore::new()).unwrap();
@@ -51,12 +51,12 @@ impl Node {
         }
     }
 
-    fn pk(&self) -> String {
+    pub(super) fn pk(&self) -> String {
         self.id.public_key_hex().to_owned()
     }
 
     /// Publishes this laptop's device profile with Mira `version`.
-    fn report_version(&mut self, version: &str) {
+    pub(super) fn report_version(&mut self, version: &str) {
         let profile = DeviceProfile {
             app_version: version.into(),
             ..device()
@@ -64,12 +64,12 @@ impl Node {
         p::ensure_device_op(&mut self.conn, &self.id, &profile, now()).unwrap();
     }
 
-    fn state(&self) -> p::OrgState {
+    pub(super) fn state(&self) -> p::OrgState {
         p::load_state(&self.conn).unwrap().unwrap()
     }
 
     /// Sends every op `to` may receive.
-    fn sync_to(&self, to: &mut Node) {
+    pub(super) fn sync_to(&self, to: &mut Node) {
         let state = self.state();
         let ids = p::op_ids_for(&self.conn, &state, &to.pk()).unwrap();
         let missing = p::missing_op_ids(&to.conn, &ids).unwrap();
@@ -80,12 +80,12 @@ impl Node {
 
 /// Founder Andi (superadmin, in Administrasi), department Desain with admin
 /// Rina, plain member Dimas in Desain, and Budi in Administrasi.
-struct Office {
-    andi: Node,
-    rina: Node,
-    dimas: Node,
-    desain: String,
-    admin: String,
+pub(super) struct Office {
+    pub(super) andi: Node,
+    pub(super) rina: Node,
+    pub(super) dimas: Node,
+    pub(super) desain: String,
+    pub(super) admin: String,
 }
 
 fn join_by_code(inviter: &mut Node, joiner: &mut Node, team: &str, role: p::InviteRole) {
@@ -124,7 +124,7 @@ fn join_by_code(inviter: &mut Node, joiner: &mut Node, team: &str, role: p::Invi
     .unwrap();
 }
 
-fn office() -> Office {
+pub(super) fn office() -> Office {
     let mut andi = Node::new("Andi");
     org::create_organization(&mut andi.conn, &andi.id, "Biro Contoh").unwrap();
     let admin = p::create_team(&mut andi.conn, &andi.id, "Administrasi", now())
@@ -150,7 +150,7 @@ fn office() -> Office {
     }
 }
 
-fn target(member: &Node, team: &str) -> JoinTarget {
+pub(super) fn target(member: &Node, team: &str) -> JoinTarget {
     let info = p::join_info(&member.conn).unwrap().unwrap();
     let dept = info.departments.iter().find(|d| d.id == team).unwrap();
     JoinTarget {
@@ -300,6 +300,7 @@ fn note_and_account_reach_the_approver_card() {
     let extras = p::join::JoinExtras {
         note: Some("  Staf gudang, NIK 1234 ".into()),
         account: Some("sari.w".into()),
+        ad: None,
     };
     let mine = p::create_join_request(
         &mut sari.conn,
@@ -350,6 +351,7 @@ fn note_is_cleaned_and_checked_before_signing() {
             Some(&p::join::JoinExtras {
                 note: Some(note.into()),
                 account: account.map(str::to_owned),
+                ad: None,
             }),
             now(),
         )
@@ -386,7 +388,7 @@ fn note_is_cleaned_and_checked_before_signing() {
 
 /// Every member of the office reports Mira `version`, and Andi has all
 /// the device profiles.
-fn all_on(o: &mut Office, version: &str) {
+pub(super) fn all_on(o: &mut Office, version: &str) {
     o.andi.report_version(version);
     o.rina.report_version(version);
     o.dimas.report_version(version);
@@ -435,6 +437,7 @@ fn requests_with_extras_are_refused_while_the_gate_is_closed() {
     let extras = p::join::JoinExtras {
         note: Some("Staf gudang".into()),
         account: Some("sari".into()),
+        ad: None,
     };
     let with = p::create_join_request(
         &mut sari.conn,
@@ -854,6 +857,7 @@ fn removed_laptops_and_archived_departments_are_refused_on_receipt() {
             app_version: "0.3.0".into(),
             note: None,
             account: None,
+            ad: None,
             at: p::format::format_time(now()),
             nonce: "ab".repeat(16),
         };

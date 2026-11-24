@@ -16,6 +16,7 @@ export const OFFICE_STEP = ONB.office;
 export const WAITING = ONB.waiting;
 export const ADMIN_IT = ONB.adminIt;
 export const NEW_OFFICE = ONB.newOffice;
+export const LEGACY = ONB.legacy;
 
 // Fungsi, bukan salinan fungsi kamus, supaya selalu memakai bahasa aktif.
 export const CHECKING_FIREWALL = (name: string) => ONB.firewall.checking(name);

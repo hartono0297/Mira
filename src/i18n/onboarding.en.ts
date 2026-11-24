@@ -28,6 +28,7 @@ const en: Dict<typeof id> = {
     submit: "Continue",
     saving: "Saving...",
     saveFailed: "Name not saved",
+    adSource: (domain: string) => `Filled in from your Windows account (${domain}). Change it if needed.`,
   },
   device: {
     error: "Couldn't read this laptop's name and address. The search keeps going.",
@@ -40,7 +41,8 @@ const en: Dict<typeof id> = {
     heading: "Looking for your office on the network...",
     lead: "Mira is looking for offices that use Mira on the Wi-Fi or LAN this laptop is on.",
     searching: "Searching",
-    stopsAfter: "The search stops on its own after 15 seconds.",
+    stopsAfter: (seconds: number) => `The search stops on its own after ${seconds} seconds.`,
+    setupLead: "Before setting up a new office, Mira checks whether a Mira office already exists on this network.",
     cancel: "Cancel",
     grace: {
       title: "Office found, checking for other offices...",
@@ -70,14 +72,36 @@ const en: Dict<typeof id> = {
     inviteTitle: "Use an invite code",
     inviteDesc: "A code from the office admin or a department admin.",
     searchAgain: "Search again",
+    headingLegacy: "Office found, but it can't take join requests yet",
+  },
+  legacy: {
+    title: "Office with an older Mira",
+    unnamed: "Unnamed office",
+    item: (name: string, laptops: number) => `${name} (${laptops === 1 ? "1 laptop" : `${laptops} laptops`})`,
+    body: "To join:",
+    update:
+      "Ask the office admin or a colleague in that office to update Mira on their laptop by running the Mira install command again, then press Search again.",
+    invite: "Or ask the office admin for an invite code, then choose Use an invite code.",
   },
   adminIt: {
     summary: "For IT admins",
     explain:
       "An IT admin or superadmin sets up a new office only once, on the laptop of the first person to use Mira. Everyone else just asks to join.",
     button: "Set up Mira for a new office",
-    officeSeen:
-      "There's already a Mira office on this network, so don't set up a new one. Ask to join that office with Search again, a colleague's laptop address, or an invite code.",
+    seenTitle: "There's already a Mira office on this network",
+    seenNamed: (names: string) =>
+      `Offices found: ${names}. Usually you only need to ask to join that office. A second office separates you from colleagues who already use Mira.`,
+    seenUnnamed:
+      "A laptop on this network already belongs to a Mira office, even though it hasn't answered. Usually you only need to ask to join that office. A second office separates you from colleagues who already use Mira.",
+    joinSeen: "Ask to join that office",
+    confirmPhrase: "new office",
+    confirmLabel: (phrase: string) => `Still need a new office? Type "${phrase}" to continue.`,
+    confirmMismatch: (phrase: string) => `Type "${phrase}" exactly, then press the button again.`,
+    confirmButton: "Set up a new office anyway",
+    sameDomain: (domain: string, names: string) =>
+      `This laptop uses the domain ${domain}, the same as the office ${names}. One office domain belongs to one Mira office, so ask to join that office.`,
+    setupHeading: "Check before setting up a new office",
+    otherWay: "Find your office another way",
   },
   office: {
     nameSummary: "Name:",
@@ -95,6 +119,7 @@ const en: Dict<typeof id> = {
     pickOffice: "Choose your office first.",
     pickTeam: "Choose your department first.",
     headingOne: (name: string) => `Office found: ${name}`,
+    headingMine: "Your office was found",
     headingMany: "Several offices found",
     subOne: "This office uses Mira on the same network as your laptop.",
     leadMany: (n: number) =>
@@ -119,6 +144,40 @@ const en: Dict<typeof id> = {
     sendFailed: "Request not sent",
     notYours: "Not your office?",
     otherWay: "Find it another way",
+    ad: {
+      officeMatch: (domain: string) => `Your office domain: ${domain}`,
+      officeSummary: "Office:",
+      officeWithDomain: (name: string, domain: string) => `${name} (${domain})`,
+      changeOffice: "Change",
+      changeOfficeLabel: "Change office",
+      primary: (domain: string) => `Main office for ${domain} (created first, according to that office's own records)`,
+      laterSameDomain:
+        "Same domain, but its records say it was created later. Choose it only if the office admin asks you to, and compare the fingerprint first.",
+      deptFromAccount: (dept: string) => `From your Windows account: ${dept}`,
+      deptMissing: (dept: string) =>
+        `Your department in your Windows account (${dept}) isn't in Mira yet. Choose the closest department, or ask the office admin.`,
+      boxTitle: "What the admin sees",
+      name: "Name",
+      team: "Department",
+      teamNone: "Not chosen yet",
+      account: "Windows account",
+      location: "Location in Active Directory",
+      note: "Note",
+      partial:
+        "Some Windows account details couldn't be read because the office server is out of reach. The admin will check them again.",
+      skip: {
+        noDomain:
+          "Your Windows account details won't be sent because this office hasn't set its office domain yet. The admin reviews the request as usual.",
+        otherDomain: (office: string, mine: string) =>
+          `Your Windows account details won't be sent because this office's domain (${office}) is different from your laptop's domain (${mine}).`,
+        outdated:
+          "Your Windows account details won't be sent because some office laptops still run an older Mira. The admin reviews the request as usual.",
+        noUser:
+          "Your Windows account details won't be sent because the account name couldn't be read. The admin reviews the request as usual.",
+      },
+      stored:
+        "Your name, department, Windows account, and location in Active Directory are kept in the office records, where office members can see them.",
+    },
   },
   waiting: {
     adminSees: "What the admin sees",
@@ -149,6 +208,8 @@ const en: Dict<typeof id> = {
     cancelFailed: "Request not canceled",
     cancel: "Cancel request",
     cancelling: "Canceling...",
+    adAccount: "Windows account",
+    adLocation: "Location in Active Directory",
   },
   rejected: {
     heading: "Request declined",
@@ -213,6 +274,12 @@ const en: Dict<typeof id> = {
     back: "Back",
     submit: "Create organization",
     saving: "Setting up the office...",
+    orgFromDomain: "Filled in from the office domain. Replace it with the name colleagues know, for example MACF.",
+    adLabel: "Active Directory domain (optional)",
+    adPlaceholder: "e.g. office.co.id",
+    adHint:
+      "Mira uses it to recognize office laptops and to fill in new people's names and departments from their Windows accounts. You can leave it empty.",
+    adInvalid: "Write the domain like office.co.id, without spaces or slashes.",
   },
 };
 

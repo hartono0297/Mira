@@ -11,6 +11,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { getLang } from "../../i18n/core";
 import { DEPT_TEXT as T } from "../../i18n/org-departments";
+import { AdSettings } from "./AdSettings";
 import type { OrgPage } from "./context";
 import { useOrgLive } from "./useOrgLive";
 import "./departments.css";
@@ -254,6 +255,9 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
           </ul>
         </details>
       )}
+
+      {/* Hanya superadmin (tab ini sudah khusus superadmin). Butuh daftar departemen untuk pemetaan OU. */}
+      {manage && live.data && <AdSettings page={page} departments={departments} />}
 
       {manage && <CreateDialog open={creating} onOpenChange={setCreating} page={page} />}
 

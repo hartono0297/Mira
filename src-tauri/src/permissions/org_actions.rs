@@ -8,13 +8,31 @@ use rusqlite::{Connection, TransactionBehavior};
 use time::OffsetDateTime;
 
 use super::actions::{author_in, reason_error};
-use super::fold::{MemberStatus, Reason};
+use super::fold::{AdSettings, MemberStatus, Reason};
 use super::format::{is_lower_hex, validate_label_name, validate_team_name};
+use super::join::{
+    AD_OU_MAP_MAX_ROWS, ad_settings_allowed, is_below_ad_threshold, is_valid_ou_name, join_ad_allowed,
+    parse_request_payload,
+};
 use super::join_store::{DeviceProfile, stored_request};
-use super::op::{Body, Scope, SignedOp};
+use super::op::{Body, MAX_PAYLOAD_BYTES, Scope, SignedOp};
 use super::store::{load_state, not_in_org, recompute_in, require_org};
+use crate::ad::OuMapping;
 use crate::error::{AppError, AppResult};
 use crate::identity::Identity;
+
+/// `approve_join` refusal when the office has AD settings and the
+/// requester's Mira is older than `JOIN_AD_SINCE`.
+pub const REQUESTER_OUTDATED: &str = "Mira di laptop peminta terlalu lama untuk kantor yang memakai pengaturan AD. Minta peminta memperbarui Mira dulu, lalu mengirim permintaan lagi.";
+/// `approve_join` refusal for a request with an AD claim while some laptop
+/// of the office runs a Mira older than `JOIN_AD_SINCE`.
+pub const AD_CLAIM_GATE_CLOSED: &str = "Permintaan ini membawa data AD, tapi masih ada laptop kantor dengan Mira versi lama. Perbarui Mira di laptop itu dulu, atau tolak permintaan ini dan minta peminta mengirim ulang.";
+/// `set_ad_settings` refusal while some laptop runs an older Mira.
+pub const AD_SETTINGS_GATE_CLOSED: &str =
+    "Pengaturan AD baru bisa disimpan setelah semua laptop kantor memakai Mira versi terbaru.";
+/// Room left in an op for everything but the `ad_settings_set` body: the
+/// other payload fields, with `deps` at its longest, take about 2.5 KiB.
+const AD_SETTINGS_MAX_BODY_BYTES: usize = MAX_PAYLOAD_BYTES - 4 * 1024;
 
 fn random_hex16() -> String {
     let mut b = [0u8; 16];
@@ -150,6 +168,21 @@ fn decide_join(
                 .into(),
         )
     })?;
+    if approve
+        && let (Some(state), Ok(p)) = (load_state(&tx)?, parse_request_payload(&req.payload))
+    {
+        // An office with AD settings has an `ad_settings_set` op in its log.
+        // An older Mira refuses that op, so the new member's log would stall.
+        if state.ad.set && is_below_ad_threshold(&p.app_version) {
+            return Err(AppError::InvalidInput(REQUESTER_OUTDATED.into()));
+        }
+        // The gate may have closed since the request was stored (a laptop
+        // on an older Mira joined by invite code): that laptop would refuse
+        // the `join_approve` op carrying the claim.
+        if p.has_ad() && !join_ad_allowed(&state) {
+            return Err(AppError::InvalidInput(AD_CLAIM_GATE_CLOSED.into()));
+        }
+    }
     let body = if approve {
         Body::JoinApprove {
             request: req.payload,
@@ -184,6 +217,91 @@ pub fn reject_join(
     now: OffsetDateTime,
 ) -> AppResult<()> {
     decide_join(conn, identity, request_id, false, now)
+}
+
+// ----- Active Directory settings ---------------------------------------------------
+
+/// Superadmin: saves the organization's AD domain (empty clears it) and the
+/// OU to department mapping as one `ad_settings_set` op. The domain is
+/// normalized first (`Kantor.CO.ID.` becomes `kantor.co.id`) and OU names
+/// are trimmed. Refused until every active member runs a Mira that
+/// understands the op ([`ad_settings_allowed`]). Saving what the log
+/// already holds writes nothing.
+pub fn set_ad_settings(
+    conn: &mut Connection,
+    identity: &Identity,
+    domain: &str,
+    ou_map: Vec<OuMapping>,
+    now: OffsetDateTime,
+) -> AppResult<()> {
+    let domain = match domain.trim() {
+        "" => String::new(),
+        d => crate::ad::dn::normalize_domain(d).ok_or_else(|| {
+            AppError::InvalidInput("Domain tidak valid. Contoh: kantor.co.id".into())
+        })?,
+    };
+    let ou_map = clean_ou_map(ou_map)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let state = load_state(&tx)?.ok_or_else(not_in_org)?;
+    if !state.is_superadmin(identity.public_key_hex()) {
+        return Err(reason_error(Reason::NotAuthorized));
+    }
+    if !ad_settings_allowed(&state) {
+        return Err(AppError::InvalidInput(AD_SETTINGS_GATE_CLOSED.into()));
+    }
+    if let Some(row) = ou_map.iter().find(|r| state.live_team(&r.team).is_none()) {
+        return Err(AppError::NotFound(format!(
+            "Departemen untuk OU \"{}\" tidak ditemukan atau sudah dihapus.",
+            row.ou
+        )));
+    }
+    let next = AdSettings {
+        domain: (!domain.is_empty()).then(|| domain.clone()),
+        ou_map: ou_map.clone(),
+        set: true,
+    };
+    if state.ad == next {
+        return Ok(());
+    }
+    let body = Body::AdSettingsSet { domain, ou_map };
+    let size = serde_json::to_string(&body).map_or(usize::MAX, |s| s.len());
+    if size > AD_SETTINGS_MAX_BODY_BYTES {
+        return Err(AppError::InvalidInput(
+            "Pemetaan OU terlalu panjang untuk disimpan. Kurangi barisnya atau singkat nama OU-nya."
+                .into(),
+        ));
+    }
+    author_in(&tx, identity, Scope::Org, body, now)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// OU names trimmed and checked, with messages the superadmin can act on.
+fn clean_ou_map(map: Vec<OuMapping>) -> AppResult<Vec<OuMapping>> {
+    if map.len() > AD_OU_MAP_MAX_ROWS {
+        return Err(AppError::InvalidInput(
+            "Pemetaan OU paling banyak 100 baris.".into(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(map.len());
+    for row in map {
+        let ou = row.ou.trim().to_owned();
+        if !is_valid_ou_name(&ou) {
+            return Err(AppError::InvalidInput(
+                "Nama OU harus 1 sampai 64 karakter, tanpa baris baru, tab, atau karakter tak terlihat."
+                    .into(),
+            ));
+        }
+        check_id(&row.team, Reason::TeamNotFound)?;
+        if !seen.insert(ou.to_lowercase()) {
+            return Err(AppError::InvalidInput(format!(
+                "OU \"{ou}\" tercantum lebih dari sekali. Satu OU hanya bisa dipetakan ke satu departemen."
+            )));
+        }
+        out.push(OuMapping { ou, team: row.team });
+    }
+    Ok(out)
 }
 
 // ----- Projects ----------------------------------------------------------------

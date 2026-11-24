@@ -119,6 +119,90 @@ export type JoinRequestView = {
   note: string | null;
   // Nama akun login Windows atau macOS di laptop peminta.
   account: string | null;
+  // onboarding-ad: data AD yang ikut permintaan bertanda tangan (dilaporkan
+  // laptop peminta, diperiksa ulang lewat joinAdCheck). null untuk permintaan manual.
+  ad: JoinAdView | null;
+  // Kantor memakai pengaturan AD dan Mira peminta terlalu lama untuk itu:
+  // Setujui akan ditolak sampai peminta memperbarui Mira.
+  requesterOutdated: boolean;
+};
+
+export type JoinAdView = {
+  domain: string;
+  user: string;
+  dn: string | null;
+  name: string | null;
+  department: string | null;
+  // OU dari DN, paling dalam dulu.
+  ous: string[];
+  suggestedTeamId: string | null;
+  // Departemen hasil AD ada di Mira.
+  departmentInMira: boolean;
+  // Nama anggota aktif yang sudah bergabung dengan akun AD yang sama
+  // (domain dan user), null kalau belum ada. Tanda kemungkinan penyamaran.
+  usedBy: string | null;
+};
+
+export type AdCheckStatus =
+  | "match"
+  // Akun ada dan aktif, tapi tidak ada nama atau departemen yang bisa dibandingkan.
+  | "exists"
+  | "mismatch"
+  | "disabled"
+  | "not_found"
+  | "unreachable"
+  | "other_domain"
+  | "not_domain_machine";
+
+export type AdCheck = {
+  status: AdCheckStatus;
+  // name dan department: permintaan (nama tampilan, departemen Mira) dibanding
+  // direktori. claim_name, claim_department, location: data AD yang dilaporkan
+  // laptop peminta dibanding direktori (tanda klaim palsu).
+  mismatches: {
+    field: "name" | "department" | "claim_name" | "claim_department" | "location";
+    requested: string;
+    directory: string;
+  }[];
+  directoryName: string | null;
+  // OU dari DN di direktori, paling dalam dulu (bukan dari klaim peminta).
+  directoryOus: string[];
+  directoryDepartment: string | null;
+  departmentInMira: boolean;
+  checkedAt: string;
+};
+
+// Laptop di jaringan ini yang mengumumkan organisasi Mira lain (petunjuk mDNS,
+// tidak terverifikasi). Hanya untuk pemberitahuan, tanpa sinkron data.
+export type OtherOfficesView = {
+  // Jumlah laptop dengan organisasi selain kantor ini.
+  laptops: number;
+  // Jumlah organisasi berbeda.
+  offices: number;
+  // Dari laptop itu, yang mengumumkan domain AD sama dengan kantor ini.
+  sameDomainLaptops: number;
+  // Nama organisasi dari pengumuman, kalau ada.
+  names: string[];
+  // Kantor lain dengan domain AD sama yang dibuat lebih dulu (genesis
+  // terverifikasi lewat join_info), null kalau tidak ada. Superadmin kantor
+  // ini diberi tahu bahwa kantor itu "kantor utama" domain ini.
+  olderSameDomain: { name: string; createdAt: string; fingerprint: string } | null;
+};
+
+// Satu baris pemetaan OU AD ke departemen Mira.
+export type OuMapping = { ou: string; team: string };
+
+export type AdSettingsView = {
+  domain: string | null;
+  ouMap: OuMapping[];
+  // Superadmin.
+  canEdit: boolean;
+  // Semua laptop anggota sudah cukup baru untuk menyimpan pengaturan AD.
+  allowed: boolean;
+  // Laptop yang menghalangi (versi Mira terlalu lama atau belum dilaporkan).
+  outdated: { name: string; appVersion: string | null }[];
+  // Domain AD laptop ini, untuk tombol "Pakai domain laptop ini".
+  machineDomain: string | null;
 };
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -152,6 +236,14 @@ export const orgApi = {
   // Permintaan bergabung (superadmin atau admin departemen tujuan)
   approveJoin: (requestId: string) => call<null>("org_approve_join", { requestId }),
   rejectJoin: (requestId: string) => call<null>("org_reject_join", { requestId }),
+  // Cek ulang akun AD peminta dari laptop ini. Hasil disimpan 2 menit; refresh memaksa cek baru.
+  joinAdCheck: (requestId: string, refresh = false) => call<AdCheck>("org_join_ad_check", { requestId, refresh }),
+
+  // Active Directory (superadmin mengubah, semua bisa membaca)
+  adSettings: () => call<AdSettingsView>("org_ad_settings"),
+  setAdSettings: (domain: string, ouMap: OuMapping[]) => call<null>("org_set_ad_settings", { domain, ouMap }),
+  // Laptop lain di jaringan yang tergabung di kantor Mira lain.
+  otherOffices: () => call<OtherOfficesView>("org_other_offices"),
 
   // Anggota proyek
   addProjectMember: (projectId: string, publicKey: string) =>

@@ -585,3 +585,27 @@
   gap: 10px;
   padding: 4px 0 2px;
 }
+
+/* Penanda kantor dengan domain AD yang sama dengan laptop ini. accent-text
+   lolos 4,5:1 di atas --card dan --accent-soft (kartu terpilih) di dua mode. */
+.onb-office-ad {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+/* Catatan di bawah isi kotak "Yang dikirim ke admin" (data AD sebagian). */
+.onb-box-foot {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Peringatan sebelum kantor kedua: pesan, tombol bergabung, lalu konfirmasi. */
+.onb-guard,
+.onb-guard-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}

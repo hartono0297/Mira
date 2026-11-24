@@ -5,6 +5,7 @@ import type { AppState, OrgInfo } from "../../api";
 import type { DepartmentView, OrgOverview, PersonView } from "../../api/org";
 import { appState, directory, router, rustError } from "../../test/fixtures";
 import {
+  adSettings,
   department,
   memberOverview,
   overview,
@@ -61,6 +62,7 @@ function setup(extra: Table = {}, ov: OrgOverview = overview()) {
       org_join_requests: [],
       org_departments: [desain, keuangan, interior, lanskap],
       org_people: people,
+      org_ad_settings: adSettings(),
       ...(extra as Record<string, never>),
     }),
   );

@@ -107,6 +107,11 @@ pub struct JoinDept {
 /// `note` and `account` (docs/plans/v04-onboarding.md).
 pub const JOIN_INFO_EXTRAS: u32 = 1;
 
+/// `JoinInfoWire.extras` of a member that also accepts the AD claim (`ad`)
+/// in join requests (docs/plans/onboarding-ad.md). Mira v0.4.0 compares
+/// `extras >= 1`, so it still reads 2 as "takes `note` and `account`".
+pub const JOIN_INFO_EXTRAS_AD: u32 = 2;
+
 /// Answer to `join_info_get` (v0.3): the organization's genesis record, its
 /// short fingerprint and the open departments. The requester checks the
 /// genesis record itself; the fingerprint is only shown.
@@ -116,10 +121,45 @@ pub struct JoinInfoWire {
     pub fingerprint: String,
     pub departments: Vec<JoinDept>,
     /// v0.4: which optional join request fields this member accepts
-    /// ([`JOIN_INFO_EXTRAS`]). Absent (0) from v0.3 members. v0.3 parses
-    /// this struct without `deny_unknown_fields`, so it ignores the field.
+    /// ([`JOIN_INFO_EXTRAS`], [`JOIN_INFO_EXTRAS_AD`]). Absent (0) from v0.3
+    /// members. v0.3 parses this struct without `deny_unknown_fields`, so
+    /// it ignores the field.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub extras: u32,
+    /// AD onboarding: the organization's AD domain, lowercase. Absent when
+    /// not set and from older members (which ignore it, like `extras`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ad_domain: Option<String>,
+    /// AD onboarding: OU to department rows whose department is open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ad_ou_map: Vec<OuMapWire>,
+}
+
+/// One OU mapping row in a `join_info` answer. Unlike `ad::OuMapping` (the
+/// strict shape inside the `ad_settings_set` op), unknown fields are
+/// ignored, so a later Mira can add some without breaking the answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OuMapWire {
+    pub ou: String,
+    pub team: String,
+}
+
+impl From<crate::ad::OuMapping> for OuMapWire {
+    fn from(m: crate::ad::OuMapping) -> Self {
+        OuMapWire {
+            ou: m.ou,
+            team: m.team,
+        }
+    }
+}
+
+impl From<OuMapWire> for crate::ad::OuMapping {
+    fn from(m: OuMapWire) -> Self {
+        crate::ad::OuMapping {
+            ou: m.ou,
+            team: m.team,
+        }
+    }
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -158,7 +198,8 @@ pub enum JoinStatusWire {
     Unknown,
 }
 
-/// A laptop announcing an organization over mDNS (TXT `org`, `on`, `j`).
+/// A laptop announcing an organization over mDNS (TXT `org`, `on`, `j`,
+/// `ad`).
 /// Hints only: nothing here is authenticated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfficeHint {
@@ -169,6 +210,9 @@ pub struct OfficeHint {
     pub org_name: Option<String>,
     /// TXT `j` = `"1"`: an active non-guest member that takes join requests.
     pub accepts_join: bool,
+    /// TXT `ad`: the organization's AD domain, normalized; `None` when not
+    /// announced or not a valid domain (onboarding-ad).
+    pub ad_domain: Option<String>,
 }
 
 /// What the backend says about a key proven in a handshake.
@@ -293,6 +337,12 @@ pub trait SyncBackend: Send + Sync + 'static {
     /// `join_info_get` and `join_request` (v0.3). Default: no.
     fn accepts_join_requests(&self) -> bool {
         false
+    }
+
+    /// TXT `ad`: the organization's AD domain, when it has one
+    /// (onboarding-ad). Default: none.
+    fn ad_domain(&self) -> Option<String> {
+        None
     }
 
     /// Answer to `join_info_get`; `None` when this laptop does not take join

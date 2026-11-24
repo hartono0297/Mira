@@ -3,6 +3,7 @@ import { toAppError, type AppError, type OrgInfo } from "../../api";
 import { formatDateTime } from "../../api/format";
 import { joinApi, type JoinDevice, type OutgoingJoinRequest } from "../../api/join";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { ouPath } from "./adProfile";
 import { StepHeading } from "./StepHeading";
 import { ONB, WAITING } from "./texts";
 
@@ -90,7 +91,9 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
   const undelivered = Boolean(request.lastError);
   // Akun login ikut permintaan hanya bersama keterangan (bentuk v0.4). Permintaan
   // tanpa keterangan bisa berbentuk v0.3, jadi akunnya tidak diklaim terlihat admin.
-  const accountSent = Boolean(request.note) && Boolean(device?.account);
+  // Permintaan dengan data AD menampilkan akun Windows; baris akun login tidak diulang.
+  const accountSent = Boolean(request.note) && Boolean(device?.account) && !request.ad;
+  const adLocation = request.ad ? ouPath(request.ad.dn) : null;
 
   return (
     <div className="onb-form">
@@ -118,6 +121,18 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
               <dd className="mono">{device?.account}</dd>
             </>
           )}
+          {request.ad && (
+            <>
+              <dt>{WAITING.adAccount}</dt>
+              <dd className="mono" data-testid="onb-ad-waiting-account">{`${request.ad.user}@${request.ad.domain}`}</dd>
+              {adLocation && (
+                <>
+                  <dt>{WAITING.adLocation}</dt>
+                  <dd>{adLocation}</dd>
+                </>
+              )}
+            </>
+          )}
           <dt>{WAITING.code}</dt>
           <dd>
             <span className="mono onb-match">{request.code}</span>
@@ -126,7 +141,7 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
           <dd className="mono">{request.orgFingerprint}</dd>
         </dl>
       </div>
-      {device?.account && !accountSent && (
+      {device?.account && !accountSent && !request.ad && (
         <dl className="onb-kv">
           <dt>{WAITING.accountFact}</dt>
           <dd className="mono">{device.account}</dd>

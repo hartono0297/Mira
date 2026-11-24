@@ -23,12 +23,15 @@ export function office(overrides: Partial<FoundOffice> = {}): FoundOffice {
     conflict: false,
     sameName: false,
     acceptsNote: true,
+    adDomain: null,
+    acceptsAd: false,
+    createdAt: "2026-01-05T08:00:00Z",
     ...overrides,
   };
 }
 
 export function searchResult(overrides: Partial<JoinSearch> = {}): JoinSearch {
-  return { offices: [], orgSeen: false, mdnsOk: true, mdnsError: null, ...overrides };
+  return { offices: [], legacyOffices: [], orgSeen: false, mdnsOk: true, mdnsError: null, ...overrides };
 }
 
 export function outgoing(overrides: Partial<OutgoingJoinRequest> = {}): OutgoingJoinRequest {
@@ -42,6 +45,7 @@ export function outgoing(overrides: Partial<OutgoingJoinRequest> = {}): Outgoing
     teamName: "Desain",
     displayName: "Rina",
     note: null,
+    ad: null,
     createdAt: "2026-11-23T09:00:00Z",
     status: "pending",
     decidedByName: null,

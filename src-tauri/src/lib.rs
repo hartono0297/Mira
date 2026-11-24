@@ -3,6 +3,7 @@
 //! Modules are split by concern so later stages can add `network/`, `sync/`
 //! and `permissions/` next to these without reshaping them.
 
+pub mod ad;
 pub mod blobs;
 pub mod board;
 pub mod chat;
@@ -20,6 +21,7 @@ pub mod net_backend;
 pub mod network;
 pub mod network_commands;
 pub mod org;
+pub mod org_ad_commands;
 pub mod org_commands;
 pub mod org_screen;
 pub mod paths;
@@ -143,6 +145,8 @@ pub fn run() {
             app.manage(documents.clone());
             documents.spawn_recovery();
             app.manage(signing::session::SignSessions::default());
+            // AD onboarding, approver side: re-check and other-offices caches.
+            app.manage(org_ad_commands::OrgAdCache::default());
             signing::peer_sync::register(app.handle());
             // v0.3 join requests: topic `join`, approver notifications, and
             // the requester's in-memory state.
@@ -167,6 +171,7 @@ pub fn run() {
             commands::get_app_state,
             commands::save_display_name,
             commands::create_organization,
+            commands::machine_ad_domain,
             commands::get_setting,
             commands::set_setting,
             team_commands::get_directory,
@@ -203,6 +208,10 @@ pub fn run() {
             org_commands::org_rename_label,
             org_commands::org_set_label_archived,
             org_commands::org_set_label_assigned,
+            org_ad_commands::org_ad_settings,
+            org_ad_commands::org_set_ad_settings,
+            org_ad_commands::org_join_ad_check,
+            org_ad_commands::org_other_offices,
             org_screen::org_fingerprint,
             join_commands::join_device,
             join_commands::join_search,
@@ -213,6 +222,8 @@ pub fn run() {
             join_commands::join_cancel,
             join_commands::join_resend,
             join_commands::join_setup_mode,
+            join_commands::join_ad_profile,
+            join_commands::join_ad_suggest,
             network_commands::get_network_status,
             network_commands::add_manual_address,
             network_commands::remove_manual_address,

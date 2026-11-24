@@ -33,6 +33,10 @@ const MAX_CONCURRENT_DIALS: usize = 8;
 /// Longest TXT `on` (organization name) in bytes, sent and read (contract
 /// 8.1). Keeps the whole TXT record well inside one mDNS packet.
 const MAX_TXT_ORG_NAME: usize = 63;
+/// Longest TXT `ad` (organization's AD domain) value announced: one TXT
+/// string holds 255 bytes, `ad=` included. A normalized domain is at most
+/// 253 bytes, so only the very longest are left out.
+const MAX_TXT_AD: usize = 252;
 
 struct MdnsHandle {
     daemon: ServiceDaemon,
@@ -41,7 +45,7 @@ struct MdnsHandle {
 }
 
 /// What this laptop announces besides its key. A change of any field
-/// (organization, its name, or whether join requests are taken)
+/// (organization, its name, whether join requests are taken, AD domain)
 /// re-registers the service so browsers see the new TXT.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Advert {
@@ -52,6 +56,40 @@ struct Advert {
     /// TXT `j` = `"1"`. Left out (not `"0"`) when false, so the record stays
     /// what a v0.2 laptop sends and readers only test for `"1"`.
     accepts_join: bool,
+    /// TXT `ad`: the organization's AD domain (onboarding-ad, plan 6.3).
+    /// Older Mira ignores the key.
+    ad_domain: Option<String>,
+}
+
+/// TXT key/value pairs for `advert`, in the order they are sent.
+fn advert_props(me: &str, advert: &Advert) -> Vec<(&'static str, String)> {
+    let mut props = vec![
+        ("v", "1".to_owned()),
+        ("pk", me.to_owned()),
+        ("org", advert.org.clone()),
+    ];
+    if let Some(name) = &advert.org_name {
+        props.push(("on", name.clone()));
+    }
+    if advert.accepts_join {
+        props.push(("j", "1".to_owned()));
+    }
+    if let Some(domain) = &advert.ad_domain {
+        props.push(("ad", domain.clone()));
+    }
+    props
+}
+
+/// The AD domain as announced: a valid domain short enough for one TXT
+/// string, `None` otherwise.
+fn txt_ad_domain(domain: &str) -> Option<String> {
+    crate::ad::dn::normalize_domain(domain).filter(|d| d.len() <= MAX_TXT_AD)
+}
+
+/// TXT `ad` as received: anyone on the LAN can send anything, so only a
+/// valid domain (normalized) is kept.
+fn parse_txt_ad(raw: &str) -> Option<String> {
+    crate::ad::dn::normalize_domain(raw)
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +100,8 @@ pub(crate) struct Candidate {
     pub org_name: Option<String>,
     /// TXT `j` == `"1"`. Unauthenticated hint.
     pub accepts_join: bool,
+    /// TXT `ad`, cleaned by `parse_txt_ad`. Unauthenticated hint.
+    pub ad_domain: Option<String>,
     pub seen: Instant,
 }
 
@@ -136,7 +176,7 @@ impl Discovery {
         lock(&self.mdns).is_some()
     }
 
-    /// Laptops announcing an organization (TXT `org`, `on`, `j`), freshest
+    /// Laptops announcing an organization (TXT `org`, `on`, `j`, `ad`), freshest
     /// first, without this laptop and without candidates older than
     /// `CANDIDATE_TTL` (v0.3 onboarding). Hints only.
     pub(crate) fn office_hints(&self, me: &str) -> Vec<super::OfficeHint> {
@@ -154,6 +194,7 @@ impl Discovery {
                         org,
                         org_name: c.org_name.clone(),
                         accepts_join: c.accepts_join,
+                        ad_domain: c.ad_domain.clone(),
                     },
                 ))
             })
@@ -262,7 +303,8 @@ pub(crate) async fn start_mdns(inner: &Arc<Inner>) {
 }
 
 /// Advertises this laptop when it has an organization, with the current
-/// org, its name and whether it takes join requests in TXT; withdraws the
+/// org, its name, whether it takes join requests and the organization's AD
+/// domain in TXT; withdraws the
 /// advertisement otherwise. Called on start, `Network::refresh` and new ops,
 /// which covers renames and role changes.
 pub(crate) async fn refresh_mdns(inner: &Arc<Inner>) {
@@ -279,6 +321,7 @@ pub(crate) async fn refresh_mdns(inner: &Arc<Inner>) {
                     .map(|n| txt_org_name(&n))
                     .filter(|n| !n.is_empty()),
                 accepts_join: b.accepts_join_requests(),
+                ad_domain: b.ad_domain().as_deref().and_then(txt_ad_domain),
             })
         })
         .await;
@@ -300,17 +343,7 @@ pub(crate) async fn refresh_mdns(inner: &Arc<Inner>) {
         if let Some(advert) = desired {
             let instance = &inner.me[..16];
             let host = format!("mira-{instance}.local.");
-            let mut props = vec![
-                ("v", "1".to_owned()),
-                ("pk", inner.me.clone()),
-                ("org", advert.org.clone()),
-            ];
-            if let Some(name) = &advert.org_name {
-                props.push(("on", name.clone()));
-            }
-            if advert.accepts_join {
-                props.push(("j", "1".to_owned()));
-            }
+            let props = advert_props(&inner.me, &advert);
             let result = ServiceInfo::new(
                 SERVICE_TYPE,
                 instance,
@@ -375,6 +408,7 @@ async fn browse_loop(weak: Weak<Inner>, rx: mdns_sd::Receiver<ServiceEvent>) {
             .map(str::to_owned);
         let org_name = svc.get_property_val_str("on").and_then(parse_txt_org_name);
         let accepts_join = svc.get_property_val_str("j") == Some("1");
+        let ad_domain = svc.get_property_val_str("ad").and_then(parse_txt_ad);
         let port = svc.get_port();
         let mut added = false;
         for ip in svc.get_addresses_v4() {
@@ -389,6 +423,7 @@ async fn browse_loop(weak: Weak<Inner>, rx: mdns_sd::Receiver<ServiceEvent>) {
                     org: org.clone(),
                     org_name: org_name.clone(),
                     accepts_join,
+                    ad_domain: ad_domain.clone(),
                     seen: Instant::now(),
                 },
             );
@@ -587,6 +622,7 @@ mod tests {
                     org: Some("0".repeat(32)),
                     org_name: None,
                     accepts_join: false,
+                    ad_domain: None,
                     seen: t0 + Duration::from_millis(u64::from(i)),
                 },
             );
@@ -598,6 +634,7 @@ mod tests {
                 org: Some("0".repeat(32)),
                 org_name: None,
                 accepts_join: false,
+                ad_domain: None,
                 seen: t0,
             },
         );
@@ -673,6 +710,97 @@ mod tests {
         assert_eq!(parse_txt_org_name(&"z".repeat(300)), Some("z".repeat(63)));
     }
 
+    fn props_map(props: &[(&'static str, String)]) -> HashMap<&'static str, String> {
+        props.iter().cloned().collect()
+    }
+
+    #[test]
+    fn txt_ad_is_written_when_the_office_has_a_domain() {
+        let me = "e".repeat(64);
+        let org = "0123456789abcdef0123456789abcdef".to_owned();
+        let full = Advert {
+            org: org.clone(),
+            org_name: Some("MCF".into()),
+            accepts_join: true,
+            ad_domain: txt_ad_domain("MACF.co.id."),
+        };
+        let props = advert_props(&me, &full);
+        let keys: Vec<&str> = props.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, ["v", "pk", "org", "on", "j", "ad"]);
+        assert_eq!(props_map(&props)["ad"], "macf.co.id");
+
+        let none = Advert {
+            ad_domain: None,
+            ..full.clone()
+        };
+        assert!(!props_map(&advert_props(&me, &none)).contains_key("ad"));
+
+        // Not a domain, or too long for one TXT string: left out.
+        assert_eq!(txt_ad_domain("bukan domain"), None);
+        assert_eq!(txt_ad_domain("corp"), None);
+        let long = format!(
+            "{}.{}.{}.{}",
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61)
+        );
+        assert_eq!(long.len(), 253);
+        assert!(crate::ad::dn::normalize_domain(&long).is_some());
+        assert_eq!(txt_ad_domain(&long), None);
+        let fits = &long[2..];
+        assert_eq!(txt_ad_domain(fits).as_deref(), Some(fits));
+    }
+
+    /// The shape a Mira 0.1/0.2 laptop announces (`MIRA_TEST_LEGACY_ADVERT`):
+    /// key and organization only.
+    #[test]
+    fn legacy_advert_carries_only_org() {
+        let me = "e".repeat(64);
+        let legacy = Advert {
+            org: "0123456789abcdef0123456789abcdef".into(),
+            org_name: None,
+            accepts_join: false,
+            ad_domain: None,
+        };
+        let keys: Vec<&str> = advert_props(&me, &legacy).iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, ["v", "pk", "org"]);
+    }
+
+    #[test]
+    fn txt_ad_from_the_lan_is_cleaned() {
+        assert_eq!(parse_txt_ad(" MACF.CO.ID. ").as_deref(), Some("macf.co.id"));
+        assert_eq!(parse_txt_ad("macf.co.id").as_deref(), Some("macf.co.id"));
+        for bad in [
+            "",
+            "   ",
+            "corp",
+            "macf..co.id",
+            "mac f.co.id",
+            "macf.co.id\u{0}",
+            "-a.co.id",
+        ] {
+            assert_eq!(parse_txt_ad(bad), None, "{bad:?}");
+        }
+        assert_eq!(parse_txt_ad(&"a.".repeat(200)), None);
+    }
+
+    #[test]
+    fn office_hints_carry_the_ad_domain() {
+        let d = Discovery::new();
+        let mut c = hint_candidate(
+            'a',
+            Some("0123456789abcdef0123456789abcdef"),
+            None,
+            true,
+            Instant::now(),
+        );
+        c.ad_domain = parse_txt_ad("Macf.co.id");
+        d.add_candidate(SocketAddr::from(([10, 0, 0, 1], 47800)), c);
+        let hints = d.office_hints(&"e".repeat(64));
+        assert_eq!(hints[0].ad_domain.as_deref(), Some("macf.co.id"));
+    }
+
     fn hint_candidate(
         pk: char,
         org: Option<&str>,
@@ -685,6 +813,7 @@ mod tests {
             org: org.map(str::to_owned),
             org_name: name.map(str::to_owned),
             accepts_join: j,
+            ad_domain: None,
             seen,
         }
     }
@@ -730,6 +859,7 @@ mod tests {
                 org: org.to_owned(),
                 org_name: None,
                 accepts_join: false,
+                ad_domain: None,
             }
         );
         assert_eq!(
@@ -740,6 +870,7 @@ mod tests {
                 org: org.to_owned(),
                 org_name: Some("Kantor".to_owned()),
                 accepts_join: true,
+                ad_domain: None,
             }
         );
         assert!(Discovery::new().office_hints(&me).is_empty());

@@ -1,9 +1,20 @@
 import { IconAlertTriangle } from "@tabler/icons-react";
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { toAppError, type AppError } from "../../api";
-import { JOIN_NOTE_MAX_CHARS, joinApi, type FoundOffice, type OutgoingJoinRequest } from "../../api/join";
+import {
+  JOIN_NOTE_MAX_CHARS,
+  joinApi,
+  type AdDeptSuggestion,
+  type FoundOffice,
+  type JoinDepartment,
+  type LegacyOffice,
+  type LocalAd,
+  type OutgoingJoinRequest,
+} from "../../api/join";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { adUse, asSuggestion, ouPath, sameDomain, type AdSkipReason } from "./adProfile";
+import { LegacyOffices } from "./OfficeGuard";
 import { StepHeading } from "./StepHeading";
 import { NOTE_COUNT_FROM, OFFICE_STEP } from "./texts";
 
@@ -14,6 +25,8 @@ export type OfficeDraft = {
   teamId: string;
   note: string;
   confirmedKey: string | null;
+  // Daftar kantor sedang dibuka lewat Ubah (kantor dari domain AD).
+  picking?: boolean;
 };
 
 // Karakter yang ditolak inti Rust (identity::has_forbidden_chars): kontrol,
@@ -32,6 +45,10 @@ type Props = {
   offices: FoundOffice[];
   // Nama tampilan dari langkah 1, sudah tersimpan.
   displayName: string;
+  // Akun domain Windows laptop ini (onboarding-ad), null kalau tidak ada.
+  ad?: LocalAd | null;
+  // Kantor versi lama di jaringan yang sama: terlihat, tapi tidak bisa dipilih.
+  legacy?: LegacyOffice[];
   draft?: OfficeDraft | null;
   onEditName: (draft: OfficeDraft) => void;
   onSent: (request: OutgoingJoinRequest) => void;
@@ -43,12 +60,44 @@ const NO_ERRORS: Errors = { office: null, team: null, note: null, server: null }
 
 // (b) Kantor ditemukan, dalam satu formulir: nama (ringkasan), kantor,
 // departemen, keterangan untuk admin, lalu kirim permintaan.
-export function OfficeStep({ offices, displayName, draft, onEditName, onSent, onOther }: Props) {
+export function OfficeStep({
+  offices: found,
+  displayName,
+  ad = null,
+  legacy = [],
+  draft,
+  onEditName,
+  onSent,
+  onOther,
+}: Props) {
   const T = OFFICE_STEP;
+  // Kantor dengan domain AD yang sama dengan laptop ini tampil paling atas,
+  // yang dibuat paling awal (kantor utama untuk domain itu) paling depan.
+  const offices = useMemo(() => {
+    if (!ad) return found;
+    const mine = found
+      .filter((o) => sameDomain(o.adDomain, ad.domain))
+      .sort((a, b) => createdMs(a) - createdMs(b));
+    return mine.length ? [...mine, ...found.filter((o) => !mine.includes(o))] : found;
+  }, [found, ad]);
+  const isMine = (o: FoundOffice) => ad !== null && sameDomain(o.adDomain, ad.domain);
+  const mineCount = offices.filter(isMine).length;
+  // Kantor dengan domain sama: yang paling awal terpilih bawaan.
+  const mineKey = mineCount > 0 ? offices[0].key : null;
   const single = offices.length === 1;
+  // Tepat satu kantor dengan domain sama: langsung dipakai tanpa daftar kantor.
+  // Ubah membuka daftarnya.
+  const [picking, setPicking] = useState(draft?.picking === true);
   const [officeKey, setOfficeKey] = useState<string | null>(
-    draft && offices.some((o) => o.key === draft.officeKey) ? draft.officeKey : single ? offices[0].key : null,
+    draft && offices.some((o) => o.key === draft.officeKey)
+      ? draft.officeKey
+      : single
+        ? offices[0].key
+        : mineKey,
   );
+  // Orangnya sudah memilih kantor atau departemen sendiri: pilihan dari AD tidak menimpanya.
+  const officePicked = useRef(Boolean(draft?.officeKey));
+  const teamPicked = useRef(Boolean(draft?.teamId));
   const [teamId, setTeamId] = useState(draft?.teamId ?? "");
   const [note, setNote] = useState(draft?.note ?? "");
   const [errors, setErrors] = useState<Errors>(NO_ERRORS);
@@ -72,6 +121,7 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
     blocked: useId(),
     confirm: useId(),
     empty: useId(),
+    adDept: useId(),
   };
 
   const office = offices.find((o) => o.key === officeKey) ?? null;
@@ -85,7 +135,52 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
   // batas isian selalu cocok. Satu emoji terhitung dua.
   const noteLength = note.length;
 
+  // Data AD ikut permintaan hanya kalau domain kantor sama dan kantor menerimanya.
+  const adState = adUse(ad, office);
+  const adApplies = adState.kind === "use";
+  const [suggestion, setSuggestion] = useState<{ key: string; value: AdDeptSuggestion } | null>(null);
+  const shownSuggestion = adApplies && office && suggestion?.key === office.key ? suggestion.value : null;
+
+  // Profil AD bisa tiba setelah formulir tampil.
+  useEffect(() => {
+    if (officePicked.current || !mineKey) return;
+    setOfficeKey((current) => current ?? mineKey);
+  }, [mineKey]);
+
+  // Departemen usulan dari AD. Dipilih otomatis kalau orangnya belum memilih.
+  // Tidak pernah membuat departemen: usulan di luar daftar kantor diabaikan.
+  useEffect(() => {
+    if (!adApplies || !office) return;
+    let alive = true;
+    const key = office.key;
+    const known = Array.isArray(office.departments) ? office.departments : [];
+    joinApi
+      .adSuggest(key)
+      .then((raw) => {
+        const value = asSuggestion(raw);
+        if (!alive || !value) return;
+        setSuggestion({ key, value });
+        const suggested = value.teamId;
+        if (value.inMira && suggested && !teamPicked.current && known.some((d) => d.id === suggested)) {
+          setTeamId((current) => (current === "" ? suggested : current));
+        }
+      })
+      .catch(() => {
+        // Tanpa usulan, orangnya memilih departemen sendiri seperti biasa.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [adApplies, office]);
+
+  function openPicker() {
+    setPicking(true);
+    window.setTimeout(() => firstRadioRef.current?.focus(), 0);
+  }
+
   function pickOffice(key: string) {
+    officePicked.current = true;
+    teamPicked.current = false;
     setOfficeKey(key);
     setTeamId("");
     setConfirmedKey(null);
@@ -120,6 +215,7 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
         teamId,
         office.conflict ? office.fingerprint : null,
         trimmedNote ? trimmedNote : null,
+        adApplies,
       );
       onSent(request);
     } catch (err) {
@@ -128,12 +224,19 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
     }
   }
 
-  const heading = single ? T.headingOne(offices[0].name) : T.headingMany;
+  // Kantor dari domain AD dipakai langsung, tampil sebagai ringkasan.
+  const autoOffice =
+    ad !== null && mineCount === 1 && office !== null && isMine(office) && (single || !picking) ? office : null;
+  const one = single || autoOffice !== null;
+  const heading = autoOffice ? T.headingMine : one ? T.headingOne(offices[0].name) : T.headingMany;
+  const draftNow = (): OfficeDraft => ({ officeKey, teamId, note, confirmedKey, picking });
+  const deptCaption = shownSuggestion ? suggestionText(shownSuggestion, departments) : null;
+  const location = adApplies && ad ? ouPath(ad.dn) : null;
 
   return (
     <form className="onb-form" onSubmit={submit} noValidate aria-busy={sending || undefined}>
       <StepHeading>{heading}</StepHeading>
-      {single ? (
+      {one ? (
         <p className="hint onb-sub">{T.subOne}</p>
       ) : (
         <p className="onb-lead">{T.leadMany(offices.length)}</p>
@@ -147,12 +250,30 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
           type="button"
           className="link-btn onb-summary-btn"
           aria-label={T.editNameLabel}
-          onClick={() => onEditName({ officeKey, teamId, note, confirmedKey })}
+          onClick={() => onEditName(draftNow())}
           disabled={sending}
         >
           {T.editName}
         </button>
       </p>
+      {autoOffice && ad && (
+        <p className="onb-summary" data-testid="onb-ad-office-summary">
+          <span className="onb-summary-text">
+            {T.ad.officeSummary} <strong>{T.ad.officeWithDomain(autoOffice.name, ad.domain)}</strong>
+          </span>
+          {!single && (
+            <button
+              type="button"
+              className="link-btn onb-summary-btn"
+              aria-label={T.ad.changeOfficeLabel}
+              onClick={openPicker}
+              disabled={sending}
+            >
+              {T.ad.changeOffice}
+            </button>
+          )}
+        </p>
+      )}
 
       {twins && (
         <div className="notice">
@@ -164,9 +285,9 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
         </div>
       )}
 
-      {single ? (
+      {one ? (
         <p className="onb-fp">
-          {T.fingerprint} <span className="mono onb-fp-code">{offices[0].fingerprint}</span>
+          {T.fingerprint} <span className="mono onb-fp-code">{(autoOffice ?? offices[0]).fingerprint}</span>
         </p>
       ) : (
         <fieldset className="onb-offices" aria-describedby={ids.officeErr}>
@@ -187,6 +308,21 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
                 <span className="onb-office-fp">
                   {T.fingerprint} <span className="mono">{o.fingerprint}</span>
                 </span>
+                {ad && isMine(o) && mineCount === 1 && (
+                  <span className="onb-office-ad" data-testid="onb-ad-office-match">
+                    {T.ad.officeMatch(ad.domain)}
+                  </span>
+                )}
+                {ad && isMine(o) && mineCount > 1 && o.key === mineKey && (
+                  <span className="onb-office-ad" data-testid="onb-ad-office-primary">
+                    {T.ad.primary(ad.domain)}
+                  </span>
+                )}
+                {ad && isMine(o) && mineCount > 1 && o.key !== mineKey && (
+                  <span className="onb-office-warn" data-testid="onb-ad-office-later">
+                    {T.ad.laterSameDomain}
+                  </span>
+                )}
                 {o.conflict && (
                   <span className="onb-office-warn">{T.conflict}</span>
                 )}
@@ -214,9 +350,12 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
             name="team"
             required
             value={teamId}
-            onChange={(e) => setTeamId(e.target.value)}
+            onChange={(e) => {
+              teamPicked.current = true;
+              setTeamId(e.target.value);
+            }}
             aria-invalid={errors.team ? true : undefined}
-            aria-describedby={`${ids.teamHint} ${ids.teamErr}`}
+            aria-describedby={`${deptCaption ? `${ids.adDept} ` : ""}${ids.teamHint} ${ids.teamErr}`}
             disabled={sending || !office}
           >
             <option value="">{office ? T.teamPlaceholder : T.teamPickOfficeFirst}</option>
@@ -226,6 +365,14 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
               </option>
             ))}
           </select>
+          {/* Usulan AD tiba setelah kantor dipilih: keterangannya diumumkan. */}
+          <div aria-live="polite">
+            {deptCaption && (
+              <p id={ids.adDept} className="hint" data-testid="onb-ad-dept">
+                {deptCaption}
+              </p>
+            )}
+          </div>
           <p id={ids.teamHint} className="hint">
             {T.teamHint}
           </p>
@@ -285,6 +432,45 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
         </div>
       )}
 
+      {adApplies && ad && (
+        <div className="onb-box" data-testid="onb-ad-box">
+          <p className="onb-label">{T.ad.boxTitle}</p>
+          <dl className="onb-kv">
+            <dt>{T.ad.name}</dt>
+            <dd>{displayName}</dd>
+            <dt>{T.ad.team}</dt>
+            <dd>{departments.find((d) => d.id === teamId)?.name ?? T.ad.teamNone}</dd>
+            <dt>{T.ad.account}</dt>
+            <dd className="mono">{`${ad.user}@${ad.domain}`}</dd>
+            {location && (
+              <>
+                <dt>{T.ad.location}</dt>
+                <dd>{location}</dd>
+              </>
+            )}
+            {acceptsNote && note.trim() && (
+              <>
+                <dt>{T.ad.note}</dt>
+                <dd>{note.trim()}</dd>
+              </>
+            )}
+          </dl>
+          {!ad.complete && (
+            <p className="onb-box-foot" data-testid="onb-ad-partial">
+              {T.ad.partial}
+            </p>
+          )}
+          <p className="onb-box-foot" data-testid="onb-ad-stored">
+            {T.ad.stored}
+          </p>
+        </div>
+      )}
+      {adState.kind === "skip" && ad && office && (
+        <p className="hint" data-testid="onb-ad-skipped">
+          {skipText(adState.reason, office, ad)}
+        </p>
+      )}
+
       <p id={ids.shared} className="hint">
         {acceptsNote ? T.sharedWithNote : T.shared}
       </p>
@@ -308,6 +494,7 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
           {sending ? T.sending : T.submit}
         </button>
       </div>
+      <LegacyOffices legacy={legacy} />
       <p className="hint onb-other">
         {T.notYours}{" "}
         <button type="button" className="link-btn" onClick={onOther} disabled={sending}>
@@ -316,4 +503,37 @@ export function OfficeStep({ offices, displayName, draft, onEditName, onSent, on
       </p>
     </form>
   );
+}
+
+// Waktu dibuat kantor untuk mengurutkan; tanpa tanggal yang terbaca: paling akhir.
+function createdMs(o: FoundOffice): number {
+  const t = typeof o.createdAt === "string" ? Date.parse(o.createdAt) : NaN;
+  return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+}
+
+// Keterangan di bawah pilihan departemen, sesuai asal usulan AD.
+function suggestionText(s: AdDeptSuggestion, departments: JoinDepartment[]): string | null {
+  const T = OFFICE_STEP.ad;
+  if (s.inMira && s.teamId) {
+    const label = s.adDepartment?.trim() || departments.find((d) => d.id === s.teamId)?.name;
+    if (!label) return null;
+    return T.deptFromAccount(label);
+  }
+  if (!s.inMira && s.adDepartment?.trim()) return T.deptMissing(s.adDepartment.trim());
+  return null;
+}
+
+// Alasan singkat data AD tidak ikut permintaan.
+function skipText(reason: AdSkipReason, office: FoundOffice, ad: LocalAd): string {
+  const T = OFFICE_STEP.ad.skip;
+  switch (reason) {
+    case "noDomain":
+      return T.noDomain;
+    case "otherDomain":
+      return T.otherDomain(office.adDomain ?? "", ad.domain);
+    case "outdated":
+      return T.outdated;
+    case "noUser":
+      return T.noUser;
+  }
 }

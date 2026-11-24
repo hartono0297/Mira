@@ -27,6 +27,12 @@
 //! parses requests with `deny_unknown_fields` and refuses either field, so
 //! the requester adds them only for offices whose members all answered
 //! `join_info` with `extras >= 1`.
+//!
+//! The AD onboarding (docs/plans/onboarding-ad.md, 3.5) adds a third
+//! optional field, `ad` ([`JoinAdClaim`]): the domain account the requester's
+//! laptop is logged in with, as that laptop reports it. It follows the same
+//! rules (absent when unused, never `null`) behind a stricter gate
+//! ([`join_ad_allowed`], `extras >= 2`), since Mira v0.4.0 refuses it too.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use hex::FromHex;
@@ -89,29 +95,94 @@ pub struct JoinRequestPayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub account: Option<String>,
+    /// AD onboarding: the domain account the requester's laptop reports.
+    /// Absent or an object, never `null`.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ad: Option<JoinAdClaim>,
     pub at: String,
     pub nonce: String,
 }
 
 impl JoinRequestPayload {
-    /// Carries a v0.4 field, so Mira v0.3 refuses it.
+    /// Carries a field added after v0.3 (`note`, `account` or `ad`), so
+    /// Mira v0.3 refuses it.
     pub fn has_extras(&self) -> bool {
-        self.note.is_some() || self.account.is_some()
+        self.note.is_some() || self.account.is_some() || self.ad.is_some()
+    }
+
+    /// Carries the AD claim, so Mira v0.4.0 refuses it.
+    pub fn has_ad(&self) -> bool {
+        self.ad.is_some()
     }
 }
 
-/// What a v0.4 requester adds to its request. Both optional; empty means
-/// the request has the v0.3 shape.
+/// The domain account a requester's laptop is logged in with, signed in the
+/// request (docs/plans/onboarding-ad.md 3.5). Reported by the requester, so
+/// it proves nothing by itself; the approver's laptop looks it up again.
+/// Field order is the serialization order; optional fields are absent when
+/// unknown, never `null`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JoinAdClaim {
+    /// Lowercase DNS domain, `macf.co.id` (`ad::dn::normalize_domain`).
+    pub domain: String,
+    /// `sAMAccountName`.
+    pub user: String,
+    /// Distinguished name; its `DC` parts must spell `domain`.
+    #[serde(
+        default,
+        deserialize_with = "present_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dn: Option<String>,
+    /// `displayName`.
+    #[serde(
+        default,
+        deserialize_with = "present_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub name: Option<String>,
+    /// The `department` attribute.
+    #[serde(
+        default,
+        deserialize_with = "present_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub department: Option<String>,
+}
+
+/// What a requester adds to its request after v0.3. All optional; empty
+/// means the request has the v0.3 shape.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct JoinExtras {
     pub note: Option<String>,
     pub account: Option<String>,
+    /// AD onboarding: only for offices that answered `extras >= 2` and whose
+    /// AD domain is the laptop's own.
+    pub ad: Option<JoinAdClaim>,
+}
+
+impl JoinExtras {
+    pub fn has_ad(&self) -> bool {
+        self.ad.is_some()
+    }
 }
 
 /// An optional field that, when present, must be a string (`null` is an
 /// error). Used with `#[serde(default)]`, so an absent field is `None`.
 fn present_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     String::deserialize(d).map(Some)
+}
+
+/// [`present_string`] for any value.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 /// Characters a join note or account name may not contain: everything
@@ -163,7 +234,8 @@ pub fn is_combining_mark(c: char) -> bool {
     )
 }
 
-fn has_long_mark_run(s: &str) -> bool {
+/// More than [`JOIN_MAX_COMBINING_RUN`] combining marks in a row.
+pub fn has_long_mark_run(s: &str) -> bool {
     let mut run = 0;
     for c in s.chars() {
         run = if is_combining_mark(c) { run + 1 } else { 0 };
@@ -271,6 +343,184 @@ pub fn is_valid_join_account(s: &str) -> bool {
     is_short_text(s, JOIN_ACCOUNT_MAX_CHARS)
 }
 
+// ----- AD onboarding ---------------------------------------------------------
+
+/// First Mira version that takes join requests with `ad` and the
+/// `ad_settings_set` op (docs/plans/onboarding-ad.md 2). Same `min` rule as
+/// [`JOIN_EXTRAS_SINCE`]: while this build is numbered below 0.5.0 the
+/// threshold is this build's own version. The release that ships AD
+/// onboarding must be numbered 0.5.0 or later (0.4.1 would also be safe:
+/// the threshold would then be 0.4.1).
+pub const JOIN_AD_SINCE: &str = "0.5.0";
+/// Longest `sAMAccountName`, in characters.
+pub const AD_USER_MAX_CHARS: usize = 64;
+/// Longest `displayName` or `department` in a claim, in characters.
+pub const AD_TEXT_MAX_CHARS: usize = 64;
+/// Most rows in the OU to department mapping.
+pub const AD_OU_MAP_MAX_ROWS: usize = 100;
+/// Longest OU name in the mapping, in characters.
+pub const AD_OU_MAX_CHARS: usize = 64;
+/// Characters `sAMAccountName` may not contain (besides
+/// [`is_join_forbidden_char`]).
+const AD_USER_FORBIDDEN: &str = "\"/\\[]:;|=,+*?<>@";
+
+/// The version every member must have reported for the AD gate.
+pub fn join_ad_threshold() -> (u32, u32, u32) {
+    let since = parse_app_version(JOIN_AD_SINCE).unwrap_or((0, 5, 0));
+    parse_app_version(crate::device::APP_VERSION).map_or(since, |own| own.min(since))
+}
+
+/// Whether join requests with `ad` may be advertised (`extras: 2`) and
+/// taken here: every active member, guests included, reported at least
+/// [`join_ad_threshold`]. Not a fold rule.
+pub fn join_ad_allowed(state: &super::fold::OrgState) -> bool {
+    join_ad_allowed_since(state, join_ad_threshold())
+}
+
+pub fn join_ad_allowed_since(state: &super::fold::OrgState, threshold: (u32, u32, u32)) -> bool {
+    join_extras_allowed_since(state, threshold)
+}
+
+/// Whether a superadmin may write `ad_settings_set` now: the same gate as
+/// [`join_ad_allowed`], since every member must understand the op.
+pub fn ad_settings_allowed(state: &super::fold::OrgState) -> bool {
+    join_ad_allowed(state)
+}
+
+/// Whether a requester reporting `app_version` is older than the AD
+/// threshold (an unparseable version counts as older).
+pub fn is_below_ad_threshold(app_version: &str) -> bool {
+    parse_app_version(app_version).is_none_or(|v| v < join_ad_threshold())
+}
+
+/// An active member whose laptop keeps the AD gate closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdBlocker {
+    pub member: String,
+    pub name: String,
+    /// Last reported Mira version; `None` when never reported.
+    pub app_version: Option<String>,
+}
+
+/// Active members (guests included) below [`join_ad_threshold`], by name.
+pub fn ad_blockers(state: &super::fold::OrgState) -> Vec<AdBlocker> {
+    ad_blockers_since(state, join_ad_threshold())
+}
+
+pub fn ad_blockers_since(
+    state: &super::fold::OrgState,
+    threshold: (u32, u32, u32),
+) -> Vec<AdBlocker> {
+    let mut out: Vec<AdBlocker> = state
+        .members
+        .values()
+        .filter(|m| m.status == super::fold::MemberStatus::Active)
+        .filter(|m| {
+            !m.device
+                .as_ref()
+                .and_then(|d| parse_app_version(&d.app_version))
+                .is_some_and(|v| v >= threshold)
+        })
+        .map(|m| AdBlocker {
+            member: m.public_key.clone(),
+            name: super::store::display_name_for(state, &m.public_key, None),
+            app_version: m.device.as_ref().map(|d| d.app_version.clone()),
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.member.cmp(&b.member))
+    });
+    out
+}
+
+/// A DNS domain as stored: already `normalize_domain`d.
+pub fn is_valid_ad_domain(s: &str) -> bool {
+    crate::ad::dn::normalize_domain(s).as_deref() == Some(s)
+}
+
+/// A `sAMAccountName`: 1 to 64 characters, no leading or trailing space,
+/// none of `"/\[]:;|=,+*?<>@` or [`is_join_forbidden_char`].
+pub fn is_valid_ad_user(s: &str) -> bool {
+    is_short_text(s, AD_USER_MAX_CHARS) && !s.chars().any(|c| AD_USER_FORBIDDEN.contains(c))
+}
+
+/// A distinguished name in `domain`: at most `MAX_DN_CHARS` characters,
+/// none of [`is_join_forbidden_char`], parses, and its `DC` parts spell
+/// `domain`.
+pub fn is_valid_ad_dn(dn: &str, domain: &str) -> bool {
+    dn.chars().count() <= crate::ad::dn::MAX_DN_CHARS
+        && !dn.chars().any(is_join_forbidden_char)
+        && crate::ad::dn::parse_dn(dn).is_some()
+        && crate::ad::dn::domain_of(dn).as_deref() == Some(domain)
+}
+
+/// A `displayName` or `department` value in a claim.
+pub fn is_valid_ad_text(s: &str) -> bool {
+    is_short_text(s, AD_TEXT_MAX_CHARS)
+}
+
+/// An OU name in the mapping (1 to 64 characters, like a note).
+pub fn is_valid_ou_name(s: &str) -> bool {
+    is_short_text(s, AD_OU_MAX_CHARS)
+}
+
+/// Every field of a claim. The error names the field (Indonesian, for
+/// logs and the "cannot create" message).
+pub fn check_ad_claim(c: &JoinAdClaim) -> Result<(), String> {
+    need(is_valid_ad_domain(&c.domain), "domain AD tidak valid")?;
+    need(is_valid_ad_user(&c.user), "nama akun AD tidak valid")?;
+    need(
+        c.dn.as_deref().is_none_or(|dn| is_valid_ad_dn(dn, &c.domain)),
+        "DN akun AD tidak valid",
+    )?;
+    need(
+        c.name.as_deref().is_none_or(is_valid_ad_text),
+        "nama di AD tidak valid",
+    )?;
+    need(
+        c.department.as_deref().is_none_or(is_valid_ad_text),
+        "departemen di AD tidak valid",
+    )
+}
+
+/// Format of an OU mapping (also checked in the `ad_settings_set` op): at
+/// most [`AD_OU_MAP_MAX_ROWS`] rows, each OU [`is_valid_ou_name`] and
+/// unique ignoring case, each team 32 lowercase hex.
+pub fn check_ou_map(map: &[crate::ad::OuMapping]) -> Result<(), String> {
+    need(
+        map.len() <= AD_OU_MAP_MAX_ROWS,
+        "pemetaan OU lebih dari 100 baris",
+    )?;
+    let mut seen = std::collections::HashSet::new();
+    for row in map {
+        need(is_valid_ou_name(&row.ou), "nama OU tidak valid")?;
+        need(is_lower_hex(&row.team, 32), "departemen pemetaan OU tidak valid")?;
+        need(seen.insert(row.ou.to_lowercase()), "nama OU ganda")?;
+    }
+    Ok(())
+}
+
+/// Makes the request fit [`MAX_JOIN_REQUEST_BYTES`] by dropping the AD
+/// claim's `dn`, then the whole claim. Mira v0.4.0 applies that limit to
+/// the requests inside `join_approve` ops, so it is not raised. Every
+/// field outside the claim fits on its own.
+pub fn fit_ad_claim(p: &mut JoinRequestPayload) {
+    let size = |p: &JoinRequestPayload| serde_json::to_string(p).map_or(usize::MAX, |s| s.len());
+    if p.ad.is_none() || size(p) <= MAX_JOIN_REQUEST_BYTES {
+        return;
+    }
+    if let Some(ad) = p.ad.as_mut() {
+        ad.dn = None;
+    }
+    if size(p) > MAX_JOIN_REQUEST_BYTES {
+        p.ad = None;
+    }
+}
+
 /// A request as stored and sent: the exact payload string and the
 /// requester's Ed25519 signature over `JOIN_REQUEST_DOMAIN + payload`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -357,6 +607,9 @@ pub fn parse_request_payload(s: &str) -> Result<JoinRequestPayload, String> {
         p.account.as_deref().is_none_or(is_valid_join_account),
         "nama akun peminta tidak valid",
     )?;
+    if let Some(ad) = &p.ad {
+        check_ad_claim(ad)?;
+    }
     need(parse_time(&p.at).is_some(), "waktu permintaan tidak valid")?;
     need(is_lower_hex(&p.nonce, 32), "nonce permintaan tidak valid")?;
     Ok(p)
@@ -510,6 +763,7 @@ mod tests {
             app_version: "0.3.0".into(),
             note: None,
             account: None,
+            ad: None,
             at: "2026-11-23T08:00:00Z".into(),
             nonce: "cd".repeat(16),
         }

@@ -223,3 +223,151 @@
 .req-dlg-list li + li {
   margin-top: 2px;
 }
+
+/* Peringatan Mira peminta terlalu lama untuk pengaturan AD. Memakai .notice
+   (perlu tindakan, bukan error): Setujui tetap bisa ditekan. */
+.req-outdated {
+  margin: 0;
+}
+
+/* Blok Active Directory (onboarding-ad). Data AD dilaporkan laptop peminta,
+   jadi tampil di kotak sendiri dengan latar halaman, terpisah dari fakta Mira,
+   seperti keterangan. Garis --border hiasan: judul blok sudah menandainya. */
+.req-ad {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.req-ad-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.req-ad-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.req-ad-check {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.req-ad-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+/* Status selalu berupa kalimat; ikon dan warna hanya pendukung. Hijau hanya
+   untuk match, merah hanya untuk akun dinonaktifkan atau tidak ada. Warna teks
+   dicek di atas --bg dan --card: --online 5,14:1 / 8,33:1, --danger 7,49:1 /
+   8,65:1 (terang / gelap). */
+.req-ad-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 220px;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.req-ad-status svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.req-ad-ok {
+  color: var(--online);
+}
+
+.req-ad-bad {
+  color: var(--danger);
+}
+
+/* Laptop peminta melaporkan data AD yang tidak sama dengan direktori. --state
+   5,89:1 di atas --card dan 6,14:1 di atas --bg (terang), 7,89:1 dan 8,78:1 (gelap). */
+.req-ad-warn {
+  color: var(--state);
+}
+
+.req-ad-neutral {
+  color: var(--text);
+}
+
+.req-ad-neutral svg {
+  color: var(--text-sec);
+}
+
+.req-ad-recheck[aria-disabled="true"] {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.req-ad-diff {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.req-ad-diff li + li {
+  margin-top: 2px;
+}
+
+.req-ad-note {
+  font-size: 13px;
+}
+
+/* Batas cek AD: teks biasa tepat di bawah status, bukan .hint kecil, supaya
+   admin membacanya bersama hasilnya. */
+.req-ad-limit {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.req-ad .hint {
+  margin: 0;
+}
+
+/* Sumber nilai di blok AD: laporan peminta atau direktori. Teks biasa, bukan
+   .hint, karena menentukan seberapa jauh nilai di bawahnya bisa dipercaya. */
+.req-ad-source {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Laporan peminta sebagai pembanding di bawah nilai direktori. */
+.req-ad-claim {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+/* Akun AD yang sama sudah dipakai anggota aktif: kemungkinan penyamaran, jadi
+   kotak merah (.alert). */
+.req-ad-used {
+  margin: 0;
+}
+
+.req-ad-used p {
+  margin-top: 2px;
+}

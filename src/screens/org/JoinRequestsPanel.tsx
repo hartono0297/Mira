@@ -9,6 +9,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
 import { REQUEST_TEXT } from "../../i18n/org-requests";
 import type { OrgPage } from "./context";
+import { JoinAdBlock, OutdatedNotice } from "./JoinRequestsPanelAd";
 import { useOrgLive } from "./useOrgLive";
 import "./requests.css";
 
@@ -320,6 +321,8 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                   </div>
                 </div>
 
+                {r.requesterOutdated && <OutdatedNotice name={r.displayName} />}
+
                 {note && (
                   <figure className="req-note">
                     <figcaption className="req-note-label">{CARD_TEXT.note}</figcaption>
@@ -357,6 +360,8 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                     <dd>{filled(r.appVersion) ?? REQUEST_TEXT.notRecorded}</dd>
                   </div>
                 </dl>
+
+                {r.ad && <JoinAdBlock request={{ ...r, ad: r.ad }} />}
 
                 <div className="req-match">
                   <div className="req-code-box">

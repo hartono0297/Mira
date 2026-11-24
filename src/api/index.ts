@@ -64,7 +64,11 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 export const api = {
   getAppState: () => call<AppState>("get_app_state"),
   saveDisplayName: (name: string) => call<IdentityInfo>("save_display_name", { name }),
-  createOrganization: (name: string) => call<OrgInfo>("create_organization", { name }),
+  // adDomain: domain Active Directory kantor (onboarding-ad), null atau "" kalau tidak dipakai.
+  createOrganization: (name: string, adDomain: string | null = null) =>
+    call<OrgInfo>("create_organization", { name, adDomain }),
+  // Domain AD tempat PC ini bergabung (huruf kecil), null kalau tidak ada atau bukan Windows.
+  machineAdDomain: () => call<string | null>("machine_ad_domain"),
   getSetting: (key: string) => call<string | null>("get_setting", { key }),
   setSetting: (key: string, value: string) => call<null>("set_setting", { key, value }),
 

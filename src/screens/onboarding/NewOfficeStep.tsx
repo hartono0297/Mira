@@ -1,24 +1,28 @@
 import { IconAlertTriangle, IconArrowLeft } from "@tabler/icons-react";
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { api, toAppError, type AppError, type IdentityInfo, type OrgInfo } from "../../api";
 import { orgApi } from "../../api/org";
 import { validateDepartmentName, validateDisplayName, validateOrgName } from "../../api/validation";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { normalizeAdDomain } from "./adProfile";
 import { StepHeading } from "./StepHeading";
 import { NEW_OFFICE } from "./texts";
 
 type Props = {
   identity: IdentityInfo;
+  // Domain akun Windows laptop ini (profil AD), dipakai sebelum domain PC.
+  adDomain?: string | null;
   onIdentity: (identity: IdentityInfo) => void;
   onOrganization: (org: OrgInfo) => void;
   onBack: () => void;
   onReload: () => void;
 };
 
-type Field = "org" | "name" | "dept" | "confirm";
+type Field = "org" | "name" | "dept" | "confirm" | "domain";
 type Errors = Record<Field, string | null>;
-const NO_ERRORS: Errors = { org: null, name: null, dept: null, confirm: null };
+const NO_ERRORS: Errors = { org: null, name: null, dept: null, confirm: null, domain: null };
+const FIELDS: Field[] = ["org", "name", "dept", "confirm", "domain"];
 
 // Organisasi sudah dibuat, tapi departemen pertama belum selesai disiapkan.
 type HalfDone = { org: OrgInfo; dept: string; error: AppError };
@@ -26,11 +30,17 @@ type HalfDone = { org: OrgInfo; dept: string; error: AppError };
 // (e) Siapkan Mira untuk kantor baru. Nama organisasi diketik dua kali supaya
 // salah ketik tidak menjadi nama kantor. Urutan simpan: nama, organisasi,
 // departemen, lalu pindahkan diri sendiri ke departemen itu.
-export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, onReload }: Props) {
+export function NewOfficeStep({ identity, adDomain = null, onIdentity, onOrganization, onBack, onReload }: Props) {
   const [orgName, setOrgName] = useState("");
+  const orgTouched = useRef(false);
+  // Nama organisasi bawaan dari domain kantor; keterangannya hilang begitu diubah.
+  const [orgFromDomain, setOrgFromDomain] = useState<string | null>(null);
   const [name, setName] = useState(identity.displayName ?? "");
   const [dept, setDept] = useState("");
   const [confirm, setConfirm] = useState("");
+  // Domain AD kantor (opsional). Terisi domain PC ini kalau PC-nya bergabung ke domain.
+  const [domain, setDomain] = useState("");
+  const domainTouched = useRef(false);
   const [errors, setErrors] = useState<Errors>(NO_ERRORS);
   const [serverError, setServerError] = useState<AppError | null>(null);
   const [saving, setSaving] = useState(false);
@@ -40,11 +50,13 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
     name: useRef<HTMLInputElement>(null),
     dept: useRef<HTMLInputElement>(null),
     confirm: useRef<HTMLInputElement>(null),
+    domain: useRef<HTMLInputElement>(null),
   };
   const ids = {
     org: useId(),
     orgHint: useId(),
     orgErr: useId(),
+    orgSource: useId(),
     name: useId(),
     nameHint: useId(),
     nameErr: useId(),
@@ -54,7 +66,48 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
     confirm: useId(),
     confirmHint: useId(),
     confirmErr: useId(),
+    domain: useId(),
+    domainHint: useId(),
+    domainErr: useId(),
   };
+
+  // Domain kantor laptop ini: dari akun Windows, atau domain PC. Mengisi nama
+  // organisasi dan domain AD yang masih kosong dan belum disentuh.
+  function fillFromDomain(found: string | null | undefined) {
+    const normalized = typeof found === "string" ? normalizeAdDomain(found) : null;
+    if (!normalized) return;
+    if (!domainTouched.current) setDomain((current) => (current.trim() === "" ? normalized : current));
+    if (!orgTouched.current && orgNameNow.current.trim() === "") {
+      orgNameNow.current = normalized;
+      setOrgName(normalized);
+      setOrgFromDomain(normalized);
+    }
+  }
+  const orgNameNow = useRef(orgName);
+  orgNameNow.current = orgName;
+  const applyDomain = useRef(fillFromDomain);
+  applyDomain.current = fillFromDomain;
+
+  useEffect(() => {
+    if (adDomain) applyDomain.current(adDomain);
+  }, [adDomain]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .machineAdDomain()
+      .then((found) => {
+        if (alive) applyDomain.current(found);
+      })
+      .catch(() => {
+        // Domain PC tidak terbaca: isian tetap kosong dan boleh diisi sendiri.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const showOrgSource = orgFromDomain !== null && orgName === orgFromDomain;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -64,8 +117,9 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
       name: validateDisplayName(name),
       dept: validateDepartmentName(dept),
       confirm: confirm.trim() === orgName.trim() ? null : NEW_OFFICE.confirmMismatch,
+      domain: domain.trim() === "" || normalizeAdDomain(domain) ? null : NEW_OFFICE.adInvalid,
     };
-    const first = (["org", "name", "dept", "confirm"] as Field[]).find((f) => found[f]);
+    const first = FIELDS.find((f) => found[f]);
     if (first) {
       setErrors(found);
       setServerError(null);
@@ -83,7 +137,7 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
         const saved = await api.saveDisplayName(trimmed);
         onIdentity(saved);
       }
-      org = await api.createOrganization(orgName.trim());
+      org = await api.createOrganization(orgName.trim(), normalizeAdDomain(domain));
     } catch (err) {
       setSaving(false);
       setServerError(toAppError(err));
@@ -147,11 +201,21 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
           autoComplete="organization"
           placeholder={T.orgPlaceholder}
           value={orgName}
-          onChange={(e) => setOrgName(e.target.value)}
+          onChange={(e) => {
+            orgTouched.current = true;
+            setOrgName(e.target.value);
+          }}
           aria-invalid={errors.org ? true : undefined}
-          aria-describedby={`${ids.orgHint} ${ids.orgErr}`}
+          aria-describedby={`${showOrgSource ? `${ids.orgSource} ` : ""}${ids.orgHint} ${ids.orgErr}`}
           disabled={saving}
         />
+        <div aria-live="polite">
+          {showOrgSource && (
+            <p id={ids.orgSource} className="hint" data-testid="onb-new-office-domain-source">
+              {T.orgFromDomain}
+            </p>
+          )}
+        </div>
         <p id={ids.orgHint} className="hint">
           {T.orgHint}
         </p>
@@ -222,6 +286,32 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
         </p>
         <div id={ids.confirmErr} aria-live="polite">
           {errors.confirm && <FieldError text={errors.confirm} />}
+        </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor={ids.domain}>{T.adLabel}</label>
+        <input
+          ref={refs.domain}
+          id={ids.domain}
+          name="adDomain"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={T.adPlaceholder}
+          value={domain}
+          onChange={(e) => {
+            domainTouched.current = true;
+            setDomain(e.target.value);
+          }}
+          aria-invalid={errors.domain ? true : undefined}
+          aria-describedby={`${ids.domainHint} ${ids.domainErr}`}
+          disabled={saving}
+        />
+        <p id={ids.domainHint} className="hint">
+          {T.adHint}
+        </p>
+        <div id={ids.domainErr} aria-live="polite">
+          {errors.domain && <FieldError text={errors.domain} />}
         </div>
       </div>
 

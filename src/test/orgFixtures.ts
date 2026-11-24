@@ -1,10 +1,14 @@
 // Data uji untuk halaman Organisasi v0.3 (src/api/org.ts). Nama, laptop, dan
 // alamat jelas buatan, hanya untuk tes.
 import type {
+  AdCheck,
+  AdSettingsView,
   DepartmentView,
+  JoinAdView,
   JoinRequestView,
   LabelView,
   OrgOverview,
+  OtherOfficesView,
   PersonView,
   UserView,
 } from "../api/org";
@@ -108,6 +112,53 @@ export function joinRequest(id: string, displayName: string, extra: Partial<Join
     // Permintaan v0.4. Untuk permintaan dari Mira v0.3 berikan note: null, account: null.
     note: "Staf baru, mulai minggu ini.",
     account: displayName.toLowerCase(),
+    ad: null,
+    requesterOutdated: false,
     ...extra,
   };
+}
+
+// Data AD yang ikut permintaan bertanda tangan (onboarding-ad). Domain dan akun buatan.
+export function joinAd(extra: Partial<JoinAdView> = {}): JoinAdView {
+  return {
+    domain: "kantor-uji.test",
+    user: "rina",
+    dn: "CN=rina,OU=Keuangan,OU=Jakarta,DC=kantor-uji,DC=test",
+    name: "Rina Wijaya",
+    department: "Keuangan",
+    ous: ["Keuangan", "Jakarta"],
+    suggestedTeamId: TEAM_1,
+    departmentInMira: true,
+    usedBy: null,
+    ...extra,
+  };
+}
+
+export function adCheck(extra: Partial<AdCheck> = {}): AdCheck {
+  return {
+    status: "match",
+    mismatches: [],
+    directoryName: "Rina Wijaya",
+    directoryOus: ["Keuangan", "Jakarta"],
+    directoryDepartment: "Keuangan",
+    departmentInMira: true,
+    checkedAt: "2026-11-23T02:00:00Z",
+    ...extra,
+  };
+}
+
+export function adSettings(extra: Partial<AdSettingsView> = {}): AdSettingsView {
+  return {
+    domain: null,
+    ouMap: [],
+    canEdit: true,
+    allowed: true,
+    outdated: [],
+    machineDomain: null,
+    ...extra,
+  };
+}
+
+export function otherOffices(extra: Partial<OtherOfficesView> = {}): OtherOfficesView {
+  return { laptops: 0, offices: 0, sameDomainLaptops: 0, names: [], olderSameDomain: null, ...extra };
 }

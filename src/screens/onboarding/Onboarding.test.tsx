@@ -7,7 +7,7 @@ import { ThemeProvider } from "../../theme/ThemeProvider";
 import { device, office, outgoing, searchResult } from "./joinFixtures";
 import { noteHasForbiddenChars } from "./OfficeStep";
 import { Onboarding } from "./Onboarding";
-import { GRACE_MS } from "./SearchStep";
+import { GRACE_MS, SETUP_SEARCH_MS } from "./SearchStep";
 import { OFFICE_STEP } from "./texts";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -260,14 +260,20 @@ describe("Onboarding: langkah nama", () => {
     expect(screen.getByRole("checkbox", { name: /BBBB-2222/ })).toBeChecked();
   });
 
-  it("mode --siapkan-kantor: setelah nama langsung ke kantor baru, Kembali ke cara lain", async () => {
+  it("mode --siapkan-kantor: mencari sebentar, tanpa kantor lalu kantor baru, Kembali ke cara lain", async () => {
     const u = user();
     commands({ join_setup_mode: true, join_search: searchResult() });
     setup();
     await passName(u);
 
+    expect(await screen.findByRole("heading", { name: "Mencari kantor di jaringan..." })).toHaveFocus();
+    expect(screen.getByText(/Sebelum menyiapkan kantor baru, Mira memeriksa/)).toBeInTheDocument();
+    expect(screen.getByText("Pencarian berhenti sendiri setelah 6 detik.")).toBeInTheDocument();
+    expect(screen.queryByText(/Langkah \d dari 3/)).not.toBeInTheDocument();
+    await advance(SETUP_SEARCH_MS + 500);
+
     expect(await screen.findByRole("heading", { name: "Siapkan Mira untuk kantor baru" })).toHaveFocus();
-    expect(calls("join_search")).toHaveLength(0);
+    expect(calls("join_search").length).toBeGreaterThan(0);
     expect(calls("get_firewall_status")).toHaveLength(1);
     expect(screen.getByLabelText("Nama Anda")).toHaveValue("Penguji");
 
@@ -283,8 +289,9 @@ describe("Onboarding: langkah nama", () => {
 
     expect(await screen.findByRole("heading", { name: "Izinkan Mira di jaringan kantor" })).toHaveFocus();
     await u.click(await screen.findByRole("button", { name: "Lewati, atur nanti" }));
+    expect(await screen.findByRole("heading", { name: "Mencari kantor di jaringan..." })).toHaveFocus();
+    await advance(SETUP_SEARCH_MS + 500);
     expect(await screen.findByRole("heading", { name: "Siapkan Mira untuk kantor baru" })).toHaveFocus();
-    expect(calls("join_search")).toHaveLength(0);
   });
 
   it("Lanjut ditekan dua kali selagi mode siapkan kantor belum terjawab: lanjut sekali saja", async () => {
@@ -345,6 +352,8 @@ describe("Onboarding: kantor ditemukan", () => {
       teamId: "t-des",
       confirmFingerprint: null,
       note: null,
+      useAd: false,
+
     });
     expect(calls("save_display_name")).toHaveLength(0);
     expect(screen.getByText("4F2A 91C0")).toBeInTheDocument();
@@ -385,6 +394,8 @@ describe("Onboarding: kantor ditemukan", () => {
         teamId: "t-des",
         confirmFingerprint: null,
         note: "Staf desain, NIK 1042",
+        useAd: false,
+
       }),
     );
   });
@@ -576,6 +587,8 @@ describe("Onboarding: kantor ditemukan", () => {
         teamId: "t-u",
         confirmFingerprint: null,
         note: null,
+        useAd: false,
+
       }),
     );
   });
@@ -710,6 +723,8 @@ describe("Onboarding: kantor ditemukan", () => {
         teamId: "t-adm",
         confirmFingerprint: "AAAA-1111",
         note: null,
+        useAd: false,
+
       }),
     );
   });
@@ -738,6 +753,8 @@ describe("Onboarding: kantor ditemukan", () => {
         teamId: "t-adm",
         confirmFingerprint: null,
         note: null,
+        useAd: false,
+
       }),
     );
   });
@@ -819,7 +836,7 @@ describe("Onboarding: kantor belum ditemukan", () => {
     expect(screen.queryByRole("button", { name: NEW_OFFICE })).toBeNull();
   });
 
-  it("ada pengumuman organisasi (orgSeen): bagian admin IT menjelaskan, tanpa tombol kantor baru", async () => {
+  it("ada pengumuman organisasi (orgSeen): kantor baru baru terbuka setelah peringatan dan ketik ulang frasa", async () => {
     const u = user();
     commands({ join_search: searchResult({ orgSeen: true }) });
     setup();
@@ -828,8 +845,22 @@ describe("Onboarding: kantor belum ditemukan", () => {
 
     expect(await screen.findByRole("heading", { name: "Kantor belum ditemukan" })).toBeInTheDocument();
     await u.click(screen.getByText("Untuk admin IT"));
-    expect(screen.getByText(/sudah ada kantor Mira, jadi jangan menyiapkan kantor baru/)).toBeVisible();
+    const guard = screen.getByTestId("onb-second-office");
+    expect(within(guard).getByText("Sudah ada kantor Mira di jaringan ini")).toBeVisible();
+    expect(within(guard).getByText(/sudah tergabung ke kantor Mira, walau belum menjawab/)).toBeVisible();
     expect(screen.queryByRole("button", { name: NEW_OFFICE })).toBeNull();
+    // Tanpa kantor yang menjawab, tidak ada tombol bergabung.
+    expect(within(guard).queryByRole("button", { name: "Minta bergabung ke kantor itu" })).toBeNull();
+
+    const input = screen.getByLabelText('Tetap perlu kantor baru? Ketik "kantor baru" untuk melanjutkan.');
+    await u.click(screen.getByRole("button", { name: "Tetap siapkan kantor baru" }));
+    expect(await screen.findByText('Ketik "kantor baru" persis, lalu tekan tombolnya lagi.')).toBeInTheDocument();
+    expect(input).toHaveFocus();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+
+    await u.type(input, "  Kantor   Baru ");
+    await u.click(screen.getByRole("button", { name: "Tetap siapkan kantor baru" }));
+    expect(await screen.findByRole("heading", { name: "Siapkan Mira untuk kantor baru" })).toHaveFocus();
   });
 
   it("kantor pernah ditemukan: tombol kantor baru tidak pernah muncul, juga setelah cari lagi", async () => {
@@ -844,6 +875,7 @@ describe("Onboarding: kantor belum ditemukan", () => {
     expect(await screen.findByRole("heading", { name: "Cari kantor dengan cara lain" })).toBeInTheDocument();
     await u.click(screen.getByText("Untuk admin IT"));
     expect(screen.queryByRole("button", { name: NEW_OFFICE })).toBeNull();
+    expect(screen.getByText(/Kantor yang terlihat: Biro Contoh\./)).toBeVisible();
 
     found = false;
     await u.click(screen.getByRole("button", { name: "Cari lagi" }));
@@ -852,7 +884,7 @@ describe("Onboarding: kantor belum ditemukan", () => {
     expect(await screen.findByRole("heading", { name: "Kantor belum ditemukan" })).toBeInTheDocument();
     await u.click(screen.getByText("Untuk admin IT"));
     expect(screen.queryByRole("button", { name: NEW_OFFICE })).toBeNull();
-    expect(screen.getByText(/sudah ada kantor Mira/)).toBeVisible();
+    expect(screen.getByText("Sudah ada kantor Mira di jaringan ini")).toBeVisible();
   });
 
   it("mDNS mati: langsung ke cara lain dan menyebut sebabnya", async () => {
@@ -901,7 +933,7 @@ describe("Onboarding: kantor belum ditemukan", () => {
     await screen.findByRole("heading", { name: "Cari kantor dengan cara lain" });
     await u.click(screen.getByText("Untuk admin IT"));
     expect(screen.queryByRole("button", { name: NEW_OFFICE })).toBeNull();
-    expect(screen.getByText(/sudah ada kantor Mira/)).toBeVisible();
+    expect(screen.getByText("Sudah ada kantor Mira di jaringan ini")).toBeVisible();
   });
 
   it("alamat manual: kantor dari alamat itu tampil di layar kantor ditemukan", async () => {
@@ -991,7 +1023,7 @@ describe("Onboarding: kantor baru", () => {
       .map(([c]) => c)
       .filter((c) => ["save_display_name", "create_organization", "org_create_department", "org_move_member"].includes(c));
     expect(order).toEqual(["save_display_name", "create_organization", "org_create_department", "org_move_member"]);
-    expect(invoke).toHaveBeenCalledWith("create_organization", { name: "Kantor Uji" });
+    expect(invoke).toHaveBeenCalledWith("create_organization", { name: "Kantor Uji", adDomain: null });
     expect(invoke).toHaveBeenCalledWith("org_create_department", { name: "Manajemen" });
     expect(invoke).toHaveBeenCalledWith("org_move_member", { publicKey: fresh().identity.publicKey, teamId: "t-man" });
   });

@@ -17,6 +17,7 @@ use super::join::{
     JOIN_REQUEST_VALIDITY, SignedJoinRequest, VerifiedJoinRequest, verify_join_request,
 };
 use super::op::{Body, CLOCK_SLACK, InviteRole, Scope, VerifiedOp};
+use crate::ad::OuMapping;
 use crate::org::{Organization, Role};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -195,6 +196,8 @@ pub struct JoinDecision {
     pub approved: bool,
     pub by: String,
     pub at: String,
+    /// AD onboarding: `(domain, user)` of the request's AD claim, if any.
+    pub ad_account: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +219,21 @@ pub struct OrgState {
     pub labels: BTreeMap<String, LabelState>,
     /// Decided join requests by request id.
     pub join_decisions: BTreeMap<String, JoinDecision>,
+    /// Active Directory settings (`ad_settings_set`, the latest wins).
+    pub ad: AdSettings,
+}
+
+/// The organization's Active Directory settings (docs/plans/onboarding-ad.md).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdSettings {
+    /// Lowercase DNS domain; `None` when not set or cleared.
+    pub domain: Option<String>,
+    /// OU to department mapping, as the superadmin saved it.
+    pub ou_map: Vec<OuMapping>,
+    /// An `ad_settings_set` op was applied (even one clearing the domain):
+    /// every member's Mira understands the op, and a laptop joining must
+    /// too.
+    pub set: bool,
 }
 
 /// Why the fold rejected an op. `code` is stored in `org_ops.reject_reason`.
@@ -492,6 +510,7 @@ impl OrgState {
             projects: BTreeMap::new(),
             labels: BTreeMap::new(),
             join_decisions: BTreeMap::new(),
+            ad: AdSettings::default(),
         }
     }
 
@@ -1336,6 +1355,28 @@ impl OrgState {
                     at,
                 });
             }
+            Body::AdSettingsSet { domain, ou_map } => {
+                self.require_superadmin(&author)?;
+                // Rows of a deleted (or unknown) department are left out
+                // rather than refusing the op: a department deleted
+                // concurrently must not undo another superadmin's domain.
+                // Archived departments may stay mapped (suggestions skip
+                // them).
+                let ou_map: Vec<OuMapping> = ou_map
+                    .iter()
+                    .filter(|row| self.live_team(&row.team).is_some())
+                    .cloned()
+                    .collect();
+                let next = AdSettings {
+                    domain: (!domain.is_empty()).then(|| domain.clone()),
+                    ou_map,
+                    set: true,
+                };
+                if self.ad == next {
+                    return Err(Reason::NoChange);
+                }
+                self.ad = next;
+            }
         }
         Ok(())
     }
@@ -1368,6 +1409,11 @@ impl OrgState {
                 approved,
                 by,
                 at,
+                ad_account: req
+                    .payload
+                    .ad
+                    .as_ref()
+                    .map(|c| (c.domain.clone(), c.user.clone())),
             },
         );
     }

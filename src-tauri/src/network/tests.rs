@@ -785,6 +785,8 @@ fn join_info_sample() -> JoinInfoWire {
             },
         ],
         extras: crate::network::JOIN_INFO_EXTRAS,
+        ad_domain: None,
+        ad_ou_map: Vec::new(),
     }
 }
 

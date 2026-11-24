@@ -641,7 +641,8 @@ fn is_short_fingerprint(s: &str) -> bool {
 }
 
 /// Shape of a `join_info` answer. The genesis record itself is checked by
-/// the caller (`validate_org_record`, `verify_genesis`).
+/// the caller (`validate_org_record`, `verify_genesis`). The AD fields are
+/// not part of it: see [`drop_bad_ad`].
 fn check_info(info: &JoinInfoWire) -> bool {
     wire::is_hex_id32(&info.org.id)
         && is_short_fingerprint(&info.fingerprint)
@@ -650,6 +651,22 @@ fn check_info(info: &JoinInfoWire) -> bool {
             .departments
             .iter()
             .all(|d| wire::is_hex_id32(&d.id) && d.name.chars().count() <= MAX_DEPT_NAME_CHARS)
+}
+
+/// Clears `ad_domain` and `ad_ou_map` together unless both are well formed
+/// (a normalized domain; at most 100 rows of valid, unique OU names and 32
+/// hex team ids). The rest of the answer stays usable: the requester then
+/// treats the office as one without AD and sends no claim, which every
+/// member takes. Refusing the whole answer instead would also lock out
+/// requesters whenever a later Mira widens these formats.
+fn drop_bad_ad(info: &mut JoinInfoWire) {
+    use crate::permissions::join::{check_ou_map, is_valid_ad_domain};
+    let domain_ok = info.ad_domain.as_deref().is_none_or(is_valid_ad_domain);
+    let rows: Vec<crate::ad::OuMapping> = info.ad_ou_map.iter().cloned().map(Into::into).collect();
+    if !domain_ok || check_ou_map(&rows).is_err() {
+        info.ad_domain = None;
+        info.ad_ou_map.clear();
+    }
 }
 
 fn check_request_ok(ok: &JoinRequestOk) -> bool {
@@ -744,7 +761,10 @@ pub(crate) async fn info_at(
     addr: SocketAddr,
 ) -> Result<(String, JoinInfoWire), JoinReject> {
     match ask(inner, addr, Msg::JoinInfoGet, MAX_JOIN_FRAME).await? {
-        (pk, Msg::JoinInfo { info }) if check_info(&info) => Ok((pk, info)),
+        (pk, Msg::JoinInfo { mut info }) if check_info(&info) => {
+            drop_bad_ad(&mut info);
+            Ok((pk, info))
+        }
         _ => Err(bad_answer()),
     }
 }
@@ -890,6 +910,8 @@ mod tests {
                 name: "Keuangan".into(),
             }],
             extras: super::super::JOIN_INFO_EXTRAS,
+            ad_domain: None,
+            ad_ou_map: Vec::new(),
         }
     }
 
@@ -958,6 +980,92 @@ mod tests {
         let mut i = info();
         i.departments[0].name = "\u{e9}".repeat(MAX_DEPT_NAME_CHARS);
         assert!(check_info(&i), "the name limit counts characters");
+    }
+
+    fn ad_row(ou: &str) -> super::super::OuMapWire {
+        super::super::OuMapWire {
+            ou: ou.into(),
+            team: "1".repeat(32),
+        }
+    }
+
+    #[test]
+    fn bad_ad_fields_are_dropped_together() {
+        let with_ad = || JoinInfoWire {
+            extras: super::super::JOIN_INFO_EXTRAS_AD,
+            ad_domain: Some("biro.co.id".into()),
+            ad_ou_map: vec![ad_row("Desain"), ad_row("Kantor Pusat")],
+            ..info()
+        };
+        let mut i = with_ad();
+        drop_bad_ad(&mut i);
+        assert_eq!(i, with_ad(), "well formed: kept");
+        let full: Vec<_> = (0..100).map(|n| ad_row(&format!("OU {n}"))).collect();
+        let mut i = JoinInfoWire {
+            ad_ou_map: full.clone(),
+            ..with_ad()
+        };
+        drop_bad_ad(&mut i);
+        assert_eq!(i.ad_ou_map, full);
+
+        let bad: [fn(&mut JoinInfoWire); 7] = [
+            |i| i.ad_domain = Some("Biro.co.id".into()),
+            |i| i.ad_domain = Some("biro".into()),
+            |i| i.ad_ou_map[0].team = "x".into(),
+            |i| i.ad_ou_map[0].ou = String::new(),
+            |i| i.ad_ou_map[1].ou = "desain".into(),
+            |i| i.ad_ou_map[0].ou = "Desa\u{202E}in".into(),
+            |i| i.ad_ou_map = (0..101).map(|n| ad_row(&format!("OU {n}"))).collect(),
+        ];
+        for (n, spoil) in bad.iter().enumerate() {
+            let mut i = with_ad();
+            spoil(&mut i);
+            assert!(check_info(&i), "case {n}: the rest is still usable");
+            drop_bad_ad(&mut i);
+            assert_eq!(i.ad_domain, None, "case {n}");
+            assert!(i.ad_ou_map.is_empty(), "case {n}");
+            assert_eq!(i.extras, super::super::JOIN_INFO_EXTRAS_AD);
+            assert_eq!(i.departments, info().departments);
+        }
+    }
+
+    #[test]
+    fn a_full_ou_map_fits_the_join_frame() {
+        // 100 rows of 64 four-byte characters and 50 departments of 60.
+        let ou_map: Vec<_> = (0..100)
+            .map(|n| ad_row(&format!("{n:03}{}", "\u{1F3E2}".repeat(61))))
+            .collect();
+        let departments = (0..50)
+            .map(|n| super::super::JoinDept {
+                id: format!("{n:032x}"),
+                name: "\u{1F3E2}".repeat(60),
+            })
+            .collect();
+        let big = JoinInfoWire {
+            departments,
+            ad_domain: Some("biro.co.id".into()),
+            ad_ou_map: ou_map,
+            ..info()
+        };
+        let frame = serde_json::to_vec(&Msg::JoinInfo { info: big.clone() }).unwrap();
+        assert!(frame.len() < MAX_JOIN_FRAME, "{} bytes", frame.len());
+        // The member drops the mapping when the answer is too large to be
+        // read safely; the rest stays.
+        let mut huge = JoinInfoWire {
+            departments: (0..200)
+                .map(|n| super::super::JoinDept {
+                    id: format!("{n:032x}"),
+                    name: "\u{1F3E2}".repeat(60),
+                })
+                .collect(),
+            ..big.clone()
+        };
+        crate::net_backend::fit_join_info(&mut huge);
+        assert!(huge.ad_ou_map.is_empty());
+        assert_eq!(huge.ad_domain.as_deref(), Some("biro.co.id"));
+        let mut kept = big.clone();
+        crate::net_backend::fit_join_info(&mut kept);
+        assert_eq!(kept, big);
     }
 
     #[test]
