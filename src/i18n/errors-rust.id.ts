@@ -48,6 +48,8 @@ const id = {
       labelNameChars: "Nama label berisi karakter yang tidak diizinkan, misalnya baris baru atau tab.",
       deptNameRule: "Nama departemen harus 2 sampai 60 karakter, tanpa baris baru.",
       usersSuperadmin: "Daftar pengguna hanya untuk superadmin.",
+      targetNotSuspended: "Orang itu tidak sedang dinonaktifkan.",
+      suspended: "Akun Anda di organisasi ini sedang dinonaktifkan, jadi tidak bisa membuat perubahan. Hubungi IT atau superadmin kantor.",
       notInOrg: "Laptop ini belum tergabung dalam organisasi.",
     },
     invite: {
@@ -452,6 +454,7 @@ const id = {
     adOuDeptMissing: (ou: string) => `Departemen untuk OU "${ou}" tidak ditemukan atau sudah dihapus.`,
     adOuDuplicate: (ou: string) => `OU "${ou}" tercantum lebih dari sekali. Satu OU hanya bisa dipetakan ke satu departemen.`,
     adDomainOfficeExists: (office: string, domain: string) => `Kantor "${office}" sudah memakai domain AD ${domain} di jaringan ini. Satu domain cukup satu kantor Mira, jadi kantor baru tidak dibuat. Bergabunglah ke kantor itu dengan mengirim permintaan bergabung.`,
+    suspendGateClosed: (version: string, names: string) => `Ada laptop yang belum diperbarui ke Mira ${version}: ${names}. Perbarui dulu, lalu coba lagi.`,
   },
 };
 

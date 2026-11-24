@@ -67,3 +67,15 @@ export function ErrorScreen({ error, onRetry }: ErrorProps) {
     </div>
   );
 }
+
+// Sidik jari laptop ini untuk dibacakan ke IT atau superadmin. Hanya dibaca,
+// jadi teks biasa tanpa bingkai.
+export function Fingerprint({ value, hint }: { value: string; hint?: string }) {
+  return (
+    <div className="status-fp">
+      <span className="status-fp-label">{T.fingerprintLabel}</span>
+      <span className="mono status-fp-value">{value}</span>
+      {hint && <span className="status-fp-hint">{hint}</span>}
+    </div>
+  );
+}

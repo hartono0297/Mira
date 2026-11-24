@@ -1922,6 +1922,7 @@ mod tests {
             account: None,
             ad: None,
             requester_outdated: false,
+            previously_removed: None,
         };
         let v = serde_json::to_value(&card).unwrap();
         assert_eq!(
@@ -1937,6 +1938,7 @@ mod tests {
                 "laptop",
                 "note",
                 "os",
+                "previouslyRemoved",
                 "publicKey",
                 "receivedAt",
                 "requestedAt",

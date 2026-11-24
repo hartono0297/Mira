@@ -6,14 +6,22 @@ import {
   joinApi,
   type AdDeptSuggestion,
   type FoundOffice,
-  type JoinDepartment,
   type LegacyOffice,
   type LocalAd,
   type OutgoingJoinRequest,
 } from "../../api/join";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
-import { adUse, asSuggestion, ouPath, sameDomain, type AdSkipReason } from "./adProfile";
+import {
+  adLine,
+  adUse,
+  asSuggestion,
+  outdatedCount,
+  ouPath,
+  sameDomain,
+  type AdLine,
+  type SuggestState,
+} from "./adProfile";
 import { LegacyOffices } from "./OfficeGuard";
 import { StepHeading } from "./StepHeading";
 import { NOTE_COUNT_FROM, OFFICE_STEP } from "./texts";
@@ -138,8 +146,10 @@ export function OfficeStep({
   // Data AD ikut permintaan hanya kalau domain kantor sama dan kantor menerimanya.
   const adState = adUse(ad, office);
   const adApplies = adState.kind === "use";
-  const [suggestion, setSuggestion] = useState<{ key: string; value: AdDeptSuggestion } | null>(null);
-  const shownSuggestion = adApplies && office && suggestion?.key === office.key ? suggestion.value : null;
+  // Jawaban join_ad_suggest per kantor; value null berarti inti Rust tidak punya usulan.
+  const [suggestion, setSuggestion] = useState<{ key: string; value: AdDeptSuggestion | null } | null>(null);
+  const suggestState: SuggestState =
+    adApplies && office && suggestion?.key === office.key ? { kind: "done", value: suggestion.value } : { kind: "pending" };
 
   // Profil AD bisa tiba setelah formulir tampil.
   useEffect(() => {
@@ -158,15 +168,16 @@ export function OfficeStep({
       .adSuggest(key)
       .then((raw) => {
         const value = asSuggestion(raw);
-        if (!alive || !value) return;
+        if (!alive) return;
         setSuggestion({ key, value });
-        const suggested = value.teamId;
-        if (value.inMira && suggested && !teamPicked.current && known.some((d) => d.id === suggested)) {
+        const suggested = value?.teamId;
+        if (value?.inMira && suggested && !teamPicked.current && known.some((d) => d.id === suggested)) {
           setTeamId((current) => (current === "" ? suggested : current));
         }
       })
       .catch(() => {
-        // Tanpa usulan, orangnya memilih departemen sendiri seperti biasa.
+        // Tanpa jawaban, orangnya memilih departemen sendiri seperti biasa,
+        // tanpa baris alasan (belum tentu departemennya tidak cocok).
       });
     return () => {
       alive = false;
@@ -230,7 +241,16 @@ export function OfficeStep({
   const one = single || autoOffice !== null;
   const heading = autoOffice ? T.headingMine : one ? T.headingOne(offices[0].name) : T.headingMany;
   const draftNow = (): OfficeDraft => ({ officeKey, teamId, note, confirmedKey, picking });
-  const deptCaption = shownSuggestion ? suggestionText(shownSuggestion, departments) : null;
+  // Satu baris AD di bawah pilihan departemen: dari mana departemennya, atau
+  // kenapa data akun Windows tidak dipakai.
+  const line = office ? adLine(ad, office, suggestState, departments) : null;
+  const lineText = line && office && ad ? adLineText(line, office, ad) : null;
+  // Baris diisi setelah tampil, di wilayah aria-live yang sudah ada, supaya
+  // pembaca layar mengumumkannya sekali (juga kalau alasannya sudah ada saat
+  // langkah ini muncul), dan tidak lagi selama teksnya sama. Fokus tidak berpindah.
+  const [liveText, setLiveText] = useState<string | null>(null);
+  useEffect(() => setLiveText(lineText), [lineText]);
+  const deptCaption = line && lineText !== null && lineText === liveText ? { line, text: lineText } : null;
   const location = adApplies && ad ? ouPath(ad.dn) : null;
 
   return (
@@ -365,11 +385,15 @@ export function OfficeStep({
               </option>
             ))}
           </select>
-          {/* Usulan AD tiba setelah kantor dipilih: keterangannya diumumkan. */}
           <div aria-live="polite">
             {deptCaption && (
-              <p id={ids.adDept} className="hint" data-testid="onb-ad-dept">
-                {deptCaption}
+              <p
+                id={ids.adDept}
+                className="hint"
+                data-testid={deptCaption.line.kind === "matched" ? "onb-ad-dept" : "onb-ad-skipped"}
+                data-reason={deptCaption.line.kind === "skip" ? deptCaption.line.reason : deptCaption.line.kind}
+              >
+                {deptCaption.text}
               </p>
             )}
           </div>
@@ -465,11 +489,6 @@ export function OfficeStep({
           </p>
         </div>
       )}
-      {adState.kind === "skip" && ad && office && (
-        <p className="hint" data-testid="onb-ad-skipped">
-          {skipText(adState.reason, office, ad)}
-        </p>
-      )}
 
       <p id={ids.shared} className="hint">
         {acceptsNote ? T.sharedWithNote : T.shared}
@@ -511,29 +530,28 @@ function createdMs(o: FoundOffice): number {
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
 }
 
-// Keterangan di bawah pilihan departemen, sesuai asal usulan AD.
-function suggestionText(s: AdDeptSuggestion, departments: JoinDepartment[]): string | null {
+// Teks baris AD di bawah pilihan departemen.
+function adLineText(line: AdLine, office: FoundOffice, ad: LocalAd): string {
   const T = OFFICE_STEP.ad;
-  if (s.inMira && s.teamId) {
-    const label = s.adDepartment?.trim() || departments.find((d) => d.id === s.teamId)?.name;
-    if (!label) return null;
-    return T.deptFromAccount(label);
-  }
-  if (!s.inMira && s.adDepartment?.trim()) return T.deptMissing(s.adDepartment.trim());
-  return null;
-}
-
-// Alasan singkat data AD tidak ikut permintaan.
-function skipText(reason: AdSkipReason, office: FoundOffice, ad: LocalAd): string {
-  const T = OFFICE_STEP.ad.skip;
-  switch (reason) {
-    case "noDomain":
-      return T.noDomain;
-    case "otherDomain":
-      return T.otherDomain(office.adDomain ?? "", ad.domain);
-    case "outdated":
-      return T.outdated;
-    case "noUser":
-      return T.noUser;
+  switch (line.kind) {
+    case "matched":
+      return T.deptFromAccount(line.dept);
+    case "unmatched":
+      return T.deptUnmatched(line.dept);
+    case "noDept":
+      return T.deptNone;
+    case "skip":
+      switch (line.reason) {
+        case "outdated": {
+          const n = outdatedCount(office);
+          return n === null ? T.skip.outdated : T.skip.outdatedCount(n);
+        }
+        case "noDomain":
+          return T.skip.noDomain;
+        case "otherDomain":
+          return T.skip.otherDomain(office.adDomain ?? "", ad.domain);
+        case "noUser":
+          return T.skip.noUser;
+      }
   }
 }

@@ -196,6 +196,18 @@ impl SyncBackend for MiraBackend {
             .flatten()
     }
 
+    fn suspended_org(&self) -> Option<String> {
+        self.state
+            .with_core(|c| {
+                if permissions::membership(&c.db, &c.identity)? != Membership::Suspended {
+                    return Ok(None);
+                }
+                Ok(crate::org::load_organization(&c.db)?.map(|o| o.id))
+            })
+            .ok()
+            .flatten()
+    }
+
     fn display_name(&self) -> Option<String> {
         self.state
             .with_core(|c| Ok(c.identity.display_name().map(str::to_owned)))
@@ -208,15 +220,25 @@ impl SyncBackend for MiraBackend {
             let Some(state) = permissions::load_state(&c.db)? else {
                 return Ok(PeerAuth::Unknown);
             };
+            let load = |id: Option<String>| -> AppResult<Option<WireOp>> {
+                Ok(match id {
+                    Some(id) => permissions::load_op(&c.db, &id)?.map(to_wire),
+                    None => None,
+                })
+            };
             Ok(match permissions::peer_auth(&state, public_key) {
                 PeerAuthState::Member { display_name } => PeerAuth::Member { display_name },
                 PeerAuthState::Removed { removal_op } => PeerAuth::Removed {
-                    removal: match removal_op {
-                        Some(id) => permissions::load_op(&c.db, &id)?.map(to_wire),
-                        None => None,
-                    },
+                    removal: load(removal_op)?,
                 },
-                PeerAuthState::Suspended { display_name } => PeerAuth::Suspended { display_name },
+                PeerAuthState::Suspended { display_name } => PeerAuth::Suspended {
+                    display_name,
+                    suspension: load(
+                        state
+                            .member(public_key)
+                            .and_then(|m| m.suspension_op.clone()),
+                    )?,
+                },
                 PeerAuthState::Unknown => PeerAuth::Unknown,
             })
         });

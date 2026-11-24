@@ -1,8 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, OrgInfo } from "../../api";
 import type { OrgOverview, PersonView } from "../../api/org";
+import { formatDate } from "../../api/format";
 import { appState, directory, router } from "../../test/fixtures";
 import { adminOverview, LABEL_1, LABEL_2, ME, memberOverview, person, PK_B, PK_C, PK_D, TEAM_2 } from "../../test/orgFixtures";
 import { OrgScreen } from "./OrgScreen";
@@ -139,10 +140,121 @@ describe("Anggota (bukan superadmin)", () => {
     expect(await screen.findByText("Rina")).toBeInTheDocument();
   });
 
+  it("tanpa tanda aksi dari inti Rust tidak ada tombol Nonaktifkan", async () => {
+    const ue = renderPeople({}, adminOverview());
+    await openTab(ue);
+    await screen.findByText("Rina");
+    expect(screen.queryByRole("button", { name: /Nonaktifkan|Aktifkan lagi/ })).not.toBeInTheDocument();
+  });
+
   it("hanya Anda: menyebut cara rekan bergabung", async () => {
     const ue = renderPeople({ org_people: [person(ME, "Penguji")] });
     await openTab(ue);
     expect(await screen.findByText(/Belum ada orang lain di organisasi ini/)).toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  });
+});
+
+// 0.5.1: org_people bisa membawa status dan tanda aksi per laptop yang melihat.
+// PersonView belum punya field itu, jadi data uji menambahkannya sendiri.
+type PersonRow = PersonView & {
+  status?: "active" | "suspended";
+  suspendedAt?: string | null;
+  suspendedByName?: string | null;
+  canSuspend?: boolean;
+  canReinstate?: boolean;
+};
+
+const SUSPENDED_AT = "2026-11-23T03:00:00Z";
+
+function deptPeople(): PersonRow[] {
+  return [
+    person(ME, "Penguji", { departmentRole: "admin" }),
+    { ...person(PK_B, "Bayu"), status: "active", canSuspend: true, canReinstate: false },
+    { ...person(PK_C, "Citra", { departmentRole: "admin" }), status: "active", canSuspend: false, canReinstate: false },
+    {
+      ...person(PK_D, "Dewi", { departmentId: null, departmentName: null, departmentRole: null }),
+      status: "suspended",
+      suspendedAt: SUSPENDED_AT,
+      suspendedByName: "Penguji",
+      canSuspend: false,
+      canReinstate: true,
+    },
+  ];
+}
+
+describe("Anggota: admin departemen menonaktifkan dan mengaktifkan lagi", () => {
+  it("tombol mengikuti tanda; orang nonaktif ditandai dengan tanggal dan nama", async () => {
+    const ue = renderPeople({ org_people: deptPeople() }, adminOverview());
+    await openTab(ue);
+    await screen.findByText("Bayu");
+
+    expect(within(itemOf("Bayu")).getByRole("button", { name: "Nonaktifkan, Bayu" })).toHaveTextContent("Nonaktifkan");
+    expect(within(itemOf("Citra")).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(itemOf("Penguji")).queryByRole("button")).not.toBeInTheDocument();
+
+    const dewi = itemOf("Dewi");
+    expect(within(dewi).getByText("Nonaktif")).toBeInTheDocument();
+    expect(within(dewi).getByText(`Dinonaktifkan ${formatDate(SUSPENDED_AT)} oleh Penguji`)).toBeInTheDocument();
+    expect(within(dewi).getByRole("button", { name: "Aktifkan lagi, Dewi" })).toHaveTextContent("Aktifkan lagi");
+    expect(within(dewi).queryByRole("button", { name: /Nonaktifkan/ })).not.toBeInTheDocument();
+  });
+
+  it("Nonaktifkan: hanya satu pilihan, tanpa Keluarkan permanen, lalu daftar dimuat ulang", async () => {
+    let done = false;
+    const ue = renderPeople(
+      {
+        org_people: () =>
+          done
+            ? deptPeople().map((p) =>
+                p.publicKey === PK_B ? { ...p, status: "suspended", suspendedAt: SUSPENDED_AT, suspendedByName: "Penguji", canSuspend: false, canReinstate: true } : p,
+              )
+            : deptPeople(),
+        org_suspend_gate: { allowed: true, outdated: [] },
+        org_suspend_member: () => {
+          done = true;
+          return null;
+        },
+      },
+      adminOverview(),
+    );
+    await openTab(ue);
+    await ue.click(await screen.findByRole("button", { name: "Nonaktifkan, Bayu" }));
+    const dialog = await screen.findByRole("dialog", { name: "Nonaktifkan Bayu?" });
+    expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("Keluarkan permanen");
+    expect(dialog).toHaveTextContent("Bisa diaktifkan lagi nanti.");
+    const submit = await within(dialog).findByRole("button", { name: "Nonaktifkan Bayu" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    await ue.click(submit);
+    expect(invoke).toHaveBeenCalledWith("org_suspend_member", { publicKey: PK_B });
+    expect(invoke).not.toHaveBeenCalledWith("org_remove_member", expect.anything());
+    expect(await screen.findByText(/Bayu sekarang nonaktif/)).toBeInTheDocument();
+    expect(await within(itemOf("Bayu")).findByRole("button", { name: "Aktifkan lagi, Bayu" })).toBeInTheDocument();
+  });
+
+  it("gerbang tertutup: tombol Nonaktifkan di dialog mati dan laptop yang menghalangi disebut", async () => {
+    const ue = renderPeople(
+      { org_people: deptPeople(), org_suspend_gate: { allowed: false, outdated: [{ name: "Citra", appVersion: "0.5.0" }] } },
+      adminOverview(),
+    );
+    await openTab(ue);
+    await ue.click(await screen.findByRole("button", { name: "Nonaktifkan, Bayu" }));
+    const dialog = await screen.findByRole("dialog", { name: "Nonaktifkan Bayu?" });
+    expect(
+      await within(dialog).findByText("Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: Citra (Mira 0.5.0)."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Nonaktifkan Bayu" })).toBeDisabled();
+    expect(invoke).not.toHaveBeenCalledWith("org_suspend_member", expect.anything());
+  });
+
+  it("Aktifkan lagi memanggil org_reinstate_member", async () => {
+    const ue = renderPeople({ org_people: deptPeople(), org_reinstate_member: null }, adminOverview());
+    await openTab(ue);
+    await ue.click(await screen.findByRole("button", { name: "Aktifkan lagi, Dewi" }));
+    const dialog = await screen.findByRole("dialog", { name: "Aktifkan Dewi lagi?" });
+    await ue.click(within(dialog).getByRole("button", { name: "Aktifkan Dewi" }));
+    expect(invoke).toHaveBeenCalledWith("org_reinstate_member", { publicKey: PK_D });
+    expect(await screen.findByText("Dewi aktif lagi.")).toBeInTheDocument();
   });
 });

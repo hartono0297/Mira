@@ -205,20 +205,30 @@ pub struct MembershipCheck {
     pub peers_reached: u32,
 }
 
-/// Syncs the membership log with every connected office laptop (waits at
-/// most 4 seconds), then reports this laptop's membership. Skeleton: filled
-/// in by the network task.
+/// Longest "Periksa lagi" check.
+pub const CHECK_MEMBERSHIP_LIMIT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Syncs the membership log with every reachable office laptop (dialing
+/// the ones that are not connected, waits at most
+/// [`CHECK_MEMBERSHIP_LIMIT`]), then reports this laptop's membership. A
+/// suspended laptop syncs org-scope ops only (decision 6).
 #[tauri::command]
 pub async fn check_membership(
     state: State<'_, MiraState>,
     net: State<'_, AppNet>,
     app: AppHandle,
 ) -> AppResult<MembershipCheck> {
-    let _ = (&net, &app);
+    let network = net.get(&state, &app).await?;
+    let reached = network.check_membership(CHECK_MEMBERSHIP_LIMIT).await;
+    membership_check(&state, reached)
+}
+
+/// The command's answer once the sync is done.
+pub(crate) fn membership_check(state: &MiraState, reached: usize) -> AppResult<MembershipCheck> {
     let membership = state.with_core(|c| permissions::membership(&c.db, &c.identity))?;
     Ok(MembershipCheck {
         membership,
-        checked_at: permissions::format::format_time(crate::clock::now()),
-        peers_reached: 0,
+        checked_at: permissions::format::format_time(clock::now()),
+        peers_reached: u32::try_from(reached).unwrap_or(u32::MAX),
     })
 }

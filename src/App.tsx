@@ -4,6 +4,7 @@ import { Onboarding } from "./screens/onboarding/Onboarding";
 import { RemovedScreen } from "./screens/RemovedScreen";
 import { Shell } from "./screens/shell/Shell";
 import { ErrorScreen, LoadingScreen } from "./screens/StatusScreens";
+import { SuspendedScreen } from "./screens/SuspendedScreen";
 import { MarkWhatsNewSeen, UpdateProvider } from "./updates/UpdateContext";
 import { WhatsNewDialog } from "./updates/WhatsNewDialog";
 
@@ -26,8 +27,9 @@ export default function App() {
     }
   }, []);
 
-  // Muat ulang tanpa layar memuat, misalnya setelah peran berubah atau laptop
-  // ini dikeluarkan. Kalau gagal, layar yang sedang tampil dibiarkan.
+  // Muat ulang tanpa layar memuat, misalnya setelah peran berubah, akun
+  // dinonaktifkan atau aktif lagi, atau laptop ini dikeluarkan. Kalau gagal,
+  // layar yang sedang tampil dibiarkan.
   const refresh = useCallback(async () => {
     try {
       const state = await api.getAppState();
@@ -68,7 +70,11 @@ export default function App() {
     );
   }
   if (state.membership === "removed") {
-    return <RemovedScreen state={state} onRecheck={load} />;
+    // Setelah reset, AppState baru tanpa organisasi membawa ke onboarding.
+    return <RemovedScreen state={state} onReset={(next) => setPhase({ kind: "ready", state: next })} />;
+  }
+  if (state.membership === "suspended") {
+    return <SuspendedScreen state={state} onRefresh={refresh} />;
   }
   return (
     <UpdateProvider>

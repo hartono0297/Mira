@@ -97,9 +97,19 @@ pub struct DeviceView {
 pub struct UserView {
     #[serde(flatten)]
     pub person: PersonView,
+    /// `active`, `suspended` or `removed`.
     pub status: MemberStatus,
     pub joined_at: String,
     pub removed_at: Option<String>,
+    /// 0.5.1: when and by whom the member was suspended, while suspended.
+    pub suspended_at: Option<String>,
+    pub suspended_by_name: Option<String>,
+    /// What the viewing laptop's person may do to this one (the fold rules;
+    /// never to themselves). `can_suspend` ignores the version gate, which
+    /// `org_suspend_gate` reports separately.
+    pub can_suspend: bool,
+    pub can_reinstate: bool,
+    pub can_remove: bool,
     /// `None` until the laptop reported it ("Belum dilaporkan").
     pub device: Option<DeviceView>,
     /// IP seen on the connection (current, or the last successful one),
@@ -379,11 +389,20 @@ pub fn users(
         } else {
             0
         };
+        let acts = |ok: bool| ok && !is_me && state.is_active(me);
         out.push(UserView {
             person: person_view(state, m, mine),
             status: m.status,
             joined_at: m.joined_at.clone(),
             removed_at: m.removed_at.clone(),
+            suspended_at: m.suspended_at.clone(),
+            suspended_by_name: m
+                .suspended_by
+                .as_deref()
+                .map(|by| display_name_for(state, by, mine)),
+            can_suspend: acts(state.may_suspend(me, pk).is_ok()),
+            can_reinstate: acts(state.may_reinstate(me, pk).is_ok()),
+            can_remove: acts(state.may_remove(me, pk).is_ok()),
             device: m.device.as_ref().map(|d| DeviceView {
                 laptop: d.laptop.clone(),
                 os: d.os.clone(),
@@ -397,9 +416,14 @@ pub fn users(
             guest_project_count,
         });
     }
+    let rank = |s: MemberStatus| match s {
+        MemberStatus::Active => 0,
+        MemberStatus::Suspended => 1,
+        MemberStatus::Removed => 2,
+    };
     out.sort_by(|a, b| {
-        (a.status != MemberStatus::Active)
-            .cmp(&(b.status != MemberStatus::Active))
+        rank(a.status)
+            .cmp(&rank(b.status))
             .then_with(|| {
                 a.person
                     .display_name

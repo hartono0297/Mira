@@ -6,13 +6,13 @@ import {
   IconDotsVertical,
   IconSearch,
   IconShieldCheck,
+  IconUserCheck,
+  IconUserPause,
 } from "@tabler/icons-react";
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, toAppError, type AppError } from "../../api";
 import { formatDate, relativeTime } from "../../api/format";
-import { actionErrorTitle } from "../../api/messages";
 import { orgApi, type DepartmentView, type UserView } from "../../api/org";
-import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { MenuButton, menuItems, SEPARATOR, useContextMenu, type MenuEntry } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -22,16 +22,27 @@ import { useLang } from "../../i18n/core";
 import { ORG_TEXT, USERS_TEXT as T } from "../../i18n/org";
 import type { OrgPage } from "./context";
 import { byName, matches, orgMessage, roleText } from "./PeoplePanel";
+import {
+  DialogError,
+  ReinstateDialog,
+  RemoveForGoodDialog,
+  SuspendedStatus,
+  TakeOutDialog,
+  type StatusDone,
+  type StatusTarget,
+} from "./UsersPanelStatus";
 import { useOrgLive } from "./useOrgLive";
 import "./users.css";
 
 type DeptFilter = "all" | "none" | "guest" | string;
-type StatusFilter = "active" | "online" | "offline" | "removed";
+// "current": semua yang belum dikeluarkan, termasuk yang nonaktif, supaya orang
+// yang dinonaktifkan tetap terlihat dan mudah diaktifkan lagi.
+type StatusFilter = "current" | "online" | "offline" | "suspended" | "removed";
 
-const STATUS_OPTIONS: StatusFilter[] = ["active", "online", "offline", "removed"];
+const STATUS_OPTIONS: StatusFilter[] = ["current", "online", "offline", "suspended", "removed"];
 
 type Filters = { query: string; dept: DeptFilter; status: StatusFilter };
-const NO_FILTERS: Filters = { query: "", dept: "all", status: "active" };
+const NO_FILTERS: Filters = { query: "", dept: "all", status: "current" };
 
 type DeptOption = { id: string; name: string };
 
@@ -41,8 +52,10 @@ function isOnline(u: UserView): boolean {
 }
 
 function passes(u: UserView, f: Filters): boolean {
-  if (f.status === "removed") {
-    if (u.status !== "removed") return false;
+  if (f.status === "removed" || f.status === "suspended") {
+    if (u.status !== f.status) return false;
+  } else if (f.status === "current") {
+    if (u.status === "removed") return false;
   } else {
     if (u.status !== "active") return false;
     if (f.status === "online" && !isOnline(u)) return false;
@@ -66,6 +79,7 @@ function subjectText(dept: DeptFilter, deptName: (id: string) => string): string
 function statusClause(status: StatusFilter): string | null {
   if (status === "online") return T.empty.clauseOnline;
   if (status === "offline") return T.empty.clauseOffline;
+  if (status === "suspended") return T.empty.clauseSuspended;
   if (status === "removed") return T.empty.clauseRemoved;
   return null;
 }
@@ -88,8 +102,8 @@ function emptyResult(users: UserView[], f: Filters, deptName: (id: string) => st
           ? T.empty.countGuest(n)
           : T.empty.countDept(n, deptName(f.dept));
 
-  if (f.status !== "active") {
-    const next = { ...f, status: "active" as const };
+  if (f.status !== "current") {
+    const next = { ...f, status: "current" as const };
     const n = count(next);
     if (n > 0) {
       const state = f.status === "online" ? T.empty.nowOffline : f.status === "offline" ? T.empty.nowOnline : T.empty.stillActive;
@@ -116,15 +130,6 @@ function emptyResult(users: UserView[], f: Filters, deptName: (id: string) => st
   return { title, loosen: { label: T.empty.clearAll, next: NO_FILTERS, note: T.empty.stillNothing } };
 }
 
-function ErrorBox({ error, title }: { error: AppError; title: string }) {
-  return (
-    <ErrorAlert title={actionErrorTitle(error, title)}>
-      <p>{orgMessage(error.message)}</p>
-      {error.code === "last_superadmin" && <p>{ORG_TEXT.lastSuperadminHint}</p>}
-    </ErrorAlert>
-  );
-}
-
 function OsIcon({ os }: { os: string }) {
   const lower = os.toLowerCase();
   if (lower.startsWith("windows")) return <IconBrandWindows size={15} aria-hidden="true" />;
@@ -142,6 +147,7 @@ function Status({ u }: { u: UserView }) {
   if (u.status === "removed") {
     return <span className="users-st">{T.removedOn(u.removedAt ? formatDate(u.removedAt) : "")}</span>;
   }
+  if (u.status === "suspended") return <SuspendedStatus u={u} />;
   const on = isOnline(u);
   const text = u.isMe
     ? T.thisLaptop
@@ -175,18 +181,40 @@ function fill(template: string, values: Record<string, ReactNode>): ReactNode[] 
 type RowActions = {
   onMove: (u: UserView) => void;
   onRole: (u: UserView) => void;
-  onRemove: (u: UserView) => void;
+  onTakeOut: (u: UserView) => void;
+  onReinstate: (u: UserView) => void;
+  onRemoveForGood: (u: UserView) => void;
 };
 
-// Hak yang sama dengan menu lama: Tamu tidak punya departemen dan peran,
-// diri sendiri tidak bisa dikeluarkan, orang yang sudah dikeluarkan tidak punya aksi.
-function hasActions(u: UserView): boolean {
-  return u.status === "active" && (!u.isGuest || !u.isMe);
-}
-
+// Tamu tidak punya departemen dan peran. Nonaktifkan, Aktifkan lagi, dan
+// Keluarkan permanen mengikuti tanda dari inti Rust; diri sendiri tidak pernah.
+// Orang yang sudah dikeluarkan tidak punya aksi.
 function rowMenu(u: UserView, busy: boolean, act: RowActions): MenuEntry[] {
-  if (!hasActions(u)) return [];
   const disabled = busy ? MENU_TEXT.busy : undefined;
+  if (u.status === "suspended") {
+    if (u.isMe) return [];
+    return menuItems(
+      u.canReinstate && {
+        id: "reinstate",
+        label: MENU_TEXT.reinstate,
+        icon: <IconUserCheck size={16} aria-hidden="true" />,
+        disabled,
+        onSelect: () => act.onReinstate(u),
+      },
+      SEPARATOR,
+      u.canRemove && {
+        id: "remove",
+        label: MENU_TEXT.removeForGood,
+        icon: <IconDoorExit size={16} aria-hidden="true" />,
+        danger: true,
+        disabled,
+        onSelect: () => act.onRemoveForGood(u),
+      },
+    );
+  }
+  if (u.status !== "active") return [];
+  const suspend = !u.isMe && u.canSuspend;
+  const remove = !u.isMe && u.canRemove;
   return menuItems(
     !u.isGuest && {
       id: "move",
@@ -203,22 +231,28 @@ function rowMenu(u: UserView, busy: boolean, act: RowActions): MenuEntry[] {
       onSelect: () => act.onRole(u),
     },
     SEPARATOR,
-    !u.isMe && {
-      id: "remove",
-      label: MENU_TEXT.remove,
-      icon: <IconDoorExit size={16} aria-hidden="true" />,
+    (suspend || remove) && {
+      id: "takeout",
+      label: suspend && remove ? MENU_TEXT.takeOut : suspend ? MENU_TEXT.suspend : MENU_TEXT.removeForGood,
+      icon: suspend ? <IconUserPause size={16} aria-hidden="true" /> : <IconDoorExit size={16} aria-hidden="true" />,
       danger: true,
       disabled,
-      onSelect: () => act.onRemove(u),
+      onSelect: () => act.onTakeOut(u),
     },
   );
 }
 
-function DialogError({ error, title }: { error: AppError | null; title: string }) {
-  return (
-    <div aria-live="polite">{error && <ErrorBox error={error} title={title} />}</div>
-  );
+function hasActions(u: UserView): boolean {
+  return rowMenu(u, false, NO_ACTIONS).length > 0;
 }
+
+const NO_ACTIONS: RowActions = {
+  onMove: () => {},
+  onRole: () => {},
+  onTakeOut: () => {},
+  onReinstate: () => {},
+  onRemoveForGood: () => {},
+};
 
 function MoveDialog({
   user,
@@ -477,7 +511,7 @@ function RoleDialog({
   );
 }
 
-type Open = { kind: "move" | "role" | "remove"; user: UserView } | null;
+type Open = { kind: "move" | "role" | "takeout" | "reinstate" | "removeForGood"; user: UserView } | null;
 
 // Daftar pengguna khusus superadmin: laptop, IP, sistem, status, dan aksi per orang.
 export function UsersPanel({ page }: { page: OrgPage }) {
@@ -506,7 +540,8 @@ export function UsersPanel({ page }: { page: OrgPage }) {
   const onlyMe = active.length <= 1 && active.every((u) => u.isMe);
   const busy = page.pending !== null;
 
-  // Setelah seseorang dikeluarkan, barisnya hilang dari daftar. Fokus pindah ke
+  // Setelah seseorang dikeluarkan (atau dinonaktifkan saat saringan hanya
+  // menampilkan yang aktif), barisnya hilang dari daftar. Fokus pindah ke
   // tombol aksi orang berikutnya (atau sebelumnya), kalau tidak ada ke judul tab.
   const headingRef = useRef<HTMLHeadingElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -520,12 +555,17 @@ export function UsersPanel({ page }: { page: OrgPage }) {
     setRefocus(null);
   });
 
-  function removed(u: UserView) {
+  function statusDone(target: StatusTarget, result: StatusDone) {
+    setOpen(null);
+    const u = users.find((x) => x.publicKey === target.publicKey);
+    if (!u) return;
+    const status = result === "removed" ? "removed" : result === "suspended" ? "suspended" : "active";
+    // Baris tetap tampil dengan saringan sekarang: fokus kembali ke tombol aksinya lewat Dialog.
+    if (passes({ ...u, status }, filters)) return;
     const i = shown.findIndex((x) => x.publicKey === u.publicKey);
     const others = [...shown.slice(i + 1), ...shown.slice(0, Math.max(i, 0)).reverse()];
     const next = others.find((x) => hasActions(x)) ?? null;
     setRefocus({ gone: u.publicKey, next: next?.publicKey ?? null });
-    setOpen(null);
   }
 
   function set(next: Partial<Filters>) {
@@ -535,7 +575,9 @@ export function UsersPanel({ page }: { page: OrgPage }) {
   const actions: RowActions = {
     onMove: (u) => setOpen({ kind: "move", user: u }),
     onRole: (u) => setOpen({ kind: "role", user: u }),
-    onRemove: (u) => setOpen({ kind: "remove", user: u }),
+    onTakeOut: (u) => setOpen({ kind: "takeout", user: u }),
+    onReinstate: (u) => setOpen({ kind: "reinstate", user: u }),
+    onRemoveForGood: (u) => setOpen({ kind: "removeForGood", user: u }),
   };
 
   const empty = live.data && shown.length === 0 && users.length > 0 ? emptyResult(users, filters, deptName) : null;
@@ -674,8 +716,21 @@ export function UsersPanel({ page }: { page: OrgPage }) {
         <RoleDialog user={open.user} superadminCount={superadminCount} onClose={() => setOpen(null)} page={page} />
       )}
 
-      {open?.kind === "remove" && (
-        <RemoveDialog user={open.user} onClose={() => setOpen(null)} onRemoved={removed} page={page} />
+      {open?.kind === "takeout" && (
+        <TakeOutDialog
+          user={open.user}
+          allowSuspend={open.user.canSuspend}
+          allowRemove={open.user.canRemove}
+          onClose={() => setOpen(null)}
+          onDone={statusDone}
+          page={page}
+        />
+      )}
+      {open?.kind === "reinstate" && (
+        <ReinstateDialog user={open.user} onClose={() => setOpen(null)} onDone={statusDone} page={page} />
+      )}
+      {open?.kind === "removeForGood" && (
+        <RemoveForGoodDialog user={open.user} onClose={() => setOpen(null)} onDone={statusDone} page={page} />
       )}
     </section>
   );
@@ -698,7 +753,7 @@ function UserRow({
   return (
     <tr
       role="row"
-      className={u.status === "removed" ? "ut-off" : undefined}
+      className={u.status === "active" ? undefined : "ut-off"}
       data-user-key={u.publicKey}
       {...menu.triggerProps}
     >
@@ -757,55 +812,5 @@ function UserRow({
         {menu.element}
       </td>
     </tr>
-  );
-}
-
-function RemoveDialog({
-  user,
-  onClose,
-  onRemoved,
-  page,
-}: {
-  user: UserView;
-  onClose: () => void;
-  onRemoved: (u: UserView) => void;
-  page: OrgPage;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<AppError | null>(null);
-  const name = user.displayName;
-
-  async function confirm() {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.removeMember(user.publicKey);
-      page.notify(T.remove.done(name));
-      page.refresh();
-      onRemoved(user);
-    } catch (err) {
-      setError(toAppError(err));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <ConfirmDialog
-      open
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-      title={T.remove.title(name)}
-      confirmLabel={T.remove.confirm(name)}
-      busyLabel={T.remove.busy}
-      busy={busy}
-      onConfirm={() => void confirm()}
-      error={error && <ErrorBox error={error} title={T.remove.failTitle(name)} />}
-    >
-      <p>{T.remove.effect(name)}</p>
-      <p>{T.remove.data(name)}</p>
-      <p>{T.remove.final}</p>
-    </ConfirmDialog>
   );
 }

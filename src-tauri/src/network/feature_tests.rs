@@ -1022,3 +1022,102 @@ async fn v02_peer_syncs_the_membership_log_but_no_features() {
     .await;
     shutdown(&[&old, &new, &new2]).await;
 }
+
+// ----- 0.5.1: suspended laptops ----------------------------------------------
+
+fn suspend(office: &Node, suspended: &Node) {
+    office.backend.with(|s| {
+        s.auth.insert(
+            suspended.pk.clone(),
+            PeerAuth::Suspended {
+                display_name: "nonaktif".into(),
+                suspension: None,
+            },
+        )
+    });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn suspended_laptop_gets_no_feature_or_blob_data_until_reinstated() {
+    let (a, b) = duo(181, 182).await;
+    let a_rec = a.add("catatan kantor");
+    let b_rec = b.add("catatan laptop nonaktif");
+    let hash = a.blobs.add(&blob_bytes(50_000, 7));
+    a.blobs.allow(&b.pk, &hash);
+    suspend(&a, &b);
+    b.backend.set_self_suspended(true);
+
+    // b dials; the connection carries the membership log only.
+    let org_op = a.backend.add_op(super::testing::op("op org"));
+    b.backend.know(Some(&a.pk), a.addr);
+    b.net.refresh();
+    wait_for("org op over the limited connection", || {
+        b.backend.has_op(&org_op)
+    })
+    .await;
+    a.add("catatan kantor baru");
+    b.add("catatan nonaktif baru");
+    a.net.refresh();
+    b.net.refresh();
+    tokio::time::sleep(GRACE).await;
+
+    assert!(!b.connected_to(&a) && !a.connected_to(&b));
+    assert!(b.toy.ingested_any().is_empty(), "b stored feature data");
+    assert!(a.toy.ingested_any().is_empty(), "a took feature data from b");
+    assert!(!a.toy.was_offered_to(&b.pk) && a.toy.served_to(&b.pk).is_empty());
+    assert!(!b.toy.was_offered_to(&a.pk));
+    assert!(!a.toy.was_connected_to(&b.pk) && !b.toy.was_connected_to(&a.pk));
+    assert!(b.hub.connected_peers().is_empty());
+    let dest = b.downloads.path().join("nonaktif.bin");
+    assert!(b.fetch(&hash, 1_000_000, &[&a], &dest).await.is_err());
+    assert!(!a.blobs.was_asked(&b.pk, &hash));
+    assert!(!dest.exists());
+
+    // Reinstated on both sides: the same nodes sync features again.
+    a.backend.add_member(&b.pk);
+    b.backend.set_self_suspended(false);
+    a.net.refresh();
+    b.net.refresh();
+    wait_for("full connection both ways", || {
+        a.connected_to(&b) && b.connected_to(&a)
+    })
+    .await;
+    wait_for("records flow both ways", || {
+        b.toy.has(&a_rec) && a.toy.has(&b_rec)
+    })
+    .await;
+    let size = b
+        .fetch(&hash, 1_000_000, &[&a], &dest)
+        .await
+        .expect("download after reinstatement");
+    assert_eq!(size, 50_000);
+    shutdown(&[&a, &b]).await;
+}
+
+/// A suspended laptop that does not know it yet (or claims otherwise)
+/// treats the connection as full and tries feature sessions and a blob
+/// download: the office resets them all.
+#[tokio::test(flavor = "multi_thread")]
+async fn office_refuses_feature_streams_from_a_suspended_peer() {
+    let (a, b) = duo(183, 184).await;
+    a.add("rahasia kantor");
+    let hash = a.blobs.add(&blob_bytes(20_000, 9));
+    a.blobs.allow(&b.pk, &hash);
+    suspend(&a, &b);
+
+    b.backend.know(Some(&a.pk), a.addr);
+    b.net.refresh();
+    wait_for("b believes it is connected", || b.connected_to(&a)).await;
+    b.add("dari laptop nonaktif");
+    tokio::time::sleep(GRACE).await;
+    let dest = b.downloads.path().join("x.bin");
+    assert!(b.fetch(&hash, 1_000_000, &[&a], &dest).await.is_err());
+
+    assert!(!a.connected_to(&b), "a lists a suspended peer");
+    assert!(b.toy.ingested_any().is_empty());
+    assert!(a.toy.ingested_any().is_empty());
+    assert!(!a.toy.was_offered_to(&b.pk));
+    assert!(!a.toy.was_connected_to(&b.pk));
+    assert!(!a.blobs.was_asked(&b.pk, &hash));
+    shutdown(&[&a, &b]).await;
+}

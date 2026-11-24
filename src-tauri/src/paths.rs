@@ -63,6 +63,138 @@ pub fn resolve_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResu
     })
 }
 
+/// The SQLite database and its side files. A reset moves these first: they
+/// are the point of no return (0.5.1, `reset_removed_laptop`).
+pub const DB_FILES: &[&str] = &[
+    crate::db::DB_FILE_NAME,
+    "mira.db-wal",
+    "mira.db-shm",
+    "mira.db-journal",
+];
+
+/// Folders Mira writes in the data folder for the organization. A reset
+/// deletes only these (and [`DB_FILES`]); anything else in the folder is left
+/// alone. `webview` (WebView2 data with `MIRA_DATA_DIR`) is not listed: the
+/// open window uses it and it holds no organization data.
+pub const ORG_FOLDERS: &[&str] = &[
+    crate::blobs::BlobStore::DIR_NAME,
+    crate::chat::files::OPEN_DIR,
+    // chat/runtime.rs `tmp_path`.
+    "chat-tmp",
+    crate::documents::peer_sync::INCOMING_DIR,
+    crate::documents::session::WORKING_DIR,
+    crate::documents::session::VIEW_DIR,
+    crate::signing::store::LEGACY_FOLDER,
+    crate::signing::peer_sync::DOWNLOAD_FOLDER,
+    // Not `ekspor` (signing/commands.rs `export_dir` fallback): signed PDFs
+    // the person exported are their own files, kept like Downloads.
+];
+
+/// Name prefix of the folder a reset moves old data into before deleting it.
+pub const RESET_TRASH_PREFIX: &str = ".mira-reset-";
+
+/// Old data moved aside by a reset. Renames within the data folder, so each
+/// move is atomic and can be undone until the trash is emptied.
+#[derive(Debug)]
+pub struct ResetTrash {
+    data_dir: PathBuf,
+    dir: PathBuf,
+    /// `(original, in trash)`, in the order moved.
+    moved: Vec<(PathBuf, PathBuf)>,
+}
+
+impl ResetTrash {
+    /// Creates an empty `<data_dir>/.mira-reset-<random>` folder.
+    pub fn create(data_dir: &Path) -> std::io::Result<ResetTrash> {
+        use rand_core::{OsRng, RngCore};
+        let mut bytes = [0u8; 8];
+        OsRng.fill_bytes(&mut bytes);
+        let dir = data_dir.join(format!("{RESET_TRASH_PREFIX}{}", hex::encode(bytes)));
+        std::fs::create_dir(&dir)?;
+        Ok(ResetTrash {
+            data_dir: data_dir.to_path_buf(),
+            dir,
+            moved: Vec::new(),
+        })
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Moves `<data_dir>/<name>` into the trash. `Ok(false)` when it does
+    /// not exist. `name` must be one plain component.
+    pub fn take(&mut self, name: &str) -> std::io::Result<bool> {
+        let mut parts = Path::new(name).components();
+        let plain = matches!(
+            (parts.next(), parts.next()),
+            (Some(std::path::Component::Normal(_)), None)
+        ) && !name.contains(['/', '\\']);
+        if !plain {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("nama tidak valid: {name}"),
+            ));
+        }
+        let from = self.data_dir.join(name);
+        match std::fs::symlink_metadata(&from) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        }
+        let to = self.dir.join(name);
+        std::fs::rename(&from, &to)?;
+        self.moved.push((from, to));
+        Ok(true)
+    }
+
+    /// Moves everything back, newest first, and removes the trash folder.
+    /// On failure returns the error; what could not be moved back stays in
+    /// the trash folder.
+    pub fn restore(mut self) -> std::io::Result<()> {
+        while let Some((from, to)) = self.moved.pop() {
+            if let Err(e) = std::fs::rename(&to, &from) {
+                self.moved.push((from, to));
+                return Err(e);
+            }
+        }
+        std::fs::remove_dir(&self.dir)
+    }
+
+    /// Deletes the trash folder and everything moved into it.
+    pub fn empty(self) -> std::io::Result<()> {
+        std::fs::remove_dir_all(&self.dir)
+    }
+}
+
+/// Cleans what an interrupted reset may have left: trash folders, and a
+/// SQLite `-wal`/`-shm` without its `mira.db` (a stale WAL must never be
+/// replayed into a new database). Best effort; nothing else is touched.
+pub fn sweep_reset_leftovers(data_dir: &Path) {
+    if let Ok(entries) = std::fs::read_dir(data_dir) {
+        for entry in entries.flatten() {
+            let is_trash = entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with(RESET_TRASH_PREFIX));
+            let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+            if is_trash && is_dir {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let db = data_dir.join(crate::db::DB_FILE_NAME);
+    let db_missing = matches!(
+        std::fs::symlink_metadata(&db),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    );
+    if db_missing {
+        for side in ["mira.db-wal", "mira.db-shm", "mira.db-journal"] {
+            let _ = std::fs::remove_file(data_dir.join(side));
+        }
+    }
+}
+
 fn folder_error(path: &Path, err: std::io::Error) -> AppError {
     AppError::Internal(format!(
         "Folder data Mira di {} tidak bisa dibuat atau dibuka. Detail: {err}",
@@ -98,6 +230,67 @@ mod tests {
             assert!(!dir.from_env);
             assert!(fallback.is_dir());
         }
+    }
+
+    #[test]
+    fn reset_trash_moves_restores_and_empties() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("mira.db"), b"db").unwrap();
+        std::fs::create_dir_all(dir.join("blobs").join("ab")).unwrap();
+        std::fs::write(dir.join("blobs").join("ab").join("x"), b"blob").unwrap();
+        std::fs::write(dir.join("milik-orang-lain.txt"), b"jangan").unwrap();
+
+        let mut trash = ResetTrash::create(dir).unwrap();
+        assert!(trash.take("mira.db").unwrap());
+        assert!(trash.take("blobs").unwrap());
+        assert!(
+            !trash.take("chat-files").unwrap(),
+            "missing is not an error"
+        );
+        for bad in ["", "..", "a/b", "a\\b", "../x"] {
+            assert!(trash.take(bad).is_err(), "{bad:?}");
+        }
+        assert!(!dir.join("mira.db").exists());
+        assert!(trash.dir().join("blobs").join("ab").join("x").exists());
+        trash.restore().unwrap();
+        assert_eq!(std::fs::read(dir.join("mira.db")).unwrap(), b"db");
+        assert!(dir.join("blobs").join("ab").join("x").exists());
+
+        let mut trash = ResetTrash::create(dir).unwrap();
+        trash.take("mira.db").unwrap();
+        trash.take("blobs").unwrap();
+        let trash_dir = trash.dir().to_path_buf();
+        trash.empty().unwrap();
+        assert!(!trash_dir.exists());
+        assert!(!dir.join("mira.db").exists() && !dir.join("blobs").exists());
+        assert!(dir.join("milik-orang-lain.txt").exists());
+    }
+
+    #[test]
+    fn sweep_removes_trash_and_orphan_wal_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let trash = dir.join(format!("{RESET_TRASH_PREFIX}0011223344556677"));
+        std::fs::create_dir_all(trash.join("blobs")).unwrap();
+        std::fs::write(trash.join("mira.db"), b"lama").unwrap();
+        std::fs::write(dir.join("mira.db-wal"), b"wal").unwrap();
+        std::fs::write(dir.join("mira.db-shm"), b"shm").unwrap();
+        std::fs::write(dir.join(".mira-reset-file"), b"bukan folder").unwrap();
+        std::fs::create_dir(dir.join("lain")).unwrap();
+
+        sweep_reset_leftovers(dir);
+        assert!(!trash.exists());
+        assert!(!dir.join("mira.db-wal").exists());
+        assert!(!dir.join("mira.db-shm").exists());
+        assert!(dir.join(".mira-reset-file").exists(), "files are not trash");
+        assert!(dir.join("lain").exists());
+
+        // With the database present its WAL is live and stays.
+        std::fs::write(dir.join("mira.db"), b"db").unwrap();
+        std::fs::write(dir.join("mira.db-wal"), b"wal").unwrap();
+        sweep_reset_leftovers(dir);
+        assert!(dir.join("mira.db-wal").exists());
     }
 
     #[test]

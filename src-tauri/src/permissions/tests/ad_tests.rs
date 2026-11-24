@@ -425,6 +425,7 @@ fn member(pk: &str, kind: MemberKind, version: Option<&str>) -> MemberState {
         suspended_by: None,
         suspension_op: None,
         snapshot: None,
+        joint_suspensions: Vec::new(),
     }
 }
 

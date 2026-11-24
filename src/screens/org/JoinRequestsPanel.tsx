@@ -1,9 +1,9 @@
-import { IconCheck, IconX } from "@tabler/icons-react";
+import { IconCheck, IconHistory, IconX } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
-import { formatDateTime, relativeTime } from "../../api/format";
+import { formatDate, formatDateTime, relativeTime } from "../../api/format";
 import { actionErrorTitle } from "../../api/messages";
-import { orgApi, type JoinRequestView } from "../../api/org";
+import { orgApi, type JoinRequestView, type PreviouslyRemoved } from "../../api/org";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
@@ -73,6 +73,46 @@ export function ipGroup(raw: string): string {
     .join(":")}::/64`;
 }
 
+// 0.5.1: akun AD atau nama laptop peminta sama dengan orang yang dikeluarkan atau
+// sedang nonaktif. Satu baris bernada peringatan, lalu kalimat bahwa ini petunjuk,
+// bukan bukti. Data yang bentuknya tidak dikenal tidak ditampilkan.
+function previousText(p: PreviouslyRemoved | null | undefined): { main: string; suspended: boolean } | null {
+  if (!p || typeof p !== "object") return null;
+  if (typeof p.name !== "string" || !p.name.trim() || typeof p.at !== "string") return null;
+  if (p.status !== "suspended" && p.status !== "removed") return null;
+  if (p.match !== "ad_account" && p.match !== "laptop") return null;
+  const P = CARD_TEXT.previous;
+  const laptop = p.match === "laptop";
+  const date = formatDate(p.at);
+  const name = p.name.trim();
+  if (p.status === "suspended") {
+    return { main: (laptop ? P.laptopSuspended : P.accountSuspended)(name, date), suspended: true };
+  }
+  return { main: (laptop ? P.laptopRemoved : P.accountRemoved)(name, date), suspended: false };
+}
+
+function PreviousHint({ request }: { request: JoinRequestView }) {
+  const text = previousText(request.previouslyRemoved);
+  if (!text || !request.previouslyRemoved) return null;
+  return (
+    <div
+      className="req-prev"
+      data-testid="join-previously-removed"
+      data-status={request.previouslyRemoved.status}
+      data-match={request.previouslyRemoved.match}
+    >
+      <IconHistory size={18} aria-hidden="true" />
+      <div>
+        <p>
+          <strong>{text.main}</strong>
+          {text.suspended && <> {CARD_TEXT.previous.reinstate}</>}
+        </p>
+        <p className="req-prev-note">{CARD_TEXT.previous.notProof}</p>
+      </div>
+    </div>
+  );
+}
+
 // Penolakan beruntun untuk satu kelompok alamat (kontrak 8.6). Daftarnya diambil
 // saat dialog dibuka, supaya muat ulang di tengah jalan tidak mengubah yang ditolak.
 type Bulk = {
@@ -85,7 +125,9 @@ type Bulk = {
   error: { title: string; error: AppError; note: string } | null;
 };
 
-export function JoinRequestsPanel({ page }: { page: OrgPage }) {
+// onSetupDomain: "Atur domain AD" dari form Cocokkan OU (OrgScreen menampilkan
+// tawaran domain atau membuka tab Departemen).
+export function JoinRequestsPanel({ page, onSetupDomain }: { page: OrgPage; onSetupDomain?: () => void }) {
   const live = useOrgLive(() => orgApi.joinRequests(), { version: page.version });
   const requests = useMemo(() => (Array.isArray(live.data) ? live.data : null), [live.data]);
   const [rejecting, setRejecting] = useState<JoinRequestView | null>(null);
@@ -323,6 +365,8 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
 
                 {r.requesterOutdated && <OutdatedNotice name={r.displayName} />}
 
+                <PreviousHint request={r} />
+
                 {note && (
                   <figure className="req-note">
                     <figcaption className="req-note-label">{CARD_TEXT.note}</figcaption>
@@ -361,7 +405,12 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                   </div>
                 </dl>
 
-                {r.ad && <JoinAdBlock request={{ ...r, ad: r.ad }} />}
+                {r.ad && (
+                  <JoinAdBlock
+                    request={{ ...r, ad: r.ad }}
+                    match={page.overview.isSuperadmin ? { onSetupDomain, onMatched: page.refresh } : undefined}
+                  />
+                )}
 
                 <div className="req-match">
                   <div className="req-code-box">

@@ -45,6 +45,8 @@ const en: Dict<typeof id> = {
       labelNameChars: "The label name contains characters that aren't allowed, such as line breaks or tabs.",
       deptNameRule: "Department names must be 2 to 60 characters, without line breaks.",
       usersSuperadmin: "Only superadmins can see the user list.",
+      targetNotSuspended: "That person isn't suspended.",
+      suspended: "Your account in this organization is suspended, so you can't make changes. Contact IT or an office superadmin.",
       notInOrg: "This laptop isn't in an organization yet.",
     },
     invite: {
@@ -449,6 +451,7 @@ const en: Dict<typeof id> = {
     adOuDeptMissing: (ou: string) => `The department for OU "${ou}" wasn't found or has been deleted.`,
     adOuDuplicate: (ou: string) => `OU "${ou}" is listed more than once. Each OU can map to only one department.`,
     adDomainOfficeExists: (office: string, domain: string) => `The office "${office}" already uses the AD domain ${domain} on this network. One domain needs only one Mira office, so no new office was created. Join that office by sending a join request instead.`,
+    suspendGateClosed: (version: string, names: string) => `Some laptops haven't been updated to Mira ${version} yet: ${names}. Update them first, then try again.`,
   },
 };
 

@@ -64,7 +64,7 @@ describe("Organisasi dalam bahasa Inggris", () => {
     expect(await screen.findByRole("columnheader", { name: "Laptop and last IP" })).toBeInTheDocument();
     expect(screen.getByText("3 people")).toBeInTheDocument();
     expect(screen.getByText("Guest, 2 projects")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Everyone active" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Active and deactivated" })).toBeInTheDocument();
     expect(screen.queryByText("Pengguna")).not.toBeInTheDocument();
     expect(screen.queryByText(/Belum ada departemen|Laptop ini|Bergabung/)).not.toBeInTheDocument();
 

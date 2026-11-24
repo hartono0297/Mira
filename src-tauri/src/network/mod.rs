@@ -221,10 +221,13 @@ pub enum PeerAuth {
     Member {
         display_name: String,
     },
-    /// 0.5.1: suspended. The connection serves membership op sync only
-    /// (docs/plans/perbaikan-bergabung.md).
+    /// 0.5.1: suspended. The connection is kept out of the peer list and
+    /// serves membership op sync only (docs/plans/perbaikan-bergabung.md).
+    /// `suspension` is the op that suspended them, pushed once when a live
+    /// member connection is cut.
     Suspended {
         display_name: String,
+        suspension: Option<WireOp>,
     },
     /// Removed from the organization. `removal` is the op that removed them,
     /// sent once so their laptop learns about it.
@@ -300,8 +303,15 @@ impl AddressSource {
 /// synchronous and should be fast; the network calls the slow ones (sync and
 /// join) on tokio's blocking pool.
 pub trait SyncBackend: Send + Sync + 'static {
-    /// `None`: not joined yet, or removed.
+    /// `None`: not joined yet, removed, or suspended.
     fn org_id(&self) -> Option<String>;
+    /// 0.5.1: the organization when this laptop's own membership is
+    /// suspended (`org_id` is then `None`). Such a laptop keeps dialing its
+    /// colleagues but syncs the membership log only, so it learns when it is
+    /// reinstated or removed. Default: never suspended.
+    fn suspended_org(&self) -> Option<String> {
+        None
+    }
     fn display_name(&self) -> Option<String>;
     fn peer_auth(&self, public_key: &str) -> PeerAuth;
     /// Public keys of active members, without this laptop.
@@ -502,6 +512,33 @@ impl Network {
     /// Public keys of the peers with a live connection. Addition to 3.1.
     pub fn connected_peers(&self) -> Vec<String> {
         self.inner.connected_peers()
+    }
+
+    /// 0.5.1 "Periksa lagi": dials the colleagues that are not connected
+    /// (backoff reset), syncs the membership log with every connected one
+    /// and waits until each has sent its ops, at most `limit`. Returns the
+    /// number of laptops synced with during the check. A suspended laptop
+    /// counts a laptop only once that laptop has offered it its ops (the
+    /// colleague syncs back after the suspended laptop's session).
+    pub async fn check_membership(&self, limit: std::time::Duration) -> usize {
+        self.inner.check_membership(limit).await
+    }
+
+    /// Tests: application close codes `pk` sent when it closed a
+    /// registered connection with this laptop.
+    #[cfg(test)]
+    pub(crate) fn close_codes_from(&self, pk: &str) -> Vec<u64> {
+        node::lock(&self.inner.peer_closes)
+            .iter()
+            .filter(|(p, _)| p == pk)
+            .map(|(_, c)| *c)
+            .collect()
+    }
+
+    /// Tests: `pk` has a live connection, limited (0.5.1) or full.
+    #[cfg(test)]
+    pub(crate) fn is_linked(&self, pk: &str) -> bool {
+        self.inner.is_linked(pk)
     }
 
     /// Redeems an invite on a laptop that is already a member. Candidates are

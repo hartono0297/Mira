@@ -1228,3 +1228,272 @@ fn v02_hello_without_features_decodes_as_one() {
     // A later version stays capable.
     assert!(node::feature_capable(wire::FEATURE_PROTO_VERSION + 1));
 }
+
+// ----- 0.5.1: suspended laptops (docs/plans/perbaikan-bergabung.md) --------
+
+/// An office laptop `a` and a suspended laptop `b` that knows `a`'s
+/// address. `a` holds an org op, a team op (`team_ops`, which a suspended
+/// peer may not receive) and the suspension op.
+struct SuspendedPair {
+    a: Node,
+    b: Node,
+    org_op: String,
+    team_op: String,
+    suspension: WireOp,
+}
+
+async fn suspended_pair(sa: u8, sb: u8) -> SuspendedPair {
+    let (a, b) = pair(sa, sb).await;
+    let org_op = a.backend.add_op(op("{\"type\":\"team_create\",\"n\":1}"));
+    let team_op = a.backend.add_op(op("{\"type\":\"project_create\",\"team\":\"x\"}"));
+    let suspension = op(&format!(
+        "{{\"type\":\"member_suspend\",\"member\":\"{}\"}}",
+        b.pk
+    ));
+    a.backend.add_op(suspension.clone());
+    a.backend.with(|s| s.team_ops.insert(team_op.clone()));
+    a.backend.suspend(&b.pk, Some(suspension.clone()));
+    b.backend.set_self_suspended(true);
+    b.backend.know(Some(&a.pk), a.addr);
+    SuspendedPair {
+        a,
+        b,
+        org_op,
+        team_op,
+        suspension,
+    }
+}
+
+/// Ids `from`'s backend served to `peer` with `ops_for`.
+fn served_to(from: &Node, peer: &Node) -> HashSet<String> {
+    from.backend.with(|s| {
+        s.served
+            .iter()
+            .filter(|(p, _)| *p == peer.pk)
+            .flat_map(|(_, ids)| ids.clone())
+            .collect()
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn suspended_laptop_syncs_org_ops_only_on_an_unlisted_connection() {
+    let p = suspended_pair(211, 212).await;
+    let (a, b) = (&p.a, &p.b);
+    let b_op = b.backend.add_op(op("{\"type\":\"label_create\",\"n\":2}"));
+    b.net.refresh();
+
+    wait_for("b gets the org ops", || {
+        b.backend.has_op(&p.org_op) && b.backend.has_op(&super::wire::op_id(&p.suspension))
+    })
+    .await;
+    // The office takes what the suspended laptop offers (signed ops the
+    // fold checks like any other).
+    wait_for("a ingests b's op", || a.backend.has_op(&b_op)).await;
+    assert!(a.net.is_linked(&b.pk) && b.net.is_linked(&a.pk));
+
+    // More rounds leak nothing.
+    a.net.refresh();
+    b.net.refresh();
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert!(!b.backend.has_op(&p.team_op), "team op reached a suspended laptop");
+    assert!(!served_to(a, b).contains(&p.team_op));
+
+    // Neither side lists the limited connection.
+    assert!(a.net.connected_peers().is_empty());
+    assert!(b.net.connected_peers().is_empty());
+    assert!(a.net.status().peers.is_empty());
+    assert!(b.net.status().peers.is_empty());
+    // A suspended laptop reports no organization of its own.
+    assert_eq!(b.net.status().state, NetState::NoOrg);
+
+    // "Periksa lagi": the office syncs back after b's session.
+    let reached = b.net.check_membership(Duration::from_secs(4)).await;
+    assert_eq!(reached, 1);
+
+    a.net.shutdown().await;
+    b.net.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn check_membership_dials_the_office_and_reports_no_one_when_alone() {
+    let p = suspended_pair(213, 214).await;
+    // No dial before the check: the check itself dials.
+    let reached = p.b.net.check_membership(Duration::from_secs(4)).await;
+    assert_eq!(reached, 1);
+    assert!(p.b.backend.has_op(&p.org_op));
+
+    // Nobody to reach: returns 0 within the limit.
+    let lonely = node(215, None).await;
+    lonely.backend.with(|s| s.suspended_org = Some(ORG.into()));
+    let t = Instant::now();
+    assert_eq!(lonely.net.check_membership(Duration::from_millis(600)).await, 0);
+    assert!(t.elapsed() < Duration::from_secs(3));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn member_suspended_while_connected_gets_the_op_then_comes_back_limited_and_reinstated() {
+    let (a, b) = pair(221, 222).await;
+    b.backend.know(Some(&a.pk), a.addr);
+    connect(&a, &b).await;
+
+    let suspension = op(&format!(
+        "{{\"type\":\"member_suspend\",\"member\":\"{}\"}}",
+        b.pk
+    ));
+    let suspension_id = super::wire::op_id(&suspension);
+    let reinstate = op(&format!(
+        "{{\"type\":\"member_reinstate\",\"member\":\"{}\"}}",
+        b.pk
+    ));
+    let reinstate_id = super::wire::op_id(&reinstate);
+    // b learns that it is reinstated from the op it ingests. It does not
+    // act on the suspension op yet: had it closed the connection itself
+    // first, the office's SUSPENDED close would not be seen.
+    b.backend.with(|s| {
+        s.on_ingest = Some(Box::new(|s, _from, ops| {
+            if ops.iter().any(|o| o.payload.contains("member_reinstate"))
+                && let Some(org) = s.suspended_org.take()
+            {
+                s.org = Some(org);
+            }
+        }))
+    });
+    a.backend.add_op(suspension.clone());
+    a.backend.suspend(&b.pk, Some(suspension.clone()));
+    a.net.refresh();
+
+    wait_for("b ingests the pushed suspension op", || {
+        b.backend.with(|s| {
+            s.ingested
+                .iter()
+                .any(|(from, ids)| *from == a.pk && ids.contains(&suspension_id))
+        })
+    })
+    .await;
+    wait_for("the full connection is gone", || {
+        !a.connected_to(&b) && !b.connected_to(&a)
+    })
+    .await;
+    wait_for("b saw the SUSPENDED close", || {
+        b.net
+            .close_codes_from(&a.pk)
+            .contains(&u64::from(node::code::SUSPENDED))
+    })
+    .await;
+    assert!(a.backend.with(|s| {
+        s.rejections
+            .iter()
+            .any(|(pk, _, code)| pk.as_deref() == Some(b.pk.as_str()) && code == "suspended_member")
+    }));
+
+    // b now knows it is suspended, keeps dialing and gets a limited
+    // connection: new org ops still reach it, but it is not listed.
+    b.backend.set_self_suspended(true);
+    b.net.refresh();
+    let later = a.backend.add_op(op("{\"type\":\"team_create\",\"n\":9}"));
+    wait_for("limited connection again", || {
+        a.net.is_linked(&b.pk)
+            && b.net.is_linked(&a.pk)
+            && !a.connected_to(&b)
+            && !b.connected_to(&a)
+    })
+    .await;
+    a.net.refresh();
+    wait_for("org op reaches the suspended laptop", || b.backend.has_op(&later)).await;
+    assert!(!a.connected_to(&b) && !b.connected_to(&a));
+
+    // Reinstated: both sides turn the same connection into a full one,
+    // without restarting either node.
+    a.backend.add_op(reinstate);
+    a.backend.add_member(&b.pk);
+    a.net.refresh();
+    wait_for("b ingests the reinstate op", || b.backend.has_op(&reinstate_id)).await;
+    wait_for("full connection both ways", || {
+        a.connected_to(&b) && b.connected_to(&a)
+    })
+    .await;
+    assert_eq!(b.net.status().state, NetState::Lan);
+
+    a.net.shutdown().await;
+    b.net.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_suspended_laptop_works_like_a_removal() {
+    let p = suspended_pair(223, 224).await;
+    let (a, b) = (&p.a, &p.b);
+    b.net.refresh();
+    wait_for("limited connection", || {
+        a.net.is_linked(&b.pk) && b.backend.has_op(&p.org_op)
+    })
+    .await;
+
+    let removal = op(&format!(
+        "{{\"type\":\"member_remove\",\"member\":\"{}\"}}",
+        b.pk
+    ));
+    let removal_id = super::wire::op_id(&removal);
+    b.backend.with(|s| {
+        s.on_ingest = Some(Box::new(|s, _from, ops| {
+            if ops.iter().any(|o| o.payload.contains("member_remove")) {
+                s.suspended_org = None;
+                s.org = None;
+            }
+        }))
+    });
+    a.backend.with(|s| {
+        s.auth.insert(
+            b.pk.clone(),
+            PeerAuth::Removed {
+                removal: Some(removal.clone()),
+            },
+        )
+    });
+    a.net.refresh();
+    wait_for("b ingests the removal op", || {
+        b.backend.with(|s| {
+            s.ingested
+                .iter()
+                .any(|(from, ids)| *from == a.pk && ids.contains(&removal_id))
+        })
+    })
+    .await;
+    wait_for("disconnected", || {
+        !a.net.is_linked(&b.pk) && !b.net.is_linked(&a.pk)
+    })
+    .await;
+    assert!(a.backend.with(|s| {
+        s.rejections
+            .iter()
+            .any(|(pk, _, code)| pk.as_deref() == Some(b.pk.as_str()) && code == "removed_member")
+    }));
+    // A removed laptop stops dialing: no new connection shows up.
+    b.net.refresh();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(!a.net.is_linked(&b.pk));
+    assert_eq!(b.net.status().state, NetState::NoOrg);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_suspended_laptops_do_not_sync_back_and_forth() {
+    let (a, b) = pair(225, 226).await;
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        x.backend.suspend(&y.pk, None);
+        x.backend.set_self_suspended(true);
+    }
+    // A suspended laptop dials active members only; a manual address is
+    // dialed anyway.
+    a.backend.add_op(op("{\"n\":1}"));
+    b.backend.add_op(op("{\"n\":2}"));
+    a.backend.know(None, b.addr);
+    a.net.refresh();
+    wait_for("both ops on both sides", || {
+        a.backend.op_ids().len() == 2 && b.backend.op_ids().len() == 2
+    })
+    .await;
+    let offers = || a.backend.with(|s| s.offers) + b.backend.with(|s| s.offers);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let before = offers();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(offers() <= before + 2, "sync ping-pong: {before} -> {}", offers());
+}

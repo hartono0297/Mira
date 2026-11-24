@@ -1,7 +1,7 @@
 // Data akun domain (Active Directory) di layar onboarding: pembanding domain,
 // penguraian DN untuk lokasi OU, dan alasan data AD tidak ikut permintaan.
 // Inti Rust tetap penentu akhir (join_send_request dengan useAd).
-import type { AdDeptSuggestion, FoundOffice, LocalAd } from "../../api/join";
+import type { AdDeptSuggestion, FoundOffice, JoinDepartment, LocalAd } from "../../api/join";
 
 function normDomain(s: string): string {
   return s.trim().toLowerCase().replace(/\.$/, "");
@@ -108,13 +108,60 @@ export type AdSkipReason = "noDomain" | "otherDomain" | "outdated" | "noUser";
 // use: data AD ikut permintaan. skip: ada profil, tapi tidak ikut, dengan alasannya.
 export type AdUse = { kind: "none" } | { kind: "use" } | { kind: "skip"; reason: AdSkipReason };
 
+// Syaratnya sama dengan ad_claim_for di Rust; urutannya menentukan alasan yang
+// tampil. Domain kantor yang diketahui dan berbeda didahulukan dari laptop
+// lama, karena memperbarui laptop tidak akan membuat data AD terpakai. Laptop
+// lama didahulukan dari domain kosong, karena Mira lama tidak melaporkan
+// domain kantor sama sekali.
 export function adUse(ad: LocalAd | null, office: FoundOffice | null): AdUse {
   if (!ad || !office) return { kind: "none" };
-  if (!office.adDomain) return { kind: "skip", reason: "noDomain" };
-  if (!sameDomain(office.adDomain, ad.domain)) return { kind: "skip", reason: "otherDomain" };
+  if (office.adDomain && !sameDomain(office.adDomain, ad.domain)) return { kind: "skip", reason: "otherDomain" };
   if (office.acceptsAd !== true) return { kind: "skip", reason: "outdated" };
+  if (!office.adDomain) return { kind: "skip", reason: "noDomain" };
   if (!ad.user?.trim()) return { kind: "skip", reason: "noUser" };
   return { kind: "use" };
+}
+
+// Baris AD di bawah pilihan departemen: satu saja.
+// matched: departemen terpilih dari akun Windows. unmatched: data AD ikut,
+// tapi departemennya belum dicocokkan admin. noDept: akun tidak mencantumkan
+// departemen atau OU. skip: data AD tidak dipakai sama sekali.
+export type AdLine =
+  | { kind: "matched"; dept: string }
+  | { kind: "unmatched"; dept: string }
+  | { kind: "noDept" }
+  | { kind: "skip"; reason: AdSkipReason };
+
+// Jawaban join_ad_suggest untuk kantor terpilih. pending: belum dijawab (atau
+// gagal): belum ada baris departemen, supaya tidak menulis "belum dicocokkan"
+// sebelum tahu jawabannya.
+export type SuggestState = { kind: "pending" } | { kind: "done"; value: AdDeptSuggestion | null };
+
+export function adLine(
+  ad: LocalAd | null,
+  office: FoundOffice | null,
+  suggest: SuggestState,
+  departments: JoinDepartment[],
+): AdLine | null {
+  const use = adUse(ad, office);
+  if (use.kind === "none" || !ad) return null;
+  if (use.kind === "skip") return { kind: "skip", reason: use.reason };
+  if (suggest.kind === "pending") return null;
+  const s = suggest.value;
+  if (s && s.inMira && s.teamId && departments.some((d) => d.id === s.teamId)) {
+    const label = s.adDepartment?.trim() || departments.find((d) => d.id === s.teamId)?.name;
+    if (label) return { kind: "matched", dept: label };
+  }
+  const dept = s?.adDepartment?.trim() || ad.department?.trim() || dnOus(ad.dn)[0];
+  if (dept) return { kind: "unmatched", dept };
+  // Data sebagian: kotak "Yang dilihat admin" sudah menjelaskannya.
+  return ad.complete ? { kind: "noDept" } : null;
+}
+
+// Jumlah laptop lama yang layak disebut; null kalau tidak diketahui.
+export function outdatedCount(office: FoundOffice): number | null {
+  const n = office.adOutdated;
+  return typeof n === "number" && Number.isInteger(n) && n > 0 ? n : null;
 }
 
 // Profil dari inti Rust dianggap ada hanya kalau domainnya terisi.

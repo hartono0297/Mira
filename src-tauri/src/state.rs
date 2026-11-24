@@ -14,6 +14,7 @@ use rusqlite::Connection;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::identity::{self, Identity, KeyStore};
+use crate::{paths, settings};
 
 /// Everything that needs the database and the laptop key.
 pub struct Core {
@@ -56,14 +57,141 @@ impl MiraState {
     /// The lock is held for the whole call, so keep `f` short.
     pub fn with_core<T>(&self, f: impl FnOnce(&mut Core) -> AppResult<T>) -> AppResult<T> {
         let mut guard = self.lock()?;
-        if guard.is_none() {
-            let core = Core::open(self.data_dir()?, self.keystore.as_ref())?;
-            *guard = Some(core);
-        }
-        let core = guard
-            .as_mut()
-            .ok_or_else(|| AppError::Internal("Inisialisasi Mira tidak selesai.".into()))?;
+        let core = self.ensure(&mut guard)?;
         f(core)
+    }
+
+    fn ensure<'a>(&self, guard: &'a mut Option<Core>) -> AppResult<&'a mut Core> {
+        if guard.is_none() {
+            let data_dir = self.data_dir()?;
+            paths::sweep_reset_leftovers(data_dir);
+            *guard = Some(Core::open(data_dir, self.keystore.as_ref())?);
+        }
+        guard
+            .as_mut()
+            .ok_or_else(|| AppError::Internal("Inisialisasi Mira tidak selesai.".into()))
+    }
+
+    /// 0.5.1 "Reset dan mulai dari awal": deletes this laptop's organization
+    /// data and its key, then starts over with a new key and an empty
+    /// database. Only when `allowed` accepts the current core.
+    ///
+    /// Under the core lock, so no command sees a half-reset laptop:
+    /// 1. read the settings named in `keep` (display preferences);
+    /// 2. close the database (the only connection to `mira.db`);
+    /// 3. move `mira.db` and its side files into a trash folder. A failure
+    ///    (another program still has the file open) moves everything back:
+    ///    the laptop stays as it was;
+    /// 4. delete the keystore entry of the old public key, and nothing
+    ///    else. A failure moves the database back too, so a database is
+    ///    never left without its key;
+    /// 5. from here there is no way back: move the organization folders
+    ///    ([`paths::ORG_FOLDERS`]) into the trash, or delete them in place
+    ///    when a move fails; what still cannot be deleted is reported in
+    ///    [`ResetOutcome::leftovers`]. Empty the trash;
+    /// 6. create a new database, write the kept settings back, and make a
+    ///    new key.
+    pub fn reset_with(
+        &self,
+        allowed: impl FnOnce(&Core) -> AppResult<()>,
+        keep: &[&str],
+    ) -> AppResult<ResetOutcome> {
+        let mut guard = self.lock()?;
+        let data_dir = self.data_dir()?;
+        let core = self.ensure(&mut guard)?;
+        allowed(core)?;
+        let mut kept = Vec::new();
+        for key in keep {
+            if let Some(value) = settings::get(&core.db, key)? {
+                kept.push((*key, value));
+            }
+        }
+
+        let Some(Core { db, identity }) = guard.take() else {
+            return Err(AppError::Internal(
+                "Inisialisasi Mira tidak selesai.".into(),
+            ));
+        };
+        if let Err((db, e)) = db.close() {
+            *guard = Some(Core { db, identity });
+            return Err(AppError::Database(format!(
+                "Database Mira belum bisa ditutup untuk reset. Tutup lalu buka lagi Mira, kemudian coba lagi. Detail: {e}"
+            )));
+        }
+        let old_public_key = identity.public_key_hex().to_owned();
+        drop(identity);
+
+        let mut trash = paths::ResetTrash::create(data_dir).map_err(|e| {
+            AppError::Storage(format!(
+                "Folder data Mira tidak bisa diubah untuk reset. Detail: {e}"
+            ))
+        })?;
+        for name in paths::DB_FILES {
+            if let Err(e) = trash.take(name) {
+                return Err(undo(
+                    trash,
+                    format!(
+                        "Data organisasi lama belum bisa dihapus karena file {name} masih dipakai. Tutup program lain yang membukanya, atau tutup lalu buka lagi Mira, kemudian coba Reset lagi. Detail: {e}"
+                    ),
+                ));
+            }
+        }
+        if let Err(e) = self
+            .keystore
+            .delete(&identity::keystore_account(&old_public_key))
+        {
+            return Err(undo(
+                trash,
+                format!(
+                    "Kunci lama laptop ini di {} belum bisa dihapus, jadi reset dibatalkan dan data tidak diubah. Detail: {e}",
+                    identity::STORE_NAME
+                ),
+            ));
+        }
+
+        let mut leftovers = Vec::new();
+        for name in paths::ORG_FOLDERS {
+            if trash.take(name).is_err() {
+                let path = data_dir.join(name);
+                let _ = std::fs::remove_dir_all(&path);
+                if std::fs::symlink_metadata(&path).is_ok() {
+                    eprintln!(
+                        "Mira: reset tidak bisa menghapus semua isi {}",
+                        path.display()
+                    );
+                    leftovers.push(path);
+                }
+            }
+        }
+        let trash_dir = trash.dir().to_path_buf();
+        if let Err(e) = trash.empty() {
+            // Swept on the next start (`paths::sweep_reset_leftovers`).
+            eprintln!(
+                "Mira: folder sampah reset {} belum terhapus: {e}",
+                trash_dir.display()
+            );
+            leftovers.push(trash_dir);
+        }
+
+        let fresh = |e: AppError| {
+            AppError::Database(format!(
+                "Data lama sudah dihapus, tapi data baru belum bisa dibuat. Tutup lalu buka lagi Mira. Detail: {e}"
+            ))
+        };
+        let db = db::open(data_dir).map_err(fresh)?;
+        for (key, value) in &kept {
+            if let Err(e) = settings::set(&db, key, value) {
+                eprintln!("Mira: pengaturan {key} tidak bisa disimpan lagi setelah reset: {e}");
+            }
+        }
+        let identity = identity::ensure_identity(&db, self.keystore.as_ref())?;
+        let new_public_key = identity.public_key_hex().to_owned();
+        *guard = Some(Core { db, identity });
+        Ok(ResetOutcome {
+            old_public_key,
+            new_public_key,
+            leftovers,
+        })
     }
 
     fn lock(&self) -> AppResult<MutexGuard<'_, Option<Core>>> {
@@ -73,6 +201,29 @@ impl MiraState {
                     .into(),
             )
         })
+    }
+}
+
+/// What [`MiraState::reset_with`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResetOutcome {
+    pub old_public_key: String,
+    pub new_public_key: String,
+    /// Organization paths that could not be deleted (a file still open in
+    /// another program). Harmless to the new identity; logged.
+    pub leftovers: Vec<PathBuf>,
+}
+
+/// Moves the database back after a failed reset and builds the error. When
+/// even that fails, the error says where the old data is.
+fn undo(trash: paths::ResetTrash, message: String) -> AppError {
+    let dir = trash.dir().to_path_buf();
+    match trash.restore() {
+        Ok(()) => AppError::Storage(message),
+        Err(e) => AppError::Storage(format!(
+            "{message} Data lama juga belum bisa dikembalikan; salinannya ada di {}. Detail: {e}",
+            dir.display()
+        )),
     }
 }
 

@@ -106,6 +106,10 @@ pub struct MemberState {
     pub suspension_op: Option<String>,
     /// What `member_reinstate` gives back, while suspended.
     pub snapshot: Option<SuspendSnapshot>,
+    /// Ids of further `member_suspend` ops applied while already suspended
+    /// (made concurrently with `suspension_op`). A `member_reinstate` must
+    /// have seen all of them.
+    pub joint_suspensions: Vec<String>,
 }
 
 /// What a member had when suspended (docs/plans/perbaikan-bergabung.md).
@@ -524,6 +528,7 @@ impl OrgState {
             suspended_by: None,
             suspension_op: None,
             snapshot: None,
+            joint_suspensions: Vec::new(),
         };
         let umum = ChannelState {
             id: umum_channel_id(&org.id),
@@ -781,6 +786,158 @@ impl OrgState {
         }
     }
 
+    /// Takes `pk` out of every department, project, label and guest access
+    /// (what `member_remove` and `member_suspend` do).
+    fn strip_member(&mut self, pk: &str) {
+        self.leave_departments(pk);
+        self.guest_access.retain(|g| g.public_key != pk);
+        for p in self.projects.values_mut() {
+            p.members.remove(pk);
+        }
+        for l in self.labels.values_mut() {
+            l.members.remove(pk);
+        }
+    }
+
+    /// What `strip_member` is about to take from `pk`.
+    fn snapshot_of(&self, pk: &str) -> SuspendSnapshot {
+        SuspendSnapshot {
+            department: self.department_of(pk).map(|(t, r)| (t.id.clone(), r)),
+            superadmin: self.is_superadmin(pk),
+            projects: self
+                .projects
+                .values()
+                .filter(|p| p.members.contains_key(pk))
+                .map(|p| p.id.clone())
+                .collect(),
+            labels: self
+                .labels
+                .values()
+                .filter(|l| l.members.contains(pk))
+                .map(|l| l.id.clone())
+                .collect(),
+            guest_access: self
+                .guest_access
+                .iter()
+                .filter(|g| g.public_key == pk)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Effect of `member_reinstate`: active again, with what the snapshot
+    /// held that is still valid (open department, existing projects and
+    /// labels, guest access through a live team).
+    fn restore_member(&mut self, pk: &str, by: &str, at: &str) {
+        let Some(m) = self.members.get_mut(pk) else {
+            return;
+        };
+        let snapshot = m.snapshot.take().unwrap_or_default();
+        m.status = MemberStatus::Active;
+        m.is_superadmin = snapshot.superadmin;
+        m.suspended_at = None;
+        m.suspended_by = None;
+        m.suspension_op = None;
+        m.joint_suspensions.clear();
+        if let Some((team, role)) = snapshot.department
+            && let Some(t) = self.teams.get_mut(&team).filter(|t| !t.deleted && !t.archived)
+        {
+            t.members.insert(
+                pk.to_owned(),
+                TeamMember {
+                    role,
+                    added_at: at.to_owned(),
+                },
+            );
+        }
+        for project in &snapshot.projects {
+            if let Some(p) = self.projects.get_mut(project) {
+                p.members.entry(pk.to_owned()).or_insert(ProjectMember {
+                    added_at: at.to_owned(),
+                    added_by: by.to_owned(),
+                });
+            }
+        }
+        for label in &snapshot.labels {
+            if let Some(l) = self.labels.get_mut(label) {
+                l.members.insert(pk.to_owned());
+            }
+        }
+        for g in snapshot.guest_access {
+            if self.live_team(&g.team).is_some() {
+                self.guest_access.insert(g);
+            }
+        }
+    }
+
+    /// The department whose admin `author` is and through which they may
+    /// suspend `target`: the target is a regular member (not a guest, not a
+    /// superadmin, role `member`) of that department.
+    pub(crate) fn suspend_admin_team(&self, author: &str, target: &str) -> Option<String> {
+        let m = self.member(target)?;
+        if m.status != MemberStatus::Active || m.kind != MemberKind::Member || m.is_superadmin {
+            return None;
+        }
+        let (team, role) = self.department_of(target)?;
+        (role == TeamRole::Member && self.team_role(&team.id, author) == Some(TeamRole::Admin))
+            .then(|| team.id.clone())
+    }
+
+    /// The department whose admin `author` is and through which they may
+    /// reinstate `target`: the snapshot's department, when the target was a
+    /// regular member there and not a superadmin.
+    pub(crate) fn reinstate_admin_team(&self, author: &str, target: &str) -> Option<String> {
+        let m = self.member(target)?;
+        let snapshot = m.snapshot.as_ref()?;
+        if m.status != MemberStatus::Suspended || m.kind != MemberKind::Member || snapshot.superadmin
+        {
+            return None;
+        }
+        let (team, role) = snapshot.department.as_ref()?;
+        (*role == TeamRole::Member && self.team_role(team, author) == Some(TeamRole::Admin))
+            .then(|| team.clone())
+    }
+
+    /// Whether `author` may write `member_suspend` for `target` now (the
+    /// fold rule; `author` must be active too).
+    pub fn may_suspend(&self, author: &str, target: &str) -> Result<(), Reason> {
+        if !self.is_active(target) {
+            return Err(Reason::TargetNotActive);
+        }
+        if !self.is_superadmin(author) && self.suspend_admin_team(author, target).is_none() {
+            return Err(Reason::NotAuthorized);
+        }
+        if self.is_superadmin(target) && self.superadmin_count() <= 1 {
+            return Err(Reason::LastSuperadmin);
+        }
+        Ok(())
+    }
+
+    /// Whether `author` may write `member_reinstate` for `target` now.
+    pub fn may_reinstate(&self, author: &str, target: &str) -> Result<(), Reason> {
+        if self.member(target).map(|m| m.status) != Some(MemberStatus::Suspended) {
+            return Err(Reason::TargetNotSuspended);
+        }
+        if !self.is_superadmin(author) && self.reinstate_admin_team(author, target).is_none() {
+            return Err(Reason::NotAuthorized);
+        }
+        Ok(())
+    }
+
+    /// Whether `author` may write `member_remove` for `target` now: a
+    /// superadmin, for an active or a suspended member.
+    pub fn may_remove(&self, author: &str, target: &str) -> Result<(), Reason> {
+        self.require_superadmin(author)?;
+        match self.member(target).map(|m| m.status) {
+            Some(MemberStatus::Active | MemberStatus::Suspended) => {}
+            Some(MemberStatus::Removed) | None => return Err(Reason::TargetNotActive),
+        }
+        if self.is_superadmin(target) && self.superadmin_count() <= 1 {
+            return Err(Reason::LastSuperadmin);
+        }
+        Ok(())
+    }
+
     /// Renames the department channels of `team` after its new name.
     fn rename_team_channels(&mut self, team: &str, name: &str) {
         let channel = channel_name_for(name);
@@ -933,31 +1090,51 @@ impl OrgState {
                 self.live_team_mut(team)?.members.remove(member);
             }
             Body::MemberRemove { member } => {
-                self.require_superadmin(&author)?;
-                if !self.is_active(member) {
-                    return Err(Reason::TargetNotActive);
-                }
-                if self.is_superadmin(member) && self.superadmin_count() <= 1 {
-                    return Err(Reason::LastSuperadmin);
-                }
-                self.leave_departments(member);
-                self.guest_access.retain(|g| &g.public_key != member);
-                for p in self.projects.values_mut() {
-                    p.members.remove(member);
-                }
-                for l in self.labels.values_mut() {
-                    l.members.remove(member);
-                }
+                self.may_remove(&author, member)?;
+                self.strip_member(member);
                 if let Some(m) = self.members.get_mut(member) {
                     m.status = MemberStatus::Removed;
                     m.is_superadmin = false;
                     m.removed_at = Some(at);
                     m.removal_op = Some(op.id.clone());
+                    m.suspended_at = None;
+                    m.suspended_by = None;
+                    m.suspension_op = None;
+                    m.joint_suspensions.clear();
+                    m.snapshot = None;
                 }
             }
-            // Skeleton: implemented in the permissions task (R1).
-            Body::MemberSuspend { .. } | Body::MemberReinstate { .. } => {
-                return Err(Reason::NotAuthorized);
+            Body::MemberSuspend { member } => {
+                // Already suspended: suspensions made concurrently all
+                // stand, so a reinstatement must have seen each of them
+                // (checked in `causal.rs`). The UI never offers this
+                // (`may_suspend` refuses a suspended target).
+                if self.member(member).map(|m| m.status) == Some(MemberStatus::Suspended) {
+                    if !self.is_superadmin(&author)
+                        && self.reinstate_admin_team(&author, member).is_none()
+                    {
+                        return Err(Reason::NotAuthorized);
+                    }
+                    if let Some(m) = self.members.get_mut(member) {
+                        m.joint_suspensions.push(op.id.clone());
+                    }
+                    return Ok(());
+                }
+                self.may_suspend(&author, member)?;
+                let snapshot = self.snapshot_of(member);
+                self.strip_member(member);
+                if let Some(m) = self.members.get_mut(member) {
+                    m.status = MemberStatus::Suspended;
+                    m.is_superadmin = false;
+                    m.suspended_at = Some(at);
+                    m.suspended_by = Some(author);
+                    m.suspension_op = Some(op.id.clone());
+                    m.snapshot = Some(snapshot);
+                }
+            }
+            Body::MemberReinstate { member } => {
+                self.may_reinstate(&author, member)?;
+                self.restore_member(member, &author, &at);
             }
             Body::InviteCreate {
                 invite,
@@ -1056,11 +1233,12 @@ impl OrgState {
                 if !verify_sig(member, &msg, member_sig) {
                     return Err(Reason::BadMemberSignature);
                 }
-                if self
-                    .member(member)
-                    .is_some_and(|m| m.status == MemberStatus::Removed)
-                {
-                    return Err(Reason::MemberRemoved);
+                match self.member(member).map(|m| m.status) {
+                    Some(MemberStatus::Removed) => return Err(Reason::MemberRemoved),
+                    // A suspended member comes back only through
+                    // `member_reinstate`.
+                    Some(MemberStatus::Suspended) => return Err(Reason::TargetNotActive),
+                    Some(MemberStatus::Active) | None => {}
                 }
                 // One department per person: a member (or a guest becoming a
                 // member) already in another department keeps it. This is
@@ -1189,6 +1367,7 @@ impl OrgState {
                         suspended_by: None,
                         suspension_op: None,
                         snapshot: None,
+                        joint_suspensions: Vec::new(),
                     },
                 );
                 self.live_team_mut(&p.team)?.members.insert(
@@ -1493,6 +1672,7 @@ impl OrgState {
                         suspended_by: None,
                         suspension_op: None,
                         snapshot: None,
+                        joint_suspensions: Vec::new(),
                     },
                 );
             }

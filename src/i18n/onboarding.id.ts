@@ -175,8 +175,10 @@ const id = {
         "Domainnya sama, tapi menurut catatannya dibuat lebih baru. Pilih hanya kalau admin kantor memintanya, dan cocokkan sidiknya dulu.",
       // Departemen usulan dari atribut department atau OU di Active Directory.
       deptFromAccount: (dept: string) => `Dari akun Windows Anda: ${dept}`,
-      deptMissing: (dept: string) =>
-        `Departemen Anda di akun Windows (${dept}) belum ada di Mira. Pilih departemen yang paling dekat, atau tanya admin kantor.`,
+      // Atribut department, atau OU paling dalam, yang belum dipetakan admin.
+      deptUnmatched: (dept: string) =>
+        `Departemen Anda di akun Windows (${dept}) belum dicocokkan admin dengan departemen di Mira. Pilih departemen sendiri.`,
+      deptNone: "Akun Windows Anda tidak mencantumkan departemen. Pilih departemen sendiri.",
       // Sama dengan judul kotak di layar menunggu; tidak mengklaim daftar lengkap.
       boxTitle: "Yang dilihat admin",
       name: "Nama",
@@ -187,15 +189,19 @@ const id = {
       note: "Keterangan",
       partial:
         "Sebagian data akun Windows tidak terbaca karena server kantor tidak terjangkau. Admin akan memeriksanya lagi.",
+      // Alasan data akun Windows terbaca tapi tidak dipakai (satu baris di
+      // bawah pilihan departemen).
       skip: {
-        noDomain:
-          "Data akun Windows Anda tidak ikut dikirim karena kantor ini belum mengatur domain kantor. Admin memeriksa permintaan seperti biasa.",
-        otherDomain: (office: string, mine: string) =>
-          `Data akun Windows Anda tidak ikut dikirim karena domain kantor ini (${office}) berbeda dengan domain laptop Anda (${mine}).`,
+        // Laptop anggota yang menjawab tidak melaporkan jumlahnya (Mira lama).
         outdated:
-          "Data akun Windows Anda tidak ikut dikirim karena Mira di sebagian laptop kantor belum diperbarui. Admin memeriksa permintaan seperti biasa.",
-        noUser:
-          "Data akun Windows Anda tidak ikut dikirim karena nama akunnya belum terbaca. Admin memeriksa permintaan seperti biasa.",
+          "Ada laptop di kantor ini yang belum diperbarui ke Mira 0.5, jadi data akun Windows Anda belum bisa dipakai. Pilih departemen sendiri.",
+        outdatedCount: (n: number) =>
+          `Ada ${n} laptop di kantor ini yang belum diperbarui ke Mira 0.5, jadi data akun Windows Anda belum bisa dipakai. Pilih departemen sendiri.`,
+        noDomain:
+          "Domain kantor ini belum diatur, jadi data akun Windows Anda belum dipakai. Pilih departemen sendiri; admin bisa mengatur domainnya nanti.",
+        otherDomain: (office: string, mine: string) =>
+          `Domain kantor (${office}) berbeda dengan domain akun Anda (${mine}), jadi data akun Windows Anda tidak dipakai. Pilih departemen sendiri.`,
+        noUser: "Nama akun Windows Anda belum terbaca, jadi datanya belum dipakai. Pilih departemen sendiri.",
       },
       // Di dalam kotak: data AD ikut op persetujuan yang disalin ke semua laptop anggota.
       stored:

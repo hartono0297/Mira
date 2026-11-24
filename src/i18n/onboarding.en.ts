@@ -154,8 +154,9 @@ const en: Dict<typeof id> = {
       laterSameDomain:
         "Same domain, but its records say it was created later. Choose it only if the office admin asks you to, and compare the fingerprint first.",
       deptFromAccount: (dept: string) => `From your Windows account: ${dept}`,
-      deptMissing: (dept: string) =>
-        `Your department in your Windows account (${dept}) isn't in Mira yet. Choose the closest department, or ask the office admin.`,
+      deptUnmatched: (dept: string) =>
+        `Your department in your Windows account (${dept}) hasn't been matched to a Mira department by the admin yet. Choose a department yourself.`,
+      deptNone: "Your Windows account doesn't list a department. Choose a department yourself.",
       boxTitle: "What the admin sees",
       name: "Name",
       team: "Department",
@@ -166,14 +167,17 @@ const en: Dict<typeof id> = {
       partial:
         "Some Windows account details couldn't be read because the office server is out of reach. The admin will check them again.",
       skip: {
-        noDomain:
-          "Your Windows account details won't be sent because this office hasn't set its office domain yet. The admin reviews the request as usual.",
-        otherDomain: (office: string, mine: string) =>
-          `Your Windows account details won't be sent because this office's domain (${office}) is different from your laptop's domain (${mine}).`,
         outdated:
-          "Your Windows account details won't be sent because some office laptops still run an older Mira. The admin reviews the request as usual.",
-        noUser:
-          "Your Windows account details won't be sent because the account name couldn't be read. The admin reviews the request as usual.",
+          "Some laptops in this office haven't been updated to Mira 0.5 yet, so your Windows account details can't be used. Choose a department yourself.",
+        outdatedCount: (n: number) =>
+          n === 1
+            ? "1 laptop in this office hasn't been updated to Mira 0.5 yet, so your Windows account details can't be used. Choose a department yourself."
+            : `${n} laptops in this office haven't been updated to Mira 0.5 yet, so your Windows account details can't be used. Choose a department yourself.`,
+        noDomain:
+          "This office's domain hasn't been set up yet, so your Windows account details aren't used. Choose a department yourself; the admin can set up the domain later.",
+        otherDomain: (office: string, mine: string) =>
+          `The office domain (${office}) is different from your account's domain (${mine}), so your Windows account details aren't used. Choose a department yourself.`,
+        noUser: "Your Windows account name couldn't be read, so your account details aren't used. Choose a department yourself.",
       },
       stored:
         "Your name, department, Windows account, and location in Active Directory are kept in the office records, where office members can see them.",

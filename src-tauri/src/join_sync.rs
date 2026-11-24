@@ -359,6 +359,7 @@ mod tests {
             account: None,
             ad: None,
             requester_outdated: false,
+            previously_removed: None,
         }
     }
 

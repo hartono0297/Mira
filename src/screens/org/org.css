@@ -471,3 +471,46 @@
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
+
+/* Tawaran domain AD (0.5.1, superadmin): memakai kotak netral .org-other, karena
+   ini tawaran, bukan masalah. Satu tombol utama, "Nanti" bergaris (--border-strong
+   di atas --card 3,05:1 terang, 3,76:1 gelap). */
+.org-offer-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.org-offer p {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.org-offer-outdated {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+.org-offer-error {
+  margin-top: 10px;
+}
+
+.org-offer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.org-offer-actions .btn {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.org-offer > div {
+  min-width: 0;
+}

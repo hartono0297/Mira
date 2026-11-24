@@ -577,6 +577,7 @@ mod tests {
             account: None,
             ad,
             requester_outdated: false,
+            previously_removed: None,
         }
     }
 

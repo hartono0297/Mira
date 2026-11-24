@@ -352,9 +352,9 @@ describe("Onboarding AD: kantor dan departemen", () => {
     });
     setup();
     await searchUntil(u, "Kantor Anda ditemukan");
-    expect(
-      await screen.findByText("Departemen Anda di akun Windows (Pajak) belum ada di Mira. Pilih departemen yang paling dekat, atau tanya admin kantor."),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId("onb-ad-skipped")).toHaveTextContent(
+      "Departemen Anda di akun Windows (Pajak) belum dicocokkan admin dengan departemen di Mira. Pilih departemen sendiri.",
+    );
     expect(screen.getByLabelText("Departemen")).toHaveValue("");
     expect(within(screen.getByTestId("onb-ad-box")).getByText("Belum dipilih")).toBeInTheDocument();
     expect(calls("org_create_department")).toHaveLength(0);
@@ -380,50 +380,216 @@ describe("Onboarding AD: kantor dan departemen", () => {
     await waitFor(() => expect(calls("join_send_request")[0][1]).toMatchObject({ useAd: true }));
   });
 
-  it("kantor belum menerima data AD (laptop lama): alasannya tampil, useAd false, tanpa usulan", async () => {
-    const u = user();
-    commands({
-      join_ad_profile: AD,
-      join_search: searchResult({ offices: [{ ...MCF, acceptsAd: false }] }),
-      join_ad_suggest: SUGGEST,
-      join_send_request: outgoing(),
-    });
-    setup();
-    await searchUntil(u, "Kantor Anda ditemukan");
-    expect(screen.getByTestId("onb-ad-skipped")).toHaveTextContent(
-      "Data akun Windows Anda tidak ikut dikirim karena Mira di sebagian laptop kantor belum diperbarui.",
-    );
-    expect(screen.queryByTestId("onb-ad-box")).toBeNull();
+});
+
+// docs/plans/perbaikan-bergabung.md keputusan 9: satu baris alasan di bawah
+// pilihan departemen kalau data akun Windows terbaca tapi tidak dipakai.
+describe("Onboarding AD: alasan data akun Windows tidak dipakai", () => {
+  // Kasus nyata 0.5.0: OU dengan spasi dan &, tanpa atribut department.
+  const JULIUS_DN =
+    "CN=Julius,OU=IT- BussinesAnalyst_AppSupport & MIS_QA,OU=IT-Department,OU=IT & CP Department,OU=HO,OU=Member Users,DC=macf,DC=co,DC=id";
+  const JULIUS: LocalAd = {
+    domain: "macf.co.id",
+    user: "julius",
+    dn: JULIUS_DN,
+    displayName: "Julius",
+    department: null,
+    complete: true,
+  };
+  const JULIUS_OU = "IT- BussinesAnalyst_AppSupport & MIS_QA";
+
+  async function sendWithoutAd(u: ReturnType<typeof user>) {
     await u.selectOptions(screen.getByLabelText("Departemen"), "Keuangan");
     await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
     await waitFor(() => expect(calls("join_send_request")).toHaveLength(1));
     expect(calls("join_send_request")[0][1]).toMatchObject({ useAd: false });
-    expect(calls("join_ad_suggest")).toHaveLength(0);
-  });
+  }
 
-  it("domain kantor berbeda: kedua domain disebut, data AD tidak ikut", async () => {
+  it("laptop lama tanpa jumlah (yang menjawab memakai Mira lama): tanpa angka, useAd false, tanpa usulan", async () => {
     const u = user();
     commands({
-      join_ad_profile: AD,
-      join_search: searchResult({ offices: [{ ...MCF, adDomain: "kantorlain.co.id" }] }),
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [{ ...MCF, acceptsAd: false, adOutdated: null }] }),
+      join_ad_suggest: SUGGEST,
+      join_send_request: outgoing(),
     });
-    setup();
-    await searchUntil(u, "Kantor ditemukan: MCF");
-    expect(screen.getByTestId("onb-ad-skipped")).toHaveTextContent(
-      "Data akun Windows Anda tidak ikut dikirim karena domain kantor ini (kantorlain.co.id) berbeda dengan domain laptop Anda (macf.co.id).",
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor Anda ditemukan");
+    const line = await screen.findByTestId("onb-ad-skipped");
+    expect(line).toHaveTextContent(
+      "Ada laptop di kantor ini yang belum diperbarui ke Mira 0.5, jadi data akun Windows Anda belum bisa dipakai. Pilih departemen sendiri.",
     );
-    expect(screen.queryByTestId("onb-ad-office-summary")).toBeNull();
+    expect(line).toHaveAttribute("data-reason", "outdated");
+    expect(screen.queryByTestId("onb-ad-box")).toBeNull();
+    expect(screen.getByLabelText("Departemen")).toHaveValue("");
+    await sendWithoutAd(u);
     expect(calls("join_ad_suggest")).toHaveLength(0);
   });
 
-  it("kantor belum mengatur domain: alasannya tampil", async () => {
+  it("laptop lama dengan jumlah: angkanya disebut", async () => {
     const u = user();
-    commands({ join_ad_profile: AD, join_search: searchResult({ offices: [office()] }) });
-    setup();
-    await searchUntil(u, "Kantor ditemukan: Biro Contoh");
-    expect(screen.getByTestId("onb-ad-skipped")).toHaveTextContent(
-      "Data akun Windows Anda tidak ikut dikirim karena kantor ini belum mengatur domain kantor.",
+    commands({
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [{ ...MCF, acceptsAd: false, adOutdated: 2 }] }),
+    });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor Anda ditemukan");
+    expect(await screen.findByTestId("onb-ad-skipped")).toHaveTextContent(
+      "Ada 2 laptop di kantor ini yang belum diperbarui ke Mira 0.5, jadi data akun Windows Anda belum bisa dipakai. Pilih departemen sendiri.",
     );
+  });
+
+  it("laptop lama didahulukan dari domain kosong (Mira lama tidak melaporkan domain)", async () => {
+    const u = user();
+    commands({
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [{ ...MCF, adDomain: null, acceptsAd: false, adOutdated: 1 }] }),
+    });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor ditemukan: MCF");
+    expect(await screen.findByTestId("onb-ad-skipped")).toHaveTextContent(
+      "Ada 1 laptop di kantor ini yang belum diperbarui ke Mira 0.5",
+    );
+    expect(screen.getAllByTestId("onb-ad-skipped")).toHaveLength(1);
+  });
+
+  it("kantor belum mengatur domain (kasus Julius di 0.5.0): alasannya di bawah departemen, tanpa usulan", async () => {
+    const u = user();
+    commands({
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [{ ...MCF, adDomain: null, acceptsAd: true }] }),
+      join_ad_suggest: SUGGEST,
+      join_send_request: outgoing(),
+    });
+    setup(fresh("Julius"));
+    const heading = await searchUntil(u, "Kantor ditemukan: MCF");
+    const line = await screen.findByTestId("onb-ad-skipped");
+    expect(line).toHaveTextContent(
+      "Domain kantor ini belum diatur, jadi data akun Windows Anda belum dipakai. Pilih departemen sendiri; admin bisa mengatur domainnya nanti.",
+    );
+    // Di dalam isian departemen dan dibacakan bersama pilihannya; fokus tetap di judul.
+    const select = screen.getByLabelText("Departemen");
+    expect(select.closest(".field")).toContainElement(line);
+    expect(select.getAttribute("aria-describedby")).toContain(line.id);
+    expect(line.closest("[aria-live='polite']")).not.toBeNull();
+    expect(heading).toHaveFocus();
+    await sendWithoutAd(u);
+    expect(calls("join_ad_suggest")).toHaveLength(0);
+  });
+
+  it("domain kantor berbeda: kedua domain disebut dan didahulukan dari laptop lama; data AD tidak ikut", async () => {
+    const u = user();
+    commands({
+      join_ad_profile: JULIUS,
+      join_search: searchResult({
+        offices: [{ ...MCF, adDomain: "kantorlain.co.id", acceptsAd: false, adOutdated: 3 }],
+      }),
+      join_send_request: outgoing(),
+    });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor ditemukan: MCF");
+    expect(await screen.findByTestId("onb-ad-skipped")).toHaveTextContent(
+      "Domain kantor (kantorlain.co.id) berbeda dengan domain akun Anda (macf.co.id), jadi data akun Windows Anda tidak dipakai. Pilih departemen sendiri.",
+    );
+    expect(screen.queryByTestId("onb-ad-office-summary")).toBeNull();
+    await sendWithoutAd(u);
+    expect(calls("join_ad_suggest")).toHaveLength(0);
+  });
+
+  it("departemen belum dicocokkan: OU paling dalam Julius disebut, satu baris saja, data AD tetap ikut", async () => {
+    const u = user();
+    commands({
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [MCF] }),
+      join_ad_suggest: { teamId: null, source: null, adDepartment: JULIUS_OU, inMira: false },
+      join_send_request: outgoing(),
+    });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor Anda ditemukan");
+    expect(await screen.findByTestId("onb-ad-skipped")).toHaveTextContent(
+      `Departemen Anda di akun Windows (${JULIUS_OU}) belum dicocokkan admin dengan departemen di Mira. Pilih departemen sendiri.`,
+    );
+    expect(screen.getAllByTestId("onb-ad-skipped")).toHaveLength(1);
+    expect(document.body.textContent).not.toMatch(/belum ada di Mira/);
+    expect(screen.queryByTestId("onb-ad-dept")).toBeNull();
+    expect(screen.getByLabelText("Departemen")).toHaveValue("");
+    // Lokasi OU tetap terbaca utuh di kotak yang dilihat admin.
+    expect(
+      within(screen.getByTestId("onb-ad-box")).getByText(
+        `Member Users › HO › IT & CP Department › IT-Department › ${JULIUS_OU}`,
+      ),
+    ).toBeInTheDocument();
+    await u.selectOptions(screen.getByLabelText("Departemen"), "IT Development");
+    await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
+    await waitFor(() => expect(calls("join_send_request")[0][1]).toMatchObject({ useAd: true }));
+  });
+
+  it("tanpa usulan dari inti Rust: OU paling dalam dari DN dipakai", async () => {
+    const u = user();
+    commands({ join_ad_profile: JULIUS, join_search: searchResult({ offices: [MCF] }), join_ad_suggest: null });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor Anda ditemukan");
+    expect(await screen.findByTestId("onb-ad-skipped")).toHaveTextContent(`(${JULIUS_OU})`);
+  });
+
+  it("usulan gagal dijawab: tidak menulis belum dicocokkan", async () => {
+    const u = user();
+    commands({
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [MCF] }),
+      join_ad_suggest: rustError("internal", "x"),
+    });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor Anda ditemukan");
+    await waitFor(() => expect(calls("join_ad_suggest")).toHaveLength(1));
+    await advance(10);
+    expect(screen.queryByTestId("onb-ad-skipped")).toBeNull();
+    expect(screen.getByTestId("onb-ad-box")).toBeInTheDocument();
+  });
+
+  it("baris yang sama tidak dipasang ulang saat orangnya mengisi formulir (diumumkan sekali)", async () => {
+    const u = user();
+    commands({
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [{ ...MCF, acceptsAd: false, adOutdated: 2 }] }),
+    });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor Anda ditemukan");
+    const line = await screen.findByTestId("onb-ad-skipped");
+    await u.type(screen.getByLabelText("Keterangan untuk admin (opsional)"), "NIK 2041");
+    await u.selectOptions(screen.getByLabelText("Departemen"), "Keuangan");
+    expect(screen.getByTestId("onb-ad-skipped")).toBe(line);
+  });
+
+  it("AD tidak terbaca (akun lokal, Mac): diam, walau kantor punya laptop lama", async () => {
+    const u = user();
+    commands({
+      join_ad_profile: null,
+      join_search: searchResult({ offices: [{ ...MCF, acceptsAd: false, adOutdated: 2 }] }),
+    });
+    setup(fresh("Julius"));
+    await searchUntil(u, "Kantor ditemukan: MCF");
+    await advance(10);
+    expect(screen.queryByTestId("onb-ad-skipped")).toBeNull();
+    expect(document.body.textContent).not.toMatch(AD_TEXT);
+  });
+
+  it("bahasa Inggris: jumlah laptop lama", async () => {
+    const u = user();
+    commands({
+      join_outgoing: null,
+      join_ad_profile: JULIUS,
+      join_search: searchResult({ offices: [{ ...MCF, acceptsAd: false, adOutdated: 1 }] }),
+    });
+    renderInLang(() => draw(fresh("Julius")), "en");
+    await screen.findByRole("heading", { name: "What's your name?" });
+    await u.click(screen.getByRole("button", { name: "Continue" }));
+    await advance(GRACE_MS + 500);
+    await screen.findByRole("heading", { name: "Your office was found" });
+    expect(await screen.findByTestId("onb-ad-skipped")).toHaveTextContent(
+      "1 laptop in this office hasn't been updated to Mira 0.5 yet, so your Windows account details can't be used. Choose a department yourself.",
+    );
+    expect(document.body.textContent).not.toMatch(/belum|Pilih departemen/);
   });
 });
 

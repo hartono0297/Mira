@@ -1,9 +1,12 @@
-// Teks layar status: memuat, gagal dibuka (StatusScreens.tsx), dan laptop yang
-// dikeluarkan dari organisasi (RemovedScreen.tsx). Versi Inggris di status.en.ts.
+// Teks layar status: memuat, gagal dibuka (StatusScreens.tsx), akun yang
+// dinonaktifkan (SuspendedScreen.tsx), dan laptop yang dikeluarkan permanen
+// (RemovedScreen.tsx). Versi Inggris di status.en.ts.
 const id = {
   loading: "Membuka data Mira di laptop ini...",
   // Label tebal di depan langkah berikutnya, diikuti kalimatnya.
   nextLabel: "Langkah berikutnya: ",
+  // Label di atas sidik jari laptop ini (huruf mono).
+  fingerprintLabel: "Sidik jari laptop ini",
   error: {
     heading: "Mira belum bisa dibuka",
     code: (code: string) => `Kode error: ${code}`,
@@ -20,14 +23,43 @@ const id = {
       other: "Coba lagi. Kalau masih gagal, tutup Mira lalu buka kembali.",
     },
   },
+  suspended: {
+    heading: (org: string) => `Akun Anda di ${org} sedang dinonaktifkan`,
+    contact: "Hubungi IT atau superadmin kantor. Mereka bisa mengaktifkan Anda lagi.",
+    kept: "Selama akun Anda nonaktif, data di laptop ini tetap tersimpan dan tidak ada yang dihapus.",
+    fingerprintHint: "Bacakan ke IT supaya mereka yakin orangnya benar.",
+    check: "Periksa lagi",
+    checking: "Memeriksa...",
+    auto: "Mira juga memeriksa sendiri setiap 20 detik.",
+    // Waktu ditulis jam dan menit, misalnya 14.20.
+    stillSuspended: (time: string) => `Dicek ${time}: masih nonaktif.`,
+    active: (time: string) => `Dicek ${time}: akun Anda aktif lagi. Membuka Mira...`,
+    removed: (time: string) => `Dicek ${time}: laptop ini sudah dikeluarkan dari kantor.`,
+    notConnected: "Belum tersambung ke laptop kantor. Pastikan laptop ini ada di jaringan kantor.",
+    // Diikuti pesan error dari inti Rust.
+    failed: (message: string) => `Belum bisa memeriksa. ${message}`,
+  },
   removed: {
     heading: (org: string) => `Laptop ini sudah dikeluarkan dari organisasi ${org}`,
     cause:
-      "Pesan dan perubahan baru dari organisasi ini tidak lagi dikirim ke laptop ini, dan laptop rekan tidak menerima sambungan dari laptop ini.",
-    kept: "Data yang sudah ada di laptop ini tetap tersimpan di sini. Mira tidak menghapusnya.",
+      "Superadmin kantor mengeluarkan laptop ini secara permanen. Pesan dan perubahan baru dari kantor tidak lagi sampai ke sini.",
+    kept: "Sampai Anda me-reset, data lama tetap tersimpan di sini.",
+    rejoin:
+      "Laptop ini belum bisa bergabung lagi sebelum di-reset. Setelah reset, Anda bisa meminta bergabung lagi sebagai laptop baru.",
     // Diikuti sidik jari laptop ini.
-    next: "Kalau ini keliru, hubungi superadmin organisasi. Laptop yang sudah dikeluarkan belum bisa bergabung lagi dengan kode undangan di versi ini. Sebutkan sidik jari laptop ini supaya superadmin yakin orangnya benar:",
-    recheck: "Periksa lagi",
+    contact: "Kalau ini keliru, hubungi superadmin kantor dan sebutkan sidik jari laptop ini.",
+    reset: "Reset dan mulai dari awal",
+    dialog: {
+      title: "Reset laptop ini?",
+      data: "Data organisasi lama di laptop ini dihapus. Pilihan bahasa dan tema tetap.",
+      key: "Laptop ini mendapat kunci baru, jadi sidik jarinya berubah.",
+      start: "Mira kembali ke layar awal. Dari sana Anda bisa meminta bergabung lagi.",
+      admin: "Admin akan melihatnya sebagai laptop baru.",
+      confirm: "Hapus data dan reset",
+      busy: "Mereset...",
+      // Diikuti pesan error dari inti Rust.
+      failed: (message: string) => `Laptop ini belum di-reset. ${message}`,
+    },
   },
 };
 

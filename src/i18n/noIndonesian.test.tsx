@@ -1107,6 +1107,6 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
     renderApp();
     expect(await screen.findByText("AAAA BBBB CCCC DDDD")).toBeInTheDocument();
     await settle();
-    expectEnglish("Layar dikeluarkan", ["Check again"]);
+    expectEnglish("Layar dikeluarkan", ["Reset and start over"]);
   });
 });

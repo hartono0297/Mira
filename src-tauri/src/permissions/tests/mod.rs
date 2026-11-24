@@ -6,4 +6,5 @@ mod join_tests;
 mod op_tests;
 mod security_tests;
 mod sim;
+mod suspend_tests;
 mod v03_tests;
