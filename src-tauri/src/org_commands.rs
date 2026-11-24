@@ -358,3 +358,63 @@ pub async fn org_set_label_assigned(
     })
     .await
 }
+
+// ----- 0.5.1: suspend, reinstate, remove for good ----------------------------------
+// (docs/plans/perbaikan-bergabung.md). Skeleton: filled in by the permissions task.
+
+/// Active members whose laptop keeps the suspend gate closed.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuspendGateView {
+    pub allowed: bool,
+    pub outdated: Vec<OutdatedLaptop>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutdatedLaptop {
+    pub name: String,
+    pub app_version: Option<String>,
+}
+
+#[tauri::command]
+pub async fn org_suspend_gate(state: State<'_, MiraState>) -> AppResult<SuspendGateView> {
+    let _ = &state;
+    Err(AppError::Internal("Belum tersedia.".into()))
+}
+
+#[tauri::command]
+pub async fn org_suspend_member(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+    public_key: String,
+) -> AppResult<()> {
+    let _ = (&state, &net, &app, &public_key);
+    Err(AppError::Internal("Belum tersedia.".into()))
+}
+
+#[tauri::command]
+pub async fn org_reinstate_member(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+    public_key: String,
+) -> AppResult<()> {
+    let _ = (&state, &net, &app, &public_key);
+    Err(AppError::Internal("Belum tersedia.".into()))
+}
+
+/// Removes for good: an active or a suspended member.
+#[tauri::command]
+pub async fn org_remove_member(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+    public_key: String,
+) -> AppResult<()> {
+    mutate(&state, &net, &app, |c| {
+        permissions::remove_member(&mut c.db, &c.identity, &public_key, clock::now())
+    })
+    .await
+}

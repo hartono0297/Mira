@@ -221,6 +221,11 @@ pub enum PeerAuth {
     Member {
         display_name: String,
     },
+    /// 0.5.1: suspended. The connection serves membership op sync only
+    /// (docs/plans/perbaikan-bergabung.md).
+    Suspended {
+        display_name: String,
+    },
     /// Removed from the organization. `removal` is the op that removed them,
     /// sent once so their laptop learns about it.
     Removed {
@@ -408,6 +413,8 @@ pub enum NetState {
     Offline,
     /// Set by the adapter; the network never produces it.
     Removed,
+    /// 0.5.1: this laptop is suspended (set by the adapter).
+    Suspended,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

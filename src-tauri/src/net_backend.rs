@@ -216,6 +216,7 @@ impl SyncBackend for MiraBackend {
                         None => None,
                     },
                 },
+                PeerAuthState::Suspended { display_name } => PeerAuth::Suspended { display_name },
                 PeerAuthState::Unknown => PeerAuth::Unknown,
             })
         });

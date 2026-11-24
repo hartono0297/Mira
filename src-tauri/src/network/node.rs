@@ -651,7 +651,8 @@ impl Inner {
         let remote = conn.remote_address();
         match self.backend.peer_auth(pk) {
             PeerAuth::Member { .. } => Ok(()),
-            PeerAuth::Unknown => {
+            // Skeleton: the network task serves membership op sync here.
+            PeerAuth::Unknown | PeerAuth::Suspended { .. } => {
                 self.log_rejection(
                     Some(pk),
                     Some(remote),

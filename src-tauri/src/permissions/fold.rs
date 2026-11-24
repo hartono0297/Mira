@@ -24,6 +24,9 @@ use crate::org::{Organization, Role};
 #[serde(rename_all = "snake_case")]
 pub enum MemberStatus {
     Active,
+    /// 0.5.1: suspended by `member_suspend`; `member_reinstate` makes the
+    /// member active again (same laptop key).
+    Suspended,
     Removed,
 }
 
@@ -31,6 +34,7 @@ impl MemberStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             MemberStatus::Active => "active",
+            MemberStatus::Suspended => "suspended",
             MemberStatus::Removed => "removed",
         }
     }
@@ -94,6 +98,27 @@ pub struct MemberState {
     pub removal_op: Option<String>,
     pub has_profile: bool,
     pub device: Option<DeviceInfo>,
+    /// 0.5.1: `at` of the `member_suspend` op while suspended.
+    pub suspended_at: Option<String>,
+    /// Author of the `member_suspend` op while suspended.
+    pub suspended_by: Option<String>,
+    /// Id of the `member_suspend` op while suspended.
+    pub suspension_op: Option<String>,
+    /// What `member_reinstate` gives back, while suspended.
+    pub snapshot: Option<SuspendSnapshot>,
+}
+
+/// What a member had when suspended (docs/plans/perbaikan-bergabung.md).
+/// `member_reinstate` restores what is still valid then.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SuspendSnapshot {
+    /// Department and role in it.
+    pub department: Option<(String, TeamRole)>,
+    pub superadmin: bool,
+    /// Projects the member was an explicit member of.
+    pub projects: Vec<String>,
+    pub labels: Vec<String>,
+    pub guest_access: Vec<GuestAccess>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,6 +303,7 @@ pub enum Reason {
     JoinRequestExpired,
     JoinAlreadyDecided,
     AlreadyMember,
+    TargetNotSuspended,
 }
 
 impl Reason {
@@ -322,6 +348,7 @@ impl Reason {
             Reason::JoinRequestExpired => "join_request_expired",
             Reason::JoinAlreadyDecided => "join_already_decided",
             Reason::AlreadyMember => "already_member",
+            Reason::TargetNotSuspended => "target_not_suspended",
         }
     }
 
@@ -381,6 +408,7 @@ impl Reason {
             }
             Reason::JoinAlreadyDecided => "Permintaan ini sudah disetujui atau ditolak.",
             Reason::AlreadyMember => "Laptop itu sudah menjadi anggota organisasi.",
+            Reason::TargetNotSuspended => "Orang itu tidak sedang dinonaktifkan.",
         }
     }
 
@@ -389,7 +417,7 @@ impl Reason {
     }
 }
 
-const ALL_REASONS: [Reason; 39] = [
+const ALL_REASONS: [Reason; 40] = [
     Reason::AuthorNotActive,
     Reason::NotAuthorized,
     Reason::GuestNotAllowed,
@@ -429,6 +457,7 @@ const ALL_REASONS: [Reason; 39] = [
     Reason::JoinRequestExpired,
     Reason::JoinAlreadyDecided,
     Reason::AlreadyMember,
+    Reason::TargetNotSuspended,
 ];
 
 pub type Outcome = Result<(), Reason>;
@@ -491,6 +520,10 @@ impl OrgState {
             removal_op: None,
             has_profile: false,
             device: None,
+            suspended_at: None,
+            suspended_by: None,
+            suspension_op: None,
+            snapshot: None,
         };
         let umum = ChannelState {
             id: umum_channel_id(&org.id),
@@ -922,6 +955,10 @@ impl OrgState {
                     m.removal_op = Some(op.id.clone());
                 }
             }
+            // Skeleton: implemented in the permissions task (R1).
+            Body::MemberSuspend { .. } | Body::MemberReinstate { .. } => {
+                return Err(Reason::NotAuthorized);
+            }
             Body::InviteCreate {
                 invite,
                 team,
@@ -1119,7 +1156,9 @@ impl OrgState {
                 self.require_open_team(&req.payload.team)?;
                 match self.member(&req.payload.member).map(|m| m.status) {
                     Some(MemberStatus::Removed) => return Err(Reason::MemberRemoved),
-                    Some(MemberStatus::Active) => return Err(Reason::AlreadyMember),
+                    Some(MemberStatus::Active | MemberStatus::Suspended) => {
+                        return Err(Reason::AlreadyMember);
+                    }
                     None => {}
                 }
                 if op.at < req.at - CLOCK_SLACK
@@ -1146,6 +1185,10 @@ impl OrgState {
                             app_version: p.app_version.clone(),
                             at: p.at.clone(),
                         }),
+                        suspended_at: None,
+                        suspended_by: None,
+                        suspension_op: None,
+                        snapshot: None,
                     },
                 );
                 self.live_team_mut(&p.team)?.members.insert(
@@ -1446,6 +1489,10 @@ impl OrgState {
                         removal_op: None,
                         has_profile: false,
                         device: None,
+                        suspended_at: None,
+                        suspended_by: None,
+                        suspension_op: None,
+                        snapshot: None,
                     },
                 );
             }

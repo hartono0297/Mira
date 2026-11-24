@@ -364,6 +364,11 @@ function userView(p: PersonView, extra: Partial<UserView> = {}): UserView {
     status: "active",
     joinedAt: "2026-11-04T02:00:00Z",
     removedAt: null,
+    suspendedAt: null,
+    suspendedByName: null,
+    canSuspend: false,
+    canReinstate: false,
+    canRemove: false,
     device: { laptop: "LAPTOP-NW-01", os: "Windows 11 24H2", appVersion: "0.4.0", reportedAt: minutesAgo(30) },
     lastIp: "192.168.1.23",
     online: true,
@@ -442,6 +447,7 @@ const JOIN_REQUESTS: JoinRequestView[] = [
     account: "riley",
     ad: null,
     requesterOutdated: false,
+    previouslyRemoved: null,
   },
 ];
 

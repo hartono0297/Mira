@@ -81,6 +81,7 @@ pub(crate) fn author_in(
     match state.member(me).map(|m| m.status) {
         Some(MemberStatus::Active) => {}
         Some(MemberStatus::Removed) => return Err(AppError::Removed),
+        Some(MemberStatus::Suspended) => return Err(AppError::Suspended),
         None => {
             return Err(AppError::Forbidden(
                 "Laptop ini belum menjadi anggota organisasi.".into(),

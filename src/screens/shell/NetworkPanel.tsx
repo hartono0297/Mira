@@ -22,6 +22,7 @@ const STATE_ICON: Record<NetState, { icon: Icon; tone: "ok" | "bad" | "plain" }>
   vpn: { icon: IconPlugConnected, tone: "ok" },
   offline: { icon: IconPlugConnectedX, tone: "bad" },
   removed: { icon: IconBan, tone: "bad" },
+  suspended: { icon: IconBan, tone: "bad" },
 };
 
 export function sortPeers(peers: PeerView[]): PeerView[] {

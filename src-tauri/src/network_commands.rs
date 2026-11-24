@@ -111,10 +111,10 @@ pub async fn get_network_status(
         Ok((membership, me, views, peers::manual_addresses(&c.db)?))
     })?;
 
-    let state_view = if membership == Membership::Removed {
-        NetState::Removed
-    } else {
-        snap.state
+    let state_view = match membership {
+        Membership::Removed => NetState::Removed,
+        Membership::Suspended => NetState::Suspended,
+        _ => snap.state,
     };
     let share_link = if snap.listen_port.is_some() {
         qr::share_link(&me, &snap.local_addresses)
@@ -192,4 +192,33 @@ pub async fn request_firewall_rule() -> AppResult<FirewallRequest> {
         .await
         .map_err(|e| AppError::Internal(format!("Pengaturan firewall berhenti. Detail: {e}")))??;
     Ok(FirewallRequest { started })
+}
+
+/// 0.5.1: result of "Periksa lagi" on the suspended screen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipCheck {
+    pub membership: Membership,
+    /// RFC 3339, when the check finished.
+    pub checked_at: String,
+    /// Office laptops this laptop synced with during the check.
+    pub peers_reached: u32,
+}
+
+/// Syncs the membership log with every connected office laptop (waits at
+/// most 4 seconds), then reports this laptop's membership. Skeleton: filled
+/// in by the network task.
+#[tauri::command]
+pub async fn check_membership(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+) -> AppResult<MembershipCheck> {
+    let _ = (&net, &app);
+    let membership = state.with_core(|c| permissions::membership(&c.db, &c.identity))?;
+    Ok(MembershipCheck {
+        membership,
+        checked_at: permissions::format::format_time(crate::clock::now()),
+        peers_reached: 0,
+    })
 }

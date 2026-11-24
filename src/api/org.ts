@@ -52,9 +52,16 @@ export type PersonView = {
 export type DeviceView = { laptop: string; os: string; appVersion: string; reportedAt: string };
 
 export type UserView = PersonView & {
-  status: "active" | "removed";
+  status: "active" | "suspended" | "removed";
   joinedAt: string;
   removedAt: string | null;
+  // 0.5.1: kapan dan oleh siapa dinonaktifkan (null kalau tidak nonaktif).
+  suspendedAt: string | null;
+  suspendedByName: string | null;
+  // Aksi yang boleh dilakukan laptop ini terhadap orang itu.
+  canSuspend: boolean;
+  canReinstate: boolean;
+  canRemove: boolean;
   // null = "Belum dilaporkan".
   device: DeviceView | null;
   // Dilihat dari koneksi, bukan laporan laptop itu sendiri. null untuk laptop ini.
@@ -125,6 +132,23 @@ export type JoinRequestView = {
   // Kantor memakai pengaturan AD dan Mira peminta terlalu lama untuk itu:
   // Setujui akan ditolak sampai peminta memperbarui Mira.
   requesterOutdated: boolean;
+  // 0.5.1: akun AD atau nama laptop peminta sama dengan orang yang nonaktif
+  // atau dikeluarkan. Petunjuk, bukan bukti.
+  previouslyRemoved: PreviouslyRemoved | null;
+};
+
+export type PreviouslyRemoved = {
+  name: string;
+  status: "suspended" | "removed";
+  // RFC 3339, kapan dinonaktifkan atau dikeluarkan.
+  at: string;
+  match: "ad_account" | "laptop";
+};
+
+// 0.5.1: gerbang versi untuk menonaktifkan orang.
+export type SuspendGate = {
+  allowed: boolean;
+  outdated: { name: string; appVersion: string | null }[];
 };
 
 export type JoinAdView = {
@@ -232,6 +256,12 @@ export const orgApi = {
   setDepartmentAdmin: (teamId: string, publicKey: string, admin: boolean) =>
     call<null>("org_set_department_admin", { teamId, publicKey, admin }),
   moveMember: (publicKey: string, teamId: string) => call<null>("org_move_member", { publicKey, teamId }),
+
+  // 0.5.1: nonaktifkan, aktifkan lagi, keluarkan permanen
+  suspendGate: () => call<SuspendGate>("org_suspend_gate"),
+  suspendMember: (publicKey: string) => call<null>("org_suspend_member", { publicKey }),
+  reinstateMember: (publicKey: string) => call<null>("org_reinstate_member", { publicKey }),
+  removeMember: (publicKey: string) => call<null>("org_remove_member", { publicKey }),
 
   // Permintaan bergabung (superadmin atau admin departemen tujuan)
   approveJoin: (requestId: string) => call<null>("org_approve_join", { requestId }),

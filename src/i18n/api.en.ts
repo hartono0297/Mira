@@ -43,6 +43,7 @@ const en: Dict<typeof id> = {
     vpn: "Connected over VPN",
     offline: "Not connected to the office network",
     removed: "This laptop has been removed from the organization",
+    suspended: "Your account in this organization is deactivated",
   },
   offlineHint: "If you're out of the office, turn on the office VPN.",
   inviteError: {

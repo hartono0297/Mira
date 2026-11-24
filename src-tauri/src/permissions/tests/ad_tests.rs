@@ -421,6 +421,10 @@ fn member(pk: &str, kind: MemberKind, version: Option<&str>) -> MemberState {
             app_version: v.into(),
             at: "2026-11-01T00:00:00Z".into(),
         }),
+        suspended_at: None,
+        suspended_by: None,
+        suspension_op: None,
+        snapshot: None,
     }
 }
 

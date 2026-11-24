@@ -40,7 +40,7 @@ pub use actions::{
 pub use causal::heads;
 pub use fold::{
     AdSettings, ChannelState, DeviceInfo, FoldResult, GuestAccess, InviteState, JoinDecision,
-    LabelState, MemberKind, MemberState, MemberStatus, OrgState, Outcome, ProjectMember,
+    LabelState, MemberKind, MemberState, MemberStatus, OrgState, SuspendSnapshot, Outcome, ProjectMember,
     ProjectState, Reason, TeamMember, TeamRole, TeamState, UMUM_CHANNEL_NAME, fold, project_id_for,
     umum_channel_id,
 };

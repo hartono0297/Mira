@@ -22,6 +22,7 @@ const en: Dict<typeof id> = {
     peer_unreachable: "The colleague's laptop couldn't respond to this request.",
     already_in_org: "This laptop is already in an organization.",
     removed: "This laptop has been removed from the organization.",
+    suspended: "Your account in this organization is deactivated. Contact IT or an office superadmin.",
     last_superadmin: "The organization must have at least one superadmin.",
     invalid_address: "That colleague's laptop address isn't valid.",
     network: "Network problem. Check your connection to the office network, then try again.",

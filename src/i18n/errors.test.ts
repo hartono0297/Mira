@@ -33,6 +33,7 @@ const APP_CODES: Record<AppErrorCode, true> = {
   peer_unreachable: true,
   already_in_org: true,
   removed: true,
+  suspended: true,
   last_superadmin: true,
   invalid_address: true,
   network: true,

@@ -722,7 +722,7 @@ fn admissible(
     }
     match state.member(&req.payload.member).map(|m| m.status) {
         Some(MemberStatus::Removed) => return Err(JoinRequestRefusal::Removed),
-        Some(MemberStatus::Active) => return Ok(false),
+        Some(MemberStatus::Active | MemberStatus::Suspended) => return Ok(false),
         None => {}
     }
     if !in_window(req, now) {

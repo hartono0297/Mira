@@ -80,6 +80,11 @@ export function user(publicKey: string, displayName: string, extra: Partial<User
     status: "active",
     joinedAt: "2026-11-04T02:00:00Z",
     removedAt: null,
+    suspendedAt: null,
+    suspendedByName: null,
+    canSuspend: false,
+    canReinstate: false,
+    canRemove: false,
     device: { laptop: `LAPTOP-${displayName.toUpperCase()}`, os: "Windows 11 24H2", appVersion: "0.3.0", reportedAt: "2026-11-22T01:00:00Z" },
     lastIp: "192.168.1.23",
     online: true,
@@ -114,6 +119,7 @@ export function joinRequest(id: string, displayName: string, extra: Partial<Join
     account: displayName.toLowerCase(),
     ad: null,
     requesterOutdated: false,
+    previouslyRemoved: null,
     ...extra,
   };
 }

@@ -28,6 +28,7 @@ pub mod paths;
 pub mod peers;
 pub mod permissions;
 pub mod qr;
+pub mod reset_commands;
 pub mod runnable;
 pub mod settings;
 pub mod signing;
@@ -201,6 +202,10 @@ pub fn run() {
             org_commands::org_set_department_admin,
             org_commands::org_move_member,
             org_commands::org_approve_join,
+            org_commands::org_suspend_gate,
+            org_commands::org_suspend_member,
+            org_commands::org_reinstate_member,
+            org_commands::org_remove_member,
             org_commands::org_reject_join,
             org_commands::org_add_project_member,
             org_commands::org_remove_project_member,
@@ -225,6 +230,8 @@ pub fn run() {
             join_commands::join_ad_profile,
             join_commands::join_ad_suggest,
             network_commands::get_network_status,
+            network_commands::check_membership,
+            reset_commands::reset_removed_laptop,
             network_commands::add_manual_address,
             network_commands::remove_manual_address,
             network_commands::get_firewall_status,

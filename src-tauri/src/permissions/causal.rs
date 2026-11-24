@@ -134,6 +134,8 @@ impl OrgState {
             Body::ProfileSet { .. } | Body::ChannelCreate { .. } | Body::DeviceSet { .. } => {
                 Vec::new()
             }
+            // Skeleton: rights of the 0.5.1 ops are set in the permissions task.
+            Body::MemberSuspend { .. } | Body::MemberReinstate { .. } => sa_only(),
             Body::TeamCreate { .. }
             | Body::TeamDelete { .. }
             | Body::SuperadminAdd { .. }
