@@ -25,12 +25,13 @@ export function office(overrides: Partial<FoundOffice> = {}): FoundOffice {
     acceptsNote: true,
     adDomain: null,
     acceptsAd: false,
+    createdAt: "2026-01-05T08:00:00Z",
     ...overrides,
   };
 }
 
 export function searchResult(overrides: Partial<JoinSearch> = {}): JoinSearch {
-  return { offices: [], orgSeen: false, mdnsOk: true, mdnsError: null, ...overrides };
+  return { offices: [], legacyOffices: [], orgSeen: false, mdnsOk: true, mdnsError: null, ...overrides };
 }
 
 export function outgoing(overrides: Partial<OutgoingJoinRequest> = {}): OutgoingJoinRequest {

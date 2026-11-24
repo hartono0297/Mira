@@ -45,6 +45,9 @@ export type FoundOffice = {
   adDomain: string | null;
   // Semua laptop anggota yang menjawab menerima data AD di permintaan.
   acceptsAd: boolean;
+  // Waktu dibuat dari catatan genesis bertanda tangan (RFC 3339). Untuk
+  // memilih "kantor utama" kalau ada beberapa kantor dengan domain AD sama.
+  createdAt: string;
 };
 
 // Akun domain yang login di laptop ini (onboarding-ad). Selain domain,
@@ -85,8 +88,20 @@ export type JoinAdClaim = {
 // Batas keterangan untuk admin, dalam karakter (sama dengan Rust).
 export const JOIN_NOTE_MAX_CHARS = 80;
 
+// Kantor yang laptopnya memakai Mira lama (0.1/0.2): mengumumkan organisasi
+// lewat mDNS tapi belum bisa menerima permintaan bergabung. Tidak terverifikasi.
+export type LegacyOffice = {
+  orgId: string;
+  // Nama dari pengumuman mDNS kalau ada (sudah dibersihkan), null kalau tidak ada.
+  name: string | null;
+  // Jumlah laptop yang mengumumkan organisasi ini.
+  peerCount: number;
+};
+
 export type JoinSearch = {
   offices: FoundOffice[];
+  // Kantor Mira versi lama di jaringan ini (lihat LegacyOffice).
+  legacyOffices: LegacyOffice[];
   // Ada laptop yang mengumumkan organisasi di jaringan ini, walau belum ada
   // yang menjawab. Pilihan "kantor baru" disembunyikan kalau true.
   orgSeen: boolean;

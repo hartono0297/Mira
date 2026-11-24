@@ -9,6 +9,10 @@
 pub mod check;
 pub mod dept;
 pub mod dn;
+#[cfg(debug_assertions)]
+mod fake;
+#[cfg(windows)]
+mod windows;
 
 use std::time::Duration;
 
@@ -71,20 +75,125 @@ pub enum LookupError {
 
 /// DNS domain this computer is joined to, lowercase. No network access.
 pub fn machine_domain() -> Option<String> {
-    None
+    #[cfg(debug_assertions)]
+    if let Some(fake) = fake::load() {
+        return fake.machine_domain();
+    }
+    #[cfg(windows)]
+    {
+        windows::machine_domain()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 /// The domain account logged in here. `None` for a local account, a
 /// computer without a domain, or macOS.
-pub async fn read_local(_timeout: Duration) -> Option<LocalAd> {
-    None
+pub async fn read_local(timeout: Duration) -> Option<LocalAd> {
+    #[cfg(debug_assertions)]
+    if let Some(fake) = fake::load() {
+        return fake.read_local(timeout).await;
+    }
+    #[cfg(windows)]
+    {
+        windows::read_local(timeout).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = timeout;
+        None
+    }
 }
 
 /// Looks `user` (`sAMAccountName`) up in `domain`.
 pub async fn lookup_user(
-    _domain: &str,
-    _user: &str,
-    _timeout: Duration,
+    domain: &str,
+    user: &str,
+    timeout: Duration,
 ) -> Result<DirectoryUser, LookupError> {
-    Err(LookupError::NotDomainMachine)
+    #[cfg(debug_assertions)]
+    if let Some(fake) = fake::load() {
+        return fake.lookup_user(domain, user);
+    }
+    let mine = machine_domain().ok_or(LookupError::NotDomainMachine)?;
+    if !same_domain(&mine, domain) {
+        return Err(LookupError::OtherDomain { mine });
+    }
+    #[cfg(windows)]
+    {
+        windows::lookup_user(mine, user.to_owned(), timeout).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (user, timeout);
+        Err(LookupError::NotDomainMachine)
+    }
+}
+
+/// Trimmed, lowercase, without a trailing dot; `None` when empty. Looser
+/// than `dn::normalize_domain`: this only tidies names the OS or test data
+/// gave us.
+fn tidy_domain(s: &str) -> Option<String> {
+    let s = s.trim().trim_end_matches('.').to_lowercase();
+    (!s.is_empty()).then_some(s)
+}
+
+fn same_domain(a: &str, b: &str) -> bool {
+    matches!((tidy_domain(a), tidy_domain(b)), (Some(a), Some(b)) if a == b)
+}
+
+/// `macf.co.id` → `DC=macf,DC=co,DC=id`.
+#[cfg_attr(not(any(windows, debug_assertions)), allow(dead_code))]
+fn base_dn(domain: &str) -> String {
+    domain
+        .split('.')
+        .filter(|label| !label.is_empty())
+        .map(|label| format!("DC={label}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn domains_compare_loosely() {
+        assert!(same_domain("MACF.co.id.", " macf.CO.ID"));
+        assert!(!same_domain("macf.co.id", "macf.com"));
+        assert!(!same_domain("", ""));
+        assert_eq!(tidy_domain("  "), None);
+    }
+
+    #[test]
+    fn base_dn_from_domain() {
+        assert_eq!(base_dn("macf.co.id"), "DC=macf,DC=co,DC=id");
+        assert_eq!(base_dn("corp"), "DC=corp");
+    }
+
+    /// The real Windows calls on whatever account runs the tests: only
+    /// checks that they come back in time without panicking.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn real_reads_finish_in_time() {
+        use std::time::Instant;
+        let start = Instant::now();
+        let mine = windows::machine_domain();
+        assert!(start.elapsed() < Duration::from_secs(2));
+
+        let start = Instant::now();
+        let _ = windows::read_local(READ_TIMEOUT).await;
+        assert!(start.elapsed() < READ_TIMEOUT + Duration::from_secs(1));
+
+        let domain = mine.unwrap_or_else(|| "mira-test.invalid".to_owned());
+        let start = Instant::now();
+        let found = windows::lookup_user(domain, "mira-no-such-user".into(), LOOKUP_TIMEOUT).await;
+        assert!(start.elapsed() < LOOKUP_TIMEOUT + Duration::from_secs(1));
+        assert!(matches!(
+            found,
+            Err(LookupError::NotFound | LookupError::Unreachable)
+        ));
+    }
 }

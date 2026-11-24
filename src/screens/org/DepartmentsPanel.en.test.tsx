@@ -5,7 +5,7 @@ import type { PersonView } from "../../api/org";
 import { setLang } from "../../i18n/core";
 import { router } from "../../test/fixtures";
 import { renderInLang } from "../../test/i18n";
-import { department, overview, person, PK_B, PK_C, TEAM_1, TEAM_2, TEAM_3 } from "../../test/orgFixtures";
+import { adSettings, department, overview, person, PK_B, PK_C, TEAM_1, TEAM_2, TEAM_3 } from "../../test/orgFixtures";
 import type { OrgPage } from "./context";
 import { DepartmentsPanel } from "./DepartmentsPanel";
 
@@ -44,7 +44,7 @@ const people: PersonView[] = [
 beforeEach(() => {
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   invoke.mockReset();
-  invoke.mockImplementation(router({ org_departments: [desain, interior, lanskap], org_people: people }));
+  invoke.mockImplementation(router({ org_departments: [desain, interior, lanskap], org_people: people, org_ad_settings: adSettings() }));
 });
 
 afterEach(() => {

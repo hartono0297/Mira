@@ -158,6 +158,23 @@ export type AdCheck = {
   checkedAt: string;
 };
 
+// Laptop di jaringan ini yang mengumumkan organisasi Mira lain (petunjuk mDNS,
+// tidak terverifikasi). Hanya untuk pemberitahuan, tanpa sinkron data.
+export type OtherOfficesView = {
+  // Jumlah laptop dengan organisasi selain kantor ini.
+  laptops: number;
+  // Jumlah organisasi berbeda.
+  offices: number;
+  // Dari laptop itu, yang mengumumkan domain AD sama dengan kantor ini.
+  sameDomainLaptops: number;
+  // Nama organisasi dari pengumuman, kalau ada.
+  names: string[];
+  // Kantor lain dengan domain AD sama yang dibuat lebih dulu (genesis
+  // terverifikasi lewat join_info), null kalau tidak ada. Superadmin kantor
+  // ini diberi tahu bahwa kantor itu "kantor utama" domain ini.
+  olderSameDomain: { name: string; createdAt: string; fingerprint: string } | null;
+};
+
 // Satu baris pemetaan OU AD ke departemen Mira.
 export type OuMapping = { ou: string; team: string };
 
@@ -211,6 +228,8 @@ export const orgApi = {
   // Active Directory (superadmin mengubah, semua bisa membaca)
   adSettings: () => call<AdSettingsView>("org_ad_settings"),
   setAdSettings: (domain: string, ouMap: OuMapping[]) => call<null>("org_set_ad_settings", { domain, ouMap }),
+  // Laptop lain di jaringan yang tergabung di kantor Mira lain.
+  otherOffices: () => call<OtherOfficesView>("org_other_offices"),
 
   // Anggota proyek
   addProjectMember: (projectId: string, publicKey: string) =>

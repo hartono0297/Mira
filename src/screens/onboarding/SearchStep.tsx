@@ -1,13 +1,16 @@
 import { IconLoader2 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
-import { joinApi, type FoundOffice, type JoinDevice } from "../../api/join";
+import { joinApi, type FoundOffice, type JoinDevice, type JoinSearch } from "../../api/join";
 import { DeviceFacts } from "./DeviceFacts";
 import { StepHeading } from "./StepHeading";
 import { ONB, SEARCH_GRACE } from "./texts";
 
 // Lama pencarian dan jeda antarputaran (kontrak 8.1: mendengarkan 15 detik).
 export const SEARCH_MS = 15_000;
+// Mira dibuka dengan --siapkan-kantor: pencarian singkat sebelum kantor baru,
+// supaya kantor yang sudah ada tidak terlewat (onboarding-ad bagian 6).
+export const SETUP_SEARCH_MS = 6_000;
 export const ROUND_GAP_MS = 1_500;
 // Setelah kantor pertama menjawab, pencarian berlanjut sebentar supaya kantor
 // lain di jaringan yang sama sempat menjawab juga. Tanpa ini, satu kantor yang
@@ -30,15 +33,22 @@ type Props = {
   deviceError: boolean;
   onFound: (offices: FoundOffice[]) => void;
   onEnd: (end: SearchEnd) => void;
+  // Setiap putaran yang berhasil: kantor versi lama dan orgSeen dicatat Onboarding.
+  onRound?: (result: JoinSearch) => void;
+  // Lama pencarian, bawaan SEARCH_MS.
+  limitMs?: number;
+  // Pengganti kalimat pembuka (mode --siapkan-kantor).
+  lead?: string;
 };
 
 // (a) Mencari kantor. joinApi.search() dipanggil berulang, tidak pernah
 // tumpang tindih, sampai GRACE_MS setelah kantor pertama ditemukan atau 15
 // detik habis. Tiap putaran mengembalikan daftar lengkap dari Rust, jadi
 // daftar tidak kosong yang terakhir yang dipakai.
-export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
-  const handlers = useRef({ onFound, onEnd });
-  handlers.current = { onFound, onEnd };
+export function SearchStep({ device, deviceError, onFound, onEnd, onRound, limitMs = SEARCH_MS, lead }: Props) {
+  const handlers = useRef({ onFound, onEnd, onRound });
+  handlers.current = { onFound, onEnd, onRound };
+  const limitAt = useRef(limitMs);
   const stopRef = useRef<() => void>(() => {});
   const [grace, setGrace] = useState(false);
 
@@ -76,7 +86,7 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
     const limit = window.setTimeout(() => {
       timeUp = true;
       if (!inflight) settle();
-    }, SEARCH_MS);
+    }, limitAt.current);
 
     async function round() {
       inflight = true;
@@ -86,6 +96,7 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
         if (result && typeof result === "object") {
           ok = true;
           lastError = null;
+          handlers.current.onRound?.(result);
           orgSeen = orgSeen || result.orgSeen === true;
           const offices = Array.isArray(result.offices) ? result.offices : [];
           if (offices.length > 0) {
@@ -133,7 +144,7 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
   return (
     <div className="onb-form">
       <StepHeading>{ONB.search.heading}</StepHeading>
-      <p className="onb-lead">{ONB.search.lead}</p>
+      <p className="onb-lead">{lead ?? ONB.search.lead}</p>
 
       <div className="onb-search" role="status">
         <IconLoader2 size={28} className="onb-spin" aria-hidden="true" />
@@ -145,7 +156,7 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
         ) : (
           <div>
             <strong>{ONB.search.searching}</strong>
-            <p className="hint">{ONB.search.stopsAfter}</p>
+            <p className="hint">{ONB.search.stopsAfter(Math.round(limitAt.current / 1000))}</p>
           </div>
         )}
       </div>

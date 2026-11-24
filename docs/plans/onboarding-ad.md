@@ -230,3 +230,29 @@ Lihat `src/api/join.ts`, `src/api/org.ts`, `src/api/index.ts` (tipe sudah dituli
 | A admin | 2 | `org_commands.rs`, `lib.rs` |
 
 Fase 2 mulai setelah P, R1, R2 selesai. E2e dijalankan satu per satu di fase 3.
+
+## 6. Tambahan lingkup: satu domain, satu kantor
+
+Dari session utama (user setuju: "kalau 1 domain harusnya 1 organisasi yang sama"). Temuan: laptop user tanpa sengaja membuat organisasi kedua karena laptop Mira 0.1.0/0.2.0 mengumumkan TXT `org` tanpa `on` dan `j`, lalu pencarian hanya bertanya ke petunjuk dengan `j`, sehingga onboarding menulis "Kantor belum ditemukan" dan pilihan kantor baru terbuka.
+
+1. **Kantor versi lama tetap terlihat.** `JoinSearch.legacyOffices`: petunjuk mDNS dengan `org` tapi tanpa `j` (dan bukan org yang sudah terverifikasi lewat `join_info`), dikelompokkan per org id, dengan nama dari TXT `on` kalau ada. Layar onboarding menampilkannya sebagai kantor yang ditemukan tapi belum bisa menerima permintaan, dengan langkah: minta superadmin atau rekan memperbarui Mira, atau pakai kode undangan.
+2. **Cegah kantor kedua.** Kalau kantor Mira apa pun terlihat (`orgSeen`, termasuk versi lama), pilihan kantor baru di "Untuk admin IT" dan `--siapkan-kantor` (yang kini mencari dulu beberapa detik) menampilkan peringatan yang menyebut kantor yang ada, menyarankan bergabung, dan meminta konfirmasi ketik ulang. Kalau domain AD laptop sama dengan `adDomain` kantor yang terlihat, pilihan kantor baru disembunyikan dan orang diarahkan ke kantor itu; `create_organization` juga menolak di Rust kalau `JoinClient` mengenal kantor terverifikasi dengan domain AD sama dengan domain mesin.
+3. **Peringatan kantor lain.** Anggota yang tergabung mengumumkan TXT `ad=<domain>` kalau kantornya punya domain AD (kunci baru, laptop lama mengabaikannya). `org_other_offices` menghitung laptop yang mengumumkan org id lain (dan yang domain AD-nya sama). Halaman Organisasi menampilkan pemberitahuan ringan "Ada N laptop di jaringan ini yang tergabung di kantor Mira lain". Hanya petunjuk, tanpa sinkron.
+4. Tes unit dan skenario e2e untuk ketiganya.
+
+| Bagian | Pemilik |
+|---|---|
+| `legacyOffices` di `search`, penolakan `create_organization` | Q |
+| TXT `ad`, `org_other_offices` | A (`network/discovery.rs`, `org_commands.rs`) |
+| Tampilan onboarding (kantor lama, peringatan kantor baru, `--siapkan-kantor` mencari dulu) | U1 |
+| Pemberitahuan di Organisasi | U2 (`OrgScreen.tsx` atau panel baru) |
+
+### 6.1 Tambahan: kantor otomatis dari domain
+
+User bertanya kenapa organisasi tidak otomatis saja dari domain. Keputusan session utama: satu domain satu kantor, tapi pembuatan kantor tetap sekali oleh admin IT (pembuatnya menjadi superadmin, dan tanpa server dua laptop bisa membuat kantor bersamaan).
+
+1. PC Windows dengan akun domain yang melihat **tepat satu** kantor dengan domain AD sama: kantor itu langsung dipakai tanpa langkah memilih kantor, tetap tampil di ringkasan "Kantor: MCF (macf.co.id)" dengan tombol Ubah. Langkah pilih kantor hanya untuk Mac, PC tanpa domain, atau kalau ada lebih dari satu kandidat.
+2. Kantor baru di "Untuk admin IT": nama bawaan diisi domain AD (misalnya `macf.co.id`, bisa diubah) dan domain AD kantor terisi otomatis.
+3. Lebih dari satu kantor dengan domain AD sama: yang genesis-nya paling awal (`FoundOffice.createdAt`, dari genesis bertanda tangan) disebut "kantor utama" dan terpilih bawaan. Superadmin kantor yang lebih baru mendapat peringatan di Organisasi (`OtherOfficesView.olderSameDomain`, A menanyakan `join_info` ke laptop yang mengumumkan org lain dengan TXT `ad` sama lalu memverifikasi genesis-nya), dengan penjelasan bahwa data tidak bisa digabung otomatis.
+
+Pemilik: `createdAt` di `FoundOffice` (Q), `olderSameDomain` (A), tampilan onboarding (U1), peringatan Organisasi (U2).

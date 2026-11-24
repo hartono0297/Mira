@@ -4,15 +4,18 @@ import { toAppError, type AppError } from "../../api";
 import { joinApi, type FoundOffice } from "../../api/join";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { anySeen, LegacyOffices, legacyOnly, SecondOfficeGuard, type SeenOffices } from "./OfficeGuard";
 import type { SearchEnd } from "./SearchStep";
 import { StepHeading } from "./StepHeading";
 import { ADMIN_IT, ONB } from "./texts";
 
 type Props = {
   end: SearchEnd;
-  // Di sesi ini pernah terlihat kantor atau pengumuman kantor. Tombol
-  // kantor baru di bagian "Untuk admin IT" diganti penjelasan.
-  officeSeen: boolean;
+  // Kantor yang pernah terlihat di sesi ini. Kalau ada, kantor baru di bagian
+  // "Untuk admin IT" baru terbuka setelah peringatan dan konfirmasi.
+  seen: SeenOffices;
+  // Domain AD laptop ini. Sama dengan domain kantor yang terlihat: tanpa kantor baru.
+  laptopDomain: string | null;
   onOffices: (offices: FoundOffice[]) => void;
   onInvite: () => void;
   onSearchAgain: () => void;
@@ -20,7 +23,7 @@ type Props = {
 };
 
 // (d) Kantor belum ditemukan: alamat laptop rekan, kode undangan, atau cari lagi.
-export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAgain, onNewOffice }: Props) {
+export function NotFoundStep({ end, seen, laptopDomain, onOffices, onInvite, onSearchAgain, onNewOffice }: Props) {
   const [address, setAddress] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<AppError | null>(null);
@@ -69,15 +72,17 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
   }
 
   const searched = end.kind === "timeout" || end.kind === "mdns";
+  const officeSeen = anySeen(seen);
+  const legacy = legacyOnly(seen);
+  // Kantor versi lama terlihat: jangan menulis "belum ditemukan".
+  const legacyFound = searched && legacy.length > 0;
 
   return (
     <div className="onb-form">
-      <StepHeading>{searched ? T.headingSearched : T.headingOther}</StepHeading>
-      {searched ? (
-        <p className="onb-lead">{T.leadSearched}</p>
-      ) : (
-        <p className="onb-lead">{T.leadOther}</p>
-      )}
+      <StepHeading>{legacyFound ? T.headingLegacy : searched ? T.headingSearched : T.headingOther}</StepHeading>
+      <p className="onb-lead">{legacyFound ? T.leadLegacy : searched ? T.leadSearched : T.leadOther}</p>
+
+      <LegacyOffices legacy={legacy} />
 
       {end.kind === "mdns" && (
         <div className="onb-note">
@@ -159,7 +164,13 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
         {adminOpen && (
           <div className="onb-fold-body">
             {officeSeen ? (
-              <p className="hint">{ADMIN_IT.officeSeen}</p>
+              <SecondOfficeGuard
+                seen={seen}
+                laptopDomain={laptopDomain}
+                onJoin={onOffices}
+                onConfirmed={onNewOffice}
+                disabled={connecting}
+              />
             ) : (
               <>
                 <p className="hint">{ADMIN_IT.explain}</p>

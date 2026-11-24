@@ -12,6 +12,7 @@ import { DepartmentsPanel } from "./DepartmentsPanel";
 import { InvitesPanel } from "./InvitesPanel";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { LabelsPanel } from "./LabelsPanel";
+import { OtherOfficesNotice } from "./OtherOfficesNotice";
 import { PeoplePanel } from "./PeoplePanel";
 import { formatCount } from "./usePendingJoinCount";
 import { useOrgLive } from "./useOrgLive";
@@ -210,6 +211,8 @@ export function OrgScreen({ state, onRefresh }: Props) {
               </div>
             </div>
           )}
+
+          <OtherOfficesNotice superadmin={!!overview?.isSuperadmin} />
 
           <nav className="org-tabs-wrap" aria-label={T.tabsAria}>
             <ul className="org-tabs">

@@ -30,6 +30,8 @@ const id = {
     submit: "Lanjut",
     saving: "Menyimpan...",
     saveFailed: "Nama belum tersimpan",
+    // Nama terisi dari akun domain Windows (onboarding-ad).
+    adSource: (domain: string) => `Diisi dari akun Windows Anda (${domain}). Ubah kalau perlu.`,
   },
   device: {
     error: "Nama dan alamat laptop ini belum terbaca. Pencarian tetap berjalan.",
@@ -42,7 +44,9 @@ const id = {
     heading: "Mencari kantor di jaringan...",
     lead: "Mira mencari kantor yang memakai Mira di Wi-Fi atau LAN yang sedang dipakai laptop ini.",
     searching: "Mencari",
-    stopsAfter: "Pencarian berhenti sendiri setelah 15 detik.",
+    stopsAfter: (seconds: number) => `Pencarian berhenti sendiri setelah ${seconds} detik.`,
+    // Mira dibuka dengan --siapkan-kantor: mencari dulu sebelum kantor baru.
+    setupLead: "Sebelum menyiapkan kantor baru, Mira memeriksa apakah sudah ada kantor Mira di jaringan ini.",
     cancel: "Batal",
     grace: {
       title: "Kantor ditemukan, memeriksa kantor lain...",
@@ -72,14 +76,43 @@ const id = {
     inviteTitle: "Pakai kode undangan",
     inviteDesc: "Kode dari admin kantor atau admin departemen.",
     searchAgain: "Cari lagi",
+    // Hanya kantor versi lama yang terlihat (onboarding-ad bagian 6).
+    headingLegacy: "Kantor ditemukan, tapi belum bisa menerima permintaan",
+    leadLegacy: "Ada kantor Mira di jaringan ini, tapi laptop kantornya masih memakai Mira versi lama.",
+  },
+  // Kantor dengan laptop Mira 0.1 atau 0.2: terlihat, tapi belum bisa menerima permintaan.
+  legacy: {
+    title: "Kantor dengan Mira versi lama",
+    unnamed: "Kantor Mira versi lama",
+    item: (name: string, laptops: number) => `${name} (${laptops} laptop)`,
+    body: "Laptop kantor ini memakai Mira versi lama, jadi belum bisa menerima permintaan bergabung. Supaya Anda bisa bergabung:",
+    update:
+      "Minta superadmin atau rekan di kantor itu memperbarui Mira di laptopnya dengan menjalankan lagi perintah pasang Mira, lalu tekan Cari lagi.",
+    invite: "Atau minta kode undangan ke superadmin, lalu pilih Pakai kode undangan.",
   },
   adminIt: {
     summary: "Untuk admin IT",
     explain:
       "Kantor baru disiapkan sekali saja oleh admin IT atau superadmin, di laptop orang pertama yang memakai Mira. Orang lain tinggal meminta bergabung.",
     button: "Siapkan Mira untuk kantor baru",
-    officeSeen:
-      "Di jaringan ini sudah ada kantor Mira, jadi jangan menyiapkan kantor baru. Minta bergabung ke kantor itu lewat Cari lagi, alamat laptop rekan, atau kode undangan.",
+    // Kantor lain sudah terlihat: peringatan dan konfirmasi sebelum kantor baru.
+    seenTitle: "Sudah ada kantor Mira di jaringan ini",
+    seenNamed: (names: string) =>
+      `Kantor yang terlihat: ${names}. Biasanya Anda cukup meminta bergabung ke kantor itu. Kantor kedua memisahkan Anda dari rekan yang sudah memakai Mira.`,
+    seenUnnamed:
+      "Ada laptop di jaringan ini yang sudah tergabung ke kantor Mira, walau belum menjawab. Biasanya Anda cukup meminta bergabung ke kantor itu. Kantor kedua memisahkan Anda dari rekan yang sudah memakai Mira.",
+    joinSeen: "Minta bergabung ke kantor itu",
+    // Frasa yang diketik untuk tetap membuat kantor baru.
+    confirmPhrase: "kantor baru",
+    confirmLabel: (phrase: string) => `Tetap perlu kantor baru? Ketik ${phrase} untuk melanjutkan.`,
+    confirmMismatch: (phrase: string) => `Ketik ${phrase} persis, lalu tekan tombolnya lagi.`,
+    confirmButton: "Tetap siapkan kantor baru",
+    // Domain AD laptop ini sama dengan domain kantor yang terlihat: tanpa kantor baru.
+    sameDomain: (domain: string, names: string) =>
+      `Laptop ini memakai domain ${domain}, sama dengan kantor ${names}. Satu domain kantor hanya untuk satu kantor Mira, jadi minta bergabung ke kantor itu.`,
+    // Layar --siapkan-kantor setelah pencarian singkat menemukan kantor.
+    setupHeading: "Periksa dulu sebelum menyiapkan kantor baru",
+    otherWay: "Cari dengan cara lain",
   },
   office: {
     nameSummary: "Nama:",
@@ -126,6 +159,44 @@ const id = {
     sendFailed: "Permintaan belum terkirim",
     notYours: "Bukan kantor Anda?",
     otherWay: "Cari dengan cara lain",
+    // Data akun domain Windows (onboarding-ad). Hanya tampil di laptop dengan akun domain.
+    ad: {
+      officeMatch: (domain: string) => `Domain kantor Anda: ${domain}`,
+      // Ringkasan kantor yang dipakai langsung karena domainnya sama.
+      officeSummary: "Kantor:",
+      officeWithDomain: (name: string, domain: string) => `${name} (${domain})`,
+      changeOffice: "Ubah",
+      changeOfficeLabel: "Ubah kantor",
+      // Beberapa kantor dengan domain sama: yang dibuat paling awal.
+      primary: (domain: string) => `Kantor utama untuk ${domain}`,
+      laterSameDomain: "Domainnya sama, tapi dibuat setelah kantor utama. Pilih hanya kalau admin kantor memintanya.",
+      // Departemen usulan dari atribut department di Active Directory.
+      deptAttribute: (dept: string) => `Dari AD: ${dept}`,
+      // Departemen usulan dari OU tempat akun berada.
+      deptOu: (ou: string) => `Dari OU di AD: ${ou}`,
+      deptMissing: (dept: string) => `Departemen di AD: ${dept} belum ada di Mira. Pilih departemen Anda.`,
+      boxTitle: "Yang dikirim ke admin",
+      name: "Nama",
+      team: "Departemen",
+      teamNone: "Belum dipilih",
+      account: "Akun Windows",
+      location: "Lokasi di Active Directory",
+      note: "Keterangan",
+      partial:
+        "Sebagian data AD tidak terbaca karena server domain tidak terjangkau. Admin akan memeriksa ulang.",
+      skip: {
+        noDomain:
+          "Data akun Windows Anda tidak ikut dikirim karena kantor ini belum mengatur domain kantor. Admin memeriksa permintaan seperti biasa.",
+        otherDomain: (office: string, mine: string) =>
+          `Data akun Windows Anda tidak ikut dikirim karena domain kantor ini (${office}) berbeda dengan domain laptop Anda (${mine}).`,
+        outdated:
+          "Data akun Windows Anda tidak ikut dikirim karena Mira di sebagian laptop kantor belum diperbarui. Admin memeriksa permintaan seperti biasa.",
+        noUser:
+          "Data akun Windows Anda tidak ikut dikirim karena nama akunnya belum terbaca. Admin memeriksa permintaan seperti biasa.",
+      },
+      shared:
+        "Nama Anda, nama laptop, nama akun login laptop ini, alamat IP, keterangan, dan data akun Windows di kotak ini tersimpan di catatan kantor dan bisa dilihat admin kantor.",
+    },
   },
   waiting: {
     adminSees: "Yang dilihat admin",
@@ -158,6 +229,8 @@ const id = {
     cancelFailed: "Permintaan belum dibatalkan",
     cancel: "Batalkan permintaan",
     cancelling: "Membatalkan...",
+    adAccount: "Akun Windows",
+    adLocation: "Lokasi di Active Directory",
   },
   rejected: {
     heading: "Permintaan ditolak",
@@ -224,6 +297,12 @@ const id = {
     back: "Kembali",
     submit: "Buat organisasi",
     saving: "Menyiapkan kantor...",
+    orgFromDomain: "Diisi dari domain kantor laptop ini. Ubah kalau perlu.",
+    adLabel: "Domain Active Directory (opsional)",
+    adPlaceholder: "contoh: kantor.co.id",
+    adHint:
+      "Dipakai Mira untuk mengenali laptop kantor dan mengisi nama serta departemen orang baru dari akun Windows mereka. Boleh dikosongkan.",
+    adInvalid: "Tulis domain seperti kantor.co.id, tanpa spasi atau garis miring.",
   },
 };
 
