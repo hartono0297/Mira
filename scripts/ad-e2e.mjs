@@ -218,7 +218,8 @@ const AD_WORDS = /Active Directory|\bAD\b|Akun Windows|Domain kantor Anda/;
 // menolak join_info, seperti Mira 0.1/0.2.
 const LEGACY_ENV = { MIRA_TEST_LEGACY_ADVERT: "1" };
 
-const RESULT_RE = /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/;
+// "Kantor Anda ditemukan": satu kantor dengan domain AD sama, dipakai langsung (bagian 6.1).
+const RESULT_RE = /^(Kantor Anda ditemukan|Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/;
 const NODE_IDS = ["A", "K", "N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8", "N9", "K2", "N11", "L", "N10"];
 const NODES = Object.fromEntries(
   NODE_IDS.map((id, i) => [
@@ -633,8 +634,10 @@ async function main() {
       const dom = await soft(sec.getByLabel(TXT.id.adDomainLabel, { exact: true }).inputValue({ timeout: 5000 }), "");
       check("1.7 Bagian Active Directory menampilkan domain kantor", dom === DOMAIN, dom);
       await sec.getByRole("button", { name: TXT.id.adAddRow, exact: true }).click();
-      await sec.getByLabel(TXT.id.adOuRow(1)).fill(OU_MAP.ou);
-      await sec.getByLabel(TXT.id.adTeamRow(1)).selectOption({ label: OU_MAP.team });
+      // Lewat nama aksesibel (getByRole): label sel memuat nama kolom aria-hidden
+      // yang ikut terbaca getByLabel, tapi tidak ikut nama aksesibel.
+      await sec.getByRole("textbox", { name: TXT.id.adOuRow(1) }).fill(OU_MAP.ou);
+      await sec.getByRole("combobox", { name: TXT.id.adTeamRow(1) }).selectOption({ label: OU_MAP.team });
       await snap("A", "pengaturan-ad-pemetaan-ou");
       await sec.getByRole("button", { name: TXT.id.adSave }).click();
       mappedByUi = await soft(waitFor("pemetaan OU tersimpan", async () => {
@@ -770,7 +773,9 @@ async function main() {
     const autoDept = await soft(waitFor("departemen terpilih", async () => (await selectedTeam("N2")) || null, 10000, 300), "");
     check("3.4 N2: IT Development terpilih lewat pemetaan OU (atribut department kosong)", autoDept === DEPT.itdev, autoDept);
     const cap = await tidText("N2", TID.deptCaption);
-    check("3.5 N2: asal usulan departemen tertulis (Dari akun Windows Anda: IT Development)", has(cap, TXT.id.deptFromAccount(DEPT.itdev)), cap);
+    // Keterangan menyebut label AD (OU paling dalam), bukan nama departemen Mira.
+    const innerOu = "IT-Development";
+    check(`3.5 N2: asal usulan departemen tertulis (Dari akun Windows Anda: ${innerOu})`, has(cap, TXT.id.deptFromAccount(innerOu)), cap);
     const code = await sendRequest("N2");
     const req = await requestOnA(P.hartono.displayName);
     check("3.6 A menerima permintaan N2 ke IT Development dengan kode yang sama",
@@ -863,7 +868,8 @@ async function main() {
     check(`6.2 N5: kantor ${ORG} ditemukan`, h === `Kantor ditemukan: ${ORG}`, h);
     await sleep(2000);
     const counts = await Promise.all([TID.officeMatch, TID.officeSummary, TID.deptCaption, TID.box, TID.partial, TID.skipped].map((t) => tidCount("N5", t)));
-    const body = await bodyText("N5");
+    // Nama kantor uji ("Kantor Uji AD") memuat kata AD, jadi dibuang sebelum dicek.
+    const body = [ORG_K2, ORG].reduce((t, o) => t.replaceAll(o, ""), await bodyText("N5"));
     check("6.3 N5: tidak ada teks AD di langkah kantor", counts.every((x) => x === 0) && !AD_WORDS.test(body), `${counts} ${body.match(AD_WORDS)?.[0] ?? ""}`);
     check("6.4 N5: departemen tidak terpilih otomatis", (await selectedTeam("N5")) === "");
     await snap("N5", "onboarding-tanpa-domain");
@@ -1007,9 +1013,14 @@ async function main() {
     await snap("K2", "organisasi-kantor-lebih-lama");
 
     // A (kantor utama) tidak mendapat peringatan itu, tapi melihat kantor lain dengan domain sama.
-    await openOrgTab("A", "requests");
-    const sameDomain = await soft(byTid("A", TID.otherOffices).and(pg("A").locator('[data-same-domain="true"]'))
-      .waitFor({ timeout: 45000 }).then(() => true), false);
+    // Pemberitahuan dimuat sekali saat halaman Organisasi dibuka, dan A sudah di
+    // halaman itu sejak sebelum K2 ada: buka ulang lewat Pengaturan sampai muncul.
+    const sameDomainBox = byTid("A", TID.otherOffices).and(pg("A").locator('[data-same-domain="true"]'));
+    const sameDomain = await soft(waitFor("A melihat kantor lain dengan domain sama", async () => {
+      await mainNavBtn("A", "settings").click({ timeout: 10000 });
+      await openOrgTab("A", "requests");
+      return soft(sameDomainBox.waitFor({ timeout: 8000 }).then(() => true), false);
+    }, 90000, 500), false);
     check("8.11 Organisasi A: pemberitahuan kantor lain dengan domain AD sama, tanpa peringatan kantor lebih lama",
       sameDomain && has(await tidText("A", TID.otherOffices), TXT.id.otherSameDomain) && (await tidCount("A", TID.olderOffice)) === 0);
     await snap("A", "organisasi-kantor-ganda-domain-sama");
