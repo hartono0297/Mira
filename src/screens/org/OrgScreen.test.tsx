@@ -93,11 +93,11 @@ describe("Organisasi: memuat dan error", () => {
 });
 
 describe("Organisasi: tab per peran", () => {
-  it("superadmin melihat Pengguna, Departemen, Permintaan bergabung, Label, Undangan", async () => {
+  it("superadmin melihat Pengguna, Departemen, Permintaan bergabung, Label, Sticker, Undangan", async () => {
     answer();
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan"]);
+    expect(tabNames()).toEqual(["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Sticker", "Undangan"]);
     expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
   });
 

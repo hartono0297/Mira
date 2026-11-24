@@ -77,10 +77,34 @@ describe("ProfileDialog", () => {
     expect(await within(dlg).findByText("AB12 CD34 EF56 7890")).toBeInTheDocument();
     // Semua label tampil, tidak diringkas menjadi "+1".
     for (const label of ["Arsitek", "Senior", "K3", "Penguji mutu"]) expect(within(dlg).getByText(label)).toBeInTheDocument();
+    expect(dlg.querySelector(".lab-more")).toBeNull();
+    // Chip boleh turun baris supaya banyak label tidak melebarkan dialog.
+    expect(dlg.querySelector(".prof-name")).toHaveClass("nwl-wrap-all");
+    expect(dlg.querySelector(".prof-name .nwl-labels")).toHaveClass("nwl-wrap");
     expect(factOf(dlg, PROFILE.role)).toHaveTextContent(/^Anggota$/);
     expect(factOf(dlg, PROFILE.department)).toHaveTextContent(/^Drafting, admin departemen$/);
     expect(factOf(dlg, PROFILE.fingerprint)).toHaveTextContent(PROFILE.fingerprintNote("Sari Uji"));
     expect(org.people).toHaveBeenCalledTimes(1);
+  });
+
+  it("delapan label panjang tampil semua, juga di profil saya sendiri", async () => {
+    const many = [
+      "Arsitek",
+      "Drafter",
+      "Surveyor",
+      "Pengawas lapangan",
+      "Juru gambar senior",
+      "Estimator biaya",
+      "Ahli struktur baja",
+      "Koordinator K3",
+    ].map((name, i) => ({ id: `m${i}`, name }));
+    org.people.mockResolvedValue([{ ...personView(penguji, "Desain"), labels: many }]);
+    renderProfile(penguji);
+    const dlg = screen.getByRole("dialog", { name: /Penguji/ });
+    expect(await within(dlg).findByText("Koordinator K3")).toHaveClass("lab");
+    for (const l of many) expect(within(dlg).getByText(l.name)).toHaveClass("lab");
+    expect(dlg.querySelector(".lab-more")).toBeNull();
+    expect(within(dlg).queryByRole("button", { name: /label lain/ })).toBeNull();
   });
 
   it("superadmin tanpa departemen", async () => {

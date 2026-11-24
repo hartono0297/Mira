@@ -1,0 +1,326 @@
+/* Kolom pesan: tombol Emoji dan Sticker, pemilih sticker, dan saran ":nama" (v0.5.1).
+   Pemilih sticker meniru lapisan pemilih emoji (src/components/emoji/emoji-picker.css):
+   latar kartu, garis tegas, satu bayangan karena melayang di atas daftar pesan. */
+
+/* Tombol Lampirkan, Emoji, Sticker. Pemilih ditambatkan ke kelompok ini, di atas tombolnya. */
+.cmp-tools {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.cmp-emoji-pop,
+.stk-picker {
+  bottom: calc(100% + 8px);
+  left: 0;
+}
+
+/* Saran ":nama": daftar yang sama dengan saran mention, ditambah glyph dan tanda emote kantor. */
+.cmp-emoji-list {
+  min-width: 260px;
+}
+
+.cmp-emoji-list .conv-mention-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cmp-emoji-glyph {
+  flex: none;
+  width: 24px;
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+}
+
+.cmp-emoji-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Teks, bukan warna saja, yang membedakan emote kantor dari emoji. */
+.cmp-emoji-tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-sec);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Pemilih sticker */
+
+.stk-picker {
+  position: absolute;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(460px, calc(100vh - 120px));
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 8px 24px var(--scrim);
+  font-size: 13px;
+}
+
+.stk-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Tab terpilih ditandai garis bawah tebal dan teks utama, bukan hanya warna. */
+.stk-tab {
+  min-height: 36px;
+  margin-bottom: -1px;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text-sec);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.stk-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.stk-tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.stk-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.stk-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 8px;
+}
+
+.stk-panel > * + * {
+  margin-top: 8px;
+}
+
+.stk-panel > .stk-live:empty {
+  margin-top: 0;
+}
+
+.stk-search {
+  position: relative;
+  flex: none;
+}
+
+.stk-search svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  color: var(--text-sec);
+  pointer-events: none;
+}
+
+.stk-search input {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px 6px 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.stk-search input::placeholder {
+  color: var(--text-sec);
+  opacity: 1;
+}
+
+.stk-search input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.stk-upload {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.stk-upload .stk-note {
+  margin: 0;
+}
+
+.stk-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Ruang untuk cincin fokus di tepi kisi supaya tidak terpotong saat bergulir. */
+  padding: 2px;
+}
+
+.stk-group + .stk-group {
+  margin-top: 10px;
+}
+
+.stk-pack {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+/* Kolom tetap (STICKER_COLUMNS di StickerPicker.tsx), supaya panah atas dan bawah sesuai. */
+.stk-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stk-cell {
+  position: relative;
+  min-width: 0;
+}
+
+.stk-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 2px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.stk-item:hover {
+  background: var(--hover);
+}
+
+.stk-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.stk-item[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.stk-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.stk-item:hover .stk-name {
+  color: var(--text);
+}
+
+/* Hapus sticker pribadi: selalu terlihat (bukan hanya saat disorot), Delete untuk keyboard. */
+.stk-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-sec);
+  cursor: pointer;
+}
+
+.stk-remove:hover {
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.stk-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 4px;
+  color: var(--text-sec);
+}
+
+.stk-state svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.stk-sending {
+  padding: 0 4px;
+}
+
+.stk-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.stk-retry {
+  margin-top: 8px;
+}
+
+.stk-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.stk-form-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stk-form-file {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.stk-form .field input {
+  font-size: 14px;
+}
+
+.stk-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}

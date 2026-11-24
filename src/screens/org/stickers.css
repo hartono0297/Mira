@@ -1,0 +1,189 @@
+/* Tab Sticker (superadmin, v0.5.1). Satu blok per paket: judul paket dengan aksi
+   Sembunyikan semua / Tampilkan semua, lalu daftar baris seperti tab Label
+   (.row-list dari org.css). Gambar kecil 64 px datang dari sticker-image.css. */
+
+.stk-intro {
+  max-width: 66ch;
+  margin: 0;
+  font-size: 13px;
+}
+
+.stk-live:empty {
+  display: none;
+}
+
+.stk-packs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.stk-pack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stk-pack-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.stk-pack-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.stk-pack-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.stk-pack-count {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.stk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 14px;
+}
+
+/* Kotak tetap 64 px supaya baris rata, apa pun bentuk gambarnya. */
+.stk-thumb {
+  flex: none;
+  display: inline-flex;
+  width: 64px;
+  height: 64px;
+}
+
+/* Sticker tersembunyi: gambar dipudarkan. Status tetap tertulis di label teksnya. */
+.stk-row-hidden .stk-thumb {
+  opacity: 0.55;
+}
+
+.stk-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stk-name-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.stk-name {
+  font-weight: 700;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.stk-state {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+
+.stk-state-active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* Disembunyikan: garis putus-putus seperti label yang dihapus di tab Label. */
+.stk-state-hidden {
+  border: 1px dashed var(--border-strong);
+  color: var(--text-sec);
+  line-height: 18px;
+}
+
+.stk-keywords {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-sec);
+  overflow-wrap: anywhere;
+}
+
+/* Peringatan per sticker: ikon ditambah kalimat, bukan warna saja. */
+.stk-warn {
+  margin: 2px 0 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--state);
+}
+
+.stk-warn svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.stk-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stk-del {
+  color: var(--danger);
+}
+
+/* Container sempit: aksi baris pindah ke baris kedua, tidak ada gulir mendatar. */
+@container (max-width: 600px) {
+  .stk-row {
+    flex-wrap: wrap;
+  }
+
+  .stk-row .stk-actions {
+    flex-basis: 100%;
+  }
+}
+
+/* Dialog Tambah sticker: keterangan file yang dipilih. */
+.stk-file {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.stk-file p {
+  margin: 0;
+}
+
+.stk-file-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.stk-file-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.stk-file-facts {
+  font-size: 13px;
+}

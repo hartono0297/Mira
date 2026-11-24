@@ -12,6 +12,7 @@ const en: Dict<typeof id> = {
   labels: {
     prefix: (count: number) => `, ${plural(count, "label", "labels")} `,
     more: (count: number) => `, and ${count} more ${plural(count, "label", "labels")}`,
+    list: (count: number) => `${plural(count, "Label", "Labels")}: `,
   },
   count: {
     more: (cap: number, meaning: string) => `more than ${cap} ${meaning}`,

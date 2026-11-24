@@ -12,6 +12,7 @@ Branch `claude/chat-sticker-eac793`, dari `main` a45d1b3 (v0.5.0). Laporan: `doc
 - **Sticker pribadi**: koleksi per laptop. Unggah sendiri, atau "Simpan sticker" dari pesan.
 - **Admin menyembunyikan** pesan sticker lewat alur "Hapus pesan" yang sudah ada (pengirim, superadmin, dan admin departemen di channel departemennya; aturan `judge::message_delete` dan `ctx.is_admin` tidak diubah).
 - Tanpa paket sticker bawaan.
+- **Tambahan dari session utama** (permintaan user: "gw mau di chat, muncul semua label yang user itu punya"): di Chat, semua label keahlian orang tampil (bukan maksimal 3) di baris penulis pesan (termasuk pesan saya), kepala pesan pribadi, daftar anggota grup dan proyek, dan profil. Chip boleh turun baris. Sidebar tetap ringkas dengan "+N" yang bisa difokus. Layar di luar Chat tetap maksimal 3. Reaksi bisa diberikan ke pesan siapa pun.
 
 ## 2. Record baru (topik `chat`, `model::Body`)
 
@@ -113,6 +114,7 @@ export function emojiQueryAt(text: string, caret: number): { start: number; quer
 | U2 kolom pesan dan pemilih sticker | `Composer.tsx`, `Composer.test.tsx`, `StickerPicker.tsx`, `sticker-picker.css`, `src/i18n/chat-sticker.{id,en}.ts` |
 | U3 reaksi dan pesan sticker | `MessageItem.tsx`, `MessageList.tsx`, `Conversation.tsx`, `ReactionBar.tsx`, `reactions.css`, `menuText.ts`, `src/i18n/chat-menu.{id,en}.ts`, `src/i18n/chat-reaction.{id,en}.ts`, tes pesan |
 | U4 panel sticker kantor | `src/screens/org/StickersPanel.tsx` (+ tes, css), `src/i18n/org-stickers.{id,en}.ts`, baris pendaftaran tab di `OrgScreen.tsx` |
+| U5 semua label di Chat | `NameWithLabels.tsx` (+css, tes), `PersonName.tsx`, `ConversationHeader.tsx`, `GroupMembers.tsx`, `ProjectMembers.tsx`, `ProfileDialog.tsx`, `ConversationList.tsx` |
 | E2E | `scripts/sticker-e2e.mjs` |
 
 ## 9. Selesai berarti

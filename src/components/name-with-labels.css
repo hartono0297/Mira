@@ -43,3 +43,96 @@
   color: var(--text-sec);
   line-height: 16px;
 }
+
+/* Mode wrap (chat): nama dan label tidak pernah lebih lebar dari wadahnya. Label yang
+   tidak muat di samping nama turun ke baris berikutnya, dan label yang sangat panjang
+   patah di dalam kotaknya sendiri. */
+.nwl-wrap-all {
+  max-width: 100%;
+}
+
+.nwl-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.nwl-wrap .lab {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* "+N" yang bisa difokus: tombol seukuran chip. Area kliknya diperluas lewat ::after
+   supaya sasaran minimal sekitar 24 px tanpa menggeser baris. */
+.lab-more-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.lab-more-btn {
+  position: relative;
+  margin: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.lab-more-btn::after {
+  content: "";
+  position: absolute;
+  inset: -4px -3px;
+}
+
+.lab-more-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.lab-more-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Kotak sisa label di bawah "+N". Padding atas transparan menjembatani celah, jadi
+   kursor bisa pindah dari "+N" ke kotak tanpa kotaknya hilang. */
+.lab-tip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  padding-top: 4px;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 32px));
+}
+
+.lab-tip-end {
+  left: auto;
+  right: 0;
+}
+
+.lab-tip-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 6px 16px var(--scrim);
+}
+
+.lab-tip-box .lab {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .lab-more-btn {
+    border-color: ButtonText;
+  }
+
+  .lab-tip-box {
+    border-color: CanvasText;
+  }
+}

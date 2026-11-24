@@ -14,6 +14,14 @@ const id = {
   deleteMessage: "Hapus pesan",
   copied: "Teks pesan disalin.",
   copyFailed: "Teks belum bisa disalin. Pilih teksnya lalu tekan Ctrl+C.",
+  // v0.5.1
+  react: "Beri reaksi",
+  saveSticker: "Simpan sticker",
+  stickerSaved: "Sticker disimpan ke koleksi Anda.",
+  stickerSaveFailed: (detail: string) => `Sticker belum tersimpan. ${detail}`,
+  // Konfirmasi Hapus pesan untuk pesan sticker (label menu tetap "Hapus pesan").
+  deleteStickerBody: (title: string) =>
+    `Sticker ini dihapus untuk semua orang di ${title} dan tidak bisa dikembalikan. Di percakapan hanya tersisa tanda "Pesan dihapus".`,
 
   // Percakapan di sidebar dan menu "..." di kepala percakapan
   convMenu: (title: string) => `Aksi untuk ${title}`,

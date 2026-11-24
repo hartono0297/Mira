@@ -2,15 +2,24 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatOverview, ConversationSummary } from "../../api/chat";
+import { renderInLang } from "../../test/i18n";
 import { ConversationList } from "./ConversationList";
+import { personView } from "./conversationTestData";
+import { PeopleLabelsProvider } from "./PeopleLabels";
 import { defaultConversation, groupConversations, sectionOf } from "./ListFormat";
 // @ts-expect-error tanpa paket @types/node (lihat vite.config.ts)
 import { readFileSync } from "node:fs";
 // @ts-expect-error tanpa paket @types/node
 import process from "node:process";
-import { GRUP, PROYEK, PROYEK_CHAT, TIM, UMUM, overview, summary } from "./testData";
+import { DM_B, GRUP, PROYEK, PROYEK_CHAT, REKAN_B, TIM, UMUM, overview, summary } from "./testData";
 
 const chat = vi.hoisted(() => ({ setFolded: vi.fn() }));
+const org = vi.hoisted(() => ({ people: vi.fn() }));
+
+vi.mock("../../api/org", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/org")>()),
+  orgApi: org,
+}));
 
 vi.mock("../../api/chat", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/chat")>()),
@@ -197,5 +206,71 @@ describe("ConversationList: chat proyek", () => {
     );
     expect(groupConversations([PROYEK_CHAT]).proyek).toEqual([PROYEK_CHAT]);
     expect(defaultConversation([PROYEK_CHAT, UMUM])?.id).toBe(UMUM.id);
+  });
+});
+
+describe("ConversationList: label rekan di baris pesan pribadi", () => {
+  const LABELS = ["Arsitek", "Drafter", "Surveyor", "Pengawas lapangan", "Koordinator K3"].map((name, i) => ({
+    id: String(i).repeat(32),
+    name,
+  }));
+  const props = {
+    revealId: null,
+    onRevealed: vi.fn(),
+    staleError: null,
+    onSelect: vi.fn(),
+    onRequest: vi.fn(),
+    onChanged: vi.fn(),
+    onRemoved: vi.fn(),
+    onRetry: vi.fn(),
+    onNewChannel: vi.fn(),
+    onNewGroup: vi.fn(),
+    onNewDirect: vi.fn(),
+    onNotify: vi.fn(),
+  };
+  const draw = (currentId: string | null = UMUM.id) => (
+    <PeopleLabelsProvider>
+      <ConversationList overview={overview({ conversations: [UMUM, DM_B, GRUP] })} currentId={currentId} {...props} />
+    </PeopleLabelsProvider>
+  );
+
+  beforeEach(() => {
+    org.people.mockReset().mockResolvedValue([{ ...personView(REKAN_B, "Desain"), labels: LABELS }]);
+  });
+
+  it("ringkas: dua label dan +3 yang hanya tampilan; nama tombol dan tooltip menyebut semua", async () => {
+    render(draw());
+    const row = await vi.waitFor(() => {
+      const button = within(section("Pesan pribadi")).getByRole("button", { name: /^Pesan pribadi dengan Rekan Bayu/ });
+      expect(button.querySelector(".chat-row-labels")).not.toBeNull();
+      return button;
+    });
+    const all = LABELS.map((l) => l.name).join(", ");
+    expect(row).toHaveAccessibleName(`Pesan pribadi dengan Rekan Bayu, label ${all}, 1 pesan belum dibaca`);
+    expect(row).toHaveAttribute("title", `Rekan Bayu, label ${all}`);
+    const chips = [...row.querySelectorAll(".chat-row-labels .lab:not(.lab-more)")].map((el) => el.firstChild?.textContent);
+    expect(chips).toEqual(["Arsitek", "Drafter"]);
+    expect(row.querySelector(".lab-more [aria-hidden='true']")?.textContent).toBe("+3");
+    // Tidak ada tombol di dalam tombol baris.
+    expect(row.querySelector("button")).toBeNull();
+    // Grup dan channel tidak berlabel.
+    expect(within(section("Grup")).getByRole("button", { name: /^Grup Persiapan pameran/ }).querySelector(".chat-row-labels")).toBeNull();
+  });
+
+  it("tanpa label: baris pesan pribadi tetap seperti biasa", async () => {
+    org.people.mockResolvedValue([]);
+    render(draw());
+    await vi.waitFor(() => expect(org.people).toHaveBeenCalled());
+    const row = within(section("Pesan pribadi")).getByRole("button", { name: /^Pesan pribadi dengan Rekan Bayu/ });
+    expect(row.querySelector(".chat-row-labels")).toBeNull();
+    expect(row).toHaveAttribute("title", "Rekan Bayu");
+  });
+
+  it("bahasa Inggris", async () => {
+    renderInLang(() => draw());
+    const row = await screen.findByRole("button", { name: /^Direct message with Rekan Bayu, labels Arsitek/ });
+    expect(row).toHaveAccessibleName(
+      `Direct message with Rekan Bayu, labels ${LABELS.map((l) => l.name).join(", ")}, 1 unread message`,
+    );
   });
 });

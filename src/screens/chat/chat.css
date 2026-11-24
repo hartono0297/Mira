@@ -214,6 +214,42 @@
   color: var(--text-sec);
 }
 
+/* Label profil rekan di baris pesan pribadi: satu baris, paling banyak dua kotak dan "+N".
+   Kotak yang terlalu panjang dipotong dengan elipsis; nama lengkap semua label ada di nama
+   tombol dan tooltip baris. */
+.chat-row-labels.nwl-labels {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+  margin: 2px 0 1px;
+  overflow: hidden;
+}
+
+.chat-row-labels .lab {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-row-labels .lab-more {
+  flex: none;
+}
+
+/* Baris terpilih sudah berlatar --accent-soft: kotak label pindah ke --bg seperti avatar. */
+.chat-row[aria-current="true"] .chat-row-labels .lab:not(.lab-more) {
+  background: var(--bg);
+}
+
+/* Label profil rekan di kepala pesan pribadi: semuanya, turun baris kalau tidak muat. */
+.conv-head-labels {
+  display: flex;
+  min-width: 0;
+  margin: 4px 0 2px;
+}
+
 .chat-kind {
   flex: none;
   width: 22px;

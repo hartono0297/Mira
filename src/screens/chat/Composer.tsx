@@ -1,5 +1,16 @@
-import { IconArrowBackUp, IconDoorExit, IconLock, IconPaperclip, IconPlugConnectedX, IconSend, IconX } from "@tabler/icons-react";
 import {
+  IconArrowBackUp,
+  IconDoorExit,
+  IconLock,
+  IconMoodSmile,
+  IconPaperclip,
+  IconPlugConnectedX,
+  IconSend,
+  IconSticker,
+  IconX,
+} from "@tabler/icons-react";
+import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -10,10 +21,25 @@ import {
   type RefObject,
 } from "react";
 import { toAppError, type AppError } from "../../api";
-import { chatApi, type ConversationSummary, type MessageView, type Person, type PickedFile } from "../../api/chat";
+import {
+  chatApi,
+  type ConversationSummary,
+  type MessageView,
+  type OfficeSticker,
+  type Person,
+  type PickedFile,
+} from "../../api/chat";
+import { EmojiPicker, type EmojiEmote } from "../../components/emoji/EmojiPicker";
+import { emojiName, searchEmoji } from "../../components/emoji/emojiData";
+import { applySuggestion, emojiQueryAt } from "../../components/emoji/emojiSuggest";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { CHAT } from "../../i18n/chat";
+import { STICKER_TEXT } from "../../i18n/chat-sticker";
+import { useLang, type Lang } from "../../i18n/core";
 import { useNetworkOptional, validStatus } from "../shell/NetworkContext";
+import { officeEmoteMap, reloadStickerCatalog, useStickerCatalog } from "./stickerCatalog";
+import { StickerImage } from "./StickerImage";
+import { StickerPicker } from "./StickerPicker";
 import {
   authorName,
   baseName,
@@ -84,6 +110,57 @@ export function insertMention(text: string, caret: number, name: string): { text
   return { text: before + insert + rest, caret: before.length + insert.length };
 }
 
+// Saran saat mengetik ":nama": emote kantor yang namanya diawali query, lalu emoji Unicode.
+export type EmojiSuggestion =
+  | { kind: "emote"; value: string; name: string; sticker: OfficeSticker }
+  | { kind: "emoji"; value: string; name: string };
+
+const EMOTE_SUGGESTIONS = 5;
+const EMOJI_SUGGESTIONS = 8;
+const EMOTE_TEXT = /^:[a-z0-9_]+:$/;
+
+export function emojiSuggestions(query: string, emotes: Map<string, OfficeSticker>, lang: Lang): EmojiSuggestion[] {
+  const q = query.toLowerCase();
+  const office = [...emotes.values()]
+    .filter((s) => s.name.startsWith(q))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, EMOTE_SUGGESTIONS)
+    .map<EmojiSuggestion>((s) => ({ kind: "emote", value: `:${s.name}:`, name: s.name, sticker: s }));
+  const emoji = searchEmoji(query, EMOJI_SUGGESTIONS).map<EmojiSuggestion>((e) => ({
+    kind: "emoji",
+    value: e.char,
+    name: emojiName(e, lang),
+  }));
+  return [...office, ...emoji];
+}
+
+// Sisipkan emoji atau emote dari pemilih di rentang [start, end). Emote ":nama:" diberi spasi
+// pemisah di kiri kalau perlu dan spasi di kanan, supaya terbaca sebagai emote, bukan teks.
+export function insertEmoji(text: string, start: number, end: number, value: string): { text: string; caret: number } {
+  const from = Math.max(0, Math.min(start, text.length));
+  const to = Math.max(from, Math.min(end, text.length));
+  const before = text.slice(0, from);
+  const after = text.slice(to);
+  let insert = value;
+  if (EMOTE_TEXT.test(value)) {
+    const lead = before === "" || /\s$/.test(before) ? "" : " ";
+    insert = `${lead}${value}${after.startsWith(" ") ? "" : " "}`;
+  }
+  return { text: before + insert + after, caret: before.length + insert.length };
+}
+
+// Mencatat emoji Unicode untuk daftar "Sering dipakai". Gagal dicatat tidak mengganggu menulis.
+function noteEmojiUsed(emoji: string) {
+  try {
+    chatApi
+      .emojiUsed(emoji)
+      .then(() => reloadStickerCatalog())
+      .catch(() => {});
+  } catch {
+    // chatApi tanpa emojiUsed (misalnya inti Rust tiruan di tes): abaikan.
+  }
+}
+
 export function Composer({ summary, me, members, replyTo, onCancelReply, onSent, inputRef, mentionRequest = null }: Props) {
   const title = conversationTarget(summary);
   const [text, setText] = useState("");
@@ -92,12 +169,22 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
   const [error, setError] = useState<AppError | null>(null);
   const [attachError, setAttachError] = useState<AppError | null>(null);
   const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [emojiQuery, setEmojiQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
+  const [picker, setPicker] = useState<"emoji" | "sticker" | null>(null);
   const offline = usePeerOffline(summary);
+  const lang = useLang();
+  const { catalog } = useStickerCatalog();
   const ids = useId();
   const listId = `${ids}-mentions`;
   const alive = useRef(true);
   const pendingCaret = useRef<number | null>(null);
+  // Rentang pilihan di kolom pesan saat pemilih emoji dibuka; maju setiap emoji disisipkan.
+  const emojiRange = useRef<{ start: number; end: number } | null>(null);
+  const emojiButton = useRef<HTMLButtonElement>(null);
+  const stickerButton = useRef<HTMLButtonElement>(null);
+  // Keadaan pemilih saat tombol pemicu mulai ditekan, sebelum klik di luar sempat menutupnya.
+  const pickerAtPress = useRef<"emoji" | "sticker" | null>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -113,6 +200,8 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
     setError(null);
     setAttachError(null);
     setMention(null);
+    setEmojiQuery(null);
+    setPicker(null);
   }, [summary.id]);
 
   // Tinggi kolom ikut isi sampai batas CSS (max-height), lalu bergulir.
@@ -139,12 +228,49 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
     pendingCaret.current = next.caret;
     setText(next.text);
     setMention(null);
+    setEmojiQuery(null);
     el.focus();
   }, [mentionRequest, inputRef]);
 
-  const suggestions = mention ? filterMembers(members, mention.query, me) : [];
-  const listOpen = suggestions.length > 0;
-  const activeIndex = Math.min(active, Math.max(suggestions.length - 1, 0));
+  // Pemilih ditutup: fokus kembali ke pemicunya, kecuali pengguna sudah pindah ke kontrol lain
+  // (klik di luar). Ditunda satu giliran supaya fokus hasil klik itu sudah berpindah.
+  const closePicker = useCallback(
+    (focus: "input" | "sticker") => {
+      setPicker(null);
+      window.setTimeout(() => {
+        if (!alive.current) return;
+        const now = document.activeElement;
+        if (now && now !== document.body) return;
+        if (focus === "sticker") stickerButton.current?.focus();
+        else inputRef.current?.focus();
+      }, 0);
+    },
+    [inputRef],
+  );
+  const closeEmoji = useCallback(() => closePicker("input"), [closePicker]);
+  const closeSticker = useCallback(
+    (reason: "escape" | "outside") => {
+      if (reason === "outside") setPicker(null);
+      else closePicker("sticker");
+    },
+    [closePicker],
+  );
+
+  const emoteMap = officeEmoteMap(catalog ?? null);
+  const emotes: EmojiEmote[] = [...emoteMap.values()].map((s) => ({
+    name: s.name,
+    render: () => <StickerImage hash={s.hash} alt={`:${s.name}:`} size="inline" ready={s.ready} />,
+  }));
+
+  // Saran mention didahulukan; saran emoji hanya kalau tidak ada rekan yang cocok.
+  const memberSuggestions = mention ? filterMembers(members, mention.query, me) : [];
+  const emojiItems =
+    memberSuggestions.length === 0 && emojiQuery ? emojiSuggestions(emojiQuery.query, emoteMap, lang) : [];
+  const listKind: "mention" | "emoji" | null =
+    memberSuggestions.length > 0 ? "mention" : emojiItems.length > 0 ? "emoji" : null;
+  const listSize = listKind === "mention" ? memberSuggestions.length : emojiItems.length;
+  const listOpen = listKind !== null;
+  const activeIndex = Math.min(active, Math.max(listSize - 1, 0));
 
   // Bukan anggota lagi: satu catatan tenang menggantikan kolom pesan.
   if (summary.former) {
@@ -171,8 +297,58 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
 
   function updateMention(value: string, caret: number) {
     const next = mentionQuery(value, caret);
+    const nextEmoji = emojiQueryAt(value, caret);
     setMention(next);
-    if (!next || next.query !== mention?.query) setActive(0);
+    setEmojiQuery(nextEmoji);
+    if (!next || next.query !== mention?.query || nextEmoji?.query !== emojiQuery?.query) setActive(0);
+  }
+
+  // Saran ":nama" dipilih: emoji Unicode apa adanya, emote kantor jadi ":nama: ".
+  function pickEmoji(item: EmojiSuggestion) {
+    if (!emojiQuery) return;
+    const caret = inputRef.current?.selectionStart ?? text.length;
+    const insert = item.kind === "emote" ? `${item.value} ` : item.value;
+    const next = applySuggestion(text, emojiQuery.start, caret, insert);
+    pendingCaret.current = next.caret;
+    setText(next.text);
+    setEmojiQuery(null);
+    setMention(null);
+    if (item.kind === "emoji") noteEmojiUsed(item.value);
+    inputRef.current?.focus();
+  }
+
+  function togglePicker(which: "emoji" | "sticker") {
+    // Dibaca dari saat tombol ditekan: klik di luar pemilih bisa sudah menutupnya.
+    const wasOpen = pickerAtPress.current === which || picker === which;
+    pickerAtPress.current = null;
+    if (wasOpen) {
+      setPicker(null);
+      return;
+    }
+    if (which === "emoji") {
+      const el = inputRef.current;
+      const end = el?.value.length ?? text.length;
+      emojiRange.current = { start: el?.selectionStart ?? end, end: el?.selectionEnd ?? end };
+    }
+    setMention(null);
+    setEmojiQuery(null);
+    setPicker(which);
+  }
+
+  // Emoji atau emote dari pemilih disisipkan di posisi kursor; pemilih tetap terbuka.
+  function onEmojiPick(value: string) {
+    const current = inputRef.current?.value ?? text;
+    const range = emojiRange.current ?? { start: current.length, end: current.length };
+    const next = insertEmoji(current, range.start, range.end, value);
+    emojiRange.current = { start: next.caret, end: next.caret };
+    pendingCaret.current = next.caret;
+    setText(next.text);
+    if (!EMOTE_TEXT.test(value)) noteEmojiUsed(value);
+  }
+
+  function onStickerSent(message: MessageView) {
+    closePicker("input");
+    onSent(message);
   }
 
   function onChange(e: ChangeEvent<HTMLTextAreaElement>) {
@@ -205,6 +381,7 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
       setText("");
       setFiles([]);
       setMention(null);
+      setEmojiQuery(null);
       onSent(sent);
     } catch (err) {
       if (alive.current) setError(toAppError(err));
@@ -230,23 +407,25 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
     if (listOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setActive((activeIndex + 1) % suggestions.length);
+        setActive((activeIndex + 1) % listSize);
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setActive((activeIndex - 1 + suggestions.length) % suggestions.length);
+        setActive((activeIndex - 1 + listSize) % listSize);
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" && !e.nativeEvent.isComposing) || e.key === "Tab") {
         e.preventDefault();
-        pick(suggestions[activeIndex]);
+        if (listKind === "mention") pick(memberSuggestions[activeIndex]);
+        else pickEmoji(emojiItems[activeIndex]);
         return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         setMention(null);
+        setEmojiQuery(null);
         return;
       }
     }
@@ -326,15 +505,66 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
         )}
       </div>
       <div className="conv-input-row">
-        <button
-          type="button"
-          className="conv-icon-btn conv-attach-btn"
-          onClick={() => void attach()}
-          aria-label={CHAT.composer.attach}
-          disabled={sending}
-        >
-          <IconPaperclip size={18} aria-hidden="true" />
-        </button>
+        <div className="cmp-tools">
+          <button
+            type="button"
+            className="conv-icon-btn conv-attach-btn"
+            onClick={() => void attach()}
+            aria-label={CHAT.composer.attach}
+            disabled={sending}
+          >
+            <IconPaperclip size={18} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            ref={emojiButton}
+            className="conv-icon-btn conv-attach-btn"
+            onPointerDown={() => {
+              pickerAtPress.current = picker;
+            }}
+            onClick={() => togglePicker("emoji")}
+            aria-label={STICKER_TEXT.composer.emoji}
+            aria-haspopup="dialog"
+            aria-expanded={picker === "emoji"}
+            disabled={sending}
+          >
+            <IconMoodSmile size={18} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            ref={stickerButton}
+            className="conv-icon-btn conv-attach-btn"
+            onPointerDown={() => {
+              pickerAtPress.current = picker;
+            }}
+            onClick={() => togglePicker("sticker")}
+            aria-label={STICKER_TEXT.composer.sticker}
+            aria-haspopup="dialog"
+            aria-expanded={picker === "sticker"}
+            disabled={sending}
+          >
+            <IconSticker size={18} aria-hidden="true" />
+          </button>
+          {picker === "emoji" && (
+            <EmojiPicker
+              className="cmp-emoji-pop"
+              onPick={onEmojiPick}
+              onClose={closeEmoji}
+              recent={catalog?.recentEmoji ?? []}
+              emotes={emotes}
+              closeOnPick={false}
+            />
+          )}
+          {picker === "sticker" && (
+            <StickerPicker
+              conv={summary.id}
+              replyTo={replyTo?.id ?? null}
+              onSent={onStickerSent}
+              onClose={closeSticker}
+              anchorRef={stickerButton}
+            />
+          )}
+        </div>
         <div className="conv-input-wrap">
           <label htmlFor={`${ids}-input`} className="sr-only">
             {CHAT.composer.inputLabel(title)}
@@ -349,7 +579,10 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
             onChange={onChange}
             onKeyDown={onKeyDown}
             onClick={(e) => updateMention(text, e.currentTarget.selectionStart ?? text.length)}
-            onBlur={() => setMention(null)}
+            onBlur={() => {
+              setMention(null);
+              setEmojiQuery(null);
+            }}
             readOnly={sending}
             aria-describedby={replyTo ? `${ids}-reply ${ids}-hint` : `${ids}-hint`}
             role="combobox"
@@ -359,11 +592,51 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
             aria-activedescendant={listOpen ? `${listId}-${activeIndex}` : undefined}
           />
           <span id={`${ids}-hint`} className="sr-only">
-            {CHAT.composer.hint}
+            {CHAT.composer.hint} {STICKER_TEXT.composer.hint}
           </span>
-          {listOpen && (
+          {listKind === "emoji" && (
+            <ul
+              id={listId}
+              role="listbox"
+              aria-label={STICKER_TEXT.composer.emojiList}
+              className="conv-mentions cmp-emoji-list"
+            >
+              {emojiItems.map((item, i) => (
+                <li
+                  key={item.value}
+                  id={`${listId}-${i}`}
+                  role="option"
+                  aria-selected={i === activeIndex}
+                  aria-label={item.kind === "emote" ? STICKER_TEXT.composer.emoteOption(item.name) : `${item.value} ${item.name}`}
+                  className={i === activeIndex ? "conv-mention-opt conv-mention-opt-active" : "conv-mention-opt"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickEmoji(item);
+                  }}
+                  onMouseEnter={() => setActive(i)}
+                >
+                  <span className="cmp-emoji-glyph" aria-hidden="true">
+                    {item.kind === "emote" ? (
+                      <StickerImage hash={item.sticker.hash} alt={item.value} size="inline" ready={item.sticker.ready} />
+                    ) : (
+                      item.value
+                    )}
+                  </span>
+                  <span className="cmp-emoji-name" aria-hidden="true">
+                    {item.kind === "emote" ? item.value : item.name}
+                  </span>
+                  {item.kind === "emote" && (
+                    <span className="cmp-emoji-tag" aria-hidden="true">
+                      {STICKER_TEXT.composer.emoteTag}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {listKind === "mention" && (
             <ul id={listId} role="listbox" aria-label={CHAT.composer.mentionList} className="conv-mentions">
-              {suggestions.map((p, i) => (
+              {memberSuggestions.map((p, i) => (
                 <li
                   key={p.publicKey}
                   id={`${listId}-${i}`}

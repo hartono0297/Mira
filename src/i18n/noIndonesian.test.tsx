@@ -1029,10 +1029,10 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
       if (list.length < 5) throw new Error(`tab Organisasi belum lengkap (${list.length})`);
       return list;
     });
-    // Urutan tab superadmin: Pengguna, Departemen, Permintaan bergabung, Label, Undangan.
-    const waits = ["Casey Kim", "Archive Team", "Riley Chen", "Surveyor", null];
-    const names = ["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan"];
-    const anchors = ["Laptop and last IP", "Archived", "Approve", "New label", "Create invite code"];
+    // Urutan tab superadmin: Pengguna, Departemen, Permintaan bergabung, Label, Sticker, Undangan.
+    const waits = ["Casey Kim", "Archive Team", "Riley Chen", "Surveyor", null, null];
+    const names = ["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Sticker", "Undangan"];
+    const anchors = ["Laptop and last IP", "Archived", "Approve", "New label", "Office stickers", "Create invite code"];
     const all: string[] = [];
     for (let i = 0; i < tabs.length; i += 1) {
       await user.click(document.querySelectorAll<HTMLElement>("button.org-tab")[i]);

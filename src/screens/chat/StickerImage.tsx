@@ -66,6 +66,8 @@ export function StickerImage({ hash, alt, size, ready = true, className }: Props
 
   const cls = `sticker-img sticker-img-${size}${className ? ` ${className}` : ""}`;
   if (!url || failed) {
+    // alt kosong = hiasan (nama sudah tertulis di sampingnya): disembunyikan dari pembaca layar.
+    if (!alt) return <span className={`${cls} sticker-img-missing`} aria-hidden="true" />;
     return (
       <span className={`${cls} sticker-img-missing`} role="img" aria-label={alt}>
         {size === "inline" ? alt : null}

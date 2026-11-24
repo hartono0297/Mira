@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import type { ConversationEvent, ConversationSummary, MessageView } from "../../api/chat";
 import { MessageItem } from "./MessageItem";
+import { officeEmoteMap, useStickerCatalog } from "./stickerCatalog";
 import { dayKey, dayLabel, formatTime, fullTime, GROUP_GAP_MS, type ListItem } from "./text";
 
 export type TimelineItem = ListItem | { kind: "event"; event: ConversationEvent };
@@ -53,6 +55,8 @@ export function mergeEvents(older: ConversationEvent[], latest: ConversationEven
   return [...older.filter((e) => !ids.has(e.id)), ...latest];
 }
 
+const NO_RECENT: string[] = [];
+
 type Props = {
   items: TimelineItem[];
   me: string;
@@ -60,6 +64,9 @@ type Props = {
   flashId: string | null;
   loadedIds: Set<string>;
   canReply: boolean;
+  canReact: boolean;
+  onReact: (message: MessageView, emoji: string, on: boolean) => void;
+  onSaveSticker: (message: MessageView) => void;
   onReply: (message: MessageView) => void;
   onDelete: (message: MessageView) => void;
   onJump: (messageId: string) => void;
@@ -75,12 +82,19 @@ export function MessageList({
   flashId,
   loadedIds,
   canReply,
+  canReact,
+  onReact,
+  onSaveSticker,
   onReply,
   onDelete,
   onJump,
   onReload,
   onAnnounce,
 }: Props) {
+  // Satu katalog untuk semua pesan: emote sebaris, chip emote, dan isi pemilih emoji.
+  const { catalog } = useStickerCatalog();
+  const emotes = useMemo(() => officeEmoteMap(catalog), [catalog]);
+  const recent = catalog?.recentEmoji ?? NO_RECENT;
   return (
     <ol className="conv-list">
       {items.map((item) => {
@@ -114,6 +128,11 @@ export function MessageList({
             kind={kind}
             flash={flashId === item.message.id}
             canReply={canReply}
+            canReact={canReact}
+            emotes={emotes}
+            recent={recent}
+            onReact={onReact}
+            onSaveSticker={onSaveSticker}
             replyLoaded={!!item.message.replyTo && loadedIds.has(item.message.replyTo.id)}
             onReply={onReply}
             onDelete={onDelete}

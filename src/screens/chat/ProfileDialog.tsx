@@ -203,8 +203,8 @@ function ProfileHead({ name, isMe, labels = [] }: { name: string; isMe: boolean;
       <span className="prof-av" aria-hidden="true">
         {initials(name)}
       </span>
-      {/* Semua label tampil di profil; di daftar lain dibatasi tiga. */}
-      <NameWithLabels className="prof-name" name={name} labels={labels} max={labels.length} suffix={isMe ? PROFILE.me : undefined} />
+      {/* Semua label tampil di profil dan turun baris kalau tidak muat. */}
+      <NameWithLabels className="prof-name" name={name} labels={labels} all wrap suffix={isMe ? PROFILE.me : undefined} />
     </div>
   );
 }

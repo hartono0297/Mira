@@ -14,6 +14,7 @@ import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { LabelsPanel } from "./LabelsPanel";
 import { OtherOfficesNotice } from "./OtherOfficesNotice";
 import { PeoplePanel } from "./PeoplePanel";
+import { StickersPanel, stickersTabLabel } from "./StickersPanel";
 import { formatCount } from "./usePendingJoinCount";
 import { useOrgLive } from "./useOrgLive";
 import { UsersPanel } from "./UsersPanel";
@@ -21,7 +22,7 @@ import "../settings/settings.css";
 import "./nav-count.css";
 import "./org.css";
 
-export type Part = "users" | "people" | "departments" | "requests" | "labels" | "invites";
+export type Part = "users" | "people" | "departments" | "requests" | "labels" | "stickers" | "invites";
 
 type Feedback = { kind: "ok"; text: string } | { kind: "error"; title: string; error: AppError } | null;
 
@@ -142,6 +143,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
       list.push({ id: "requests", label: tabs.requests, count: overview.pendingJoinCount });
     }
     if (overview.manageOrg) list.push({ id: "labels", label: tabs.labels });
+    if (overview.isSuperadmin) list.push({ id: "stickers", label: stickersTabLabel() });
     if (canInvite || canRedeem) list.push({ id: "invites", label: tabs.invites });
     return list;
     // lang: label tab ikut bahasa aktif.
@@ -258,6 +260,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
             {current.id === "departments" && <DepartmentsPanel page={page} />}
             {current.id === "requests" && <JoinRequestsPanel page={page} />}
             {current.id === "labels" && <LabelsPanel page={page} />}
+            {current.id === "stickers" && <StickersPanel page={page} />}
             {current.id === "invites" &&
               (ctx ? (
                 <InvitesPanel ctx={ctx} canRedeem={canRedeem} />

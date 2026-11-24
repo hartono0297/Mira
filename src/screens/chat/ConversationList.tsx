@@ -10,7 +10,9 @@ import {
 } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { LabelChips } from "../../components/NameWithLabels";
 import { CHAT } from "../../i18n/chat";
+import { COMPONENTS_TEXT } from "../../i18n/components";
 import type { ConvRequest } from "./ChatActions";
 import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
 import {
@@ -21,6 +23,7 @@ import {
   sectionUnread,
   unreadText,
 } from "./ListFormat";
+import { useLabelsOf } from "./PeopleLabels";
 
 type Props = {
   overview: ChatOverview;
@@ -346,9 +349,14 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
   });
   const unread = c.unread > 0 || c.mentionUnread > 0;
   const state = rowState(c);
+  // Pesan pribadi: label profil rekan, ringkas di baris kedua. Semua namanya ada di nama
+  // tombol dan tooltip baris, karena "+N" di dalam tombol tidak bisa difokus sendiri.
+  const labels = useLabelsOf(c.kind === "dm" ? (c.peer?.publicKey ?? "") : "");
+  const labelText =
+    labels.length > 0 ? COMPONENTS_TEXT.labels.prefix(labels.length) + labels.map((l) => l.name).join(", ") : "";
   // Nama lengkap untuk pembaca layar. Lencana dan ikon di dalam tombol hanya tampilan.
   const label = [
-    rowLabel(c),
+    rowLabel(c) + labelText,
     c.locked ? CHAT.list.readOnly : "",
     state?.toLowerCase() ?? "",
     c.muted ? CHAT.list.muted : "",
@@ -374,7 +382,7 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
         aria-current={current ? "true" : undefined}
         aria-label={label}
         onClick={() => onSelect(c.id)}
-        title={[shown, c.locked ? CHAT.list.readOnly : "", state?.toLowerCase() ?? ""].filter(Boolean).join(", ")}
+        title={[shown + labelText, c.locked ? CHAT.list.readOnly : "", state?.toLowerCase() ?? ""].filter(Boolean).join(", ")}
       >
         {c.kind === "dm" ? (
           <span className="chat-av" aria-hidden="true">
@@ -389,6 +397,7 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
         )}
         <span className="chat-row-text">
           <span className="chat-row-name">{c.name}</span>
+          {labels.length > 0 && <LabelChips className="chat-row-labels" labels={labels} max={2} staticMore />}
           {state && <span className="chat-row-hint">{state}</span>}
         </span>
         {c.locked && <IconLock size={15} className="chat-row-icon" aria-hidden="true" />}
