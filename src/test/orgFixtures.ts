@@ -129,6 +129,7 @@ export function joinAd(extra: Partial<JoinAdView> = {}): JoinAdView {
     ous: ["Keuangan", "Jakarta"],
     suggestedTeamId: TEAM_1,
     departmentInMira: true,
+    usedBy: null,
     ...extra,
   };
 }
@@ -138,6 +139,7 @@ export function adCheck(extra: Partial<AdCheck> = {}): AdCheck {
     status: "match",
     mismatches: [],
     directoryName: "Rina Wijaya",
+    directoryOus: ["Keuangan", "Jakarta"],
     directoryDepartment: "Keuangan",
     departmentInMira: true,
     checkedAt: "2026-11-23T02:00:00Z",

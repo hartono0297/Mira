@@ -15,6 +15,7 @@ const T = AD_TEXT.card;
 
 const STATUSES: readonly AdCheckStatus[] = [
   "match",
+  "exists",
   "mismatch",
   "disabled",
   "not_found",
@@ -23,24 +24,66 @@ const STATUSES: readonly AdCheckStatus[] = [
   "not_domain_machine",
 ];
 
+// Status yang datang dari entri direktori, jadi nama, departemen, dan lokasi
+// direktori bisa ditampilkan. Status lain berarti akunnya tidak terbaca dari laptop ini.
+const FROM_DIRECTORY: readonly AdCheckStatus[] = ["match", "exists", "mismatch", "disabled"];
+
+type ClaimField = "claim_name" | "claim_department" | "location";
+const CLAIM_FIELDS: readonly ClaimField[] = ["claim_name", "claim_department", "location"];
+
+type Tone = "ok" | "bad" | "warn" | "neutral";
+
 // Galat command atau jawaban yang tidak dikenali dibaca sama dengan "AD tidak bisa dihubungi".
 function unreachable(): AdCheck {
   return {
     status: "unreachable",
     mismatches: [],
     directoryName: null,
+    directoryOus: [],
     directoryDepartment: null,
     departmentInMira: true,
     checkedAt: new Date().toISOString(),
   };
 }
 
-function statusText(status: AdCheckStatus, domain: string): string {
-  switch (status) {
+function normalize(answer: AdCheck | null | undefined): AdCheck {
+  if (!answer || !STATUSES.includes(answer.status)) return unreachable();
+  return {
+    ...answer,
+    mismatches: Array.isArray(answer.mismatches) ? answer.mismatches : [],
+    directoryOus: Array.isArray(answer.directoryOus) ? answer.directoryOus : [],
+  };
+}
+
+function claimMismatches(check: AdCheck): ClaimField[] {
+  return CLAIM_FIELDS.filter((f) => check.mismatches.some((m) => m.field === f));
+}
+
+// OU disimpan dari yang paling dalam; dibaca orang dari luar ke dalam, seperti di layar peminta.
+function ouLocation(ous: string[]): string {
+  return ous
+    .map((o) => o.trim())
+    .filter((o) => o !== "")
+    .reverse()
+    .join(" › ");
+}
+
+function claimFieldName(f: ClaimField): string {
+  if (f === "claim_name") return T.claimFields.name;
+  if (f === "claim_department") return T.claimFields.department;
+  return T.claimFields.location;
+}
+
+function statusText(check: AdCheck, domain: string): string {
+  switch (check.status) {
     case "match":
       return T.status.match;
-    case "mismatch":
-      return T.status.mismatch;
+    case "exists":
+      return T.status.exists;
+    case "mismatch": {
+      const claims = claimMismatches(check);
+      return claims.length > 0 ? T.status.claimMismatch(claims.map(claimFieldName).join(", ")) : T.status.mismatch;
+    }
     case "disabled":
       return T.status.disabled;
     case "not_found":
@@ -54,14 +97,32 @@ function statusText(status: AdCheckStatus, domain: string): string {
   }
 }
 
+// match: hijau. Akun dinonaktifkan atau tidak ada: merah. Laptop peminta
+// melaporkan data AD yang tidak sama dengan direktori: peringatan (--state),
+// karena itu tanda klaim palsu. Perbedaan nama tampilan atau departemen pilihan
+// peminta netral (peminta boleh mengubahnya), begitu juga akun yang ada tanpa
+// pembanding dan laptop ini yang tidak bisa memeriksa.
+function toneOf(check: AdCheck): Tone {
+  if (check.status === "match") return "ok";
+  if (check.status === "disabled" || check.status === "not_found") return "bad";
+  if (check.status === "mismatch" && claimMismatches(check).length > 0) return "warn";
+  return "neutral";
+}
+
+// data-status untuk tes ujung ke ujung: ketidakcocokan klaim dibedakan dari
+// perbedaan nama atau departemen biasa.
+function dataStatus(check: AdCheck): string {
+  return check.status === "mismatch" && claimMismatches(check).length > 0 ? "claim_mismatch" : check.status;
+}
+
 // Ikon pendukung; teks status tetap pembeda utamanya.
-function statusIcon(status: AdCheckStatus): ReactNode {
+function statusIcon(check: AdCheck): ReactNode {
   const props = { size: 18, "aria-hidden": true } as const;
-  switch (status) {
+  switch (toneOf(check) === "warn" ? "warn" : check.status) {
     case "match":
       return <IconCircleCheck {...props} />;
-    case "mismatch":
-      return <IconInfoCircle {...props} />;
+    case "warn":
+      return <IconAlertTriangle {...props} />;
     case "disabled":
       return <IconUserOff {...props} />;
     case "not_found":
@@ -73,19 +134,8 @@ function statusIcon(status: AdCheckStatus): ReactNode {
   }
 }
 
-// match: hijau; akun dinonaktifkan atau tidak ada: merah. Perbedaan nama atau
-// departemen netral, karena peminta boleh mengubah nama tampilan dan memilih
-// departemen lain; laptop ini tidak bisa memeriksa: netral.
-function tone(status: AdCheckStatus): "ok" | "bad" | "neutral" {
-  if (status === "match") return "ok";
-  if (status === "disabled" || status === "not_found") return "bad";
-  return "neutral";
-}
-
-function adDepartment(ad: JoinAdView): string {
-  const dept = ad.department?.trim();
-  if (!dept) return T.notSent;
-  return ad.departmentInMira ? dept : T.departmentMissing(dept);
+function withDeptNote(dept: string, inMira: boolean): string {
+  return inMira ? dept : T.departmentMissing(dept);
 }
 
 // Peringatan di kartu: kantor memakai pengaturan AD dan Mira peminta terlalu lama,
@@ -102,9 +152,28 @@ export function OutdatedNotice({ name }: { name: string }) {
   );
 }
 
-// Blok "Active Directory" di kartu permintaan: data AD yang dilaporkan peminta,
-// lalu hasil cek ulang dari laptop ini. Cek dipanggil sekali saat kartu tampil
-// (bukan polling); "Periksa lagi" memaksa cek baru.
+// Satu fakta AD: nilai utama, dan nilai laporan peminta sebagai pembanding kalau berbeda.
+function Fact({ label, value, claim }: { label: string; value: string; claim?: string | null }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        {value}
+        {claim != null && (
+          <span className="req-ad-claim" data-testid="join-ad-claim">
+            {T.claimValue(claim)}
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+// Blok "Active Directory" di kartu permintaan. Sebelum cek selesai atau kalau cek
+// gagal, yang tampil adalah laporan laptop peminta, dengan label yang mengatakannya.
+// Setelah cek berhasil, yang ditonjolkan adalah nilai dari direktori; laporan
+// peminta hanya tampil sebagai pembanding kalau berbeda. Cek dipanggil sekali
+// saat kartu tampil (bukan polling); "Periksa lagi" memaksa cek baru.
 export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: JoinAdView } }) {
   const ad = request.ad;
   const headingId = useId();
@@ -112,7 +181,7 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
   const [checking, setChecking] = useState(true);
   // Hasil yang dibacakan pembaca layar. Cek pertama saat kartu muncul tidak
   // dibacakan (N kartu akan jadi 2N pengumuman); hanya hasil "Periksa lagi".
-  const [announced, setAnnounced] = useState<AdCheckStatus | null>(null);
+  const [announced, setAnnounced] = useState<AdCheck | null>(null);
   const mounted = useRef(true);
   const seq = useRef(0);
   // Permintaan yang sudah diperiksa, supaya effect yang dijalankan ulang
@@ -126,15 +195,14 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
       if (refresh) setAnnounced(null);
       let result: AdCheck;
       try {
-        const answer = await orgApi.joinAdCheck(request.id, refresh);
-        result = answer && STATUSES.includes(answer.status) ? answer : unreachable();
+        result = normalize(await orgApi.joinAdCheck(request.id, refresh));
       } catch {
         result = unreachable();
       }
       if (!mounted.current || mine !== seq.current) return;
       setCheck(result);
       setChecking(false);
-      if (refresh) setAnnounced(result.status);
+      if (refresh) setAnnounced(result);
     },
     [request.id],
   );
@@ -150,14 +218,15 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
     };
   }, [request.id, run]);
 
-  const status = check?.status ?? null;
-  // ous datang dari yang paling dalam; dibaca orang dari luar ke dalam, seperti di layar peminta.
-  const location = ad.ous
-    .map((o) => o.trim())
-    .filter((o) => o !== "")
-    .reverse()
-    .join(" › ");
-  const nameDiffers = !!check && !checking && check.mismatches.some((m) => m.field === "name");
+  const done = !checking && check !== null ? check : null;
+  const verified = done !== null && FROM_DIRECTORY.includes(done.status) ? done : null;
+  const claims = verified ? claimMismatches(verified) : [];
+  const nameDiffers = !!done && done.mismatches.some((m) => m.field === "name");
+  const requestDiffs = done ? done.mismatches.filter((m) => m.field === "name" || m.field === "department") : [];
+
+  const claimName = ad.name?.trim() || T.notSent;
+  const claimDept = ad.department?.trim() || null;
+  const claimLocation = ouLocation(ad.ous) || T.notSent;
 
   return (
     <section className="req-ad" aria-labelledby={headingId} data-testid="join-ad">
@@ -165,42 +234,71 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
         <h4 id={headingId} className="req-ad-title">
           {T.title}
         </h4>
-        <p className="hint">{T.reported}</p>
+        <p className="req-ad-source" data-testid="join-ad-source" data-source={verified ? "directory" : "claim"}>
+          {verified ? T.verified : T.reported}
+        </p>
       </div>
 
-      <dl className="req-facts">
+      {ad.usedBy && (
+        <div className="alert req-ad-used" data-testid="join-ad-used-by">
+          <IconAlertTriangle size={18} aria-hidden="true" />
+          <div>
+            <strong>{T.usedByTitle(ad.usedBy)}</strong>
+            <p>{T.usedByBody}</p>
+          </div>
+        </div>
+      )}
+
+      <dl className="req-facts" data-testid="join-ad-facts" data-source={verified ? "directory" : "claim"}>
         <div>
           <dt>{T.account}</dt>
           <dd className="mono">{`${ad.user}@${ad.domain}`}</dd>
         </div>
-        <div>
-          <dt>{T.name}</dt>
-          <dd>{ad.name?.trim() || T.notSent}</dd>
-        </div>
-        <div>
-          <dt>{T.department}</dt>
-          <dd>{adDepartment(ad)}</dd>
-        </div>
-        <div>
-          <dt>{T.ous}</dt>
-          <dd>{location || T.notSent}</dd>
-        </div>
+        {verified ? (
+          <>
+            <Fact
+              label={T.name}
+              value={verified.directoryName?.trim() || T.emptyInDirectory}
+              claim={claims.includes("claim_name") ? claimName : null}
+            />
+            <Fact
+              label={T.department}
+              value={
+                verified.directoryDepartment?.trim()
+                  ? withDeptNote(verified.directoryDepartment.trim(), verified.departmentInMira)
+                  : T.emptyInDirectory
+              }
+              claim={claims.includes("claim_department") ? (claimDept ?? T.notSent) : null}
+            />
+            <Fact
+              label={T.ous}
+              value={ouLocation(verified.directoryOus) || T.emptyInDirectory}
+              claim={claims.includes("location") ? claimLocation : null}
+            />
+          </>
+        ) : (
+          <>
+            <Fact label={T.name} value={claimName} />
+            <Fact label={T.department} value={claimDept ? withDeptNote(claimDept, ad.departmentInMira) : T.notSent} />
+            <Fact label={T.ous} value={claimLocation} />
+          </>
+        )}
       </dl>
 
       <div className="req-ad-check">
         <div className="req-ad-status-row">
           <div
-            className={`req-ad-status req-ad-${status && !checking ? tone(status) : "neutral"}`}
+            className={`req-ad-status req-ad-${done ? toneOf(done) : "neutral"}`}
             data-testid="join-ad-status"
-            data-status={checking || !status ? "checking" : status}
+            data-status={done ? dataStatus(done) : "checking"}
           >
-            {checking || !status ? (
-              <span>{T.checking}</span>
-            ) : (
+            {done ? (
               <>
-                {statusIcon(status)}
-                <span>{statusText(status, ad.domain)}</span>
+                {statusIcon(done)}
+                <span>{statusText(done, ad.domain)}</span>
               </>
+            ) : (
+              <span>{T.checking}</span>
             )}
           </div>
           {/* aria-disabled, bukan disabled: fokus keyboard tetap di tombol selama cek berjalan. */}
@@ -220,9 +318,9 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
 
         <p className="req-ad-limit">{T.limit}</p>
 
-        {check && !checking && check.mismatches.length > 0 && (
+        {requestDiffs.length > 0 && (
           <ul className="req-ad-diff">
-            {check.mismatches.map((m, i) => (
+            {requestDiffs.map((m, i) => (
               <li key={`${m.field}-${i}`}>
                 {m.field === "name"
                   ? T.mismatchName(m.directory, m.requested)

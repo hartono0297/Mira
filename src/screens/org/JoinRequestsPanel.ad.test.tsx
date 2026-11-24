@@ -86,7 +86,11 @@ describe("Kartu permintaan dengan data AD", () => {
     const rina = await card("Rina W.");
     const block = within(rina).getByTestId("join-ad");
     expect(within(block).getByRole("heading", { name: "Active Directory", level: 4 })).toBeInTheDocument();
-    expect(within(block).getByText("Dilaporkan laptop peminta, lalu diperiksa ulang dari laptop ini.")).toBeInTheDocument();
+    // Sebelum cek selesai: laporan laptop peminta, dengan label yang mengatakannya.
+    const source = within(block).getByTestId("join-ad-source");
+    expect(source).toHaveTextContent("Dilaporkan laptop peminta, belum terbukti lewat AD.");
+    expect(source).toHaveAttribute("data-source", "claim");
+    expect(source).not.toHaveClass("hint");
     expect(fact(block, "Akun")).toHaveTextContent(/^rina@kantor-uji\.test$/);
     expect(fact(block, "Akun")).toHaveClass("mono");
     expect(fact(block, "Nama di AD")).toHaveTextContent("Rina Wijaya");
@@ -107,6 +111,10 @@ describe("Kartu permintaan dengan data AD", () => {
     await waitFor(() => expect(status).toHaveTextContent("Akun ada dan aktif di AD, nama dan departemen sama"));
     expect(status).toHaveAttribute("data-status", "match");
     expect(status).toHaveClass("req-ad-ok");
+    // Setelah cek berhasil: nilai dari direktori.
+    expect(source).toHaveTextContent("Diperiksa ke AD dari laptop ini.");
+    expect(source).toHaveAttribute("data-source", "directory");
+    expect(within(block).queryByTestId("join-ad-claim")).not.toBeInTheDocument();
     // Cek pertama saat kartu muncul tidak dibacakan.
     expect(within(block).getByTestId("join-ad-live")).toBeEmptyDOMElement();
     expect(calls("org_join_ad_check")).toEqual([{ requestId: "r1", refresh: false }]);
@@ -204,9 +212,98 @@ describe("Kartu permintaan dengan data AD", () => {
     expect(within(sari).getAllByText(/belum ada di Mira/)).toHaveLength(1);
   });
 
+  it("setelah cek: nilai dari direktori, laporan peminta hanya sebagai pembanding kalau berbeda", async () => {
+    const req = joinRequest("r7", "Rina W.", {
+      ad: joinAd({ name: "Direktur Utama", department: "Direksi", ous: ["Direksi", "Pusat"] }),
+    });
+    setup(
+      [req],
+      adCheck({
+        status: "mismatch",
+        directoryName: "Rina Wijaya",
+        directoryDepartment: "Keuangan",
+        directoryOus: ["Keuangan", "Jakarta"],
+        mismatches: [
+          { field: "claim_name", requested: "Direktur Utama", directory: "Rina Wijaya" },
+          { field: "claim_department", requested: "Direksi", directory: "Keuangan" },
+          { field: "location", requested: "Direksi, Pusat", directory: "Keuangan, Jakarta" },
+        ],
+      }),
+    );
+    const block = within(await card("Rina W.")).getByTestId("join-ad");
+    const status = within(block).getByTestId("join-ad-status");
+    await waitFor(() => expect(status).toHaveAttribute("data-status", "claim_mismatch"));
+    // Laptop peminta melaporkan data yang tidak sama dengan AD: nada peringatan.
+    expect(status).toHaveTextContent("Data AD dari laptop peminta tidak sama dengan AD: nama, departemen, lokasi");
+    expect(status).toHaveClass("req-ad-warn");
+    expect(fact(block, "Nama di AD")).toHaveTextContent(/^Rina WijayaDilaporkan laptop peminta: Direktur Utama$/);
+    expect(fact(block, "Departemen di AD")).toHaveTextContent(/^KeuanganDilaporkan laptop peminta: Direksi$/);
+    expect(fact(block, "Lokasi di Active Directory")).toHaveTextContent(
+      /^Jakarta › KeuanganDilaporkan laptop peminta: Pusat › Direksi$/,
+    );
+    expect(within(block).getAllByTestId("join-ad-claim")).toHaveLength(3);
+    expect(within(block).queryByText("Direktur Utama", { selector: "dd" })).not.toBeInTheDocument();
+  });
+
+  it("hanya lokasi yang berbeda: hanya lokasi yang diberi pembanding", async () => {
+    const req = joinRequest("r8", "Rina W.", { ad: joinAd({ ous: ["Direksi"] }) });
+    setup(
+      [req],
+      adCheck({ status: "mismatch", mismatches: [{ field: "location", requested: "Direksi", directory: "Keuangan, Jakarta" }] }),
+    );
+    const block = within(await card("Rina W.")).getByTestId("join-ad");
+    await waitFor(() =>
+      expect(within(block).getByTestId("join-ad-status")).toHaveTextContent(
+        "Data AD dari laptop peminta tidak sama dengan AD: lokasi",
+      ),
+    );
+    expect(within(block).getAllByTestId("join-ad-claim")).toHaveLength(1);
+    expect(fact(block, "Nama di AD")).toHaveTextContent(/^Rina Wijaya$/);
+  });
+
+  it("cek gagal: nilai tetap laporan peminta dengan labelnya", async () => {
+    const req = joinRequest("r9", "Rina W.", { ad: joinAd({ name: "Rina Klaim" }) });
+    setup([req], adCheck({ status: "not_found", directoryName: null, directoryOus: [], directoryDepartment: null }));
+    const block = within(await card("Rina W.")).getByTestId("join-ad");
+    await waitFor(() => expect(within(block).getByTestId("join-ad-status")).toHaveAttribute("data-status", "not_found"));
+    expect(within(block).getByTestId("join-ad-source")).toHaveAttribute("data-source", "claim");
+    expect(within(block).getByTestId("join-ad-source")).toHaveTextContent("Dilaporkan laptop peminta, belum terbukti lewat AD.");
+    expect(fact(block, "Nama di AD")).toHaveTextContent(/^Rina Klaim$/);
+  });
+
+  it("exists: akun ada tapi tidak bisa dibandingkan, nada netral, nilai kosong di direktori ditulis jelas", async () => {
+    setup([RINA], adCheck({ status: "exists", directoryName: null, directoryDepartment: null }));
+    const block = within(await card("Rina W.")).getByTestId("join-ad");
+    const status = within(block).getByTestId("join-ad-status");
+    await waitFor(() =>
+      expect(status).toHaveTextContent("Akun ada dan aktif di AD, tapi nama dan departemen tidak bisa dibandingkan"),
+    );
+    expect(status).toHaveAttribute("data-status", "exists");
+    expect(status).toHaveClass("req-ad-neutral");
+    expect(fact(block, "Nama di AD")).toHaveTextContent(/^Kosong di AD$/);
+    expect(fact(block, "Departemen di AD")).toHaveTextContent(/^Kosong di AD$/);
+  });
+
+  it("akun AD sudah dipakai anggota lain: peringatan jelas", async () => {
+    const req = joinRequest("r10", "Rina W.", { ad: joinAd({ usedBy: "Rina Wijaya" }) });
+    setup([req]);
+    const warning = within(await card("Rina W.")).getByTestId("join-ad-used-by");
+    expect(warning).toHaveClass("alert");
+    expect(warning).toHaveTextContent(
+      "Akun AD ini sudah dipakai Rina Wijaya di kantor ini.Pastikan ini orang yang sama sebelum menyetujui.",
+    );
+    expect(within(await card("Rina W.")).getByRole("button", { name: "Setujui permintaan Rina W." })).toBeEnabled();
+    expect(within(await card("Rina W.")).queryByTestId("join-ad-used-by")).toBeInTheDocument();
+  });
+
+  it("tanpa usedBy tidak ada peringatan akun dipakai", async () => {
+    setup([RINA]);
+    expect(within(await card("Rina W.")).queryByTestId("join-ad-used-by")).not.toBeInTheDocument();
+  });
+
   it("data AD yang tidak dikirim tertulis Tidak dikirim", async () => {
     const req = joinRequest("r4", "Tono", { ad: joinAd({ name: null, department: null, ous: [], dn: null }) });
-    setup([req]);
+    setup([req], adCheck({ status: "unreachable" }));
     const block = within(await card("Tono")).getByTestId("join-ad");
     expect(fact(block, "Nama di AD")).toHaveTextContent("Tidak dikirim");
     expect(fact(block, "Departemen di AD")).toHaveTextContent("Tidak dikirim");
@@ -281,6 +378,8 @@ describe("Blok AD dalam bahasa Inggris", () => {
         org_join_requests: [req],
         org_join_ad_check: adCheck({
           status: "mismatch",
+          directoryDepartment: "Pajak",
+          departmentInMira: false,
           mismatches: [{ field: "name", requested: "Rina W.", directory: "Rina Wijaya" }],
         }),
       }),
@@ -304,6 +403,7 @@ describe("Blok AD dalam bahasa Inggris", () => {
 
   it.each<[AdCheckStatus, string]>([
     ["match", "Account exists and is active in AD, name and department match"],
+    ["exists", "Account exists and is active in AD, but the name and department can't be compared"],
     ["disabled", "AD account is disabled"],
     ["not_found", "Account not found in AD"],
     ["unreachable", "Can't reach AD from this laptop"],
@@ -314,5 +414,30 @@ describe("Blok AD dalam bahasa Inggris", () => {
     renderInLang(() => <JoinRequestsPanel page={page()} />, "en");
     const rina = await card("Rina W.");
     await waitFor(() => expect(within(rina).getByTestId("join-ad-status")).toHaveTextContent(text));
+  });
+
+  it("pembanding, ketidakcocokan klaim, dan akun dipakai dalam bahasa Inggris", async () => {
+    const req = joinRequest("r11", "Rina W.", { ad: joinAd({ name: "Boss", usedBy: "Rina Wijaya" }) });
+    invoke.mockImplementation(
+      router({
+        org_join_requests: [req],
+        org_join_ad_check: adCheck({
+          status: "mismatch",
+          mismatches: [{ field: "claim_name", requested: "Boss", directory: "Rina Wijaya" }],
+        }),
+      }),
+    );
+    renderInLang(() => <JoinRequestsPanel page={page()} />, "en");
+    const block = within(await card("Rina W.")).getByTestId("join-ad");
+    await waitFor(() =>
+      expect(within(block).getByTestId("join-ad-status")).toHaveTextContent(
+        "AD data from the requesting laptop doesn't match AD: name",
+      ),
+    );
+    expect(within(block).getByTestId("join-ad-source")).toHaveTextContent("Checked against AD from this laptop.");
+    expect(within(block).getByTestId("join-ad-claim")).toHaveTextContent("Reported by the requesting laptop: Boss");
+    expect(within(block).getByTestId("join-ad-used-by")).toHaveTextContent(
+      "Rina Wijaya in this office already uses this AD account.Make sure it's the same person before approving.",
+    );
   });
 });

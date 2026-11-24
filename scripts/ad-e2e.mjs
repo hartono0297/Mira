@@ -126,6 +126,10 @@ const TID = {
   outdated: "join-requester-outdated",
   otherOffices: "org-other-offices", // OtherOfficesNotice.tsx, data-same-domain="true"
   olderOffice: "org-older-office", // hanya superadmin kantor yang lebih baru
+  cardLive: "join-ad-live", // wilayah aria-live, kosong sampai "Periksa lagi"
+  legacy: "onb-legacy-offices",
+  sameDomainGuard: "onb-same-domain",
+  secondOffice: "onb-second-office",
 };
 const TXT = {
   id: {
@@ -139,11 +143,11 @@ const TXT = {
     officeSummary: (name, d) => `Kantor: ${name} (${d})`,
     changeOffice: "Ubah kantor", // aria-label tombol Ubah
     primary: (d) => `Kantor utama untuk ${d}`,
-    deptAttribute: (d) => `Dari AD: ${d}`,
-    deptOu: "Dari OU di AD",
-    deptMissing: (d) => `Departemen di AD: ${d} belum ada di Mira`,
-    boxTitle: "Yang dikirim ke admin",
-    partial: "Sebagian data AD tidak terbaca",
+    headingMine: "Kantor Anda ditemukan", // kantor dipakai langsung karena domainnya sama
+    deptFromAccount: (d) => `Dari akun Windows Anda: ${d}`,
+    deptMissing: (d) => `Departemen Anda di akun Windows (${d}) belum ada di Mira`,
+    boxTitle: "Yang dilihat admin",
+    partial: "Sebagian data akun Windows tidak terbaca",
     newOfficeAdLabel: "Domain Active Directory (opsional)",
     // AdSettings: label baris = nama kolom + " baris n" (sr-only).
     adDomainLabel: "Domain AD",
@@ -156,21 +160,24 @@ const TXT = {
     deptCreate: "Buat departemen",
     cardTitle: "Active Directory",
     status: {
-      match: "Cocok dengan AD",
-      mismatch: "Tidak cocok dengan AD",
+      match: "Akun ada dan aktif di AD, nama dan departemen sama",
+      mismatch: "Berbeda dengan AD",
       disabled: "Akun AD dinonaktifkan",
       unreachable: "AD tidak bisa dihubungi dari laptop ini",
     },
     cardDeptMissing: (d) => `${d} (belum ada di Mira)`,
     mismatchName: (dir, req) => `Nama di AD: ${dir}, di permintaan: ${req}`,
     recheckAria: (n) => `Periksa lagi akun AD ${n}`,
+    // TODO(teks): agen lain menambah status "exists", ketidakcocokan klaim
+    // (claim_name, claim_department, location) dan peringatan usedBy di kartu.
+    // Tambahkan teksnya di sini dan pemeriksaannya di skenario 2-5 setelah final.
     approveAria: (n) => `Setujui permintaan ${n}`,
     rejectAria: (n) => `Tolak permintaan ${n}`,
     rejectConfirm: (n) => `Tolak ${n}`,
     // Bagian 6: kantor lain, kantor kedua, kantor versi lama.
     otherOffices: /Ada \d+ laptop di jaringan ini yang tergabung di kantor Mira lain/,
     otherSameDomain: "memakai domain AD yang sama dengan kantor ini",
-    olderTitle: "Ada kantor lain untuk domain AD yang sama yang dibuat lebih dulu",
+    olderTitle: "Domain AD ini sudah dipakai kantor lain yang dibuat lebih dulu",
     otherWay: "Cari dengan cara lain",
     newOfficeButton: "Siapkan Mira untuk kantor baru",
     seenTitle: "Sudah ada kantor Mira di jaringan ini",
@@ -181,6 +188,8 @@ const TXT = {
     legacyHeading: "Kantor ditemukan, tapi belum bisa menerima permintaan",
     legacyTitle: "Kantor dengan Mira versi lama",
     legacyUpdate: "memperbarui Mira",
+    // Laptop MIRA_TEST_LEGACY_ADVERT hanya mengumumkan v, pk, org (tanpa on): tanpa nama.
+    legacyUnnamed: /Kantor tanpa nama \(\d+ laptop\)/,
     inviteButton: /Pakai kode undangan/,
   },
   en: {
@@ -190,10 +199,10 @@ const TXT = {
     tabs: { departments: /^Departments/, requests: /^Join requests/ },
     officeMatch: (d) => `Your office domain: ${d}`,
     officeSummary: (name, d) => `${name} (${d})`,
-    boxTitle: "What gets sent to the admin",
+    boxTitle: "What the admin sees",
     status: {
-      match: "Matches AD",
-      mismatch: "Doesn't match AD",
+      match: "Account exists and is active in AD, name and department match",
+      mismatch: "Differs from AD",
       disabled: "AD account is disabled",
       unreachable: "Can't reach AD from this laptop",
     },
@@ -201,10 +210,12 @@ const TXT = {
   },
 };
 // Teks AD yang tidak boleh tampil di alur manual (PC tanpa domain).
+// Akun AD tampil sebagai user@domain; lokasi OU dari luar ke dalam dengan " › ".
+const adAccount = (p) => `${p.user}@${DOMAIN}`;
+const ouPath = (p) => [...p.dn.matchAll(/OU=([^,]+)/g)].map((m) => m[1]).reverse().join(" › ");
 const AD_WORDS = /Active Directory|\bAD\b|Akun Windows|Domain kantor Anda/;
-// TODO(bagian 6): override uji untuk mengumumkan TXT bentuk lama (org tanpa j
-// dan on) belum ada di src-tauri/src/network/discovery.rs atau feature_net.rs.
-// Skenario kantor lama mengandaikan variabel debug ini.
+// Build debug: laptop ini hanya mengumumkan v, pk, org (tanpa on dan j) dan
+// menolak join_info, seperti Mira 0.1/0.2.
 const LEGACY_ENV = { MIRA_TEST_LEGACY_ADVERT: "1" };
 
 const RESULT_RE = /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/;
@@ -678,17 +689,19 @@ async function main() {
     const h = await toOffices("N1");
     const radios = pg("N1").locator('input[type="radio"][name="office"]');
     const summary = await tidText("N1", TID.officeSummary);
-    check(`2.3 N1 (A dan K terlihat): kantor A dipakai langsung, judul "Kantor ditemukan: ${ORG}"`, h === `Kantor ditemukan: ${ORG}`, h);
+    check(`2.3 N1 (A dan K terlihat): kantor A dipakai langsung, judul "${TXT.id.headingMine}"`, h === TXT.id.headingMine, h);
+    const fpShown = (await soft(pg("N1").locator(".onb-fp-code").first().innerText({ timeout: 3000 }), "")).trim();
+    check("2.3b N1: sidik organisasi A tetap tampil", fpShown !== "" && fpShown === (await must("A", "org_fingerprint")), fpShown);
     check("2.4 N1: tanpa langkah pilih kantor, ringkasan \"Kantor: Kantor Uji AD (macf.co.id)\"",
       (await radios.count()) === 0 && has(summary, TXT.id.officeSummary(ORG, DOMAIN)), summary);
     const changeBtn = pg("N1").getByRole("button", { name: TXT.id.changeOffice, exact: true });
     check("2.5 N1: ringkasan kantor punya tombol Ubah", await changeBtn.isVisible());
     const autoDept = await soft(waitFor("departemen terpilih", async () => (await selectedTeam("N1")) || null, 10000, 300), "");
     check("2.6 N1: departemen Keuangan terpilih otomatis", autoDept === DEPT.fin, autoDept);
-    check("2.7 N1: asal usulan departemen tertulis (Dari AD: Keuangan)", has(await tidText("N1", TID.deptCaption), TXT.id.deptAttribute(DEPT.fin)));
+    check("2.7 N1: asal usulan departemen tertulis (Dari akun Windows Anda: Keuangan)", has(await tidText("N1", TID.deptCaption), TXT.id.deptFromAccount(DEPT.fin)));
     const box = await tidText("N1", TID.box);
     check("2.8 N1: kotak \"Yang dikirim ke admin\" memuat akun AD dan lokasi OU",
-      has(box, TXT.id.boxTitle) && box.includes(`${DOMAIN}\\${P.rina.user}`) && box.includes("Finance") && box.includes(P.rina.displayName), box.replace(/\n/g, " | ").slice(0, 200));
+      has(box, TXT.id.boxTitle) && box.includes(adAccount(P.rina)) && box.includes(ouPath(P.rina)) && box.includes(P.rina.displayName), box.replace(/\n/g, " | ").slice(0, 200));
 
     // Screenshot langkah kantor: Indonesia/Inggris, terang/gelap.
     let enOk = true;
@@ -735,10 +748,10 @@ async function main() {
     await c.waitFor({ timeout: 30000 });
     const adBlock = await soft(c.getByTestId(TID.cardAd).innerText({ timeout: 10000 }), "");
     check("2.16 Kartu A menampilkan blok Active Directory dengan akun dan departemen",
-      has(adBlock, TXT.id.cardTitle) && adBlock.includes(`${DOMAIN}\\${P.rina.user}`) && adBlock.includes(DEPT.fin), adBlock.replace(/\n/g, " | ").slice(0, 200));
+      has(adBlock, TXT.id.cardTitle) && adBlock.includes(adAccount(P.rina)) && adBlock.includes(ouPath(P.rina)) && adBlock.includes(DEPT.fin), adBlock.replace(/\n/g, " | ").slice(0, 200));
     const matched = await waitCardStatus(P.rina.displayName, "match");
-    check("2.17 Kartu A: status \"Cocok dengan AD\"", matched && has(await tidText("A", TID.cardStatus), TXT.id.status.match));
-    check("2.18 Kartu A: status berbahasa Inggris \"Matches AD\"", await adminCardShots(P.rina.displayName, "match", "cocok"));
+    check("2.17 Kartu A: status \"Akun ada dan aktif di AD, nama dan departemen sama\"", matched && has(await tidText("A", TID.cardStatus), TXT.id.status.match));
+    check("2.18 Kartu A: status cocok berbahasa Inggris", await adminCardShots(P.rina.displayName, "match", "cocok"));
     check("2.19 A menyetujui N1 lewat kartu", await approveByCard(P.rina.displayName));
     check("2.20 N1 masuk Mira setelah disetujui", (await waitShell("N1")) && (await must("N1", "get_app_state")).organization?.name === ORG);
   });
@@ -751,13 +764,13 @@ async function main() {
     const n = await nameStep("N2", { expect: P.hartono.displayName });
     check("3.1 N2: nama terisi otomatis \"Hartono\"", n.prefilled, n.value);
     const h = await toOffices("N2");
-    check(`3.2 N2: satu kantor ditemukan (${ORG})`, h === `Kantor ditemukan: ${ORG}`, h);
+    check(`3.2 N2: satu kantor domain sama, judul "${TXT.id.headingMine}"`, h === TXT.id.headingMine, h);
     check("3.3 N2: ringkasan \"Kantor: Kantor Uji AD (macf.co.id)\" tampil",
       has(await tidText("N2", TID.officeSummary), TXT.id.officeSummary(ORG, DOMAIN)));
     const autoDept = await soft(waitFor("departemen terpilih", async () => (await selectedTeam("N2")) || null, 10000, 300), "");
     check("3.4 N2: IT Development terpilih lewat pemetaan OU (atribut department kosong)", autoDept === DEPT.itdev, autoDept);
     const cap = await tidText("N2", TID.deptCaption);
-    check("3.5 N2: asal usulan menyebut OU", has(cap, TXT.id.deptOu), cap);
+    check("3.5 N2: asal usulan departemen tertulis (Dari akun Windows Anda: IT Development)", has(cap, TXT.id.deptFromAccount(DEPT.itdev)), cap);
     const code = await sendRequest("N2");
     const req = await requestOnA(P.hartono.displayName);
     check("3.6 A menerima permintaan N2 ke IT Development dengan kode yang sama",
@@ -767,8 +780,9 @@ async function main() {
     await openOrgTab("A", "requests");
     const c = card(P.hartono.displayName);
     await c.waitFor({ timeout: 30000 });
-    check("3.8 Kartu A: lokasi OU tampil", has(await soft(c.getByTestId(TID.cardAd).innerText(), ""), "IT-Development"));
-    check("3.9 Kartu A: \"Cocok dengan AD\"", await waitCardStatus(P.hartono.displayName, "match"));
+    const loc = await soft(c.getByTestId(TID.cardAd).innerText(), "");
+    check("3.8 Kartu A: lokasi OU dari luar ke dalam", has(loc, ouPath(P.hartono)), ouPath(P.hartono));
+    check("3.9 Kartu A: akun ada dan aktif, nama dan departemen sama", await waitCardStatus(P.hartono.displayName, "match"));
     check("3.10 A menyetujui N2 lewat kartu", await approveByCard(P.hartono.displayName));
     check("3.11 N2 masuk Mira", await waitShell("N2"));
   });
@@ -783,7 +797,7 @@ async function main() {
     await sleep(3000); // beri waktu usulan departemen
     check("4.2 N3: departemen tidak terpilih otomatis", (await selectedTeam("N3")) === "");
     const cap = await tidText("N3", TID.deptCaption);
-    check("4.3 N3: tertulis \"Departemen di AD: Gudang belum ada di Mira\"", has(cap, TXT.id.deptMissing(DEPT.warehouse)), cap);
+    check("4.3 N3: tertulis \"Departemen Anda di akun Windows (Gudang) belum ada di Mira\"", has(cap, TXT.id.deptMissing(DEPT.warehouse)), cap);
     await snap("N3", "onboarding-departemen-belum-ada");
     await teamSelect("N3").selectOption({ label: DEPT.design });
     const code = await sendRequest("N3");
@@ -799,9 +813,9 @@ async function main() {
     const adText = await soft(c.getByTestId(TID.cardAd).innerText(), "");
     check("4.6 Kartu A: \"Departemen di AD: Gudang (belum ada di Mira)\"",
       /Departemen di AD\s*Gudang \(belum ada di Mira\)/.test(adText), adText.replace(/\n/g, " | ").slice(0, 200));
-    check("4.7 Kartu A: \"Tidak cocok dengan AD\" dengan nama di AD dan di permintaan",
+    check("4.7 Kartu A: \"Berbeda dengan AD\" dengan nama di AD dan di permintaan",
       (await waitCardStatus(N3_TYPED_NAME, "mismatch")) && (await waitText("A", TXT.id.mismatchName(P.gita.displayName, N3_TYPED_NAME), 5000, c)));
-    check("4.8 Kartu A: status berbahasa Inggris \"Doesn't match AD\"", await adminCardShots(N3_TYPED_NAME, "mismatch", "tidak-cocok"));
+    check("4.8 Kartu A: status berbahasa Inggris \"Differs from AD\"", await adminCardShots(N3_TYPED_NAME, "mismatch", "tidak-cocok"));
     check("4.9 A tetap bisa menyetujui N3 (persetujuan manual)", await approveByCard(N3_TYPED_NAME));
     check("4.10 N3 masuk Mira", await waitShell("N3"));
   });
@@ -827,6 +841,8 @@ async function main() {
     await c.getByRole("button", { name: TXT.id.recheckAria(P.dodi.displayName) }).click();
     check("5.4 Periksa lagi setelah AD putus: \"AD tidak bisa dihubungi dari laptop ini\"",
       (await waitCardStatus(P.dodi.displayName, "unreachable")) && has(await soft(c.getByTestId(TID.cardStatus).innerText(), ""), TXT.id.status.unreachable));
+    check("5.4b Hasil Periksa lagi diumumkan di wilayah aria-live",
+      await waitText("A", TXT.id.status.unreachable, 5000, c.getByTestId(TID.cardLive)));
     await snap("A", "kartu-ad-tidak-terjangkau-id-terang");
     const chk = await must("A", "org_join_ad_check", { requestId: req.id, refresh: true });
     check("5.5 org_join_ad_check refresh: unreachable", chk.status === "unreachable", chk.status);
@@ -874,8 +890,8 @@ async function main() {
     await toOffices("N6");
     await sleep(2000);
     const box = await tidText("N6", TID.box);
-    check("7.2 N6: kotak AD tetap memuat akun yang sempat terbaca", box.includes(`${DOMAIN}\\${P.eko.user}`), box.replace(/\n/g, " | ").slice(0, 160));
-    check("7.3 N6: pesan \"Sebagian data AD tidak terbaca\"", has(await tidText("N6", TID.partial), TXT.id.partial));
+    check("7.2 N6: kotak AD tetap memuat akun yang sempat terbaca", box.includes(adAccount(P.eko)), box.replace(/\n/g, " | ").slice(0, 160));
+    check("7.3 N6: pesan \"Sebagian data akun Windows tidak terbaca\"", has(await tidText("N6", TID.partial), TXT.id.partial));
     check("7.4 N6: departemen tidak terpilih otomatis", (await selectedTeam("N6")) === "");
     await snap("N6", "onboarding-ad-sebagian");
     await teamSelect("N6").selectOption({ label: DEPT.fin });
@@ -918,7 +934,8 @@ async function main() {
     const btn = await pg("N8").getByRole("button", { name: TXT.id.newOfficeButton, exact: true }).count();
     const confirm = await pg("N8").getByRole("button", { name: TXT.id.confirmButton }).count();
     check("8.1 N8 (domain macf.co.id): Untuk admin IT tanpa pilihan kantor baru", btn === 0 && confirm === 0, `tombol ${btn}/${confirm}`);
-    check("8.2 N8: diarahkan ke kantor A (satu domain, satu kantor)", has(body, TXT.id.sameDomain(DOMAIN)) && body.includes(ORG));
+    check("8.2 N8: diarahkan ke kantor A (satu domain, satu kantor)",
+      (await tidCount("N8", TID.sameDomainGuard)) === 1 && has(body, TXT.id.sameDomain(DOMAIN)) && body.includes(ORG));
     await snap("N8", "untuk-admin-it-domain-sama");
   });
 
@@ -932,7 +949,8 @@ async function main() {
     await openAdminIT(pg("N9"));
     await sleep(800);
     const body = await bodyText("N9");
-    check("8.3 N9: peringatan \"Sudah ada kantor Mira di jaringan ini\" menyebut kantor A", has(body, TXT.id.seenTitle) && body.includes(ORG));
+    check("8.3 N9: peringatan \"Sudah ada kantor Mira di jaringan ini\" menyebut kantor A",
+      (await tidCount("N9", TID.secondOffice)) === 1 && has(body, TXT.id.seenTitle) && body.includes(ORG));
     const confirmInput = pg("N9").getByLabel(TXT.id.confirmLabel);
     check("8.4 N9: konfirmasi ketik ulang tampil, layar kantor baru belum terbuka",
       (await confirmInput.isVisible()) && !(await pg("N9").getByRole("heading", { name: TXT.id.newOfficeButton }).isVisible()));
@@ -945,19 +963,20 @@ async function main() {
 
   // 8c. Bagian 6.1 butir 3: dua kantor untuk domain yang sama. K2 dibuat setelah A.
   await scenario("8c. Dua kantor domain sama: kantor utama", ["N11", "K2"], async () => {
-    // machineDomain null: create_organization di Rust menolak domain yang sama dengan
-    // domain mesin kalau kantor terverifikasi domain itu sudah dikenal. K2 tetap
-    // memakai adDomain macf.co.id (kantor ganda yang dibuat sebelum aturan itu).
-    writeAd("K2", fakeAd(NO_DOMAIN));
-    await launch("K2");
+    // create_organization menolak kantor baru kalau laptop itu sudah mengenal kantor
+    // terverifikasi dengan domain AD sama (domain mesin atau yang diketik). Jadi K2
+    // dibuat tanpa mDNS (tidak pernah melihat A), seperti dua admin IT yang menyiapkan
+    // kantor bersamaan, lalu dijalankan ulang dengan mDNS.
+    writeAd("K2", fakeAd({}));
+    await launch("K2", { env: { MIRA_DISABLE_MDNS: "1" } });
     await must("K2", "save_display_name", { name: "Kurnia Uji" });
     await must("K2", "create_organization", { name: ORG_K2, adDomain: DOMAIN });
     await must("K2", "org_create_department", { name: DEPT.fin });
     await rememberKey("K2");
     check("8.6 K2 membuat kantor kedua dengan domain AD macf.co.id", (await must("K2", "org_ad_settings")).domain === DOMAIN);
-    await pg("K2").reload();
-    await pg("K2").waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
-    await waitShell("K2");
+    await stop("K2");
+    await launch("K2");
+    check("8.6b K2 terbuka lagi di kerangka utama dengan mDNS", await waitShell("K2"));
     await sleep(3000); // K2 mulai mengiklankan j dan ad lewat mDNS.
 
     writeAd("N11", fakeAd({ local: local(P.wulan) }));
@@ -1017,6 +1036,8 @@ async function main() {
     check("9.3 N10: langkah pembaruan Mira dan kode undangan tampil",
       has(body, TXT.id.legacyTitle) && has(body, TXT.id.legacyUpdate) &&
         (await pg("N10").getByRole("button", { name: TXT.id.inviteButton }).count()) > 0);
+    check("9.4 N10: kantor lama tanpa nama tampil sebagai \"Kantor tanpa nama (N laptop)\"",
+      has(await tidText("N10", TID.legacy), TXT.id.legacyUnnamed));
     await snap("N10", "onboarding-kantor-versi-lama");
   });
 }

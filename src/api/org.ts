@@ -138,10 +138,15 @@ export type JoinAdView = {
   suggestedTeamId: string | null;
   // Departemen hasil AD ada di Mira.
   departmentInMira: boolean;
+  // Nama anggota aktif yang sudah bergabung dengan akun AD yang sama
+  // (domain dan user), null kalau belum ada. Tanda kemungkinan penyamaran.
+  usedBy: string | null;
 };
 
 export type AdCheckStatus =
   | "match"
+  // Akun ada dan aktif, tapi tidak ada nama atau departemen yang bisa dibandingkan.
+  | "exists"
   | "mismatch"
   | "disabled"
   | "not_found"
@@ -151,8 +156,17 @@ export type AdCheckStatus =
 
 export type AdCheck = {
   status: AdCheckStatus;
-  mismatches: { field: "name" | "department"; requested: string; directory: string }[];
+  // name dan department: permintaan (nama tampilan, departemen Mira) dibanding
+  // direktori. claim_name, claim_department, location: data AD yang dilaporkan
+  // laptop peminta dibanding direktori (tanda klaim palsu).
+  mismatches: {
+    field: "name" | "department" | "claim_name" | "claim_department" | "location";
+    requested: string;
+    directory: string;
+  }[];
   directoryName: string | null;
+  // OU dari DN di direktori, paling dalam dulu (bukan dari klaim peminta).
+  directoryOus: string[];
   directoryDepartment: string | null;
   departmentInMira: boolean;
   checkedAt: string;

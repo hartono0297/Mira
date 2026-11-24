@@ -4,9 +4,16 @@
 const id = {
   card: {
     title: "Active Directory",
-    // Data AD ditulis laptop peminta sendiri; cek ulang dari laptop admin
-    // hanya memastikan akunnya ada dan aktif.
-    reported: "Dilaporkan laptop peminta, lalu diperiksa ulang dari laptop ini.",
+    // Sebelum cek selesai atau kalau cek gagal, yang tampil adalah data AD yang
+    // ditulis laptop peminta sendiri. Setelah cek berhasil, nilai dari direktori.
+    reported: "Dilaporkan laptop peminta, belum terbukti lewat AD.",
+    verified: "Diperiksa ke AD dari laptop ini.",
+    emptyInDirectory: "Kosong di AD",
+    // Pembanding di bawah nilai direktori, hanya kalau berbeda.
+    claimValue: (value: string) => `Dilaporkan laptop peminta: ${value}`,
+    // Akun AD yang sama sudah dipakai anggota aktif: tanda kemungkinan penyamaran.
+    usedByTitle: (name: string) => `Akun AD ini sudah dipakai ${name} di kantor ini.`,
+    usedByBody: "Pastikan ini orang yang sama sebelum menyetujui.",
     account: "Akun",
     name: "Nama di AD",
     department: "Departemen di AD",
@@ -18,7 +25,10 @@ const id = {
     status: {
       // Sengaja tidak "Cocok": cek ini bukan bukti bahwa peminta pemilik akun itu.
       match: "Akun ada dan aktif di AD, nama dan departemen sama",
+      exists: "Akun ada dan aktif di AD, tapi nama dan departemen tidak bisa dibandingkan",
       mismatch: "Berbeda dengan AD",
+      // Laptop peminta melaporkan data AD yang tidak sama dengan direktori.
+      claimMismatch: (fields: string) => `Data AD dari laptop peminta tidak sama dengan AD: ${fields}`,
       disabled: "Akun AD dinonaktifkan",
       notFound: "Akun tidak ditemukan di AD",
       unreachable: "AD tidak bisa dihubungi dari laptop ini",
@@ -29,6 +39,7 @@ const id = {
     mismatchDepartment: (directory: string, requested: string) =>
       `Departemen di AD: ${directory}, di permintaan: ${requested}`,
     nameNote: "Peminta boleh mengubah nama tampilan, jadi nama yang berbeda belum tentu masalah.",
+    claimFields: { name: "nama", department: "departemen", location: "lokasi" },
     recheck: "Periksa lagi",
     recheckAria: (name: string) => `Periksa lagi akun AD ${name}`,
     limit:

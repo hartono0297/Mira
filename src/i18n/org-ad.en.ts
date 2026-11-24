@@ -4,7 +4,12 @@ import type id from "./org-ad.id";
 const en: Dict<typeof id> = {
   card: {
     title: "Active Directory",
-    reported: "Reported by the requesting laptop, then checked again from this laptop.",
+    reported: "Reported by the requesting laptop, not confirmed by AD.",
+    verified: "Checked against AD from this laptop.",
+    emptyInDirectory: "Empty in AD",
+    claimValue: (value: string) => `Reported by the requesting laptop: ${value}`,
+    usedByTitle: (name: string) => `${name} in this office already uses this AD account.`,
+    usedByBody: "Make sure it's the same person before approving.",
     account: "Account",
     name: "Name in AD",
     department: "Department in AD",
@@ -14,7 +19,9 @@ const en: Dict<typeof id> = {
     checking: "Checking AD...",
     status: {
       match: "Account exists and is active in AD, name and department match",
+      exists: "Account exists and is active in AD, but the name and department can't be compared",
       mismatch: "Differs from AD",
+      claimMismatch: (fields: string) => `AD data from the requesting laptop doesn't match AD: ${fields}`,
       disabled: "AD account is disabled",
       notFound: "Account not found in AD",
       unreachable: "Can't reach AD from this laptop",
@@ -25,6 +32,7 @@ const en: Dict<typeof id> = {
     mismatchDepartment: (directory: string, requested: string) =>
       `Department in AD: ${directory}, in the request: ${requested}`,
     nameNote: "The requester is allowed to change their display name, so a different name isn't necessarily a problem.",
+    claimFields: { name: "name", department: "department", location: "location" },
     recheck: "Check again",
     recheckAria: (name: string) => `Check ${name}'s AD account again`,
     limit:
