@@ -256,6 +256,10 @@ pub enum Body {
         creator: String,
         nonce: String,
         members: Vec<String>,
+        /// v0.6: the division that owns the project (in `team`). Absent
+        /// from older ops, which keep their exact bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        division: Option<String>,
     },
     ProjectMemberAdd {
         project: String,
@@ -302,6 +306,42 @@ pub enum Body {
         domain: String,
         ou_map: Vec<crate::ad::OuMapping>,
     },
+    // ----- v0.6: divisions (docs/plans/dept-divisi.md) -----
+    /// Superadmin or admin of `team` creates a division in it.
+    DivisionCreate {
+        division: String,
+        team: String,
+        name: String,
+    },
+    DivisionRename {
+        division: String,
+        name: String,
+    },
+    DivisionArchive {
+        division: String,
+        archived: bool,
+    },
+    DivisionHeadSet {
+        division: String,
+        member: String,
+        head: bool,
+    },
+    DivisionMemberAdd {
+        division: String,
+        member: String,
+    },
+    DivisionMemberRemove {
+        division: String,
+        member: String,
+    },
+    /// Pinned note and announcement mode of a department channel
+    /// (`division` none) or of a division chat.
+    ChatSettingsSet {
+        team: String,
+        division: Option<String>,
+        pinned: String,
+        announce: bool,
+    },
 }
 
 impl Body {
@@ -337,6 +377,13 @@ impl Body {
             Body::LabelUnassign { .. } => "label_unassign",
             Body::DeviceSet { .. } => "device_set",
             Body::AdSettingsSet { .. } => "ad_settings_set",
+            Body::DivisionCreate { .. } => "division_create",
+            Body::DivisionRename { .. } => "division_rename",
+            Body::DivisionArchive { .. } => "division_archive",
+            Body::DivisionHeadSet { .. } => "division_head_set",
+            Body::DivisionMemberAdd { .. } => "division_member_add",
+            Body::DivisionMemberRemove { .. } => "division_member_remove",
+            Body::ChatSettingsSet { .. } => "chat_settings_set",
         }
     }
 }
@@ -691,11 +738,16 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
             creator,
             nonce,
             members,
+            division,
         } => {
             org_scope(p)?;
             id32(project, "project")?;
             if let Some(team) = team {
                 id32(team, "team")?;
+            }
+            if let Some(division) = division {
+                id32(division, "division")?;
+                need(team.is_some(), "proyek divisi wajib punya departemen")?;
             }
             key64(creator, "creator")?;
             id32(nonce, "nonce proyek")?;
@@ -748,6 +800,55 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
                 "domain AD tidak valid",
             )?;
             super::join::check_ou_map(ou_map)?;
+        }
+        Body::DivisionCreate {
+            division,
+            team,
+            name,
+        } => {
+            org_scope(p)?;
+            id32(division, "division")?;
+            id32(team, "team")?;
+            need(is_canonical_team_name(name), "nama divisi tidak valid")?;
+        }
+        Body::DivisionRename { division, name } => {
+            org_scope(p)?;
+            id32(division, "division")?;
+            need(is_canonical_team_name(name), "nama divisi tidak valid")?;
+        }
+        Body::DivisionArchive {
+            division,
+            archived: _,
+        } => {
+            org_scope(p)?;
+            id32(division, "division")?;
+        }
+        Body::DivisionHeadSet {
+            division,
+            member,
+            head: _,
+        }
+        | Body::DivisionMemberAdd { division, member }
+        | Body::DivisionMemberRemove { division, member } => {
+            org_scope(p)?;
+            id32(division, "division")?;
+            key64(member, "member")?;
+        }
+        Body::ChatSettingsSet {
+            team,
+            division,
+            pinned,
+            announce: _,
+        } => {
+            org_scope(p)?;
+            id32(team, "team")?;
+            if let Some(division) = division {
+                id32(division, "division")?;
+            }
+            need(
+                super::division::is_valid_pinned_note(pinned),
+                "catatan disematkan tidak valid",
+            )?;
         }
     }
     Ok(at)

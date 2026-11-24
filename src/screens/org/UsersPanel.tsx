@@ -21,6 +21,7 @@ import { NameWithLabels } from "../../components/NameWithLabels";
 import { useLang } from "../../i18n/core";
 import { ORG_TEXT, USERS_TEXT as T } from "../../i18n/org";
 import type { OrgPage } from "./context";
+import { deptWithDivisions } from "./divisionText";
 import { byName, matches, orgMessage, roleText } from "./PeoplePanel";
 import { useOrgLive } from "./useOrgLive";
 import "./users.css";
@@ -135,7 +136,7 @@ function OsIcon({ os }: { os: string }) {
 function departmentCell(u: UserView, deptName: (id: string) => string): string {
   if (u.isGuest) return T.guestCell(u.guestProjectCount);
   if (u.departmentId === null) return T.noDepartment;
-  return u.departmentName ?? deptName(u.departmentId);
+  return deptWithDivisions(u.departmentName ?? deptName(u.departmentId), u.divisions) ?? T.noDepartment;
 }
 
 function Status({ u }: { u: UserView }) {

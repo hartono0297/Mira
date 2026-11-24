@@ -160,6 +160,7 @@ fn project_for(_by: &Actor, creator: &str, team: Option<&str>, members: &[&Actor
             creator: creator.into(),
             nonce,
             members,
+            division: None,
         },
         id,
     }
@@ -690,6 +691,7 @@ fn project_create_row() {
         creator: w.member_d.pk.clone(),
         nonce,
         members,
+        division: None,
     };
     assert_eq!(w.sim.push(&w.member_d, wrong_team), Err(R::BadProjectId));
     let unknown = project(&w.member_d, Some(&rand_hex16()), &[]);

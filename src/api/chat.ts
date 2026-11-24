@@ -22,8 +22,12 @@ export type ConversationSummary = {
   id: string; // "ch:<32 hex>", "gr:<32 hex>", atau "dm:<kunci>:<kunci>"
   // "project" (v0.4): chat bawaan sebuah proyek. Tampil seperti grup, anggotanya selalu anggota
   // proyek, dan selalu di bagian Proyek. Channel buatan v0.2 untuk proyek tetap "channel".
-  kind: "channel" | "group" | "project" | "dm";
+  // "division" (v0.6): chat bawaan sebuah divisi, di bagian Departemen di bawah channel departemennya.
+  kind: "channel" | "group" | "project" | "division" | "dm";
   section: ChatSection;
+  // Chat divisi (v0.6): id divisi dan id departemennya. Tidak ada atau null untuk percakapan lain.
+  divisionId?: string | null;
+  teamId?: string | null;
   name: string; // nama channel tanpa "#", nama grup, nama proyek, atau nama rekan untuk chat pribadi
   scope: ChannelScope | null; // null untuk chat pribadi
   peer: Person | null; // rekan di chat pribadi

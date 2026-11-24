@@ -12,7 +12,7 @@ import { ROLE_LABELS, subscribe, type AppState, type OrgInfo } from "../../api";
 import { initials } from "../../components/initials";
 import { Logo } from "../../components/Logo";
 import { SidebarCount } from "../../components/SidebarCount";
-import { BoardScreen } from "../board/BoardScreen";
+import { BOARD_SELECTION_KEY, BoardScreen } from "../board/BoardScreen";
 import { ChatScreen } from "../chat/ChatScreen";
 import { DocsScreen } from "../docs/DocsScreen";
 import { OrgScreen } from "../org/OrgScreen";
@@ -52,6 +52,8 @@ type Props = {
 export function Shell({ state, onRefresh }: Props) {
   const [section, setSection] = useState<Section>("chat");
   const [settingsPart, setSettingsPart] = useState<SettingsPart>("appearance");
+  // "Buka chat" dari Departemen saya: percakapan yang dibuka saat Chat tampil.
+  const [chatTarget, setChatTarget] = useState<{ conv: string; n: number } | null>(null);
   const name = state.identity.displayName ?? "";
   const org = state.organization;
   const counts = useNavCounts();
@@ -103,11 +105,28 @@ export function Shell({ state, onRefresh }: Props) {
           </div>
         </aside>
         <div className="content">
-          {section === "chat" && <ChatScreen />}
+          {section === "chat" && <ChatScreen key={chatTarget?.n ?? 0} initialConv={chatTarget?.conv} />}
           {section === "board" && <BoardScreen />}
           {section === "docs" && <DocsScreen />}
           {section === "sign" && <SignScreen />}
-          {section === "org" && <OrgScreen state={state} onRefresh={onRefresh} />}
+          {section === "org" && (
+            <OrgScreen
+              state={state}
+              onRefresh={onRefresh}
+              onOpenChat={(conv) => {
+                setChatTarget((t) => ({ conv, n: (t?.n ?? 0) + 1 }));
+                setSection("chat");
+              }}
+              onOpenProject={(projectId) => {
+                try {
+                  window.localStorage.setItem(BOARD_SELECTION_KEY, projectId);
+                } catch {
+                  // Penyimpanan lokal tidak tersedia: Board terbuka di pilihan terakhir.
+                }
+                setSection("board");
+              }}
+            />
+          )}
           {section === "settings" && <SettingsScreen state={state} part={settingsPart} onPart={setSettingsPart} />}
         </div>
       </div>

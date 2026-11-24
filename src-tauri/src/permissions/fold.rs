@@ -11,6 +11,7 @@ use hex::FromHex;
 use serde::Serialize;
 use time::OffsetDateTime;
 
+use super::division::{ChatSettingsState, DivisionState};
 use super::format::{channel_name_for, format_time, parse_time};
 use super::invite::{invite_key_message, redeem_message};
 use super::join::{
@@ -174,6 +175,8 @@ pub struct ProjectState {
     /// Explicit members (guests included). Guests invited by code are in
     /// `OrgState::guest_access` instead.
     pub members: BTreeMap<String, ProjectMember>,
+    /// v0.6: the division the project was made for, in `team`.
+    pub division: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +224,10 @@ pub struct OrgState {
     pub join_decisions: BTreeMap<String, JoinDecision>,
     /// Active Directory settings (`ad_settings_set`, the latest wins).
     pub ad: AdSettings,
+    /// v0.6: divisions by id, deleted ones included (`division.rs`).
+    pub divisions: BTreeMap<String, DivisionState>,
+    /// v0.6: chat settings by `(team, division id or "")`.
+    pub chat_settings: BTreeMap<(String, String), ChatSettingsState>,
 }
 
 /// The organization's Active Directory settings (docs/plans/onboarding-ad.md).
@@ -278,6 +285,14 @@ pub enum Reason {
     JoinRequestExpired,
     JoinAlreadyDecided,
     AlreadyMember,
+    DivisionNotFound,
+    DivisionArchived,
+    AlreadyInDivision,
+    NotInDivision,
+    AlreadyDivisionHead,
+    NotDivisionHead,
+    TargetNotInDepartment,
+    LastTeamAdmin,
 }
 
 impl Reason {
@@ -322,6 +337,14 @@ impl Reason {
             Reason::JoinRequestExpired => "join_request_expired",
             Reason::JoinAlreadyDecided => "join_already_decided",
             Reason::AlreadyMember => "already_member",
+            Reason::DivisionNotFound => "division_not_found",
+            Reason::DivisionArchived => "division_archived",
+            Reason::AlreadyInDivision => "already_in_division",
+            Reason::NotInDivision => "not_in_division",
+            Reason::AlreadyDivisionHead => "already_division_head",
+            Reason::NotDivisionHead => "not_division_head",
+            Reason::TargetNotInDepartment => "target_not_in_department",
+            Reason::LastTeamAdmin => "last_team_admin",
         }
     }
 
@@ -381,6 +404,18 @@ impl Reason {
             }
             Reason::JoinAlreadyDecided => "Permintaan ini sudah disetujui atau ditolak.",
             Reason::AlreadyMember => "Laptop itu sudah menjadi anggota organisasi.",
+            Reason::DivisionNotFound => "Divisi tidak ditemukan atau sudah dihapus.",
+            Reason::DivisionArchived => "Divisi ini sudah diarsipkan.",
+            Reason::AlreadyInDivision => "Orang itu sudah menjadi anggota divisi ini.",
+            Reason::NotInDivision => "Orang itu bukan anggota divisi ini.",
+            Reason::AlreadyDivisionHead => "Orang itu sudah menjadi kepala divisi ini.",
+            Reason::NotDivisionHead => "Orang itu bukan kepala divisi ini.",
+            Reason::TargetNotInDepartment => {
+                "Orang itu bukan anggota departemen ini. Minta superadmin memindahkannya dulu."
+            }
+            Reason::LastTeamAdmin => {
+                "Departemen harus punya minimal satu admin. Angkat admin lain dulu."
+            }
         }
     }
 
@@ -389,7 +424,7 @@ impl Reason {
     }
 }
 
-const ALL_REASONS: [Reason; 39] = [
+const ALL_REASONS: [Reason; 47] = [
     Reason::AuthorNotActive,
     Reason::NotAuthorized,
     Reason::GuestNotAllowed,
@@ -429,6 +464,14 @@ const ALL_REASONS: [Reason; 39] = [
     Reason::JoinRequestExpired,
     Reason::JoinAlreadyDecided,
     Reason::AlreadyMember,
+    Reason::DivisionNotFound,
+    Reason::DivisionArchived,
+    Reason::AlreadyInDivision,
+    Reason::NotInDivision,
+    Reason::AlreadyDivisionHead,
+    Reason::NotDivisionHead,
+    Reason::TargetNotInDepartment,
+    Reason::LastTeamAdmin,
 ];
 
 pub type Outcome = Result<(), Reason>;
@@ -511,6 +554,8 @@ impl OrgState {
             labels: BTreeMap::new(),
             join_decisions: BTreeMap::new(),
             ad: AdSettings::default(),
+            divisions: BTreeMap::new(),
+            chat_settings: BTreeMap::new(),
         }
     }
 
@@ -551,7 +596,7 @@ impl OrgState {
     }
 
     /// `TeamNotFound` or `DepartmentArchived` unless `id` is open.
-    fn require_open_team(&self, id: &str) -> Result<(), Reason> {
+    pub(super) fn require_open_team(&self, id: &str) -> Result<(), Reason> {
         match self.live_team(id) {
             None => Err(Reason::TeamNotFound),
             Some(t) if t.archived => Err(Reason::DepartmentArchived),
@@ -698,7 +743,7 @@ impl OrgState {
         !self.project_manager_paths(project, pk).is_empty()
     }
 
-    fn require_superadmin(&self, author: &str) -> Result<(), Reason> {
+    pub(super) fn require_superadmin(&self, author: &str) -> Result<(), Reason> {
         if self.is_superadmin(author) {
             Ok(())
         } else {
@@ -706,7 +751,7 @@ impl OrgState {
         }
     }
 
-    fn require_active_non_guest_target(&self, pk: &str) -> Result<(), Reason> {
+    pub(super) fn require_active_non_guest_target(&self, pk: &str) -> Result<(), Reason> {
         match self.member(pk) {
             Some(m) if m.status == MemberStatus::Active => {
                 if m.kind == MemberKind::Guest {
@@ -730,7 +775,7 @@ impl OrgState {
         }
     }
 
-    fn live_team_mut(&mut self, id: &str) -> Result<&mut TeamState, Reason> {
+    pub(super) fn live_team_mut(&mut self, id: &str) -> Result<&mut TeamState, Reason> {
         self.teams
             .get_mut(id)
             .filter(|t| !t.deleted)
@@ -802,6 +847,7 @@ impl OrgState {
                 t.members.clear();
                 self.channels.retain(|_, c| c.team.as_deref() != Some(team));
                 self.guest_access.retain(|g| &g.team != team);
+                self.delete_team_divisions(team);
             }
             Body::SuperadminAdd { member } => {
                 self.require_superadmin(&author)?;
@@ -828,13 +874,20 @@ impl OrgState {
                 }
             }
             Body::TeamAdminSet { team, member } => {
-                self.require_superadmin(&author)?;
+                // v0.6: an admin of the department may promote its people.
+                let sa = self.is_superadmin(&author);
+                if !sa && self.team_role(team, &author) != Some(TeamRole::Admin) {
+                    return Err(Reason::NotAuthorized);
+                }
                 self.require_open_team(team)?;
                 self.require_active_non_guest_target(member)?;
                 // The admin of a department is one of its people: someone in
                 // another department has to be moved first.
                 let current = self.team_role(team, member);
                 if current.is_none() {
+                    if !sa {
+                        return Err(Reason::TargetNotInDepartment);
+                    }
                     self.require_no_department(team, member)?;
                 }
                 let t = self.live_team_mut(team)?;
@@ -853,11 +906,21 @@ impl OrgState {
                 }
             }
             Body::TeamAdminUnset { team, member } => {
-                self.require_superadmin(&author)?;
+                // v0.6: an admin of the department may demote its admins,
+                // themselves too unless they are the last one.
+                let sa = self.is_superadmin(&author);
+                if !sa && self.team_role(team, &author) != Some(TeamRole::Admin) {
+                    return Err(Reason::NotAuthorized);
+                }
                 let t = self.live_team_mut(team)?;
-                match t.members.get_mut(member) {
-                    Some(tm) if tm.role == TeamRole::Admin => tm.role = TeamRole::Member,
-                    _ => return Err(Reason::NotTeamAdmin),
+                if t.members.get(member).map(|tm| tm.role) != Some(TeamRole::Admin) {
+                    return Err(Reason::NotTeamAdmin);
+                }
+                if !sa && member == &author && self.team_admin_count(team) <= 1 {
+                    return Err(Reason::LastTeamAdmin);
+                }
+                if let Some(tm) = self.live_team_mut(team)?.members.get_mut(member) {
+                    tm.role = TeamRole::Member;
                 }
             }
             Body::TeamMemberAdd { team, member } => {
@@ -898,6 +961,7 @@ impl OrgState {
                     return Err(Reason::NotAuthorized);
                 }
                 self.live_team_mut(team)?.members.remove(member);
+                self.leave_team_divisions(member, team);
             }
             Body::MemberRemove { member } => {
                 self.require_superadmin(&author)?;
@@ -908,6 +972,7 @@ impl OrgState {
                     return Err(Reason::LastSuperadmin);
                 }
                 self.leave_departments(member);
+                self.leave_divisions(member, None);
                 self.guest_access.retain(|g| &g.public_key != member);
                 for p in self.projects.values_mut() {
                     p.members.remove(member);
@@ -1097,6 +1162,7 @@ impl OrgState {
                     return Err(Reason::AlreadyInTeam);
                 }
                 self.leave_departments(member);
+                self.leave_divisions(member, Some(team));
                 self.live_team_mut(team)?.members.insert(
                     member.clone(),
                     TeamMember {
@@ -1176,6 +1242,7 @@ impl OrgState {
                 creator,
                 nonce,
                 members: initial,
+                division,
             } => {
                 if !self.is_active_non_guest(&author) {
                     return Err(Reason::GuestNotAllowed);
@@ -1210,6 +1277,9 @@ impl OrgState {
                         return Err(Reason::NotAuthorized);
                     }
                 }
+                if let Some(division) = division {
+                    self.check_project_division(&author, team.as_deref(), division)?;
+                }
                 let mut members = BTreeMap::new();
                 let joining = initial
                     .iter()
@@ -1233,6 +1303,7 @@ impl OrgState {
                         registered_by: author,
                         created_at: at,
                         members,
+                        division: division.clone(),
                     },
                 );
             }
@@ -1365,7 +1436,7 @@ impl OrgState {
                 let ou_map: Vec<OuMapping> = ou_map
                     .iter()
                     .filter(|row| self.live_team(&row.team).is_some())
-                    .cloned()
+                    .map(|row| self.ou_row_checked(row))
                     .collect();
                 let next = AdSettings {
                     domain: (!domain.is_empty()).then(|| domain.clone()),
@@ -1377,6 +1448,41 @@ impl OrgState {
                 }
                 self.ad = next;
             }
+            Body::DivisionCreate {
+                division,
+                team,
+                name,
+            } => self.apply_division_create(&author, &at, division, team, name)?,
+            Body::DivisionRename { division, name } => {
+                self.apply_division_rename(&author, division, name)?
+            }
+            Body::DivisionArchive { division, archived } => {
+                self.apply_division_archive(&author, &at, division, *archived)?
+            }
+            Body::DivisionHeadSet {
+                division,
+                member,
+                head,
+            } => self.apply_division_head_set(&author, &at, division, member, *head)?,
+            Body::DivisionMemberAdd { division, member } => {
+                self.apply_division_member_add(&author, &at, division, member)?
+            }
+            Body::DivisionMemberRemove { division, member } => {
+                self.apply_division_member_remove(&author, division, member)?
+            }
+            Body::ChatSettingsSet {
+                team,
+                division,
+                pinned,
+                announce,
+            } => self.apply_chat_settings_set(
+                &author,
+                &at,
+                team,
+                division.as_deref(),
+                pinned,
+                *announce,
+            )?,
         }
         Ok(())
     }

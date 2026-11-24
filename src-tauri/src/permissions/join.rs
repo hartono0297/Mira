@@ -499,6 +499,10 @@ pub fn check_ou_map(map: &[crate::ad::OuMapping]) -> Result<(), String> {
     for row in map {
         need(is_valid_ou_name(&row.ou), "nama OU tidak valid")?;
         need(is_lower_hex(&row.team, 32), "departemen pemetaan OU tidak valid")?;
+        need(
+            row.division.as_deref().is_none_or(|d| is_lower_hex(d, 32)),
+            "divisi pemetaan OU tidak valid",
+        )?;
         need(seen.insert(row.ou.to_lowercase()), "nama OU ganda")?;
     }
     Ok(())

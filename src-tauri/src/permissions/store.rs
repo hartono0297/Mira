@@ -417,6 +417,7 @@ pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()
             d.request, d.member, d.name, d.team, d.approved, d.by, d.at
         ])?;
     }
+    super::division::write_derived_divisions(conn, state)?;
     Ok(())
 }
 

@@ -20,6 +20,9 @@ export type ProjectSummary = {
   openCount: number;
   taskCount: number;
   canManage: boolean;
+  // Divisi pemilik proyek (sejak v0.6). Opsional supaya data lama tetap sah.
+  divisionId?: string | null;
+  divisionName?: string | null;
 };
 
 export type TaskCard = {
@@ -204,8 +207,23 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 export const boardApi = {
   listProjects: () => call<ProjectSummary[]>("board_list_projects"),
   // members: kunci publik orang yang dipilih selain pembuat (pembuat selalu anggota).
-  createProject: (name: string, code: string, teamId: string | null = null, members: string[] = []) =>
-    call<ProjectSummary>("board_create_project", { name, code, teamId, members }),
+  // divisionId: proyek atas nama divisi; teamId harus departemen divisi itu, dan
+  // anggota divisi yang aktif ikut menjadi anggota awal (ditambahkan inti Rust).
+  // Tanpa divisi, argumennya tidak dikirim sama sekali (bentuk panggilan lama).
+  createProject: (
+    name: string,
+    code: string,
+    teamId: string | null = null,
+    members: string[] = [],
+    divisionId: string | null = null,
+  ) =>
+    call<ProjectSummary>("board_create_project", {
+      name,
+      code,
+      teamId,
+      members,
+      ...(divisionId ? { divisionId } : {}),
+    }),
   outsideProjects: () => call<OutsideProject[]>("board_outside_projects"),
   updateProject: (projectId: string, name: string) =>
     call<ProjectSummary>("board_update_project", { projectId, name }),

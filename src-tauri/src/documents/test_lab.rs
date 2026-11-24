@@ -205,6 +205,7 @@ impl Lab {
             creator: creator_pk,
             nonce,
             members,
+            division: None,
         };
         self.laptops[creator]
             .with(|c| p::author_op(&mut c.db, &c.identity, p::Scope::Org, body, now()).unwrap());

@@ -85,9 +85,19 @@ type Bulk = {
   error: { title: string; error: AppError; note: string } | null;
 };
 
-export function JoinRequestsPanel({ page }: { page: OrgPage }) {
+type Props = {
+  page: OrgPage;
+  // Tab Departemen saya: hanya permintaan ke departemen ini.
+  teamId?: string;
+};
+
+export function JoinRequestsPanel({ page, teamId }: Props) {
   const live = useOrgLive(() => orgApi.joinRequests(), { version: page.version });
-  const requests = useMemo(() => (Array.isArray(live.data) ? live.data : null), [live.data]);
+  const requests = useMemo(
+    () =>
+      Array.isArray(live.data) ? (teamId === undefined ? live.data : live.data.filter((r) => r.teamId === teamId)) : null,
+    [live.data, teamId],
+  );
   const [rejecting, setRejecting] = useState<JoinRequestView | null>(null);
   const [rejectBusy, setRejectBusy] = useState(false);
   const [rejectError, setRejectError] = useState<{ title: string; error: AppError } | null>(null);

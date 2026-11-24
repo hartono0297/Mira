@@ -224,6 +224,7 @@ pub fn register_test_project(
         creator: me.clone(),
         nonce,
         members,
+        division: None,
     };
     permissions::author_op(conn, identity, Scope::Org, body, time::OffsetDateTime::now_utc())
         .unwrap();

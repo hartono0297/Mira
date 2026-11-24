@@ -97,7 +97,7 @@ describe("Organisasi: tab per peran", () => {
     answer();
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan"]);
+    expect(tabNames()).toEqual(["Pengguna", "Departemen", "Departemen saya", "Permintaan bergabung", "Label", "Undangan"]);
     expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
   });
 
@@ -105,7 +105,7 @@ describe("Organisasi: tab per peran", () => {
     answer({ org_overview: adminOverview() });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Anggota", "Permintaan bergabung", "Undangan"]);
+    expect(tabNames()).toEqual(["Anggota", "Departemen saya", "Permintaan bergabung", "Undangan"]);
     expect(screen.getByRole("button", { name: "Anggota" })).toHaveAttribute("aria-current", "true");
     expect(screen.queryByRole("button", { name: "Departemen" })).not.toBeInTheDocument();
   });

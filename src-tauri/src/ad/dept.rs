@@ -115,6 +115,7 @@ mod tests {
             .map(|(ou, team)| OuMapping {
                 ou: ou.to_string(),
                 team: team.to_string(),
+                division: None,
             })
             .collect()
     }

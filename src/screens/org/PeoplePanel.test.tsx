@@ -146,3 +146,19 @@ describe("Anggota (bukan superadmin)", () => {
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   });
 });
+
+describe("Anggota: divisi", () => {
+  it("menulis divisi setelah departemen dan bisa dicari dengan nama divisi", async () => {
+    const list = people();
+    list[1] = { ...list[1], divisions: [{ id: "d1", name: "Mobile" }, { id: "d2", name: "Web" }] };
+    const ue = renderPeople({ org_people: list });
+    await openTab(ue);
+    await screen.findByText("Rina");
+    expect(within(itemOf("Rina")).getByText("Desain · Mobile, Web, admin departemen")).toBeInTheDocument();
+    expect(within(itemOf("Penguji")).getByText("Desain, anggota")).toBeInTheDocument();
+
+    await ue.type(screen.getByRole("searchbox", { name: "Cari" }), "mobile");
+    expect(itemOf("Rina")).toBeInTheDocument();
+    expect(screen.getByText("1 orang")).toBeInTheDocument();
+  });
+});

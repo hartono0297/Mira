@@ -13,6 +13,7 @@ import type { AppState, Directory, InviteView, NetworkStatus } from "../api";
 import type { BoardView, MyTask, OutsideProject, ProjectSummary, TaskCard, TaskDetail } from "../api/board";
 import type { ChatOverview, ConversationSummary, ConversationView, MessageView, Person } from "../api/chat";
 import type { DocumentSummary, DocumentVersion, PersonRef } from "../api/documents";
+import type { DeptOverview } from "../api/division";
 import type { DepartmentView, JoinRequestView, LabelView, OrgOverview, PersonView, UserView } from "../api/org";
 import type { RequestSummary, SignOverview } from "../api/signing";
 import { renderInLang } from "../test/i18n";
@@ -411,6 +412,43 @@ function department(id: string, name: string, extra: Partial<DepartmentView> = {
     ...extra,
   };
 }
+
+// Tab Departemen saya: admin departemen Design, gerbang versi tertutup supaya
+// pemberitahuannya ikut terpindai.
+const NO_SETTINGS = { pinned: "", announce: false, setAt: null, setByName: null };
+const DEPT_OVERVIEW: DeptOverview = {
+  teamId: TEAM_1,
+  teamName: "Design",
+  archived: false,
+  choices: [
+    { id: TEAM_1, name: "Design" },
+    { id: TEAM_2, name: "Finance" },
+  ],
+  me: { publicKey: ME, isSuperadmin: true, isAdmin: true, headOf: [] },
+  canManageDept: true,
+  members: [
+    {
+      publicKey: ME, displayName: "Alex Morgan", fingerprint: "AAAA BBBB CCCC DDDD", isSuperadmin: true, isAdmin: true,
+      isMe: true, online: true, labels: [], divisions: [], appVersion: "0.6.0",
+    },
+    {
+      publicKey: PK_B, displayName: "Sam Lee", fingerprint: "BBBB 0000 0000 0000", isSuperadmin: false, isAdmin: false,
+      isMe: false, online: false, labels: [{ id: LABEL_1, name: "Surveyor" }],
+      divisions: [{ id: "8".repeat(32), name: "Mobile", role: "head" }], appVersion: null,
+    },
+  ],
+  divisions: [
+    {
+      id: "8".repeat(32), name: "Mobile", archived: false, createdAt: "2026-11-20T03:00:00Z",
+      members: [{ publicKey: PK_B, displayName: "Sam Lee", role: "head" }],
+      canManage: true, canEditMembers: true, conv: `ch:${"8".repeat(32)}`, settings: NO_SETTINGS,
+    },
+  ],
+  projects: [{ id: PROJ_1, name: "Harbor Tower", divisionId: null, divisionName: null, members: [] }],
+  channel: { conv: `c${TEAM_1.slice(1)}`, name: "design", settings: NO_SETTINGS },
+  adminHistory: [{ at: "2026-11-20T03:00:00Z", byName: "Alex Morgan", targetName: "Sam Lee", admin: true, status: "rejected" }],
+  gate: { open: false, since: "0.6.0", blockers: [{ publicKey: PK_B, name: "Sam Lee", appVersion: null }] },
+};
 
 const DEPARTMENTS: DepartmentView[] = [
   department(TEAM_1, "Design", { admins: [{ publicKey: ME, displayName: "Alex Morgan" }] as never }),
@@ -839,6 +877,7 @@ function backend(overrides: Record<string, Answer> = {}) {
     org_departments: DEPARTMENTS,
     org_labels: LABELS,
     org_join_requests: JOIN_REQUESTS,
+    dept_overview: DEPT_OVERVIEW,
     org_project_members: {
       projectId: PROJ_1,
       registered: true,
@@ -1023,13 +1062,13 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
     await openSection(user, "org");
     const tabs = await waitFor(() => {
       const list = document.querySelectorAll<HTMLElement>("button.org-tab");
-      if (list.length < 5) throw new Error(`tab Organisasi belum lengkap (${list.length})`);
+      if (list.length < 6) throw new Error(`tab Organisasi belum lengkap (${list.length})`);
       return list;
     });
-    // Urutan tab superadmin: Pengguna, Departemen, Permintaan bergabung, Label, Undangan.
-    const waits = ["Casey Kim", "Archive Team", "Riley Chen", "Surveyor", null];
-    const names = ["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan"];
-    const anchors = ["Laptop and last IP", "Archived", "Approve", "New label", "Create invite code"];
+    // Urutan tab superadmin: Pengguna, Departemen, Departemen saya, Permintaan bergabung, Label, Undangan.
+    const waits = ["Casey Kim", "Archive Team", "Department members", "Riley Chen", "Surveyor", null];
+    const names = ["Pengguna", "Departemen", "Departemen saya", "Permintaan bergabung", "Label", "Undangan"];
+    const anchors = ["Laptop and last IP", "Archived", "version not reported", "Approve", "New label", "Create invite code"];
     const all: string[] = [];
     for (let i = 0; i < tabs.length; i += 1) {
       await user.click(document.querySelectorAll<HTMLElement>("button.org-tab")[i]);

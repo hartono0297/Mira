@@ -85,6 +85,18 @@ describe("boardApi.createProject", () => {
       members: [],
     });
   });
+
+  it("proyek divisi: divisionId ikut dikirim", async () => {
+    tauri.invoke.mockResolvedValue({});
+    await boardApi.createProject("Aplikasi", "APP", "t", [], "d");
+    expect(tauri.invoke).toHaveBeenLastCalledWith("board_create_project", {
+      name: "Aplikasi",
+      code: "APP",
+      teamId: "t",
+      members: [],
+      divisionId: "d",
+    });
+  });
 });
 
 describe("boardApi.updateProject", () => {

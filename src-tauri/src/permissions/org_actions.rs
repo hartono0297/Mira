@@ -255,6 +255,7 @@ pub fn set_ad_settings(
             row.ou
         )));
     }
+    super::division::check_ou_map_divisions(&state, &ou_map)?;
     let next = AdSettings {
         domain: (!domain.is_empty()).then(|| domain.clone()),
         ou_map: ou_map.clone(),
@@ -299,7 +300,14 @@ fn clean_ou_map(map: Vec<OuMapping>) -> AppResult<Vec<OuMapping>> {
                 "OU \"{ou}\" tercantum lebih dari sekali. Satu OU hanya bisa dipetakan ke satu departemen."
             )));
         }
-        out.push(OuMapping { ou, team: row.team });
+        if let Some(division) = &row.division {
+            check_id(division, Reason::DivisionNotFound)?;
+        }
+        out.push(OuMapping {
+            ou,
+            team: row.team,
+            division: row.division,
+        });
     }
     Ok(out)
 }
@@ -346,6 +354,7 @@ pub(crate) fn register_own_project_in(
             creator: me.to_owned(),
             nonce: nonce.to_owned(),
             members,
+            division: None,
         },
         now,
     )?;
@@ -379,6 +388,7 @@ pub(crate) fn register_project_for_in(
             creator: creator.to_owned(),
             nonce: nonce.to_owned(),
             members,
+            division: None,
         },
         now,
     )?;

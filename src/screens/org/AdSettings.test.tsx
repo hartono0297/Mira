@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DivisionRef } from "../../api/division";
 import type { AdSettingsView, OuMapping } from "../../api/org";
 import { setLang } from "../../i18n/core";
 import { router } from "../../test/fixtures";
@@ -362,5 +363,103 @@ describe("Pengaturan Active Directory dalam bahasa Inggris", () => {
     const blocked = await screen.findByTestId("ad-settings-blocked");
     expect(blocked).toHaveTextContent("AD settings can't be changed yet");
     expect(blocked).toHaveTextContent("Bayu, version not reported yet");
+  });
+});
+
+const MOBILE = "4".repeat(32);
+const KAS = "5".repeat(32);
+const LAMA = "6".repeat(32);
+const DIVS: DivisionRef[] = [
+  { id: MOBILE, name: "Mobile", teamId: TEAM_1, teamName: "Desain", archived: false },
+  { id: LAMA, name: "Lama", teamId: TEAM_1, teamName: "Desain", archived: true },
+  { id: KAS, name: "Kas", teamId: TEAM_2, teamName: "Keuangan", archived: false },
+];
+const divSelect = (n: number) => screen.getByRole("combobox", { name: `Divisi baris ${n}` });
+const optionTexts = (el: HTMLElement) => within(el).getAllByRole("option").map((o) => o.textContent);
+
+describe("Pengaturan Active Directory: divisi per baris", () => {
+  it("menampilkan divisi baris, pilihan hanya divisi aktif departemen itu, dan catatan di bawah tabel", async () => {
+    setup(adSettings({ ouMap: [{ ou: "Finance", team: TEAM_2, division: KAS }, MAP[1]] }), { my_divisions: DIVS });
+    await screen.findByRole("textbox", { name: "Domain AD" });
+    await waitFor(() => expect(divSelect(1)).toHaveValue(KAS));
+    expect(optionTexts(divSelect(1))).toEqual(["Tanpa divisi", "Kas"]);
+    expect(divSelect(2)).toHaveValue("");
+    expect(optionTexts(divSelect(2))).toEqual(["Tanpa divisi", "Mobile"]);
+    expect(screen.getByRole("columnheader", { name: "Divisi" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "OU yang lebih dalam bisa dipetakan ke divisi. Orang yang disetujui lewat AD otomatis masuk divisi itu.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("divisi tersimpan di pemetaan; ganti departemen melepas divisi departemen lama", async () => {
+    const { user } = setup(adSettings({ ouMap: [{ ou: "Finance", team: TEAM_2, division: KAS }, MAP[1]] }), {
+      my_divisions: DIVS,
+      org_set_ad_settings: null,
+    });
+    await screen.findByRole("textbox", { name: "Domain AD" });
+    await waitFor(() => expect(optionTexts(divSelect(2))).toContain("Mobile"));
+    await user.selectOptions(divSelect(2), "Mobile");
+    await user.selectOptions(deptSelect(1), "Desain");
+    expect(divSelect(1)).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Simpan pengaturan AD" }));
+    await waitFor(() =>
+      expect(calls("org_set_ad_settings")).toEqual([
+        {
+          domain: "",
+          ouMap: [
+            { ou: "Finance", team: TEAM_1 },
+            { ou: "Studio", team: TEAM_1, division: MOBILE },
+          ],
+        },
+      ]),
+    );
+  });
+
+  it("baris baru menunggu departemen; departemen tanpa divisi; divisi diarsipkan tetap terlihat", async () => {
+    const { user } = setup(
+      adSettings({ ouMap: [{ ou: "Arsip", team: TEAM_1, division: LAMA }] }),
+      { my_divisions: DIVS.filter((d) => d.id !== KAS) },
+    );
+    await screen.findByRole("textbox", { name: "Domain AD" });
+    await waitFor(() => expect(optionTexts(divSelect(1))).toEqual(["Tanpa divisi", "Lama (diarsipkan)", "Mobile"]));
+    expect(divSelect(1)).toHaveValue(LAMA);
+
+    await user.click(screen.getByRole("button", { name: "Tambah baris" }));
+    expect(divSelect(2)).toBeDisabled();
+    expect(optionTexts(divSelect(2))).toEqual(["Pilih departemen dulu"]);
+    await user.selectOptions(deptSelect(2), "Keuangan");
+    expect(divSelect(2)).toBeDisabled();
+    expect(optionTexts(divSelect(2))).toEqual(["Belum ada divisi"]);
+  });
+
+  it("daftar divisi gagal dibaca: keterangan dan tombol baca ulang", async () => {
+    let fail = true;
+    const { user } = setup(adSettings({ ouMap: [MAP[1]] }), {
+      my_divisions: () => {
+        if (fail) throw { code: "db", message: "Basis data terkunci." };
+        return DIVS;
+      },
+    });
+    expect(await screen.findByText(/Daftar divisi belum terbaca \(Basis data terkunci\.\)/)).toBeInTheDocument();
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Baca ulang divisi" }));
+    await waitFor(() => expect(optionTexts(divSelect(1))).toEqual(["Tanpa divisi", "Mobile"]));
+    expect(screen.queryByText(/Daftar divisi belum terbaca/)).not.toBeInTheDocument();
+  });
+
+  it("dalam bahasa Inggris", async () => {
+    invoke.mockImplementation(
+      router({ org_ad_settings: adSettings({ ouMap: [MAP[1], { ou: "Baru", team: "" }] }), my_divisions: DIVS }),
+    );
+    renderInLang(() => <AdSettings page={page()} departments={DEPTS} />, "en");
+    const div1 = await screen.findByRole("combobox", { name: "Division, row 1" });
+    await waitFor(() => expect(optionTexts(div1)).toEqual(["No division", "Mobile"]));
+    expect(optionTexts(screen.getByRole("combobox", { name: "Division, row 2" }))).toEqual([
+      "Choose a department first",
+    ]);
+    expect(screen.getByText(/Deeper OUs can be mapped to a division/)).toBeInTheDocument();
+    expect(screen.queryByText(/\bdivisi\b|Tanpa|Pilih/)).not.toBeInTheDocument();
   });
 });

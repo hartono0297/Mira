@@ -1,7 +1,8 @@
 import { IconLock } from "@tabler/icons-react";
-import { useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { toAppError, type AppError } from "../../api";
 import { boardApi, type ProjectSummary } from "../../api/board";
+import { divisionApi, type DivisionRef } from "../../api/division";
 import type { PersonView } from "../../api/org";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
@@ -9,6 +10,7 @@ import { FieldError } from "../../components/FieldError";
 import { initials } from "../../components/initials";
 import { BOARD_DETAIL } from "../../i18n/board-detail";
 import BOARD_DETAIL_ID from "../../i18n/board-detail.id";
+import { DIVISION_MISC } from "../../i18n/division-misc";
 import { useCreateOptions, type OrgData } from "./createOptions";
 import { PROJECT_CODE_RE, projectNameProblem, suggestCode } from "./format";
 import { describePicked, PeoplePicker } from "./PeoplePicker";
@@ -36,9 +38,36 @@ function serverHint(error: AppError): string | null {
   return null;
 }
 
-function memberSummary(picked: PersonView[]): string {
+function memberSummary(picked: PersonView[], division: DivisionRef | null): string {
+  if (division) {
+    const D = DIVISION_MISC.newProject;
+    if (picked.length === 0) return D.summaryNone(division.name);
+    return D.summaryPicked(describePicked(picked), division.name);
+  }
   if (picked.length === 0) return BOARD_DETAIL.newProject.summaryNone;
   return BOARD_DETAIL.newProject.summaryPicked(describePicked(picked));
+}
+
+// Divisi saya (dan yang saya kelola) untuk pilihan "Untuk divisi". Gagal dibaca
+// sama dengan tidak ada divisi: pilihannya opsional, proyek tetap bisa dibuat.
+function useMyDivisions(open: boolean): DivisionRef[] {
+  const [divisions, setDivisions] = useState<DivisionRef[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    divisionApi
+      .myDivisions()
+      .then((list) => {
+        if (alive) setDivisions(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        if (alive) setDivisions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+  return divisions;
 }
 
 // Penjelasan untuk orang yang tidak berhak membuat proyek, dengan nama admin departemennya kalau ada.
@@ -73,10 +102,12 @@ function CannotCreate({ data }: { data: OrgData }) {
 // mengelola dan undangan Tamu mana yang berlaku.
 export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
   const org = useCreateOptions(open);
+  const myDivisions = useMyDivisions(open);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [codeTouched, setCodeTouched] = useState(false);
   const [deptPick, setDeptPick] = useState<string | null>(null);
+  const [divisionPick, setDivisionPick] = useState<string>(NONE);
   const [members, setMembers] = useState<string[]>([]);
   const [nameError, setNameError] = useState<string | null>(null);
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -91,6 +122,8 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
   const codeErrId = useId();
   const deptId = useId();
   const deptHintId = useId();
+  const divisionId = useId();
+  const divisionHintId = useId();
 
   const options = org.status === "ready" ? org.options : null;
   const data = org.status === "ready" ? org.data : null;
@@ -104,9 +137,24 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
   const myName = data?.people.find((p) => p.publicKey === data.overview.publicKey)?.displayName ?? T.you;
 
   const values = options ? [...options.departments.map((d) => d.id), ...(options.allowNoDepartment ? [NONE] : [])] : [];
+  // Divisi yang ditawarkan: tidak diarsipkan dan di departemen yang boleh dipilih di sini.
+  const divisions = useMemo(
+    () =>
+      options
+        ? myDivisions
+            .filter((d) => !d.archived && options.departments.some((x) => x.id === d.teamId))
+            .sort((a, b) => a.teamName.localeCompare(b.teamName, "id") || a.name.localeCompare(b.name, "id"))
+        : [],
+    [myDivisions, options],
+  );
+  const pickedDivision = divisions.find((d) => d.id === divisionPick) ?? null;
   // Pilihan yang tidak berlaku lagi (departemen diarsipkan, hak berubah) kembali ke bawaan.
-  const deptValue =
-    deptPick !== null && values.includes(deptPick) ? deptPick : (options?.defaultDepartment ?? values[0] ?? NONE);
+  // Proyek divisi selalu di departemen divisi itu.
+  const deptValue = pickedDivision
+    ? pickedDivision.teamId
+    : deptPick !== null && values.includes(deptPick)
+      ? deptPick
+      : (options?.defaultDepartment ?? values[0] ?? NONE);
   const pickedDept = options?.departments.find((d) => d.id === deptValue) ?? null;
   const canSubmit = !!options?.canCreate && !busy;
 
@@ -115,6 +163,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     setCode("");
     setCodeTouched(false);
     setDeptPick(null);
+    setDivisionPick(NONE);
     setMembers([]);
     setNameError(null);
     setCodeError(null);
@@ -150,7 +199,10 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     const chosen = members.filter((k) => offered.has(k));
     setBusy(true);
     try {
-      const project = await boardApi.createProject(cleanName, cleanCode, deptValue !== NONE ? deptValue : null, chosen);
+      const team = deptValue !== NONE ? deptValue : null;
+      const project = pickedDivision
+        ? await boardApi.createProject(cleanName, cleanCode, team, chosen, pickedDivision.id)
+        : await boardApi.createProject(cleanName, cleanCode, team, chosen);
       reset();
       onCreated(project);
     } catch (err) {
@@ -203,7 +255,11 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
         <select
           id={deptId}
           value={deptValue}
-          onChange={(e) => setDeptPick(e.target.value)}
+          onChange={(e) => {
+            setDeptPick(e.target.value);
+            // Departemen lain: proyek bukan lagi milik divisi yang dipilih.
+            if (pickedDivision && pickedDivision.teamId !== e.target.value) setDivisionPick(NONE);
+          }}
           aria-describedby={deptHintId}
           disabled={busy}
         >
@@ -216,6 +272,38 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
         </select>
         <p id={deptHintId} className="hint">
           {pickedDept ? T.deptHint(pickedDept.name) : T.noDeptHint}
+        </p>
+      </div>
+    );
+  }
+
+  // "Untuk divisi": hanya tampil kalau ada divisi yang bisa dipilih.
+  function divisionField() {
+    if (org.status !== "ready" || divisions.length === 0) return null;
+    const D = DIVISION_MISC.newProject;
+    return (
+      <div className="field">
+        <label htmlFor={divisionId}>{D.label}</label>
+        <select
+          id={divisionId}
+          value={pickedDivision?.id ?? NONE}
+          onChange={(e) => {
+            const next = divisions.find((d) => d.id === e.target.value) ?? null;
+            setDivisionPick(next ? next.id : NONE);
+            if (next) setDeptPick(next.teamId);
+          }}
+          aria-describedby={divisionHintId}
+          disabled={busy}
+        >
+          <option value={NONE}>{D.none}</option>
+          {divisions.map((d) => (
+            <option key={d.id} value={d.id}>
+              {D.option(d.name, d.teamName)}
+            </option>
+          ))}
+        </select>
+        <p id={divisionHintId} className="hint">
+          {pickedDivision ? D.picked(pickedDivision.name) : D.hint}
         </p>
       </div>
     );
@@ -242,7 +330,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
             </>
           }
           emptyText={T.emptyPeople}
-          summary={memberSummary}
+          summary={(picked) => memberSummary(picked, pickedDivision)}
         />
       </div>
     );
@@ -315,6 +403,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
               </div>
             </div>
             {deptField()}
+            {divisionField()}
           </div>
           {memberField()}
           <div aria-live="polite">

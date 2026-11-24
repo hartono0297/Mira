@@ -1,0 +1,167 @@
+/* Chat divisi dan pengaturan chat departemen (v0.6).
+   Dimuat lewat PinnedNote dan AnnounceGate (dipasang di Conversation), jadi sudah ada begitu layar
+   Chat dibuka, termasuk untuk baris sidebar di bawah.
+
+   Pasangan warna yang dicek (check_contrast, terang / gelap):
+   --text di --card           #2A1F1A/#FFF9F6 15.38 / #F5EAE4/#2A201C 13.45
+   --text-sec di --card       #6E5F57/#FFF9F6 5.86  / #C2B0A6/#2A201C 7.61
+   --accent-text di --card    #A8401F/#FFF9F6 5.89  / #FFB59A/#2A201C 9.33  (Tampilkan semua)
+   --accent-text di --accent-soft (chip)   #A8401F/#FBE3D8 5.00 / #FFB59A/#4A2A1E 7.51
+   --focus di --card (3:1)    #B4472A/#FFF9F6 5.20  / #F08A64/#2A201C 6.45
+   --border-strong di --card (3:1, garis tombol dan kolom)  #A88A7C/#FFF9F6 3.05 / #8F766A/#2A201C 3.76
+   --danger di --bg (hitungan lewat batas)  #A3221B/#FFFFFF 7.49 / #FF9A8F/#1E1714 8.65 */
+
+/* Baris sidebar: chat divisi menjorok sedikit di bawah channel departemennya. Jarak 18px membuat
+   ikon grup jatuh di bawah tanda # induknya, jadi hubungannya terbaca tanpa garis tambahan. */
+.chat-row-division {
+  padding-left: 28px;
+}
+
+/* Banner catatan disematkan: satu pita tenang antara kepala percakapan dan pesan. Latar --card
+   (bukan warna aksen) karena catatan adalah isi, bukan peringatan. */
+.pin-note {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+}
+
+.pin-note-empty {
+  align-items: center;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.pin-note-icon {
+  flex: none;
+  margin-top: 3px;
+  color: var(--text-sec);
+}
+
+.pin-note-empty .pin-note-icon {
+  margin-top: 0;
+}
+
+.pin-note-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Baris baru dari penulis dipertahankan, kata panjang (tautan) dipatahkan supaya tidak melebar. */
+.pin-note-text {
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pin-note-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.pin-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.pin-note-toggle {
+  font-size: 13px;
+  min-height: 24px;
+}
+
+.pin-note-edit {
+  flex: none;
+}
+
+/* Dialog ubah catatan */
+
+.pin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pin-form-note {
+  min-height: 120px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 15px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.pin-form-note:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.pin-form-note[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.pin-form-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.pin-form-meta .hint:last-child {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.pin-form-over {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.pin-form-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pin-form-check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.pin-form-check label {
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .pin-note {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* Mode kontras tinggi: pita tetap terpisah dari pesan walau latarnya dibuang. */
+@media (forced-colors: active) {
+  .pin-note {
+    border-bottom-color: CanvasText;
+  }
+}

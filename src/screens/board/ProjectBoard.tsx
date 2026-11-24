@@ -26,6 +26,7 @@ import {
 } from "../../api/board";
 import { useContextMenu, type MenuEntry } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { DIVISION_SEPARATOR } from "../org/divisionText";
 import { BoardCard } from "./BoardCard";
 import { applyMove, blockedText, locate, neighbourPlace, samePlace, type Direction, type Place } from "./boardMoves";
 import { cardDragActive, cardMenuEntries, type CardMenuActions } from "./cardMenu";
@@ -439,6 +440,7 @@ export function ProjectBoard({
         <span className="chip pb-team">
           <span className="sr-only">{T.departemenSr}</span>
           {project.teamName ? teamLabel(project.teamName) : TEKS.proyek.tanpaDepartemen}
+          {project.teamName && project.divisionName ? `${DIVISION_SEPARATOR}${project.divisionName}` : null}
         </span>
         <span className="page-sub">{T.jumlahTask(project.taskCount, project.openCount)}</span>
         <div className="pb-actions">

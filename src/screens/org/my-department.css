@@ -1,0 +1,369 @@
+/* Tab Departemen saya. Mengikuti bahasa tampilan tab lain di org.css: daftar
+   .row-list, bagian lipat .org-fold, kotak .notice, dan kolom berbingkai (yang
+   bisa diubah tampil berbingkai border-strong). Bagian dipisah garis tipis
+   seperti .ad-set. Warna hanya token tema; pasangan baru dicek kontrasnya:
+   text-sec di atas card (kartu divisi) 5,86:1 terang dan 7,61:1 gelap, danger
+   di atas card 7,19:1 dan 7,77:1, garis border-strong di atas card 3,05:1 dan
+   3,76:1, cincin fokus di atas card 5,2:1 dan 6,45:1. */
+
+.md {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.md-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 16px;
+}
+
+.md-team {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.md-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 320px;
+}
+
+.md-intro {
+  max-width: 68ch;
+}
+
+/* Setiap bagian dipisah garis tipis, seperti .ad-set di tab Departemen. */
+.md-block {
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.md-count-line {
+  align-self: center;
+}
+
+.md-blockers {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* Kolom isian */
+
+.md-label {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.md-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.md-inline .md-input {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+.md-input {
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 15px;
+}
+
+.md-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.md-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.md-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.md-textarea {
+  width: 100%;
+  max-width: 560px;
+  min-height: 84px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.md-create,
+.md-rename,
+.md-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.md-rename {
+  flex: 1 1 320px;
+}
+
+/* Kartu divisi: bingkai tipis dan latar kartu, isi dua tingkat (kepala lalu anggota). */
+
+.md-div-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.org-fold .md-div-list {
+  margin-top: 4px;
+}
+
+.md-div {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.md-div-archived {
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+
+.md-div-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.md-div-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.md-div-name {
+  font-size: 16px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.md-people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+.md-person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 44px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-person-name {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.md-div .row-actions .btn,
+.md-person .btn {
+  white-space: nowrap;
+}
+
+.md-select {
+  cursor: pointer;
+}
+
+.md-div-chat summary {
+  margin-bottom: 0;
+}
+
+/* Pengaturan chat (channel departemen dan kartu divisi) */
+
+.md-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.md-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.md-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.md-field label {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.md-field-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  max-width: 560px;
+}
+
+.md-count {
+  font-size: 12px;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lewat batas: teks tebal berwarna danger, bukan warna saja (pesan error ikut tampil). */
+.md-count-over {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.md-switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.md-switch input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.md-switch label {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.md-fields:disabled .md-switch input,
+.md-fields:disabled .md-switch label {
+  cursor: not-allowed;
+}
+
+.md-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.md-chat-actions .btn {
+  min-height: 44px;
+}
+
+.md-chat-read {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.md-k {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.md-k:first-child {
+  margin-top: 0;
+}
+
+.md-pinned {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 68ch;
+}
+
+/* Status online: lingkaran penuh untuk online, kosong untuk offline, selalu dengan teks. */
+.md-status {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.md-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--online);
+  border: 1.5px solid var(--online);
+  transform: translateY(-1px);
+}
+
+.md-dot-off {
+  background: transparent;
+  border-color: var(--text-sec);
+}
+
+/* Riwayat admin: yang ditolak dicoret dan diberi label teks Ditolak. */
+.md-history-text {
+  overflow-wrap: anywhere;
+}
+
+.md-history-rejected {
+  text-decoration: line-through;
+  color: var(--text-sec);
+}
+
+@container (max-width: 520px) {
+  .md-inline .md-input,
+  .md-inline .md-select {
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .md-picker {
+    flex-basis: 100%;
+  }
+
+  .md-person .row-actions {
+    flex-basis: 100%;
+  }
+}

@@ -153,3 +153,15 @@ describe("ProfileDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
+
+describe("ProfileDialog: divisi", () => {
+  it("departemen ditulis dengan divisinya", async () => {
+    org.people.mockResolvedValue([
+      { ...sariView, departmentRole: "member", divisions: [{ id: "d1", name: "Mobile" }, { id: "d2", name: "Web" }] },
+    ]);
+    renderProfile(sari);
+    const dlg = screen.getByRole("dialog", { name: "Profil Sari Uji" });
+    await within(dlg).findByText(PROFILE.department);
+    expect(factOf(dlg, PROFILE.department)).toHaveTextContent(/^Drafting · Mobile, Web$/);
+  });
+});

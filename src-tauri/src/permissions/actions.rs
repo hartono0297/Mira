@@ -38,7 +38,8 @@ pub(crate) fn reason_error(reason: Reason) -> AppError {
         | Reason::TargetNotActive
         | Reason::InviteNotFound
         | Reason::ProjectNotFound
-        | Reason::LabelNotFound => AppError::NotFound(reason.message().into()),
+        | Reason::LabelNotFound
+        | Reason::DivisionNotFound => AppError::NotFound(reason.message().into()),
         Reason::InviteExpired | Reason::InviteNotYetValid => AppError::InviteExpired,
         Reason::InviteUsed => AppError::InviteUsed,
         Reason::InviteRevoked | Reason::InviterNotAuthorized => AppError::InviteRevoked,

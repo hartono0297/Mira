@@ -8,6 +8,7 @@ import { NameWithLabels } from "../../components/NameWithLabels";
 import { getLang } from "../../i18n/core";
 import { ORG_TEXT } from "../../i18n/org";
 import type { OrgPage } from "./context";
+import { deptWithDivisions } from "./divisionText";
 import { useOrgLive } from "./useOrgLive";
 import "./users.css";
 
@@ -48,7 +49,7 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
 
   const people = useMemo(() => [...(live.data ?? [])].sort(byName), [live.data]);
   const shown = people.filter((p) =>
-    matches(query, [p.displayName, ...p.labels.map((l) => l.name)]),
+    matches(query, [p.displayName, ...p.labels.map((l) => l.name), ...(p.divisions ?? []).map((d) => d.name)]),
   );
   const onlyMe = people.length === 0 || (people.length === 1 && page.isMe(people[0].publicKey));
 
@@ -141,7 +142,9 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
                         suffix={self ? ORG_TEXT.you : undefined}
                       />
                       <span className="row-sub">
-                        {p.isGuest ? ORG_TEXT.people.guest : (p.departmentName ?? ORG_TEXT.people.noDepartment)}
+                        {p.isGuest
+                          ? ORG_TEXT.people.guest
+                          : (deptWithDivisions(p.departmentName, p.divisions) ?? ORG_TEXT.people.noDepartment)}
                         {!p.isGuest && <>, {roleText(p).toLocaleLowerCase("id")}</>}
                       </span>
                     </div>

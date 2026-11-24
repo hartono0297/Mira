@@ -21,11 +21,19 @@
 //!    what they take away. A winner the final fold still rejects drops out
 //!    and everything is settled again without it.
 //!
+//! Division heads (v0.6) are rights like department admins: relieving a
+//! head, removing a head from the division, archiving the division, moving
+//! a head to another department or out of the department takes them away,
+//! so a head's concurrent division changes are rejected. Two department
+//! admins demoting each other concurrently both lose a right the other
+//! used; neither is a superadmin, so the one first in fold order wins.
+//!
 //! Every step depends only on the set of ops, so laptops holding the same
 //! ops reach the same result.
 
 use std::collections::{HashMap, HashSet};
 
+use super::division::DivisionRole;
 use super::fold::{FoldResult, ManagerPath, OrgState, Outcome, Reason, TeamRole};
 use super::op::{Body, InviteRole, MAX_DEPS, Scope, VerifiedOp};
 use crate::org::Organization;
@@ -44,6 +52,10 @@ enum Right {
     /// `(project, member)`: being an explicit member of a project, which the
     /// project's creator and superadmins need to manage its members.
     ProjectMember(String, String),
+    /// `(division, member)`: being a head of a division.
+    DivisionHead(String, String),
+    /// Taken away by archiving a division: every head right in it.
+    AllDivisionHeads(String),
 }
 
 impl Right {
@@ -55,13 +67,16 @@ impl Right {
                 Right::Member(y)
                 | Right::Superadmin(y)
                 | Right::TeamAdmin(_, y)
-                | Right::ProjectMember(_, y),
+                | Right::ProjectMember(_, y)
+                | Right::DivisionHead(_, y),
             ) => x == y,
             (Right::Superadmin(x), Right::Superadmin(y)) => x == y,
             (Right::TeamAdmin(t, x), Right::TeamAdmin(u, y)) => t == u && x == y,
             (Right::AllTeamAdmins(t), Right::TeamAdmin(u, _)) => t == u,
             (Right::Invite(i), Right::Invite(j)) => i == j,
             (Right::ProjectMember(p, x), Right::ProjectMember(q, y)) => p == q && x == y,
+            (Right::DivisionHead(d, x), Right::DivisionHead(e, y)) => d == e && x == y,
+            (Right::AllDivisionHeads(d), Right::DivisionHead(e, _)) => d == e,
             _ => false,
         }
     }
@@ -103,6 +118,9 @@ pub(crate) fn is_revocation(body: &Body) -> bool {
             | Body::InviteRevoke { .. }
             | Body::TeamMove { .. }
             | Body::ProjectMemberRemove { .. }
+            | Body::DivisionHeadSet { head: false, .. }
+            | Body::DivisionMemberRemove { .. }
+            | Body::DivisionArchive { archived: true, .. }
     )
 }
 
@@ -138,8 +156,6 @@ impl OrgState {
             | Body::TeamDelete { .. }
             | Body::SuperadminAdd { .. }
             | Body::SuperadminRemove { .. }
-            | Body::TeamAdminSet { .. }
-            | Body::TeamAdminUnset { .. }
             | Body::MemberRemove { .. }
             | Body::TeamRename { .. }
             | Body::TeamArchive { .. }
@@ -150,7 +166,27 @@ impl OrgState {
             | Body::LabelAssign { .. }
             | Body::LabelUnassign { .. }
             | Body::AdSettingsSet { .. } => sa_only(),
-            Body::TeamMemberAdd { team, .. } => one_of(author, sa, admin(team, author), team),
+            Body::TeamMemberAdd { team, .. }
+            | Body::TeamAdminSet { team, .. }
+            | Body::TeamAdminUnset { team, .. }
+            | Body::DivisionCreate { team, .. } => one_of(author, sa, admin(team, author), team),
+            Body::DivisionRename { division, .. }
+            | Body::DivisionArchive { division, .. }
+            | Body::DivisionHeadSet { division, .. } => self.division_alts(author, division, false),
+            Body::DivisionMemberAdd { division, .. } => self.division_alts(author, division, true),
+            Body::DivisionMemberRemove { division, member } => {
+                if member == author {
+                    Vec::new()
+                } else {
+                    // A head may remove members who are not heads.
+                    let target = self.division_role(division, member);
+                    self.division_alts(author, division, target != Some(DivisionRole::Head))
+                }
+            }
+            Body::ChatSettingsSet { team, division, .. } => match division {
+                Some(d) => self.division_alts(author, d, true),
+                None => one_of(author, sa, admin(team, author), team),
+            },
             Body::TeamMemberRemove { team, member } => {
                 if member == author {
                     Vec::new()
@@ -173,9 +209,21 @@ impl OrgState {
                 }
                 Err(_) => Vec::new(),
             },
-            Body::ProjectCreate { team, creator, .. } => {
+            Body::ProjectCreate {
+                team,
+                creator,
+                division,
+                ..
+            } => {
                 if creator == author {
-                    Vec::new()
+                    // A division project needs the author in the division
+                    // (not a revocable right here) or managing it.
+                    match division {
+                        Some(d) if self.division_role(d, author).is_none() => {
+                            self.division_alts(author, d, false)
+                        }
+                        _ => Vec::new(),
+                    }
                 } else {
                     match team {
                         Some(t) => one_of(author, sa, admin(t, author), t),
@@ -232,26 +280,73 @@ impl OrgState {
             Body::TeamAdminUnset { team, member } => {
                 vec![Right::TeamAdmin(team.clone(), member.clone())]
             }
-            Body::TeamMemberRemove { team, member }
-                if self.team_role(team, member) == Some(TeamRole::Admin) =>
-            {
-                vec![Right::TeamAdmin(team.clone(), member.clone())]
+            Body::TeamMemberRemove { team, member } => {
+                let mut taken = Vec::new();
+                if self.team_role(team, member) == Some(TeamRole::Admin) {
+                    taken.push(Right::TeamAdmin(team.clone(), member.clone()));
+                }
+                taken.extend(self.head_rights(member, |t| t == team));
+                taken
             }
             Body::TeamDelete { team } => vec![Right::AllTeamAdmins(team.clone())],
             Body::InviteRevoke { invite } => vec![Right::Invite(invite.clone())],
             // Moving a department admin out of the department ends that
             // admin right.
-            Body::TeamMove { team, member } => self
-                .teams_of(member)
-                .into_iter()
-                .filter(|(t, role)| &t.id != team && *role == TeamRole::Admin)
-                .map(|(t, _)| Right::TeamAdmin(t.id.clone(), member.clone()))
-                .collect(),
+            Body::TeamMove { team, member } => {
+                let mut taken: Vec<Right> = self
+                    .teams_of(member)
+                    .into_iter()
+                    .filter(|(t, role)| &t.id != team && *role == TeamRole::Admin)
+                    .map(|(t, _)| Right::TeamAdmin(t.id.clone(), member.clone()))
+                    .collect();
+                taken.extend(self.head_rights(member, |t| t != team));
+                taken
+            }
             Body::ProjectMemberRemove { project, member } => {
                 vec![Right::ProjectMember(project.clone(), member.clone())]
             }
+            Body::DivisionHeadSet {
+                division,
+                member,
+                head: false,
+            } => vec![Right::DivisionHead(division.clone(), member.clone())],
+            Body::DivisionMemberRemove { division, member }
+                if self.is_division_head(division, member) =>
+            {
+                vec![Right::DivisionHead(division.clone(), member.clone())]
+            }
+            Body::DivisionArchive {
+                division,
+                archived: true,
+            } => vec![Right::AllDivisionHeads(division.clone())],
             _ => Vec::new(),
         }
+    }
+
+    /// The alternatives for a change to `division`: superadmin, admin of its
+    /// department, and (when `head_ok`) head of the division.
+    fn division_alts(&self, author: &str, division: &str, head_ok: bool) -> Vec<Vec<Right>> {
+        let Some(d) = self.live_division(division) else {
+            return Vec::new();
+        };
+        let admin = self.team_role(&d.team, author) == Some(TeamRole::Admin);
+        let mut alts = one_of(author, self.is_superadmin(author), admin, &d.team);
+        if head_ok && self.is_division_head(division, author) {
+            alts.push(vec![Right::DivisionHead(
+                division.to_owned(),
+                author.to_owned(),
+            )]);
+        }
+        alts
+    }
+
+    /// Head rights of `member` in divisions whose department passes `team`.
+    fn head_rights(&self, member: &str, team: impl Fn(&String) -> bool) -> Vec<Right> {
+        self.divisions_of(member)
+            .into_iter()
+            .filter(|(d, role)| *role == DivisionRole::Head && team(&d.team))
+            .map(|(d, _)| Right::DivisionHead(d.id.clone(), member.to_owned()))
+            .collect()
     }
 
     /// One alternative per way `author` manages the project. A creator or

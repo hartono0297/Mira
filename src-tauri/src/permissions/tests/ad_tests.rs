@@ -522,6 +522,7 @@ fn row(ou: &str, team: &str) -> OuMapping {
     OuMapping {
         ou: ou.into(),
         team: team.into(),
+        division: None,
     }
 }
 
