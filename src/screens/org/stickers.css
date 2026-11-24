@@ -2,17 +2,23 @@
    Sembunyikan semua / Tampilkan semua, lalu daftar baris seperti tab Label
    (.row-list dari org.css). Gambar kecil 64 px datang dari sticker-image.css. */
 
-.stk-intro {
+.org-stk-intro {
   max-width: 66ch;
   margin: 0;
   font-size: 13px;
 }
 
-.stk-live:empty {
-  display: none;
+/* Kosong tetap ada di pohon aksesibilitas (sama dengan .org-live di org.css), supaya error
+   pemilih gambar dibacakan saat muncul; secara visual tidak menambah jarak di kolom flex. */
+.org-stk-live:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
-.stk-packs {
+.org-stk-packs {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -21,13 +27,13 @@
   gap: 20px;
 }
 
-.stk-pack {
+.org-stk-pack {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.stk-pack-head {
+.org-stk-pack-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -35,7 +41,7 @@
   gap: 8px 16px;
 }
 
-.stk-pack-title {
+.org-stk-pack-title {
   min-width: 0;
   display: flex;
   align-items: baseline;
@@ -43,19 +49,19 @@
   gap: 2px 10px;
 }
 
-.stk-pack-name {
+.org-stk-pack-name {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 
-.stk-pack-count {
+.org-stk-pack-count {
   font-size: 13px;
   color: var(--text-sec);
 }
 
-.stk-row {
+.org-stk-row {
   display: flex;
   align-items: center;
   gap: 10px 14px;
@@ -63,7 +69,7 @@
 }
 
 /* Kotak tetap 64 px supaya baris rata, apa pun bentuk gambarnya. */
-.stk-thumb {
+.org-stk-thumb {
   flex: none;
   display: inline-flex;
   width: 64px;
@@ -71,11 +77,11 @@
 }
 
 /* Sticker tersembunyi: gambar dipudarkan. Status tetap tertulis di label teksnya. */
-.stk-row-hidden .stk-thumb {
+.org-stk-row-hidden .org-stk-thumb {
   opacity: 0.55;
 }
 
-.stk-main {
+.org-stk-main {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -83,20 +89,20 @@
   gap: 2px;
 }
 
-.stk-name-line {
+.org-stk-name-line {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
 }
 
-.stk-name {
+.org-stk-name {
   font-weight: 700;
   font-size: 14px;
   overflow-wrap: anywhere;
 }
 
-.stk-state {
+.org-stk-state {
   font-size: 12px;
   font-weight: 700;
   line-height: 20px;
@@ -104,19 +110,19 @@
   border-radius: 6px;
 }
 
-.stk-state-active {
+.org-stk-state-active {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
 
 /* Disembunyikan: garis putus-putus seperti label yang dihapus di tab Label. */
-.stk-state-hidden {
+.org-stk-state-hidden {
   border: 1px dashed var(--border-strong);
   color: var(--text-sec);
   line-height: 18px;
 }
 
-.stk-keywords {
+.org-stk-keywords {
   margin: 0;
   font-size: 13px;
   color: var(--text-sec);
@@ -124,7 +130,7 @@
 }
 
 /* Peringatan per sticker: ikon ditambah kalimat, bukan warna saja. */
-.stk-warn {
+.org-stk-warn {
   margin: 2px 0 0;
   display: flex;
   align-items: flex-start;
@@ -133,35 +139,35 @@
   color: var(--state);
 }
 
-.stk-warn svg {
+.org-stk-warn svg {
   flex: none;
   margin-top: 2px;
 }
 
-.stk-actions {
+.org-stk-actions {
   flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.stk-del {
+.org-stk-del {
   color: var(--danger);
 }
 
 /* Container sempit: aksi baris pindah ke baris kedua, tidak ada gulir mendatar. */
 @container (max-width: 600px) {
-  .stk-row {
+  .org-stk-row {
     flex-wrap: wrap;
   }
 
-  .stk-row .stk-actions {
+  .org-stk-row .org-stk-actions {
     flex-basis: 100%;
   }
 }
 
 /* Dialog Tambah sticker: keterangan file yang dipilih. */
-.stk-file {
+.org-stk-file {
   margin-bottom: 14px;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -169,21 +175,21 @@
   background: var(--card);
 }
 
-.stk-file p {
+.org-stk-file p {
   margin: 0;
 }
 
-.stk-file-title {
+.org-stk-file-title {
   font-size: 12px;
   font-weight: 700;
   color: var(--text-sec);
 }
 
-.stk-file-name {
+.org-stk-file-name {
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 
-.stk-file-facts {
+.org-stk-file-facts {
   font-size: 13px;
 }

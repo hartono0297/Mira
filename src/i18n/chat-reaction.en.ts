@@ -4,7 +4,6 @@ import type id from "./chat-reaction.id";
 const en: Dict<typeof id> = {
   bar: (author: string, time: string) => `Reactions to message from ${author} at ${time}`,
   chip: (emoji: string, count: number, names: string) => `${emoji} ${count}. ${names}.`,
-  chipMine: (emoji: string, count: number, names: string) => `${emoji} ${count}, including you. ${names}.`,
   tip: (who: string, emoji: string) => `${who} reacted with ${emoji}`,
   tipReadOnly: "Reactions can't be changed in this conversation.",
   you: "You",
@@ -12,10 +11,10 @@ const en: Dict<typeof id> = {
   joinMany: (head: string, last: string) => `${head}, and ${last}`,
   others: (n: number) => `${n} ${plural(n, "other", "others")}`,
   people: (n: number) => `${n} ${plural(n, "person", "people")}`,
-  add: (author: string, time: string) => `Add reaction to message from ${author} at ${time}`,
+  add: (author: string, time: string) => `React to message from ${author} at ${time}`,
 
   quickGroup: (author: string, time: string) => `Quick reactions for message from ${author} at ${time}`,
-  quick: (emoji: string) => `React ${emoji}`,
+  quick: (emoji: string) => `React with ${emoji}`,
   more: (author: string, time: string) => `More reactions for message from ${author} at ${time}`,
   moreShort: "More reactions",
   picker: (author: string, time: string) => `Choose a reaction for message from ${author} at ${time}`,

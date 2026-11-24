@@ -2,8 +2,10 @@
 // emoji yang melayang di dekat tombol pembukanya.
 import { IconMoodPlus } from "@tabler/icons-react";
 import {
+  useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -44,11 +46,11 @@ export function reactorSummary(r: ReactionView, me: string): string {
   return joinNames([...shown, RX.others(rest)], RX);
 }
 
-// Label chip untuk pembaca layar: "👍 3, termasuk Anda. Rina, Dimas, Anda."
+// Label chip untuk pembaca layar: "jempol 3. Rina, Dimas, Anda." Reaksi saya terbaca dari
+// aria-pressed dan nama "Anda" di daftar.
 export function reactionLabel(r: ReactionView, me: string): string {
   const names = reactorNames(r, me).join(", ") || RX.people(r.count);
-  const emoji = spokenEmoji(r.emoji);
-  return r.mine ? RX.chipMine(emoji, r.count, names) : RX.chip(emoji, r.count, names);
+  return RX.chip(spokenEmoji(r.emoji), r.count, names);
 }
 
 // Emoji Unicode apa adanya; ":nama:" emote kantor sebagai gambar kecil, atau teksnya kalau
@@ -120,9 +122,11 @@ type BarProps = {
   me: string;
   canReact: boolean;
   emotes: EmoteMap;
-  // "Reaksi untuk pesan Sari pukul 09.12" dan "Tambah reaksi ke pesan ...".
+  // "Reaksi untuk pesan Sari pukul 09.12" dan "Beri reaksi ke pesan ...".
   label: string;
   addLabel: string;
+  // Emoji yang reaksinya sedang disimpan: klik diabaikan sampai data baru datang.
+  pending: ReadonlySet<string>;
   onToggle: (emoji: string, on: boolean) => void;
   onAdd: (anchor: HTMLElement) => void;
   // Pemilih emoji sedang terbuka dari tombol "+" ini.
@@ -132,7 +136,18 @@ type BarProps = {
 // Chip reaksi di bawah pesan. Klik menambah atau menghapus reaksi saya. Arahkan kursor atau
 // fokus untuk melihat siapa saja. Tanpa hak memberi reaksi, chip tetap bisa difokus dan
 // dibaca, tetapi tidak bisa ditekan.
-export function ReactionBar({ reactions, me, canReact, emotes, label, addLabel, onToggle, onAdd, addExpanded = false }: BarProps) {
+export function ReactionBar({
+  reactions,
+  me,
+  canReact,
+  emotes,
+  label,
+  addLabel,
+  pending,
+  onToggle,
+  onAdd,
+  addExpanded = false,
+}: BarProps) {
   const [tip, setTip] = useState<{ emoji: string; anchor: HTMLElement } | null>(null);
   const tipId = useId();
   if (reactions.length === 0) return null;
@@ -157,8 +172,10 @@ export function ReactionBar({ reactions, me, canReact, emotes, label, addLabel, 
               className={`rx-chip${r.mine ? " rx-chip-mine" : ""}${canReact ? "" : " rx-chip-static"}`}
               aria-pressed={r.mine}
               aria-disabled={canReact ? undefined : true}
+              aria-busy={pending.has(r.emoji) || undefined}
               aria-label={reactionLabel(r, me)}
-              onClick={canReact ? () => onToggle(r.emoji, !r.mine) : undefined}
+              data-rx-emoji={r.emoji}
+              onClick={canReact && !pending.has(r.emoji) ? () => onToggle(r.emoji, !r.mine) : undefined}
               onMouseEnter={(e) => setTip({ emoji: r.emoji, anchor: e.currentTarget })}
               onMouseLeave={() => setTip((t) => (t?.emoji === r.emoji ? null : t))}
               onFocus={(e) => setTip({ emoji: r.emoji, anchor: e.currentTarget })}
@@ -205,11 +222,21 @@ type QuickProps = {
   onMore: (anchor: HTMLElement) => void;
   moreRef?: { current: HTMLButtonElement | null };
   moreExpanded?: boolean;
+  pending: ReadonlySet<string>;
 };
 
 // Reaksi cepat di bilah aksi pesan: satu tab stop, panah kiri dan kanan (Home, End) untuk
-// berpindah. Tombol terakhir "Reaksi lain" membuka pemilih emoji.
-export function QuickReactions({ reactions, label, moreLabel, onToggle, onMore, moreRef, moreExpanded = false }: QuickProps) {
+// berpindah. Tombol terakhir "Beri reaksi lain" membuka pemilih emoji.
+export function QuickReactions({
+  reactions,
+  label,
+  moreLabel,
+  onToggle,
+  onMore,
+  moreRef,
+  moreExpanded = false,
+  pending,
+}: QuickProps) {
   const [active, setActive] = useState(0);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const count = QUICK_REACTIONS.length + 1;
@@ -240,10 +267,13 @@ export function QuickReactions({ reactions, label, moreLabel, onToggle, onMore, 
             className={`conv-action rx-quick-btn${mine ? " rx-quick-mine" : ""}`}
             tabIndex={i === active ? 0 : -1}
             aria-pressed={mine}
+            aria-busy={pending.has(emoji) || undefined}
             aria-label={RX.quick(spokenEmoji(emoji))}
             title={RX.quick(spokenEmoji(emoji))}
             onFocus={() => setActive(i)}
-            onClick={() => onToggle(emoji, !mine)}
+            onClick={() => {
+              if (!pending.has(emoji)) onToggle(emoji, !mine);
+            }}
           >
             <span aria-hidden="true">{emoji}</span>
           </button>
@@ -276,29 +306,50 @@ type PickerLayerProps = {
   recent: string[];
   emotes: EmoteMap;
   onPick: (emoji: string) => void;
-  onClose: () => void;
+  // outside: ditutup karena klik di luar pemilih. Fokus lalu ikut ke tempat yang diklik.
+  onClose: (reason: "outside" | "other") => void;
 };
 
 // Pemilih emoji untuk satu pesan, melayang di dekat tombol pembukanya.
 export function ReactionPicker({ anchor, label, recent, emotes, onPick, onClose }: PickerLayerProps) {
   const labelId = useId();
+  const boxRef = useRef<HTMLDivElement>(null);
+  // Hanya tombol pembuka ini yang tidak dihitung klik di luar; tombol itu sendiri yang menutup.
+  const anchorRef = useMemo(() => ({ current: anchor }), [anchor]);
+  // EmojiPicker menutup di pointerdown (fase capture di document). Pendengar di window
+  // berjalan lebih dulu, jadi alasan tutup sudah tercatat saat onClose dipanggil.
+  const outside = useRef(false);
+  useEffect(() => {
+    function onDown(e: Event) {
+      const t = e.target;
+      outside.current = t instanceof Node && !!boxRef.current && !boxRef.current.contains(t);
+      window.setTimeout(() => {
+        outside.current = false;
+      }, 0);
+    }
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, []);
   const list = [...emotes.values()].map((s) => ({
     name: s.name,
     render: () => <StickerImage hash={s.hash} alt={`:${s.name}:`} size="inline" ready={s.ready} />,
   }));
   return (
     <FloatingLayer anchor={anchor} prefer="below" align="end" className="rx-picker-layer">
-      <span id={labelId} className="sr-only">
-        {label}
-      </span>
-      <EmojiPicker
-        className="rx-picker"
-        onPick={onPick}
-        onClose={onClose}
-        recent={recent}
-        emotes={list}
-        labelledBy={labelId}
-      />
+      <div ref={boxRef}>
+        <span id={labelId} className="sr-only">
+          {label}
+        </span>
+        <EmojiPicker
+          className="rx-picker"
+          onPick={onPick}
+          onClose={() => onClose(outside.current ? "outside" : "other")}
+          recent={recent}
+          emotes={list}
+          labelledBy={labelId}
+          anchorRef={anchorRef}
+        />
+      </div>
     </FloatingLayer>
   );
 }

@@ -69,7 +69,7 @@ const en: Dict<typeof id> = {
   packTooLong: (max: number, now: number) => `A pack name can be at most ${max} characters (now ${now}).`,
   keywordsLabel: "Keywords (optional)",
   keywordsHint: (max: number) =>
-    `Used to search the sticker picker. Separate them with commas, up to ${max}, such as coffee, morning.`,
+    `Used to search the sticker picker. Separate them with commas or spaces, up to ${max}, such as coffee, morning.`,
   keywordsTooMany: (max: number, now: number) => `Up to ${max} keywords (now ${now}).`,
   keywordTooLong: (word: string, max: number) => `The keyword "${word}" is longer than ${max} characters.`,
   cancel: "Cancel",

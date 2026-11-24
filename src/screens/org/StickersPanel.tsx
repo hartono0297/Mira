@@ -172,13 +172,13 @@ export function StickersPanel({ page }: { page: OrgPage }) {
   const packNames = packs.map((p) => p.name);
 
   return (
-    <section className="set-section stk" aria-labelledby="stickers-title">
+    <section className="set-section org-stk" aria-labelledby="stickers-title">
       <div className="org-head">
         <div>
           <h2 id="stickers-title" className="set-title">
             {T.title}
           </h2>
-          <p className="hint stk-intro">{T.intro}</p>
+          <p className="hint org-stk-intro">{T.intro}</p>
         </div>
         {canManage && (
           <div className="org-head-actions">
@@ -197,7 +197,7 @@ export function StickersPanel({ page }: { page: OrgPage }) {
         )}
       </div>
 
-      <div aria-live="polite" className="stk-live">
+      <div aria-live="polite" className="org-stk-live">
         {pickError && (
           <ErrorAlert title={T.pickFail}>
             <p>{pickError.message}</p>
@@ -244,7 +244,7 @@ export function StickersPanel({ page }: { page: OrgPage }) {
       )}
 
       {canManage && packs.length > 0 && (
-        <ul className="stk-packs" aria-label={T.packList}>
+        <ul className="org-stk-packs" aria-label={T.packList}>
           {packs.map((p) => (
             <PackGroup
               key={p.name}
@@ -320,15 +320,15 @@ function PackGroup({
   const working = pending === `pack:${pack.name}`;
 
   return (
-    <li className="stk-pack">
-      <div className="stk-pack-head">
-        <div className="stk-pack-title">
-          <h3 id={headingId} className="stk-pack-name">
+    <li className="org-stk-pack">
+      <div className="org-stk-pack-head">
+        <div className="org-stk-pack-title">
+          <h3 id={headingId} className="org-stk-pack-name">
             {pack.name}
           </h3>
-          <span className="stk-pack-count">{T.packCount(pack.stickers.length, hidden)}</span>
+          <span className="org-stk-pack-count">{T.packCount(pack.stickers.length, hidden)}</span>
         </div>
-        <div className="stk-actions">
+        <div className="org-stk-actions">
           {active > 0 && (
             <button
               type="button"
@@ -392,21 +392,21 @@ function StickerRow({
 }) {
   const hidden = s.state === "hidden";
   return (
-    <li className={`stk-row${hidden ? " stk-row-hidden" : ""}`}>
+    <li className={`org-stk-row${hidden ? " org-stk-row-hidden" : ""}`}>
       {/* Nama tertulis di sebelahnya, jadi gambar kecil ini tidak dibacakan dua kali. */}
-      <span className="stk-thumb" aria-hidden="true">
+      <span className="org-stk-thumb" aria-hidden="true">
         <StickerImage hash={s.hash} alt={`:${s.name}:`} size="thumb" ready={s.ready} />
       </span>
-      <div className="stk-main">
-        <div className="stk-name-line">
-          <span className="stk-name">:{s.name}:</span>
-          <span className={`stk-state ${hidden ? "stk-state-hidden" : "stk-state-active"}`}>
+      <div className="org-stk-main">
+        <div className="org-stk-name-line">
+          <span className="org-stk-name">:{s.name}:</span>
+          <span className={`org-stk-state ${hidden ? "org-stk-state-hidden" : "org-stk-state-active"}`}>
             {hidden ? T.hidden : T.active}
           </span>
         </div>
-        <p className="stk-keywords">{s.keywords.length > 0 ? T.keywordsLine(s.keywords.join(", ")) : T.noKeywords}</p>
+        <p className="org-stk-keywords">{s.keywords.length > 0 ? T.keywordsLine(s.keywords.join(", ")) : T.noKeywords}</p>
         {s.nameTaken && (
-          <p className="stk-warn">
+          <p className="org-stk-warn">
             <IconAlertTriangle size={16} aria-hidden="true" />
             <span>
               <strong>{T.nameTaken}.</strong> {T.nameTakenHint}
@@ -414,13 +414,13 @@ function StickerRow({
           </p>
         )}
         {!s.ready && (
-          <p className="stk-warn">
+          <p className="org-stk-warn">
             <IconAlertTriangle size={16} aria-hidden="true" />
             <span>{T.notReady}</span>
           </p>
         )}
       </div>
-      <div className="stk-actions">
+      <div className="org-stk-actions">
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy} ref={editRef} onClick={onEdit}>
           {T.edit}
           {" "}
@@ -437,7 +437,7 @@ function StickerRow({
           {" "}
           <span className="sr-only">{T.srSticker(s.name)}</span>
         </button>
-        <button type="button" className="btn btn-ghost btn-sm stk-del" disabled={busy} onClick={onDelete}>
+        <button type="button" className="btn btn-ghost btn-sm org-stk-del" disabled={busy} onClick={onDelete}>
           {T.remove}
           {" "}
           <span className="sr-only">{T.srSticker(s.name)}</span>
@@ -677,10 +677,10 @@ function AddDialog({
       }}
       title={T.addTitle}
     >
-      <div className="stk-file">
-        <p className="stk-file-title">{T.fileTitle}</p>
-        <p className="stk-file-name">{fileName}</p>
-        <p className="hint stk-file-facts">
+      <div className="org-stk-file">
+        <p className="org-stk-file-title">{T.fileTitle}</p>
+        <p className="org-stk-file-name">{fileName}</p>
+        <p className="hint org-stk-file-facts">
           {T.fileFacts(formatSize(picked.size), picked.width, picked.height)},{" "}
           {picked.frames > 1 ? T.frames(picked.frames) : T.still}
         </p>

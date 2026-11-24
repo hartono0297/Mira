@@ -65,7 +65,7 @@ type Props = {
   loadedIds: Set<string>;
   canReply: boolean;
   canReact: boolean;
-  onReact: (message: MessageView, emoji: string, on: boolean) => void;
+  onReact: (message: MessageView, emoji: string, on: boolean) => Promise<boolean>;
   onSaveSticker: (message: MessageView) => void;
   onReply: (message: MessageView) => void;
   onDelete: (message: MessageView) => void;

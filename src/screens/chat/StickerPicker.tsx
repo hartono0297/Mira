@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type FocusEvent,
   type FormEvent,
   type KeyboardEvent,
   type RefObject,
@@ -213,7 +214,7 @@ function UploadForm({ picked, onSaved, onCancel }: UploadFormProps) {
   const details = T.details(formatSize(picked.size), picked.width, picked.height);
   return (
     <form
-      className="stk-form"
+      className="cmp-stk-form"
       aria-labelledby={`${ids}-title`}
       onSubmit={(e) => void submit(e)}
       onKeyDown={(e) => {
@@ -225,10 +226,10 @@ function UploadForm({ picked, onSaved, onCancel }: UploadFormProps) {
       }}
       noValidate
     >
-      <h3 id={`${ids}-title`} className="stk-form-title">
+      <h3 id={`${ids}-title`} className="cmp-stk-form-title">
         {T.title}
       </h3>
-      <p className="stk-form-file">
+      <p className="cmp-stk-form-file">
         {picked.frames > 1 ? `${details}, ${T.frames(picked.frames)}` : details}
       </p>
       <div className="field">
@@ -282,7 +283,7 @@ function UploadForm({ picked, onSaved, onCancel }: UploadFormProps) {
           </ErrorAlert>
         )}
       </div>
-      <div className="stk-form-actions">
+      <div className="cmp-stk-form-actions">
         <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} disabled={saving}>
           {T.cancel}
         </button>
@@ -423,7 +424,9 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
   }
 
   function onPanelKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    // Dialog konfirmasi di-portal ke luar panel, tapi event React-nya tetap naik ke sini.
     if (e.key !== "Escape" || dialogOpen.current) return;
+    if (!panelRef.current?.contains(e.target as Node)) return;
     e.preventDefault();
     e.stopPropagation();
     onClose("escape");
@@ -444,10 +447,22 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
   }
 
   function onTabKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      switchTab(tab === "office" ? "mine" : "office", true);
-    }
+    let next: StickerTab | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") next = tab === "office" ? "mine" : "office";
+    else if (e.key === "Home") next = "office";
+    else if (e.key === "End") next = "mine";
+    if (!next) return;
+    e.preventDefault();
+    switchTab(next, true);
+  }
+
+  // Fokus pindah ke luar panel (Tab, Shift+Tab) menutup pemilih. Tanpa tujuan fokus (dialog
+  // pilih gambar milik Windows, klik di area kosong) tidak dihitung; klik diurus onDown.
+  function onPanelBlur(e: FocusEvent<HTMLDivElement>) {
+    if (dialogOpen.current) return;
+    const next = e.relatedTarget as Node | null;
+    if (!next || panelRef.current?.contains(next) || anchorRef.current?.contains(next)) return;
+    onClose("outside");
   }
 
   function onSearchKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -465,7 +480,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
         <p>{toAppError(loadError).message}</p>
         <button
           type="button"
-          className="btn btn-ghost btn-sm stk-retry"
+          className="btn btn-ghost btn-sm cmp-stk-retry"
           onClick={() => void retry()}
           disabled={retrying}
           aria-busy={retrying || undefined}
@@ -476,7 +491,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
     );
   } else if (!catalog) {
     body = (
-      <p className="stk-state" role="status">
+      <p className="cmp-stk-state" role="status">
         <IconLoader2 size={16} className="conv-spin" aria-hidden="true" />
         {T.loading}
       </p>
@@ -484,7 +499,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
   } else if (items.length === 0) {
     const total = tab === "office" ? catalog.office.filter((s) => s.state === "active").length : catalog.mine.length;
     body = (
-      <p className="stk-state">{total === 0 ? (tab === "office" ? T.emptyOffice : T.emptyMine) : T.noMatch(query)}</p>
+      <p className="cmp-stk-state">{total === 0 ? (tab === "office" ? T.emptyOffice : T.emptyMine) : T.noMatch(query)}</p>
     );
   } else {
     let n = 0;
@@ -495,24 +510,24 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
           n += g.items.length;
           const headId = `${ids}-pack-${start}`;
           return (
-            <section key={`${g.title ?? ""}-${start}`} className="stk-group" aria-labelledby={g.title ? headId : undefined}>
+            <section key={`${g.title ?? ""}-${start}`} className="cmp-stk-group" aria-labelledby={g.title ? headId : undefined}>
               {g.title && (
-                <h3 id={headId} className="stk-pack">
+                <h3 id={headId} className="cmp-stk-pack">
                   {g.title}
                 </h3>
               )}
-              <ul className="stk-grid" role="list">
+              <ul className="cmp-stk-grid" role="list">
                 {g.items.map((item, j) => {
                   const index = start + j;
                   const label = `:${item.name}:`;
                   return (
-                    <li key={item.key} className="stk-cell">
+                    <li key={item.key} className="cmp-stk-cell">
                       <button
                         type="button"
                         ref={(el) => {
                           itemRefs.current[index] = el;
                         }}
-                        className="stk-item"
+                        className="cmp-stk-item"
                         tabIndex={index === activeIndex ? 0 : -1}
                         aria-label={label}
                         aria-disabled={!item.ready || sending || undefined}
@@ -527,14 +542,14 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
                         onKeyDown={(e) => onItemKeyDown(e, index)}
                       >
                         <StickerImage hash={item.hash} alt={label} size="thumb" ready={item.ready} />
-                        <span className="stk-name" aria-hidden="true">
+                        <span className="cmp-stk-name" aria-hidden="true">
                           {label}
                         </span>
                       </button>
                       {tab === "mine" && (
                         <button
                           type="button"
-                          className="stk-remove"
+                          className="cmp-stk-remove"
                           tabIndex={-1}
                           aria-label={T.remove(item.name)}
                           title={T.remove(item.name)}
@@ -554,11 +569,11 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
           );
         })}
         {anyNotReady && (
-          <p id={reasonId} className="stk-note">
+          <p id={reasonId} className="cmp-stk-note">
             {T.notReadyNote}
           </p>
         )}
-        {tab === "mine" && <p className="stk-note">{T.removeHint}</p>}
+        {tab === "mine" && <p className="cmp-stk-note">{T.removeHint}</p>}
       </>
     );
   }
@@ -567,13 +582,14 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
   return (
     <div
       ref={panelRef}
-      className="stk-picker cmp-pop"
+      className="cmp-stk-picker cmp-pop"
       role="dialog"
       aria-label={T.label}
       aria-busy={sending || undefined}
       onKeyDown={onPanelKeyDown}
+      onBlur={onPanelBlur}
     >
-      <div className="stk-tabs" role="tablist" aria-label={T.tabs}>
+      <div className="cmp-stk-tabs" role="tablist" aria-label={T.tabs}>
         {(["office", "mine"] as const).map((t) => (
           <button
             key={t}
@@ -583,7 +599,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
             ref={(el) => {
               tabRefs.current[t] = el;
             }}
-            className="stk-tab"
+            className="cmp-stk-tab"
             aria-selected={tab === t}
             aria-controls={panelId}
             tabIndex={tab === t ? 0 : -1}
@@ -594,7 +610,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
           </button>
         ))}
       </div>
-      <div id={panelId} role="tabpanel" aria-labelledby={`${ids}-tab-${tab}`} className="stk-panel">
+      <div id={panelId} role="tabpanel" aria-labelledby={`${ids}-tab-${tab}`} className="cmp-stk-panel">
         {picked && tab === "mine" ? (
           <UploadForm
             picked={picked}
@@ -611,7 +627,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
           />
         ) : (
           <>
-            <div className="stk-search">
+            <div className="cmp-stk-search">
               <IconSearch size={16} aria-hidden="true" />
               <label htmlFor={`${ids}-search`} className="sr-only">
                 {T.search}
@@ -632,7 +648,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
               />
             </div>
             {tab === "mine" && (
-              <div className="stk-upload">
+              <div className="cmp-stk-upload">
                 <button
                   type="button"
                   ref={uploadRef}
@@ -643,14 +659,14 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
                   <IconUpload size={16} aria-hidden="true" />
                   {T.upload}
                 </button>
-                <p id={`${ids}-upload-hint`} className="stk-note">
+                <p id={`${ids}-upload-hint`} className="cmp-stk-note">
                   {T.uploadHint}
                 </p>
               </div>
             )}
-            <div aria-live="polite" className="stk-live">
+            <div aria-live="polite" className="cmp-stk-live">
               {sending && (
-                <p className="stk-state stk-sending" role="status">
+                <p className="cmp-stk-state cmp-stk-sending" role="status">
                   <IconLoader2 size={16} className="conv-spin" aria-hidden="true" />
                   {T.sending}
                 </p>
@@ -666,7 +682,7 @@ export function StickerPicker({ conv, replyTo, onSent, onClose, anchorRef }: Pro
                 </ErrorAlert>
               )}
             </div>
-            <div className="stk-scroll">{body}</div>
+            <div className="cmp-stk-scroll">{body}</div>
           </>
         )}
       </div>

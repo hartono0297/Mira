@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSummary, MessageView, MySticker, OfficeSticker, StickerCatalog } from "../../api/chat";
@@ -573,11 +573,11 @@ describe("Komposer: emoji, saran :nama, dan sticker", () => {
 
   it("hapus sticker pribadi lewat konfirmasi", async () => {
     const user = userEvent.setup();
-    chat.stickers.mockResolvedValue(catalog({ mine: [] }));
     renderComposer();
     await user.click(screen.getByRole("button", { name: "Kirim sticker" }));
     await user.click(screen.getByRole("tab", { name: "Punya saya" }));
     await user.click(screen.getByRole("button", { name: "Hapus :kucing: dari sticker saya" }));
+    chat.stickers.mockResolvedValue(catalog({ mine: [] }));
     const confirm = screen.getByRole("dialog", { name: "Hapus sticker pribadi?" });
     // Klik di dialog konfirmasi tidak menutup pemilih sticker.
     await user.click(within(confirm).getByRole("button", { name: "Hapus sticker" }));
@@ -603,6 +603,7 @@ describe("Komposer: emoji, saran :nama, dan sticker", () => {
   it("keadaan kosong menjelaskan cara menambah sticker", async () => {
     const user = userEvent.setup();
     resetStickerCatalog(catalog({ office: [], mine: [] }));
+    chat.stickers.mockResolvedValue(catalog({ office: [], mine: [] }));
     renderComposer();
     await user.click(screen.getByRole("button", { name: "Kirim sticker" }));
     expect(
@@ -628,9 +629,65 @@ describe("Komposer: emoji, saran :nama, dan sticker", () => {
     expect(await screen.findByRole("button", { name: ":kopi:" })).toBeInTheDocument();
   });
 
+  it("Baru dipakai tidak berubah selama pemilih emoji terbuka, fokus tetap di emoji yang dipilih", async () => {
+    const user = userEvent.setup();
+    const thumbs = findEmoji("👍")!;
+    resetStickerCatalog(catalog({ recentEmoji: [thumbs.char] }));
+    chat.stickers.mockResolvedValue(catalog({ recentEmoji: [thumbs.char] }));
+    renderComposer();
+    await waitFor(() => expect(chat.stickers).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Sisipkan emoji" }));
+    const picker = screen.getByRole("dialog", { name: "Pilih emoji" });
+    const cell = within(picker).getByRole("button", { name: thumbs.id });
+    // Setelah emoji dipakai, katalog baru membawa kopi di depan.
+    chat.stickers.mockResolvedValue(catalog({ recentEmoji: [COFFEE, thumbs.char] }));
+    await user.click(cell);
+    await waitFor(() => expect(chat.stickers).toHaveBeenCalledTimes(2));
+    expect(within(picker).getByRole("button", { name: thumbs.id })).toBe(cell);
+    expect(cell).toHaveFocus();
+    expect(within(picker).queryByRole("button", { name: "kopi" })).toBeNull();
+  });
+
+  it("pemilih sticker tertutup saat fokus keluar dengan Tab", async () => {
+    const user = userEvent.setup();
+    const { input } = renderComposer();
+    await user.click(screen.getByRole("button", { name: "Kirim sticker" }));
+    expect(screen.getByRole("dialog", { name: "Pilih sticker" })).toBeInTheDocument();
+    act(() => input().focus());
+    expect(screen.queryByRole("dialog", { name: "Pilih sticker" })).toBeNull();
+    expect(input()).toHaveFocus();
+  });
+
+  it("tab sticker: Home dan End", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    await user.click(screen.getByRole("button", { name: "Kirim sticker" }));
+    screen.getByRole("tab", { name: "Kantor" }).focus();
+    await user.keyboard("{End}");
+    expect(screen.getByRole("tab", { name: "Punya saya" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Punya saya" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "Kantor" })).toHaveFocus();
+  });
+
+  it("Esc di dialog konfirmasi hanya menutup dialog, pemilih tetap terbuka", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    await user.click(screen.getByRole("button", { name: "Kirim sticker" }));
+    await user.click(screen.getByRole("tab", { name: "Punya saya" }));
+    screen.getByRole("button", { name: ":kucing:" }).focus();
+    await user.keyboard("{Delete}");
+    expect(screen.getByRole("dialog", { name: "Hapus sticker pribadi?" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Hapus sticker pribadi?" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Pilih sticker" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: ":kucing:" })).toHaveFocus());
+  });
+
   it("teks bahasa Inggris", async () => {
     const user = userEvent.setup();
     resetStickerCatalog(catalog({ office: [], mine: [] }));
+    chat.stickers.mockResolvedValue(catalog({ office: [], mine: [] }));
     const inputRef = { current: null as HTMLTextAreaElement | null };
     renderInLang(() => (
       <Composer

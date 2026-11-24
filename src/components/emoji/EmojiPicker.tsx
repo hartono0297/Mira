@@ -9,11 +9,24 @@
 // emoji pertama/terakhir, Enter atau Spasi memilih, huruf apa pun pindah ke
 // kolom cari. Esc menutup dari mana saja.
 //
-// Klik di luar menutup, kecuali klik pada elemen ber-aria-expanded="true": itu
-// tombol pemicu yang sedang membuka pemilih ini, dan tombol itu sendiri yang
-// menutupnya. Tanpa pengecualian ini, klik pada pemicu menutup lalu langsung
-// membuka lagi.
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+// Klik di luar menutup, kecuali klik pada tombol pemicu: tombol itu sendiri yang
+// menutup pemilih (kalau tidak, klik pada pemicu menutup lalu langsung membuka
+// lagi). Pemicu dikenali dari anchorRef; tanpa anchorRef, elemen apa pun
+// ber-aria-expanded="true" dianggap pemicu.
+//
+// Kisi adalah daftar tombol datar (CSS grid 9 kolom) dengan key per emoji, jadi
+// tombol yang sedang terfokus tetap terpasang walau urutan data berubah.
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useLang, type Lang } from "../../i18n/core";
 import { EMOJI_TEXT } from "../../i18n/emoji";
 import {
@@ -39,13 +52,15 @@ export type EmojiPickerProps = {
   closeOnPick?: boolean; // bawaan true
   labelledBy?: string;
   className?: string;
+  anchorRef?: RefObject<HTMLElement | null>; // tombol pemicu; kliknya tidak dihitung klik di luar
 };
 
 type TabId = "recent" | "office" | EmojiCategory;
 
 type Item = { key: string; value: string; label: string; char?: string; emote?: EmojiEmote };
 
-// Jumlah kolom kisi. Panah atas/bawah melompat sebanyak ini.
+// Jumlah kolom kisi (sama dengan grid-template-columns di CSS). Panah atas/bawah
+// melompat sebanyak ini.
 export const EMOJI_COLUMNS = 9;
 const SEARCH_LIMIT = 40;
 const EMOTE = /^:([a-z0-9_]{2,32}):$/;
@@ -73,10 +88,12 @@ export function EmojiPicker({
   closeOnPick = true,
   labelledBy,
   className,
+  anchorRef,
 }: EmojiPickerProps) {
   const lang = useLang();
   const uid = useId();
   const gridId = `${uid}-grid`;
+  const statusId = `${uid}-status`;
   const headingId = `${uid}-heading`;
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -84,8 +101,13 @@ export function EmojiPicker({
   const tablistRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement | null>>>({});
-  const cellRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const cellRefs = useRef(new Map<string, HTMLButtonElement>());
   const closeRef = useRef(onClose);
+  // Posisi sorotan terakhir, dipakai kalau emoji yang disorot hilang dari data.
+  const lastIdx = useRef(0);
+  // Fokus keyboard sedang di kisi; dipakai untuk memindahkan fokus kalau tombol
+  // yang terfokus hilang karena data berubah.
+  const gridFocused = useRef(false);
 
   const tabs = useMemo<TabId[]>(
     () => [
@@ -98,7 +120,7 @@ export function EmojiPicker({
 
   const [tab, setTab] = useState<TabId>(() => (recent.length > 0 ? "recent" : EMOJI_CATEGORIES[0]));
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
 
   const current: TabId = tabs.includes(tab) ? tab : tabs[0];
   const trimmed = query.trim();
@@ -133,7 +155,25 @@ export function EmojiPicker({
     return emojiInCategory(current).map((e) => entryItem(e, lang));
   }, [searching, query, emotes, current, recent, lang]);
 
-  const activeIdx = Math.min(active, Math.max(0, items.length - 1));
+  // Sorotan mengikuti emojinya, bukan posisinya. Kalau emojinya hilang, sorotan
+  // tetap di posisi terakhir (dibatasi panjang daftar).
+  const found = activeKey === null ? -1 : items.findIndex((it) => it.key === activeKey);
+  const activeIdx = found >= 0 ? found : Math.min(lastIdx.current, Math.max(0, items.length - 1));
+  const activeItemKey = items[activeIdx]?.key;
+
+  useEffect(() => {
+    lastIdx.current = activeIdx;
+  });
+
+  // Tombol yang terfokus hilang karena data berubah: pindahkan fokus ke emoji
+  // yang sekarang disorot supaya fokus keyboard tidak jatuh ke body.
+  useLayoutEffect(() => {
+    if (!gridFocused.current) return;
+    const focused = document.activeElement;
+    if (focused && focused !== document.body) return;
+    if (activeItemKey) cellRefs.current.get(activeItemKey)?.focus();
+    else gridFocused.current = false;
+  }, [items, activeItemKey]);
 
   useEffect(() => {
     closeRef.current = onClose;
@@ -148,15 +188,20 @@ export function EmojiPicker({
       const root = rootRef.current;
       const target = e.target;
       if (!root || !(target instanceof Node) || root.contains(target)) return;
-      if (target instanceof Element && target.closest('[aria-expanded="true"]')) return;
+      if (anchorRef) {
+        if (anchorRef.current?.contains(target)) return;
+      } else if (target instanceof Element && target.closest('[aria-expanded="true"]')) {
+        return;
+      }
       closeRef.current();
     }
     document.addEventListener("pointerdown", onDown, true);
     return () => document.removeEventListener("pointerdown", onDown, true);
-  }, []);
+  }, [anchorRef]);
 
   function resetGrid() {
-    setActive(0);
+    setActiveKey(null);
+    lastIdx.current = 0;
     if (gridRef.current) gridRef.current.scrollTop = 0;
   }
 
@@ -166,8 +211,11 @@ export function EmojiPicker({
   }
 
   function focusCell(i: number) {
-    setActive(i);
-    const el = cellRefs.current[i];
+    const item = items[i];
+    if (!item) return;
+    setActiveKey(item.key);
+    lastIdx.current = i;
+    const el = cellRefs.current.get(item.key);
     el?.focus();
     el?.scrollIntoView?.({ block: "nearest" });
   }
@@ -190,7 +238,8 @@ export function EmojiPicker({
       return;
     }
     if (e.key !== "Tab") return;
-    const zones = [inputRef.current, tabRefs.current[current] ?? null, items.length > 0 ? cellRefs.current[activeIdx] : null].filter(
+    const cell = activeItemKey ? (cellRefs.current.get(activeItemKey) ?? null) : null;
+    const zones = [inputRef.current, tabRefs.current[current] ?? null, cell].filter(
       (z): z is HTMLInputElement | HTMLButtonElement => z !== null,
     );
     const focused = document.activeElement;
@@ -285,8 +334,6 @@ export function EmojiPicker({
   const T = EMOJI_TEXT;
   const heading = searching ? T.results(trimmed) : T.category[current];
   const emptyText = searching ? T.noResults(trimmed) : T.emptyRecent;
-  const rows: Item[][] = [];
-  for (let i = 0; i < items.length; i += EMOJI_COLUMNS) rows.push(items.slice(i, i + EMOJI_COLUMNS));
 
   return (
     <div
@@ -304,7 +351,7 @@ export function EmojiPicker({
         value={query}
         aria-label={T.search}
         placeholder={T.searchPlaceholder}
-        aria-controls={gridId}
+        aria-controls={items.length > 0 ? gridId : statusId}
         autoComplete="off"
         spellCheck={false}
         onChange={(e) => {
@@ -328,7 +375,7 @@ export function EmojiPicker({
               id={`${uid}-tab-${t}`}
               className="emoji-tab"
               aria-selected={!searching && t === current}
-              aria-controls={gridId}
+              aria-controls={items.length > 0 ? gridId : statusId}
               aria-label={label}
               title={label}
               tabIndex={t === current ? 0 : -1}
@@ -346,47 +393,62 @@ export function EmojiPicker({
         {heading}
       </div>
 
-      {items.length > 0 ? (
-        <div ref={gridRef} id={gridId} className="emoji-grid" role="grid" aria-labelledby={headingId} onKeyDown={onGridKey}>
-          {rows.map((row, r) => (
-            <div key={r} role="row" className="emoji-row">
-              {row.map((item, c) => {
-                const i = r * EMOJI_COLUMNS + c;
-                return (
-                  <div key={item.key} role="gridcell">
-                    <button
-                      ref={(el) => {
-                        cellRefs.current[i] = el;
-                      }}
-                      type="button"
-                      className="emoji-cell"
-                      tabIndex={i === activeIdx ? 0 : -1}
-                      aria-label={item.label}
-                      title={item.label}
-                      onFocus={() => setActive(i)}
-                      onClick={() => pick(item)}
-                    >
-                      {item.emote ? (
-                        <span className="emoji-emote" aria-hidden="true">
-                          {item.emote.render()}
-                        </span>
-                      ) : (
-                        <span className="emoji-glyph" aria-hidden="true">
-                          {item.char}
-                        </span>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+      {items.length > 0 && (
+        <div
+          ref={gridRef}
+          id={gridId}
+          className="emoji-grid"
+          role="group"
+          aria-labelledby={headingId}
+          onKeyDown={onGridKey}
+          onFocus={() => {
+            gridFocused.current = true;
+          }}
+          onBlur={(e) => {
+            const to = e.relatedTarget;
+            if (to instanceof Node && gridRef.current?.contains(to)) return;
+            // Tombol yang hilang dari DOM tidak membawa relatedTarget; biarkan
+            // useLayoutEffect di atas yang memutuskan.
+            if (to !== null) gridFocused.current = false;
+          }}
+        >
+          {items.map((item, i) => (
+            <button
+              key={item.key}
+              ref={(el) => {
+                if (el) cellRefs.current.set(item.key, el);
+                else cellRefs.current.delete(item.key);
+              }}
+              type="button"
+              className="emoji-cell"
+              tabIndex={i === activeIdx ? 0 : -1}
+              aria-label={item.label}
+              title={item.label}
+              onFocus={() => {
+                setActiveKey(item.key);
+                lastIdx.current = i;
+              }}
+              onClick={() => pick(item)}
+            >
+              {item.emote ? (
+                <span className="emoji-emote" aria-hidden="true">
+                  {item.emote.render()}
+                </span>
+              ) : (
+                <span className="emoji-glyph" aria-hidden="true">
+                  {item.char}
+                </span>
+              )}
+            </button>
           ))}
         </div>
-      ) : (
-        <p id={gridId} className="emoji-empty" role="status">
-          {emptyText}
-        </p>
       )}
+
+      {/* Wilayah status selalu ada di DOM supaya pembaca layar membacakan isinya
+          begitu hasil cari menjadi kosong. Saat kosong, ia tidak memakan tempat. */}
+      <p id={statusId} className="emoji-status" role="status">
+        {items.length === 0 ? emptyText : ""}
+      </p>
     </div>
   );
 }

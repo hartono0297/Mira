@@ -50,7 +50,9 @@ function subscribe(listener: () => void) {
   listeners.add(listener);
   if (!stopEvents) {
     stopEvents = subscribeChat(() => void reloadStickerCatalog());
-    if (!snapshot.catalog) void reloadStickerCatalog();
+    // Selalu muat ulang: selama tidak ada pendengar, event chat tidak diikuti dan katalog
+    // bisa sudah basi (sticker kantor baru dari laptop lain, emoji baru dipakai).
+    void reloadStickerCatalog();
   }
   return () => {
     listeners.delete(listener);

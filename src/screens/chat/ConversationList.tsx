@@ -397,7 +397,7 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
         )}
         <span className="chat-row-text">
           <span className="chat-row-name">{c.name}</span>
-          {labels.length > 0 && <LabelChips className="chat-row-labels" labels={labels} max={2} staticMore />}
+          {labels.length > 0 && <LabelChips className="chat-row-labels" labels={labels} max={2} />}
           {state && <span className="chat-row-hint">{state}</span>}
         </span>
         {c.locked && <IconLock size={15} className="chat-row-icon" aria-hidden="true" />}

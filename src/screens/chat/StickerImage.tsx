@@ -68,9 +68,11 @@ export function StickerImage({ hash, alt, size, ready = true, className }: Props
   if (!url || failed) {
     // alt kosong = hiasan (nama sudah tertulis di sampingnya): disembunyikan dari pembaca layar.
     if (!alt) return <span className={`${cls} sticker-img-missing`} aria-hidden="true" />;
+    // Teks pengganti terlihat untuk ukuran besar dan sebaris; kotak kecil di kisi sudah punya
+    // nama di sampingnya.
     return (
       <span className={`${cls} sticker-img-missing`} role="img" aria-label={alt}>
-        {size === "inline" ? alt : null}
+        {size === "thumb" ? null : <span aria-hidden="true">{alt}</span>}
       </span>
     );
   }

@@ -45,18 +45,22 @@
 
 /* Tab kategori: ikon emoji, nama lengkap di aria-label dan title, dan judul di
    atas kisi menulis nama kategori yang sedang dibuka. */
+/* Tab berbagi lebar kisi sama rata, jadi tepi kanan tab dan kisi selalu rata
+   berapa pun jumlah tabnya (8 sampai 10). Lebar pemilih ditentukan kisi. */
 .emoji-tabs {
-  display: flex;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
   gap: 2px;
   border-bottom: 1px solid var(--border);
 }
 
 .emoji-tab {
   display: inline-flex;
-  flex: none;
   align-items: center;
   justify-content: center;
-  width: 32px;
+  width: 100%;
+  min-width: 0;
   height: 34px;
   padding: 0;
   border: 0;
@@ -99,20 +103,16 @@
 }
 
 .emoji-grid {
-  display: flex;
+  display: grid;
   flex: 1 1 auto;
-  flex-direction: column;
+  grid-template-columns: repeat(9, 36px);
+  align-content: start;
   gap: 2px;
   min-height: 0;
   max-height: calc(6 * 36px + 5 * 2px);
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
-}
-
-.emoji-row {
-  display: flex;
-  gap: 2px;
 }
 
 .emoji-cell {
@@ -157,9 +157,10 @@
   object-fit: contain;
 }
 
-/* Lebar dan ruang gulir sama dengan kisi, supaya pemilih tidak menyempit saat
-   hasil cari kosong. */
-.emoji-empty {
+/* Wilayah status. Saat berisi pesan kosong, lebar dan ruang gulirnya sama
+   dengan kisi supaya pemilih tidak menyempit. Saat tanpa isi, ia tetap ada
+   untuk pembaca layar tetapi tidak memakan tempat. */
+.emoji-status {
   box-sizing: content-box;
   width: calc(9 * 36px + 8 * 2px);
   overflow-y: auto;
@@ -167,6 +168,16 @@
   padding: 12px 0;
   font-size: 13px;
   color: var(--text);
+}
+
+.emoji-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 /* Mode kontras tinggi Windows: latar sorotan hilang, jadi tab terpilih dan

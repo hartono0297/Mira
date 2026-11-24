@@ -4,9 +4,9 @@
 const id = {
   // Daftar chip di bawah pesan.
   bar: (author: string, time: string) => `Reaksi untuk pesan ${author} pukul ${time}`,
-  // Label lengkap chip untuk pembaca layar: "👍 3. Rina, Dimas, Sari."
+  // Label lengkap chip untuk pembaca layar: "jempol 3. Rina, Dimas, Anda." Reaksi saya
+  // terbaca dari status ditekan (aria-pressed).
   chip: (emoji: string, count: number, names: string) => `${emoji} ${count}. ${names}.`,
-  chipMine: (emoji: string, count: number, names: string) => `${emoji} ${count}, termasuk Anda. ${names}.`,
   // Keterangan saat chip disorot atau difokus: "Rina, Dimas, dan 2 lainnya memberi 👍".
   tip: (who: string, emoji: string) => `${who} memberi ${emoji}`,
   // Chip di percakapan yang tidak bisa diberi reaksi (channel diarsipkan, bukan anggota lagi).
@@ -16,13 +16,14 @@ const id = {
   joinMany: (head: string, last: string) => `${head}, dan ${last}`,
   others: (n: number) => `${n} lainnya`,
   people: (n: number) => `${n} orang`,
-  add: (author: string, time: string) => `Tambah reaksi ke pesan ${author} pukul ${time}`,
+  // Satu kata kerja untuk aksi yang sama di chip, bilah aksi, dan menu: "Beri reaksi".
+  add: (author: string, time: string) => `Beri reaksi ke pesan ${author} pukul ${time}`,
 
   // Bilah aksi pesan.
   quickGroup: (author: string, time: string) => `Reaksi cepat untuk pesan ${author} pukul ${time}`,
-  quick: (emoji: string) => `Reaksi ${emoji}`,
-  more: (author: string, time: string) => `Reaksi lain untuk pesan ${author} pukul ${time}`,
-  moreShort: "Reaksi lain",
+  quick: (emoji: string) => `Beri reaksi ${emoji}`,
+  more: (author: string, time: string) => `Beri reaksi lain ke pesan ${author} pukul ${time}`,
+  moreShort: "Beri reaksi lain",
   picker: (author: string, time: string) => `Pilih reaksi untuk pesan ${author} pukul ${time}`,
 
   // Hasil aksi.

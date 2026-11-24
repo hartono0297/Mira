@@ -285,24 +285,27 @@ function ConversationPanel({
     setAnnounce((prev) => (prev === text ? `${text}\u00a0` : text));
   }, []);
 
-  // Reaksi: simpan, lalu muat ulang percakapan. Emoji Unicode yang ditambahkan masuk daftar
-  // "Sering dipakai" laptop ini (emote kantor tidak).
+  // Reaksi: simpan, lalu muat ulang percakapan. Selesai (true) setelah data baru datang, supaya
+  // pesan bisa menahan klik berikutnya sampai chip menunjukkan keadaan baru. Emoji Unicode yang
+  // ditambahkan masuk daftar "Sering dipakai" laptop ini (emote kantor tidak).
   const onReact = useCallback(
-    async (m: MessageView, emoji: string, on: boolean) => {
+    async (m: MessageView, emoji: string, on: boolean): Promise<boolean> => {
       try {
         await chatApi.react(summary.id, m.id, emoji, on);
-        if (!alive.current) return;
-        onAnnounce(on ? REACTION.added(spokenEmoji(emoji)) : REACTION.removed(spokenEmoji(emoji)));
-        void reloadLive();
-        if (on && !emoteName(emoji)) {
-          chatApi
-            .emojiUsed(emoji)
-            .then(() => reloadStickerCatalog())
-            .catch(() => {});
-        }
       } catch (err) {
         if (alive.current) onAnnounce(REACTION.failed(toAppError(err).message), true);
+        return false;
       }
+      if (on && !emoteName(emoji)) {
+        chatApi
+          .emojiUsed(emoji)
+          .then(() => reloadStickerCatalog())
+          .catch(() => {});
+      }
+      if (!alive.current) return true;
+      onAnnounce(on ? REACTION.added(spokenEmoji(emoji)) : REACTION.removed(spokenEmoji(emoji)));
+      await reloadLive();
+      return true;
     },
     [summary.id, onAnnounce, reloadLive],
   );
@@ -418,7 +421,7 @@ function ConversationPanel({
           loadedIds={loadedIds}
           canReply={summary.canPost}
           canReact={view.canReact ?? false}
-          onReact={(m, emoji, on) => void onReact(m, emoji, on)}
+          onReact={onReact}
           onSaveSticker={(m) => void onSaveSticker(m)}
           onReply={onReply}
           onDelete={onDelete}

@@ -67,7 +67,7 @@ const id = {
   packTooLong: (max: number, now: number) => `Nama paket paling banyak ${max} karakter (sekarang ${now}).`,
   keywordsLabel: "Kata kunci (boleh kosong)",
   keywordsHint: (max: number) =>
-    `Dipakai untuk mencari di pemilih sticker. Pisahkan dengan koma, paling banyak ${max}, misalnya kopi, pagi.`,
+    `Dipakai untuk mencari di pemilih sticker. Pisahkan dengan koma atau spasi, paling banyak ${max}, misalnya kopi, pagi.`,
   keywordsTooMany: (max: number, now: number) => `Kata kunci paling banyak ${max} (sekarang ${now}).`,
   keywordTooLong: (word: string, max: number) => `Kata kunci "${word}" lebih dari ${max} karakter.`,
   cancel: "Batal",

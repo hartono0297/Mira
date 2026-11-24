@@ -28,6 +28,7 @@ export function PersonName({ person, me, labelsMode, plain }: Props) {
       labels={mode === "none" ? [] : labels}
       all={all}
       wrap={all}
+      moreFocusable={mode === "compact"}
       suffix={me ? CHAT_TEXT.youSuffix : undefined}
     />
   );

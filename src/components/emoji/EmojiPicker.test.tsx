@@ -1,4 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
+import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { setLang } from "../../i18n/core";
@@ -21,7 +22,7 @@ function setup(props: Partial<EmojiPickerProps> = {}) {
   return { ...utils, user, onPick, onClose };
 }
 
-const grid = () => screen.getByRole("grid");
+const grid = () => screen.getByRole("group");
 const cell = (name: string) => within(grid()).getByRole("button", { name });
 const tab = (name: string) => screen.getByRole("tab", { name });
 
@@ -30,7 +31,7 @@ describe("EmojiPicker", () => {
     setup();
     expect(screen.getByRole("dialog", { name: "Pilih emoji" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Cari emoji" })).toHaveFocus();
-    expect(screen.queryByRole("tab", { name: "Sering dipakai" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Baru dipakai" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Emote kantor" })).toBeNull();
     expect(tab("Wajah")).toHaveAttribute("aria-selected", "true");
     expect(grid()).toHaveAccessibleName("Wajah");
@@ -58,7 +59,7 @@ describe("EmojiPicker", () => {
   it("hasil kosong memberi pesan singkat", async () => {
     const { user } = setup();
     await user.type(screen.getByRole("textbox", { name: "Cari emoji" }), "zzzz");
-    expect(screen.queryByRole("grid")).toBeNull();
+    expect(screen.queryByRole("group")).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent('Tidak ada emoji untuk "zzzz".');
   });
 
@@ -156,10 +157,60 @@ describe("EmojiPicker", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("tab Sering dipakai terbuka lebih dulu kalau ada isinya", async () => {
+  it("wilayah status selalu ada dan baru berisi saat hasil kosong", async () => {
+    const { user } = setup();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    await user.type(screen.getByRole("textbox", { name: "Cari emoji" }), "zzzz");
+    expect(screen.getByRole("status")).toHaveTextContent('Tidak ada emoji untuk "zzzz".');
+    await user.clear(screen.getByRole("textbox", { name: "Cari emoji" }));
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("dengan anchorRef hanya pemicu itu yang dikecualikan dari klik di luar", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    const anchor = createRef<HTMLButtonElement>();
+    render(
+      <div>
+        <button type="button" ref={anchor} aria-expanded="true">
+          Emoji
+        </button>
+        <button type="button" aria-expanded="true">
+          Menu lain
+        </button>
+        <EmojiPicker onPick={vi.fn()} onClose={onClose} recent={[]} anchorRef={anchor} />
+      </div>,
+    );
+    await user.click(screen.getByRole("button", { name: "Emoji" }));
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Menu lain" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("sorotan dan fokus tetap pada emoji yang sama saat urutan recent berubah", async () => {
+    const user = userEvent.setup();
+    const props = { onPick: vi.fn(), onClose: vi.fn() };
+    const { rerender } = render(<EmojiPicker {...props} recent={["👍", "🙏", "☕", "😂"]} />);
+    await user.keyboard("{ArrowDown}{ArrowRight}{ArrowRight}");
+    const kopi = cell("kopi");
+    expect(kopi).toHaveFocus();
+
+    rerender(<EmojiPicker {...props} recent={["☕", "😂", "👍", "🙏"]} />);
+    expect(cell("kopi")).toBe(kopi);
+    expect(kopi).toHaveFocus();
+    expect(kopi).toHaveAttribute("tabindex", "0");
+    await user.keyboard("{ArrowRight}");
+    expect(cell("tertawa sampai menangis")).toHaveFocus();
+
+    // Emoji yang terfokus hilang: fokus pindah ke emoji di posisi yang sama.
+    rerender(<EmojiPicker {...props} recent={["☕", "👍", "🙏"]} />);
+    expect(cell("jempol")).toHaveFocus();
+  });
+
+  it("tab Baru dipakai terbuka lebih dulu kalau ada isinya", async () => {
     const { user, onPick } = setup({ recent: ["🙏", "❤", ":mantap:", ":sudah_dihapus:", "🫠"], emotes: EMOTES });
-    expect(tab("Sering dipakai")).toHaveAttribute("aria-selected", "true");
-    expect(grid()).toHaveAccessibleName("Sering dipakai");
+    expect(tab("Baru dipakai")).toHaveAttribute("aria-selected", "true");
+    expect(grid()).toHaveAccessibleName("Baru dipakai");
     const names = within(grid())
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label"));
@@ -211,7 +262,7 @@ describe("EmojiPicker dalam bahasa Inggris", () => {
     const search = screen.getByRole("textbox", { name: "Search emoji" });
     expect(search).toHaveAttribute("placeholder", "Search, for example thumbs or coffee");
     expect(screen.getByRole("tablist", { name: "Emoji categories" })).toBeInTheDocument();
-    expect(tab("Frequently used")).toHaveAttribute("aria-selected", "true");
+    expect(tab("Recently used")).toHaveAttribute("aria-selected", "true");
     expect(tab("Office emotes")).toBeInTheDocument();
     expect(tab("Food and drink")).toBeInTheDocument();
     expect(cell("thumbs up")).toHaveAttribute("title", "thumbs up");

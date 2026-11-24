@@ -6,7 +6,7 @@ const id = {
   searchPlaceholder: "Cari, misalnya jempol atau kopi",
   categories: "Kategori emoji",
   category: {
-    recent: "Sering dipakai",
+    recent: "Baru dipakai",
     office: "Emote kantor",
     faces: "Wajah",
     people: "Gestur dan orang",

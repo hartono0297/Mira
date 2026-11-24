@@ -8,7 +8,7 @@ import {
   IconMoodPlus,
   IconTrash,
 } from "@tabler/icons-react";
-import { useRef, useState, type MouseEvent } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import type { ConversationSummary, MessageView } from "../../api/chat";
 import { MenuButton, menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
 import { initials } from "../../components/initials";
@@ -38,7 +38,8 @@ type Props = {
   // Emote kantor aktif menurut nama, dan emoji yang baru dipakai di laptop ini.
   emotes: EmoteMap;
   recent: string[];
-  onReact: (message: MessageView, emoji: string, on: boolean) => void;
+  // Selesai setelah tersimpan dan percakapan dimuat ulang. false kalau gagal.
+  onReact: (message: MessageView, emoji: string, on: boolean) => Promise<boolean>;
   onSaveSticker: (message: MessageView) => void;
   onReply: (message: MessageView) => void;
   onDelete: (message: MessageView) => void;
@@ -48,7 +49,7 @@ type Props = {
   onAnnounce: (text: string, error?: boolean) => void;
 };
 
-// Pemilih emoji yang terbuka: tombol tempat ia melayang ("+" di chip atau Reaksi lain di bilah
+// Pemilih emoji yang terbuka: tombol tempat ia melayang ("+" di chip atau Beri reaksi lain di bilah
 // aksi, juga untuk item menu Beri reaksi) dan elemen yang menerima fokus lagi saat ditutup.
 type PickerState = { anchor: HTMLElement; via: "add" | "more"; returnTo: HTMLElement | null };
 
@@ -99,23 +100,65 @@ export function MessageItem({
   const files = sticker ? message.files.filter((f) => f.hash !== sticker.hash) : message.files;
   const known = (n: string) => emotes.has(n);
 
+  // Reaksi yang sedang disimpan per emoji. Ref untuk klik ganda sebelum render berikutnya,
+  // state untuk aria-busy.
+  const pendingRef = useRef(new Set<string>());
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  // Chip yang terfokus hilang saat reaksi terakhirnya dilepas: fokus pindah ke chip sesudahnya,
+  // sebelumnya, "+", Beri reaksi lain, atau pesannya, bukan ke body.
+  const refocus = useRef<{ emoji: string; order: string[] } | null>(null);
+
+  async function toggle(emoji: string, on: boolean) {
+    if (pendingRef.current.has(emoji)) return;
+    const i = message.reactions.findIndex((r) => r.emoji === emoji);
+    const r = message.reactions[i];
+    if (!on && r?.mine && r.count <= 1) {
+      const order = [message.reactions[i + 1]?.emoji, message.reactions[i - 1]?.emoji].filter((e): e is string => !!e);
+      refocus.current = { emoji, order };
+    }
+    pendingRef.current.add(emoji);
+    setPending(new Set(pendingRef.current));
+    const ok = await onReact(message, emoji, on);
+    pendingRef.current.delete(emoji);
+    setPending(new Set(pendingRef.current));
+    if (!ok && refocus.current?.emoji === emoji) refocus.current = null;
+  }
+
+  useLayoutEffect(() => {
+    const plan = refocus.current;
+    if (!plan || message.reactions.some((r) => r.emoji === plan.emoji)) return;
+    refocus.current = null;
+    const active = document.activeElement;
+    const li = liRef.current;
+    // Fokus sudah dipindah pengguna ke tempat lain: dibiarkan.
+    if (!li || (active && active !== document.body)) return;
+    const chips = [...li.querySelectorAll<HTMLElement>("[data-rx-emoji]")];
+    const target =
+      plan.order.map((e) => chips.find((c) => c.dataset.rxEmoji === e)).find((c) => !!c) ??
+      li.querySelector<HTMLElement>(".rx-add") ??
+      moreRef.current ??
+      li;
+    target.focus({ preventScroll: true });
+  }, [message.reactions]);
+
   function openPicker(anchor: HTMLElement, via: PickerState["via"]) {
     // Tombol pembuka ditekan lagi: pemilih ditutup.
-    if (picker?.anchor === anchor) return closePicker();
+    if (picker?.anchor === anchor) return closePicker("other");
     const active = document.activeElement;
     setPicker({ anchor, via, returnTo: active instanceof HTMLElement && active !== document.body ? active : anchor });
   }
 
-  function closePicker() {
+  // Esc, memilih, atau tombol pembuka: fokus kembali. Klik di luar: fokus ikut ke yang diklik.
+  function closePicker(reason: "outside" | "other") {
     const returnTo = picker?.returnTo;
     setPicker(null);
-    if (returnTo?.isConnected) returnTo.focus({ preventScroll: true });
+    if (reason === "other" && returnTo?.isConnected) returnTo.focus({ preventScroll: true });
   }
 
   function pick(emoji: string) {
     // Pemilih hanya menambah. Emoji yang sudah saya beri tetap (dilepas lewat chipnya).
     if (message.reactions.some((r) => r.emoji === emoji && r.mine)) return;
-    onReact(message, emoji, true);
+    void toggle(emoji, true);
   }
 
   async function copyText() {
@@ -326,7 +369,8 @@ export function MessageItem({
               emotes={emotes}
               label={RX.bar(name, time)}
               addLabel={RX.add(name, time)}
-              onToggle={(emoji, on) => onReact(message, emoji, on)}
+              pending={pending}
+              onToggle={(emoji, on) => void toggle(emoji, on)}
               onAdd={(el) => openPicker(el, "add")}
               addExpanded={picker?.via === "add"}
             />
@@ -345,7 +389,8 @@ export function MessageItem({
               reactions={message.reactions}
               label={RX.quickGroup(name, time)}
               moreLabel={RX.more(name, time)}
-              onToggle={(emoji, on) => onReact(message, emoji, on)}
+              pending={pending}
+              onToggle={(emoji, on) => void toggle(emoji, on)}
               onMore={(el) => openPicker(el, "more")}
               moreRef={moreRef}
               moreExpanded={picker?.via === "more"}
@@ -354,25 +399,25 @@ export function MessageItem({
           {canReply && (
             <button
               type="button"
-              className="conv-action"
+              className="conv-action conv-action-icon"
               onClick={() => onReply(message)}
               aria-label={CHAT.message.replyLabel(name, time)}
+              title={MENU.reply}
               data-menu-focus
             >
               <IconArrowBackUp size={16} aria-hidden="true" />
-              <span>{MENU.reply}</span>
             </button>
           )}
           {message.canDelete && (
             <button
               type="button"
-              className="conv-action"
+              className="conv-action conv-action-icon"
               onClick={() => onDelete(message)}
               aria-label={CHAT.message.deleteLabel(name, time)}
+              title={CHAT.message.delete}
               data-menu-focus={canReply ? undefined : true}
             >
               <IconTrash size={16} aria-hidden="true" />
-              <span>{CHAT.message.delete}</span>
             </button>
           )}
           <MenuButton

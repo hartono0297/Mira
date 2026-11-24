@@ -141,7 +141,7 @@ describe("Chip reaksi", () => {
   it("chip di pesan orang lain: emoji, jumlah, aria-pressed, dan siapa saja", async () => {
     renderConv();
     const bar = await screen.findByRole("list", { name: "Reaksi untuk pesan Sari Uji pukul 09.12" });
-    const thumbs = within(bar).getByRole("button", { name: "jempol 3, termasuk Anda. Budi Uji, Dimas Uji, Anda." });
+    const thumbs = within(bar).getByRole("button", { name: "jempol 3. Budi Uji, Dimas Uji, Anda." });
     expect(thumbs).toHaveTextContent("👍3");
     expect(thumbs).toHaveAttribute("aria-pressed", "true");
     const laugh = within(bar).getByRole("button", { name: /^tertawa sampai menangis 1\. Budi Uji\.$/ });
@@ -199,14 +199,14 @@ describe("Chip reaksi", () => {
     act(() => thumbs.focus());
     expect(thumbs).toHaveFocus();
     expect(screen.getByText("Reaksi tidak bisa diubah di percakapan ini.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Tambah reaksi/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Beri reaksi ke pesan/ })).toBeNull();
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
 
   it("tombol + membuka pemilih emoji; memilih menambah reaksi lalu fokus kembali ke +", async () => {
     const user = userEvent.setup();
     renderConv();
-    const add = await screen.findByRole("button", { name: "Tambah reaksi ke pesan Sari Uji pukul 09.12" });
+    const add = await screen.findByRole("button", { name: "Beri reaksi ke pesan Sari Uji pukul 09.12" });
     await user.click(add);
     expect(add).toHaveAttribute("aria-expanded", "true");
     const picker = screen.getByRole("dialog", { name: "Pilih reaksi untuk pesan Sari Uji pukul 09.12" });
@@ -216,6 +216,63 @@ describe("Chip reaksi", () => {
     expect(chat.react).toHaveBeenCalledWith(CH, "m1", "🙏", true);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(add).toHaveFocus();
+  });
+});
+
+describe("Klik ganda, fokus setelah chip hilang, dan klik di luar pemilih", () => {
+  it("klik kedua selagi menyimpan diabaikan dan chip ditandai sibuk", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    chat.react.mockImplementation(() => new Promise((resolve) => (finish = () => resolve(null))));
+    renderConv();
+    const laugh = await screen.findByRole("button", { name: /^tertawa sampai menangis 1/ });
+    await user.click(laugh);
+    await user.click(laugh);
+    expect(chat.react).toHaveBeenCalledTimes(1);
+    expect(laugh).toHaveAttribute("aria-busy", "true");
+    await act(async () => finish());
+    await vi.waitFor(() => expect(laugh).not.toHaveAttribute("aria-busy"));
+    expect(screen.getAllByText("Reaksi tertawa sampai menangis ditambahkan.")).toHaveLength(1);
+  });
+
+  it("melepas reaksi terakhir saya: fokus pindah ke chip berikutnya, bukan ke body", async () => {
+    const user = userEvent.setup();
+    chat.messages.mockResolvedValue(
+      view([message({ id: "m1", text: "Halo", reactions: [rx("👍", [penguji]), rx("😂", [budi])] })]),
+    );
+    chat.react.mockImplementation(async () => {
+      chat.messages.mockResolvedValue(view([message({ id: "m1", text: "Halo", reactions: [rx("😂", [budi])] })]));
+      return null;
+    });
+    renderConv();
+    await user.click(await screen.findByRole("button", { name: /^jempol 1/ }));
+    expect(chat.react).toHaveBeenCalledWith(CH, "m1", "👍", false);
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: /^jempol/ })).toBeNull());
+    expect(screen.getByRole("button", { name: /^tertawa sampai menangis 1/ })).toHaveFocus();
+  });
+
+  it("chip terakhir hilang bersama bar: fokus ke Beri reaksi lain", async () => {
+    const user = userEvent.setup();
+    chat.messages.mockResolvedValue(view([message({ id: "m1", text: "Halo", reactions: [rx("👍", [penguji])] })]));
+    chat.react.mockImplementation(async () => {
+      chat.messages.mockResolvedValue(view([message({ id: "m1", text: "Halo" })]));
+      return null;
+    });
+    renderConv();
+    await user.click(await screen.findByRole("button", { name: /^jempol 1/ }));
+    await vi.waitFor(() => expect(screen.queryByRole("list", { name: /^Reaksi untuk pesan/ })).toBeNull());
+    expect(screen.getByRole("button", { name: "Beri reaksi lain ke pesan Sari Uji pukul 09.12" })).toHaveFocus();
+  });
+
+  it("klik di luar pemilih menutupnya tanpa menarik fokus kembali", async () => {
+    const user = userEvent.setup();
+    renderConv();
+    const add = await screen.findByRole("button", { name: "Beri reaksi ke pesan Sari Uji pukul 09.12" });
+    await user.click(add);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(screen.getByText("Siap, saya cek."));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(add).not.toHaveFocus();
   });
 });
 
@@ -233,7 +290,7 @@ describe("Reaksi cepat di bilah aksi", () => {
     act(() => buttons[0].focus());
     await user.keyboard("{ArrowRight}");
     expect(buttons[1]).toHaveFocus();
-    expect(buttons[1]).toHaveAccessibleName(/^Reaksi /);
+    expect(buttons[1]).toHaveAccessibleName(/^Beri reaksi /);
     await user.keyboard("{Enter}");
     expect(chat.react).toHaveBeenCalledWith(CH, "m1", "❤️", true);
   });
@@ -245,18 +302,18 @@ describe("Reaksi cepat di bilah aksi", () => {
     const bar = within(messageItem("Siap, saya cek.")).getByRole("toolbar", {
       name: "Reaksi cepat untuk pesan Anda pukul 10.02",
     });
-    await user.click(within(bar).getByRole("button", { name: "Reaksi jempol" }));
+    await user.click(within(bar).getByRole("button", { name: "Beri reaksi jempol" }));
     expect(chat.react).toHaveBeenCalledWith(CH, "m4", "👍", true);
   });
 
-  it("Reaksi lain lewat keyboard: End, Enter membuka pemilih, Esc menutup dan fokus kembali", async () => {
+  it("Beri reaksi lain lewat keyboard: End, Enter membuka pemilih, Esc menutup dan fokus kembali", async () => {
     const user = userEvent.setup();
     renderConv();
     await screen.findByText("Draft kontraknya sudah saya kirim.");
     const bar = within(messageItem("Draft kontraknya sudah saya kirim.")).getByRole("toolbar");
     act(() => within(bar).getAllByRole("button")[0].focus());
     await user.keyboard("{End}");
-    const more = within(bar).getByRole("button", { name: "Reaksi lain untuk pesan Sari Uji pukul 09.12" });
+    const more = within(bar).getByRole("button", { name: "Beri reaksi lain ke pesan Sari Uji pukul 09.12" });
     expect(more).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(more).toHaveAttribute("aria-expanded", "true");
@@ -460,15 +517,15 @@ describe("Bahasa Inggris", () => {
     );
     renderInLang(() => tree());
     expect(
-      await screen.findByRole("button", { name: "thumbs up 3, including you. Budi Uji, Dimas Uji, You." }),
+      await screen.findByRole("button", { name: "thumbs up 3. Budi Uji, Dimas Uji, You." }),
     ).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Reactions to message from Sari Uji at 09:12" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "React thumbs up" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "React with thumbs up" }).length).toBeGreaterThan(0);
     expect(
       screen.getByText("The sticker image appears once a colleague's laptop that has it comes online."),
     ).toBeInTheDocument();
     fireEvent.contextMenu(screen.getByText("Draft kontraknya sudah saya kirim."));
-    expect(itemNames()).toContain("Add reaction");
+    expect(itemNames()).toContain("React");
     act(() => screen.getByRole("button", { name: /^thumbs up 3/ }).focus());
     expect(screen.getByText("Budi Uji, Dimas Uji, and You reacted with 👍")).toBeInTheDocument();
   });

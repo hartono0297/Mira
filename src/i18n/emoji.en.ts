@@ -7,7 +7,7 @@ const en: Dict<typeof id> = {
   searchPlaceholder: "Search, for example thumbs or coffee",
   categories: "Emoji categories",
   category: {
-    recent: "Frequently used",
+    recent: "Recently used",
     office: "Office emotes",
     faces: "Faces",
     people: "Gestures and people",

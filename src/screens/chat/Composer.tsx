@@ -149,7 +149,7 @@ export function insertEmoji(text: string, start: number, end: number, value: str
   return { text: before + insert + after, caret: before.length + insert.length };
 }
 
-// Mencatat emoji Unicode untuk daftar "Sering dipakai". Gagal dicatat tidak mengganggu menulis.
+// Mencatat emoji Unicode untuk daftar "Baru dipakai". Gagal dicatat tidak mengganggu menulis.
 function noteEmojiUsed(emoji: string) {
   try {
     chatApi
@@ -172,6 +172,9 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
   const [emojiQuery, setEmojiQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
   const [picker, setPicker] = useState<"emoji" | "sticker" | null>(null);
+  // "Baru dipakai" dibekukan selama pemilih emoji terbuka: memilih emoji memuat ulang katalog,
+  // dan urutan baru akan mencabut tombol yang sedang difokus.
+  const [recentEmoji, setRecentEmoji] = useState<string[]>([]);
   const offline = usePeerOffline(summary);
   const lang = useLang();
   const { catalog } = useStickerCatalog();
@@ -329,6 +332,7 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
       const el = inputRef.current;
       const end = el?.value.length ?? text.length;
       emojiRange.current = { start: el?.selectionStart ?? end, end: el?.selectionEnd ?? end };
+      setRecentEmoji(catalog?.recentEmoji ?? []);
     }
     setMention(null);
     setEmojiQuery(null);
@@ -548,9 +552,10 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
           {picker === "emoji" && (
             <EmojiPicker
               className="cmp-emoji-pop"
+              anchorRef={emojiButton}
               onPick={onEmojiPick}
               onClose={closeEmoji}
-              recent={catalog?.recentEmoji ?? []}
+              recent={recentEmoji}
               emotes={emotes}
               closeOnPick={false}
             />

@@ -12,7 +12,7 @@
 }
 
 .cmp-emoji-pop,
-.stk-picker {
+.cmp-stk-picker {
   bottom: calc(100% + 8px);
   left: 0;
 }
@@ -57,7 +57,7 @@
 
 /* Pemilih sticker */
 
-.stk-picker {
+.cmp-stk-picker {
   position: absolute;
   z-index: 55;
   display: flex;
@@ -73,7 +73,7 @@
   font-size: 13px;
 }
 
-.stk-tabs {
+.cmp-stk-tabs {
   flex: none;
   display: flex;
   gap: 4px;
@@ -81,7 +81,7 @@
 }
 
 /* Tab terpilih ditandai garis bawah tebal dan teks utama, bukan hanya warna. */
-.stk-tab {
+.cmp-stk-tab {
   min-height: 36px;
   margin-bottom: -1px;
   padding: 6px 12px;
@@ -94,21 +94,21 @@
   cursor: pointer;
 }
 
-.stk-tab:hover {
+.cmp-stk-tab:hover {
   background: var(--hover);
   color: var(--text);
 }
 
-.stk-tab[aria-selected="true"] {
+.cmp-stk-tab[aria-selected="true"] {
   border-bottom-color: var(--accent);
   color: var(--text);
 }
 
-.stk-tab:focus-visible {
+.cmp-stk-tab:focus-visible {
   outline-offset: -2px;
 }
 
-.stk-panel {
+.cmp-stk-panel {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -116,20 +116,20 @@
   padding-top: 8px;
 }
 
-.stk-panel > * + * {
+.cmp-stk-panel > * + * {
   margin-top: 8px;
 }
 
-.stk-panel > .stk-live:empty {
+.cmp-stk-panel > .cmp-stk-live:empty {
   margin-top: 0;
 }
 
-.stk-search {
+.cmp-stk-search {
   position: relative;
   flex: none;
 }
 
-.stk-search svg {
+.cmp-stk-search svg {
   position: absolute;
   top: 50%;
   left: 10px;
@@ -138,7 +138,7 @@
   pointer-events: none;
 }
 
-.stk-search input {
+.cmp-stk-search input {
   width: 100%;
   min-height: 36px;
   padding: 6px 10px 6px 32px;
@@ -148,18 +148,18 @@
   font-size: 13px;
 }
 
-.stk-search input::placeholder {
+.cmp-stk-search input::placeholder {
   color: var(--text-sec);
   opacity: 1;
 }
 
-.stk-search input:focus-visible {
+.cmp-stk-search input:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
   border-color: var(--focus);
 }
 
-.stk-upload {
+.cmp-stk-upload {
   flex: none;
   display: flex;
   flex-wrap: wrap;
@@ -167,11 +167,11 @@
   gap: 4px 10px;
 }
 
-.stk-upload .stk-note {
+.cmp-stk-upload .cmp-stk-note {
   margin: 0;
 }
 
-.stk-scroll {
+.cmp-stk-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -179,11 +179,11 @@
   padding: 2px;
 }
 
-.stk-group + .stk-group {
+.cmp-stk-group + .cmp-stk-group {
   margin-top: 10px;
 }
 
-.stk-pack {
+.cmp-stk-pack {
   margin: 0 0 4px;
   font-size: 12px;
   font-weight: 700;
@@ -192,7 +192,7 @@
 }
 
 /* Kolom tetap (STICKER_COLUMNS di StickerPicker.tsx), supaya panah atas dan bawah sesuai. */
-.stk-grid {
+.cmp-stk-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
@@ -201,12 +201,12 @@
   list-style: none;
 }
 
-.stk-cell {
+.cmp-stk-cell {
   position: relative;
   min-width: 0;
 }
 
-.stk-item {
+.cmp-stk-item {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -219,19 +219,19 @@
   cursor: pointer;
 }
 
-.stk-item:hover {
+.cmp-stk-item:hover {
   background: var(--hover);
 }
 
-.stk-item:focus-visible {
+.cmp-stk-item:focus-visible {
   outline-offset: -2px;
 }
 
-.stk-item[aria-disabled="true"] {
+.cmp-stk-item[aria-disabled="true"] {
   cursor: not-allowed;
 }
 
-.stk-name {
+.cmp-stk-name {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -240,12 +240,12 @@
   color: var(--text-sec);
 }
 
-.stk-item:hover .stk-name {
+.cmp-stk-item:hover .cmp-stk-name {
   color: var(--text);
 }
 
 /* Hapus sticker pribadi: selalu terlihat (bukan hanya saat disorot), Delete untuk keyboard. */
-.stk-remove {
+.cmp-stk-remove {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -262,12 +262,12 @@
   cursor: pointer;
 }
 
-.stk-remove:hover {
+.cmp-stk-remove:hover {
   border-color: var(--danger-border);
   color: var(--danger);
 }
 
-.stk-state {
+.cmp-stk-state {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -275,26 +275,26 @@
   color: var(--text-sec);
 }
 
-.stk-state svg {
+.cmp-stk-state svg {
   flex: none;
   margin-top: 2px;
 }
 
-.stk-sending {
+.cmp-stk-sending {
   padding: 0 4px;
 }
 
-.stk-note {
+.cmp-stk-note {
   margin-top: 8px;
   font-size: 12px;
   color: var(--text-sec);
 }
 
-.stk-retry {
+.cmp-stk-retry {
   margin-top: 8px;
 }
 
-.stk-form {
+.cmp-stk-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -303,22 +303,22 @@
   padding: 2px;
 }
 
-.stk-form-title {
+.cmp-stk-form-title {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
 }
 
-.stk-form-file {
+.cmp-stk-form-file {
   font-size: 12px;
   color: var(--text-sec);
 }
 
-.stk-form .field input {
+.cmp-stk-form .field input {
   font-size: 14px;
 }
 
-.stk-form-actions {
+.cmp-stk-form-actions {
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;

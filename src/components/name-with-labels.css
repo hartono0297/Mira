@@ -63,13 +63,8 @@
   overflow-wrap: anywhere;
 }
 
-/* "+N" yang bisa difokus: tombol seukuran chip. Area kliknya diperluas lewat ::after
-   supaya sasaran minimal sekitar 24 px tanpa menggeser baris. */
-.lab-more-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
+/* "+N" yang bisa difokus (chat, moreFocusable): tombol seukuran chip. Area kliknya
+   diperluas lewat ::after supaya sasaran minimal sekitar 24 px tanpa menggeser baris. */
 .lab-more-btn {
   position: relative;
   margin: 0;
@@ -93,27 +88,15 @@
   outline-offset: 2px;
 }
 
-/* Kotak sisa label di bawah "+N". Padding atas transparan menjembatani celah, jadi
-   kursor bisa pindah dari "+N" ke kotak tanpa kotaknya hilang. */
+/* Kotak sisa label "+N". Posisi tetap di portal (diatur NameWithLabels.tsx), jadi tidak
+   terpotong wadah yang bergulir. */
 .lab-tip {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 30;
-  padding-top: 4px;
-  width: max-content;
-  max-width: min(260px, calc(100vw - 32px));
-}
-
-.lab-tip-end {
-  left: auto;
-  right: 0;
-}
-
-.lab-tip-box {
+  z-index: 60; /* di atas dialog (51), setara menu konteks */
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 16px));
   padding: 6px;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -121,7 +104,7 @@
   box-shadow: 0 6px 16px var(--scrim);
 }
 
-.lab-tip-box .lab {
+.lab-tip .lab {
   max-width: 100%;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -132,7 +115,7 @@
     border-color: ButtonText;
   }
 
-  .lab-tip-box {
+  .lab-tip {
     border-color: CanvasText;
   }
 }

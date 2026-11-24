@@ -13,7 +13,7 @@ const en: Dict<typeof id> = {
   deleteMessage: "Delete message",
   copied: "Message text copied.",
   copyFailed: "Couldn't copy the text. Select it and press Ctrl+C.",
-  react: "Add reaction",
+  react: "React",
   saveSticker: "Save sticker",
   stickerSaved: "Sticker saved to your collection.",
   stickerSaveFailed: (detail: string) => `Sticker not saved. ${detail}`,
