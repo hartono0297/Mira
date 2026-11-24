@@ -97,7 +97,7 @@ describe("Organisasi: tab per peran", () => {
     answer();
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan"]);
+    expect(tabNames()).toEqual(["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan", "Kopi"]);
     expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
   });
 
@@ -105,7 +105,7 @@ describe("Organisasi: tab per peran", () => {
     answer({ org_overview: adminOverview() });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Anggota", "Permintaan bergabung", "Undangan"]);
+    expect(tabNames()).toEqual(["Anggota", "Permintaan bergabung", "Undangan", "Kopi"]);
     expect(screen.getByRole("button", { name: "Anggota" })).toHaveAttribute("aria-current", "true");
     expect(screen.queryByRole("button", { name: "Departemen" })).not.toBeInTheDocument();
   });
@@ -117,7 +117,7 @@ describe("Organisasi: tab per peran", () => {
     // Direktori lama juga tidak memberi hak mengelola departemen apa pun.
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_directory", undefined));
     await screen.findByRole("button", { name: "Anggota" });
-    expect(tabNames()).toEqual(["Anggota"]);
+    expect(tabNames()).toEqual(["Anggota", "Kopi"]);
     for (const name of ["Pengguna", "Departemen", "Label", "Undangan"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
@@ -129,7 +129,7 @@ describe("Organisasi: tab per peran", () => {
     answer({ org_overview: memberOverview({ departmentId: null }), get_directory: directory(plainMember) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Anggota", "Undangan"]);
+    expect(tabNames()).toEqual(["Anggota", "Undangan", "Kopi"]);
     await user.click(screen.getByRole("button", { name: "Undangan" }));
     expect(await screen.findByRole("heading", { name: "Pakai kode undangan", level: 2 })).toBeInTheDocument();
     expect(screen.getByLabelText("Kode undangan", { selector: "input" })).toBeInTheDocument();
@@ -145,7 +145,7 @@ describe("Organisasi: tab per peran", () => {
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_directory", undefined));
-    expect(tabNames()).toEqual(["Anggota"]);
+    expect(tabNames()).toEqual(["Anggota", "Kopi"]);
   });
 
   it("pindah tab memindah aria-current, dan setiap tab terbuka tanpa error", async () => {

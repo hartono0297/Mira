@@ -6,11 +6,13 @@ import { orgApi } from "../../api/org";
 import { orgScreenApi } from "../../api/orgScreen";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { useLang } from "../../i18n/core";
+import { KOPI_BOARD_TEXT } from "../../i18n/kopi-board";
 import { ORG_TEXT } from "../../i18n/org";
 import { makeCtx, type Act, type OrgPage } from "./context";
 import { DepartmentsPanel } from "./DepartmentsPanel";
 import { InvitesPanel } from "./InvitesPanel";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
+import { KopiBoardPanel } from "./KopiBoardPanel";
 import { LabelsPanel } from "./LabelsPanel";
 import { OtherOfficesNotice } from "./OtherOfficesNotice";
 import { PeoplePanel } from "./PeoplePanel";
@@ -21,7 +23,7 @@ import "../settings/settings.css";
 import "./nav-count.css";
 import "./org.css";
 
-export type Part = "users" | "people" | "departments" | "requests" | "labels" | "invites";
+export type Part = "users" | "people" | "departments" | "requests" | "labels" | "invites" | "kopi";
 
 type Feedback = { kind: "ok"; text: string } | { kind: "error"; title: string; error: AppError } | null;
 
@@ -143,6 +145,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
     }
     if (overview.manageOrg) list.push({ id: "labels", label: tabs.labels });
     if (canInvite || canRedeem) list.push({ id: "invites", label: tabs.invites });
+    list.push({ id: "kopi", label: KOPI_BOARD_TEXT.tab });
     return list;
     // lang: label tab ikut bahasa aktif.
   }, [overview, canInvite, canRedeem, lang]);
@@ -258,6 +261,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
             {current.id === "departments" && <DepartmentsPanel page={page} />}
             {current.id === "requests" && <JoinRequestsPanel page={page} />}
             {current.id === "labels" && <LabelsPanel page={page} />}
+            {current.id === "kopi" && <KopiBoardPanel page={page} />}
             {current.id === "invites" &&
               (ctx ? (
                 <InvitesPanel ctx={ctx} canRedeem={canRedeem} />

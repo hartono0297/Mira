@@ -6,6 +6,7 @@ import { orgApi, subscribeOrg, type PersonView } from "../../api/org";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { KopiProfileSection } from "../../components/KopiProfileSection";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { PROFILE } from "../../i18n/chat-dialogs";
 import { useChatActions } from "./ChatActions";
@@ -180,6 +181,7 @@ function ProfileBody({ person, onOpenChange }: { person: Person; onOpenChange: (
       <div aria-live="polite" className="prof-body">
         {content}
       </div>
+      <KopiProfileSection person={person} />
       <div className="dlg-actions">
         <DialogClose asChild>
           <button type="button" className="btn btn-ghost">

@@ -1,0 +1,72 @@
+// Teks fitur Kopi: ikon di samping nama, dialog Beri kopi, dan bagian Kopi di
+// profil (src/components/Kopi*.tsx). Panel papan di Organisasi punya kamus
+// sendiri (kopi-board).
+const id = {
+  tier: {
+    anak_baru: "Anak baru",
+    andalan: "Andalan",
+    senior: "Senior",
+    legenda: "Legenda",
+  },
+  // Ikon di samping nama. Pembaca layar mendengar "Rina, Andalan, 17 kopi".
+  mark: {
+    label: (tier: string, n: number) => `${tier}, ${n} kopi`,
+  },
+  give: {
+    title: (name: string) => `Beri kopi untuk ${name}`,
+    forMessage: "Untuk pesan ini",
+    forTask: "Untuk task ini",
+    reasonLabel: "Alasan",
+    reasonHint: "Satu kalimat cukup, misalnya karena sudah membantu mengecek gambar kerja.",
+    publicNote: "Alasan terlihat oleh semua orang di kantor.",
+    counter: (n: number, max: number) => `${n} dari ${max} karakter`,
+    reasonEmpty: "Tulis alasannya dulu.",
+    reasonTooLong: (max: number, now: number) => `Alasan paling banyak ${max} karakter (sekarang ${now}).`,
+    left: (n: number, limit: number) => `Sisa jatah hari ini: ${n} dari ${limit} kopi.`,
+    noneLeft: (limit: number) => `Jatah ${limit} kopi hari ini sudah terpakai. Besok bisa memberi lagi.`,
+    already: "Anda sudah memberi kopi untuk ini.",
+    cannotGive: "Kopi hanya bisa diberikan oleh anggota kantor saat fitur Kopi menyala.",
+    send: "Kirim kopi",
+    sending: "Mengirim kopi...",
+    cancel: "Batal",
+    failTitle: "Kopi belum terkirim",
+  },
+  profile: {
+    title: "Kopi",
+    loading: "Memuat kopi...",
+    loadFail: "Kopi orang ini belum terbaca",
+    retry: "Coba lagi",
+    stale: (message: string) => `Data kopi terbaru belum terbaca (${message}). Yang tampil adalah data terakhir.`,
+    featureOff: "Fitur Kopi sedang dimatikan. Superadmin bisa menyalakannya di Organisasi, bagian Kopi.",
+    fromPeers: "Dari rekan",
+    fromWork: "Dari kerja",
+    tierLabel: "Tingkatan",
+    progressLabel: (next: string) => `Menuju ${next}`,
+    progressText: (score: number, need: number, next: string) =>
+      `Skor ${score}. Kurang ${need} lagi untuk jadi ${next}.`,
+    top: (score: number) => `Skor ${score}. Ini tingkatan tertinggi.`,
+    scoreHint: (peer: number, work: number) => `Kopi dari rekan dihitung ${peer} poin, kopi dari kerja ${work} poin.`,
+    giveBtn: "Beri kopi",
+    givenToday: "Anda sudah memberi kopi lewat profil ini hari ini.",
+    noneLeft: (limit: number) => `Jatah ${limit} kopi Anda hari ini sudah terpakai.`,
+    historyTitle: "Dari siapa, untuk apa",
+    empty: "Belum ada kopi. Kopi datang dari rekan yang berterima kasih dan dari task yang selesai.",
+    viaMessage: "untuk pesan",
+    viaTask: "untuk task",
+    viaProfile: "lewat profil",
+    workLabel: "Kopi dari kerja",
+    otherProject: "Task di proyek lain",
+    whyAssigned: "Tugas dari rekan selesai",
+    whyOnTime: "Selesai tepat waktu",
+    showAll: (n: number) => `Tampilkan semua (${n})`,
+    showLess: "Tampilkan lebih sedikit",
+    hiddenChip: "Disembunyikan",
+    hide: "Sembunyikan",
+    hideFor: (name: string) => `Sembunyikan kopi dari ${name}`,
+    unhide: "Tampilkan lagi",
+    unhideFor: (name: string) => `Tampilkan lagi kopi dari ${name}`,
+    hideFail: "Perubahan belum tersimpan",
+  },
+};
+
+export default id;

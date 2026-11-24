@@ -42,6 +42,7 @@ import { LabelPicker } from "./LabelPicker";
 import { PropertyRow } from "./PropertyRow";
 import { Subtasks } from "./Subtasks";
 import { activitySentence } from "./taskActivity";
+import { TaskKopiThanks } from "./TaskKopiThanks";
 import { TaskMoreMenu } from "./TaskMoreMenu";
 import { MenuList, type MenuItem } from "./TaskPopover";
 import { MAX_LABEL_LEN, MAX_LABELS, TEKS_DIALOG as T, teksDialog } from "./teksDialog";
@@ -748,6 +749,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
           )}
           {edit ? titleEditor(t) : <p className="td-title-text">{t.title}</p>}
           {properties(t, edit)}
+          {mode !== "gone" && <TaskKopiThanks projectId={projectId} task={t} me={me} />}
           {/* Keterangan, bukan isian: tanpa bingkai, gembok menandai tidak bisa diubah. */}
           <p className="td-ro">
             <IconLock size={14} data-icon="lock" aria-hidden="true" />

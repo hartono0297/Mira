@@ -1,0 +1,35 @@
+/* Tombol terima kasih (Kopi) di detail task yang sudah selesai.
+   Hanya token yang sudah ada: --text di atas --bg untuk tombol, --text-sec untuk
+   alasan saat nonaktif (pasangan yang sama dengan .hint di seluruh aplikasi). */
+
+.tk-thanks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.tk-thanks .btn {
+  min-height: 44px;
+  max-width: 100%;
+  text-align: start;
+}
+
+.tk-thanks .btn > svg {
+  flex: none;
+}
+
+/* Nonaktif tetap terbaca dan bisa difokus; hanya sorotan saat diarahkan yang dimatikan. */
+.tk-thanks .btn[aria-disabled="true"] {
+  opacity: 0.75;
+}
+
+.tk-thanks .btn[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.tk-thanks .hint {
+  margin: 0;
+  min-width: 0;
+}
