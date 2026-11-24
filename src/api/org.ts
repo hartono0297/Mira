@@ -119,6 +119,59 @@ export type JoinRequestView = {
   note: string | null;
   // Nama akun login Windows atau macOS di laptop peminta.
   account: string | null;
+  // onboarding-ad: data AD yang ikut permintaan bertanda tangan (dilaporkan
+  // laptop peminta, diperiksa ulang lewat joinAdCheck). null untuk permintaan manual.
+  ad: JoinAdView | null;
+  // Kantor memakai pengaturan AD dan Mira peminta terlalu lama untuk itu:
+  // Setujui akan ditolak sampai peminta memperbarui Mira.
+  requesterOutdated: boolean;
+};
+
+export type JoinAdView = {
+  domain: string;
+  user: string;
+  dn: string | null;
+  name: string | null;
+  department: string | null;
+  // OU dari DN, paling dalam dulu.
+  ous: string[];
+  suggestedTeamId: string | null;
+  // Departemen hasil AD ada di Mira.
+  departmentInMira: boolean;
+};
+
+export type AdCheckStatus =
+  | "match"
+  | "mismatch"
+  | "disabled"
+  | "not_found"
+  | "unreachable"
+  | "other_domain"
+  | "not_domain_machine";
+
+export type AdCheck = {
+  status: AdCheckStatus;
+  mismatches: { field: "name" | "department"; requested: string; directory: string }[];
+  directoryName: string | null;
+  directoryDepartment: string | null;
+  departmentInMira: boolean;
+  checkedAt: string;
+};
+
+// Satu baris pemetaan OU AD ke departemen Mira.
+export type OuMapping = { ou: string; team: string };
+
+export type AdSettingsView = {
+  domain: string | null;
+  ouMap: OuMapping[];
+  // Superadmin.
+  canEdit: boolean;
+  // Semua laptop anggota sudah cukup baru untuk menyimpan pengaturan AD.
+  allowed: boolean;
+  // Laptop yang menghalangi (versi Mira terlalu lama atau belum dilaporkan).
+  outdated: { name: string; appVersion: string | null }[];
+  // Domain AD laptop ini, untuk tombol "Pakai domain laptop ini".
+  machineDomain: string | null;
 };
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -152,6 +205,12 @@ export const orgApi = {
   // Permintaan bergabung (superadmin atau admin departemen tujuan)
   approveJoin: (requestId: string) => call<null>("org_approve_join", { requestId }),
   rejectJoin: (requestId: string) => call<null>("org_reject_join", { requestId }),
+  // Cek ulang akun AD peminta dari laptop ini. Hasil disimpan 2 menit; refresh memaksa cek baru.
+  joinAdCheck: (requestId: string, refresh = false) => call<AdCheck>("org_join_ad_check", { requestId, refresh }),
+
+  // Active Directory (superadmin mengubah, semua bisa membaca)
+  adSettings: () => call<AdSettingsView>("org_ad_settings"),
+  setAdSettings: (domain: string, ouMap: OuMapping[]) => call<null>("org_set_ad_settings", { domain, ouMap }),
 
   // Anggota proyek
   addProjectMember: (projectId: string, publicKey: string) =>

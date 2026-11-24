@@ -440,6 +440,8 @@ const JOIN_REQUESTS: JoinRequestView[] = [
     seenByName: "Alex Morgan",
     note: "New drafter, starting Monday.",
     account: "riley",
+    ad: null,
+    requesterOutdated: false,
   },
 ];
 

@@ -23,6 +23,8 @@ export function office(overrides: Partial<FoundOffice> = {}): FoundOffice {
     conflict: false,
     sameName: false,
     acceptsNote: true,
+    adDomain: null,
+    acceptsAd: false,
     ...overrides,
   };
 }
@@ -42,6 +44,7 @@ export function outgoing(overrides: Partial<OutgoingJoinRequest> = {}): Outgoing
     teamName: "Desain",
     displayName: "Rina",
     note: null,
+    ad: null,
     createdAt: "2026-11-23T09:00:00Z",
     status: "pending",
     decidedByName: null,

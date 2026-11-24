@@ -41,6 +41,45 @@ export type FoundOffice = {
   // Semua laptop anggota yang menjawab sudah v0.4: keterangan dan nama akun
   // ikut permintaan. false: permintaan berbentuk v0.3 (tanpa keduanya).
   acceptsNote: boolean;
+  // Domain Active Directory yang diatur superadmin kantor ini, huruf kecil.
+  adDomain: string | null;
+  // Semua laptop anggota yang menjawab menerima data AD di permintaan.
+  acceptsAd: boolean;
+};
+
+// Akun domain yang login di laptop ini (onboarding-ad). Selain domain,
+// bagian lain bisa kosong kalau server domain tidak terjangkau.
+export type LocalAd = {
+  domain: string;
+  // sAMAccountName, misalnya "hartono".
+  user: string | null;
+  dn: string | null;
+  displayName: string | null;
+  // Atribut department.
+  department: string | null;
+  // false: hanya terbaca sebagian.
+  complete: boolean;
+};
+
+// Asal usulan departemen.
+export type AdDeptSource = "attribute" | "attribute_map" | "ou_map" | "ou_name";
+
+export type AdDeptSuggestion = {
+  teamId: string | null;
+  source: AdDeptSource | null;
+  // Departemen menurut AD: atribut department, atau OU paling dalam.
+  adDepartment: string | null;
+  // teamId ditemukan di kantor Mira.
+  inMira: boolean;
+};
+
+// Data AD yang ikut permintaan bertanda tangan.
+export type JoinAdClaim = {
+  domain: string;
+  user: string;
+  dn: string | null;
+  name: string | null;
+  department: string | null;
 };
 
 // Batas keterangan untuk admin, dalam karakter (sama dengan Rust).
@@ -68,6 +107,8 @@ export type OutgoingJoinRequest = {
   displayName: string;
   // Keterangan untuk admin (v0.4), null kalau dikosongkan atau kantor belum mendukungnya.
   note: string | null;
+  // Data AD yang ikut permintaan (onboarding-ad), null kalau tidak ada.
+  ad: JoinAdClaim | null;
   createdAt: string;
   status: "pending" | "rejected";
   decidedByName: string | null;
@@ -102,8 +143,20 @@ export const joinApi = {
   // confirmFingerprint: sidik pendek yang sudah dicocokkan dengan superadmin.
   // Wajib untuk kantor yang conflict, selain itu null.
   // note: keterangan untuk admin (v0.4), null atau string kosong kalau tidak diisi.
-  sendRequest: (officeKey: string, teamId: string, confirmFingerprint: string | null = null, note: string | null = null) =>
-    call<OutgoingJoinRequest>("join_send_request", { officeKey, teamId, confirmFingerprint, note }),
+  // useAd: sertakan data AD laptop ini kalau kantor menerimanya dan domainnya sama.
+  sendRequest: (
+    officeKey: string,
+    teamId: string,
+    confirmFingerprint: string | null = null,
+    note: string | null = null,
+    useAd = false,
+  ) => call<OutgoingJoinRequest>("join_send_request", { officeKey, teamId, confirmFingerprint, note, useAd }),
+  // Akun domain laptop ini, dibaca sekali (paling lama sekitar 4 detik).
+  // null: bukan akun domain, macOS, atau tidak terbaca.
+  adProfile: () => call<LocalAd | null>("join_ad_profile"),
+  // Departemen usulan dari data AD untuk kantor itu. null kalau tidak ada data
+  // AD atau domain laptop beda dengan domain kantor.
+  adSuggest: (officeKey: string) => call<AdDeptSuggestion | null>("join_ad_suggest", { officeKey }),
   outgoing: () => call<OutgoingJoinRequest | null>("join_outgoing"),
   // Dipanggil tiap 5 detik selama layar menunggu terbuka.
   poll: () => call<JoinPoll>("join_poll"),

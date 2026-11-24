@@ -108,6 +108,8 @@ export function joinRequest(id: string, displayName: string, extra: Partial<Join
     // Permintaan v0.4. Untuk permintaan dari Mira v0.3 berikan note: null, account: null.
     note: "Staf baru, mulai minggu ini.",
     account: displayName.toLowerCase(),
+    ad: null,
+    requesterOutdated: false,
     ...extra,
   };
 }

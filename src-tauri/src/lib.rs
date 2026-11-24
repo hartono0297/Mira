@@ -3,6 +3,7 @@
 //! Modules are split by concern so later stages can add `network/`, `sync/`
 //! and `permissions/` next to these without reshaping them.
 
+pub mod ad;
 pub mod blobs;
 pub mod board;
 pub mod chat;
