@@ -28,7 +28,7 @@ Tahapan
 - [[Tahap 7]]: uji coba kantor
 
 Kerja sehari-hari
-- [[Rilis]]: v0.4.0 (bahasa Inggris, subtask, pelacakan waktu, menu klik kanan), v0.3.0 (departemen, bergabung dengan persetujuan, pembaruan dari dalam aplikasi), v0.2.0 (macOS), v0.1.0 (build internal pertama, Windows)
+- [[Rilis]]: v0.5.0 (bergabung lewat Active Directory, satu domain satu kantor), v0.4.0 (bahasa Inggris, subtask, pelacakan waktu, menu klik kanan), v0.3.0 (departemen, bergabung dengan persetujuan, pembaruan dari dalam aplikasi), v0.2.0 (macOS), v0.1.0 (build internal pertama, Windows)
 - [[macOS]]: yang berbeda di Mac, build lewat GitHub Actions, cara memasang, yang belum diuji
 - [[Cara menjalankan dan menguji]]
 - [[Belum diuji]]
@@ -49,7 +49,7 @@ Kerja sehari-hari
 
 Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`): `cargo test` 861 lulus, 0 gagal, 7 diabaikan; clippy tanpa peringatan; tsc bersih; Vitest 557 tes di 37 file lulus. Semua uji ujung ke ujung pada build release lulus, termasuk chat dan board tiga instance (20/20) serta dokumen dan tanda tangan tiga instance (37/37). Semua di satu PC, lihat [[Belum diuji]]. Rincian per skrip ada di [[Cara menjalankan dan menguji]].
 
-Rilis terbaru, `v0.4.0`, berisi installer Windows dan macOS serta pembaruan dari dalam aplikasi. Rilis pertama, `v0.1.0`, hanya untuk Windows. Lihat [[Rilis]]. macOS baru diuji lewat tes otomatis di GitHub Actions, belum di MacBook sungguhan; lihat [[macOS]].
+Rilis terbaru, `v0.5.0`, berisi installer Windows dan macOS serta pembaruan dari dalam aplikasi. Rilis pertama, `v0.1.0`, hanya untuk Windows. Lihat [[Rilis]]. macOS baru diuji lewat tes otomatis di GitHub Actions, belum di MacBook sungguhan; lihat [[macOS]].
 
 ## Sumber di repo
 

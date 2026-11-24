@@ -6,6 +6,15 @@ tags: [mira, rilis]
 
 Mulai v0.3.0 setiap rilis adalah rilis biasa (bukan prerelease), supaya pembaruan dari dalam aplikasi bisa membaca `latest.json` di rilis terbaru. Alurnya: naikkan versi, push `main`, pasang tag `vX.Y.Z`, workflow Rilis membuat draft berisi installer, `.sig`, `.sha256`, dan `latest.json`, lalu draft diterbitkan.
 
+## v0.5.0
+
+Isinya:
+- Bergabung lewat akun Windows kantor: di PC dengan akun domain, Mira memilih kantor yang domain AD-nya sama dan mengisi nama serta departemen dari Active Directory (atribut `department`, atau OU yang dicocokkan superadmin). Laptop admin mengecek ulang ke AD (akun ada, aktif, cocok), lalu admin tetap menekan Setujui. Mac dan PC tanpa domain memakai alur manual.
+- Satu domain, satu kantor: kantor kedua untuk domain yang sama ditolak, kantor Mira 0.1 dan 0.2 tetap terlihat saat memasang dengan langkah pembaruan, dan anggota diberi tahu kalau ada laptop dari kantor Mira lain di jaringan.
+- Detail task: nilai yang bisa diubah diberi bingkai seperti kolom isian, yang hanya dibaca tampil sebagai teks biasa.
+
+Organisasi kantor di-reset pada 24 November 2026 dan dibuat ulang di versi ini, karena laptop 0.3.0 sempat membuat kantor kedua tanpa melihat kantor 0.1.0. Bergabung lewat data AD aktif setelah semua laptop memakai 0.5.0. Jalur LDAP sungguhan belum diuji di PC domain kantor; semua uji memakai AD tiruan. Laporan: `docs/progress/onboarding-ad.md` dan `docs/progress/task-detail-bingkai.md`.
+
 ## v0.4.0
 
 Isinya:

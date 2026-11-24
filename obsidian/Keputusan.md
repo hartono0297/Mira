@@ -98,6 +98,15 @@ Rinciannya di `docs/progress/v04-english.md`.
 - Subtask dan catatan waktu disimpan di dokumen Automerge task. Laptop v0.3 menolak perubahan itu; setelah diperbarui, catatan penolakan dikosongkan sekali supaya laptop itu menyusul.
 - Menu klik kanan memakai komponen sendiri, bukan pustaka. Menu bawaan WebView dimatikan di seluruh aplikasi. Sidebar menu utama tidak punya menu klik kanan.
 
+## v0.5: Active Directory dan satu domain satu kantor (24 November 2026)
+
+- Data AD mengisi otomatis (tingkat A), admin tetap menyetujui. Persetujuan otomatis lewat bukti login Windows ditunda. Persetujuan otomatis hanya dari data AD ditolak, karena data itu dikirim laptop peminta sendiri dan bisa dipalsukan.
+- Cek ulang dari laptop admin membuktikan akun ada dan aktif, bukan bahwa peminta pemilik akun itu. Kode cocok tetap dipakai.
+- Departemen diambil dari atribut `department` AD; kalau kosong, dari pemetaan OU yang diatur superadmin. Departemen yang belum ada di Mira tidak dibuat otomatis.
+- Satu domain, satu kantor. Pembuatan kantor tetap sekali oleh admin IT, karena pembuatnya menjadi superadmin dan tanpa server dua laptop bisa membuat kantor bersamaan. Kalau terlanjur ada dua kantor dengan domain sama, yang genesis-nya paling awal menjadi kantor utama; isi dua kantor tidak bisa digabung.
+- Data AD peminta (nama akun, DN, nama, departemen) tersimpan di catatan kantor dan terlihat oleh anggota. Layar peminta memberi tahu hal ini.
+- Rencana berikutnya: tab "Departemen saya" untuk admin departemen dan Divisi di dalam departemen. Divisi dibuat admin departemen, yang menunjuk kepala divisi. Peran kustom dengan hak bebas tidak dibuat.
+
 ## Yang masih terbuka
 
 | Keputusan | Keadaan sekarang |

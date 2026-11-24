@@ -30,7 +30,7 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 - Task berisi judul, deskripsi, penanggung jawab, tenggat, prioritas, label, komentar, dan riwayat aktivitas.
 - Subtask berupa daftar centang di dalam task, dengan penanggung jawab dan urutan yang bisa diubah. Kartu menampilkan progres seperti 2/5.
 - Pelacakan waktu: lama task di setiap kolom, cycle time dari dibuat sampai selesai, timer Mulai dan Hentikan per orang, dan catatan waktu manual. Kartu menampilkan total waktu.
-- Detail task satu kolom: judul diedit langsung, properti sebagai baris label dan nilai, lalu Subtask, Deskripsi, Waktu, dan tab Komentar/Aktivitas.
+- Detail task satu kolom: judul diedit langsung, properti sebagai baris label dan nilai, lalu Subtask, Deskripsi, Waktu, dan tab Komentar/Aktivitas. Semua nilai yang bisa diubah diberi bingkai seperti kolom isian; yang hanya bisa dibaca tampil sebagai teks biasa, dan Tamu tidak melihat bingkai sama sekali.
 - Task dipindah dengan seret mouse (pointer event, jalan di Windows dan macOS), menu Pindahkan, Alt+Panah, atau menu klik kanan. Menu klik kanan juga ada di kolom, subtask, daftar proyek, dan Task saya.
 - Halaman "Task saya" dan pengingat tenggat lewat notifikasi Windows.
 - Proyek punya anggota sendiri dari departemen mana pun, dipilih saat membuat proyek. Proyek dibuat oleh superadmin atau admin departemen.
@@ -57,6 +57,8 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 - Satu organisasi untuk seluruh kantor, dibagi per departemen, dengan peran Superadmin, Admin departemen, Anggota, dan Tamu. Satu orang masuk satu departemen; hanya superadmin yang bisa memindah.
 - Bergabung: orang baru mengisi nama, lalu Mira mencari kantor di jaringan. Orang itu memilih kantor, memilih departemen dari kantor itu, dan boleh menulis keterangan untuk admin. Superadmin atau admin departemen melihat keterangan, nama akun login laptop peminta, laptop, IP, dan kode cocok sebelum menyetujui. Kode cocok tampil di kedua layar. Membuat kantor baru tersembunyi di bagian "Untuk admin IT" pada layar "Kantor belum ditemukan". Kode undangan tetap bisa dipakai, misalnya dari VPN.
+- Active Directory (Windows): di PC yang login dengan akun domain, Mira memilih kantor yang domain AD-nya sama dan mengisi nama serta departemen dari AD (atribut `department`, atau OU yang dicocokkan superadmin dengan departemen Mira). Kartu Permintaan bergabung mengecek ulang ke AD dari laptop admin: akun ada, aktif, dan cocok. Admin tetap menekan Setujui. MacBook dan PC tanpa akun domain memakai alur manual.
+- Satu domain, satu kantor: Mira menolak membuat kantor kedua untuk domain AD yang sama, menampilkan kantor yang laptopnya masih memakai Mira lama, dan memberi tahu anggota kalau ada laptop di jaringan yang tergabung di kantor Mira lain.
 - Satu aplikasi untuk semua peran. Menu admin hanya tampil untuk peran yang berhak.
 - Halaman Organisasi: Pengguna (khusus superadmin: nama laptop, IP terakhir, sistem, versi, status), Departemen, Label, Permintaan bergabung, dan Undangan. Baris di Pengguna, Departemen, dan Label punya menu klik kanan, begitu juga baris di Dokumen dan Tanda tangan.
 - Angka di menu untuk pesan belum dibaca, task jatuh tempo, tanda tangan yang menunggu, dan permintaan bergabung.
@@ -105,6 +107,8 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 ## Rilis
 
 `v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini publik dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
+
+`v0.5.0` menambah bergabung lewat akun Windows kantor (data Active Directory mengisi kantor, nama, dan departemen, lalu laptop admin mengecek ulang ke AD), aturan satu domain satu kantor, kantor Mira versi lama yang tetap terlihat saat memasang, dan bingkai pada nilai yang bisa diubah di detail task. Bergabung lewat data AD aktif setelah semua laptop kantor memakai 0.5.0. Jalur LDAP sungguhan belum diuji di PC domain kantor. Laporan: [onboarding-ad.md](docs/progress/onboarding-ad.md), [task-detail-bingkai.md](docs/progress/task-detail-bingkai.md).
 
 `v0.4.0` menambah bahasa Inggris, subtask dan pelacakan waktu di board, detail task yang baru, menu klik kanan di seluruh aplikasi, alur bergabung dengan pilihan kantor dan keterangan untuk admin, grup yang bisa dibuat sendirian, dan chat grup otomatis untuk setiap proyek. Laptop yang masih 0.3 menolak subtask dan catatan waktu, jadi perbarui semua laptop bersamaan lewat Pengaturan > Tentang dan pembaruan. Laporan: [v04-chat.md](docs/progress/v04-chat.md), [v04-onboarding.md](docs/progress/v04-onboarding.md), [v04-board.md](docs/progress/v04-board.md), [v04-contextmenu.md](docs/progress/v04-contextmenu.md), [v04-ctx-chat.md](docs/progress/v04-ctx-chat.md), [v04-ctx-board.md](docs/progress/v04-ctx-board.md), [v04-english.md](docs/progress/v04-english.md).
 
@@ -221,7 +225,7 @@ Skrip menjalankan `mira.exe` sungguhan dan mengendalikannya lewat DevTools Proto
 
 | `npm run test:e2e-board-v04` | debug | Dua instance: subtask, timer, dan durasi status tersinkron, termasuk konflik saat offline |
 
-Skrip berikut belum punya perintah npm dan dijalankan dengan `node scripts/<skrip> <mira.exe> <folder screenshot>`: `board-e2e.mjs` dan `board-sync-e2e.mjs` (board), `org-e2e.mjs` (halaman Organisasi), dan `join-e2e.mjs` (bergabung dengan persetujuan). `contextmenu-e2e.mjs` (menu klik kanan) butuh argumen ketiga, yaitu folder kerja.
+Skrip berikut belum punya perintah npm dan dijalankan dengan `node scripts/<skrip> <mira.exe> <folder screenshot>`: `board-e2e.mjs` dan `board-sync-e2e.mjs` (board), `org-e2e.mjs` (halaman Organisasi), `join-e2e.mjs` (bergabung dengan persetujuan), dan `ad-e2e.mjs` (bergabung dengan data Active Directory tiruan dan aturan satu domain satu kantor; hanya build debug, argumen ketiga opsional untuk folder data uji). `contextmenu-e2e.mjs` (menu klik kanan) butuh argumen ketiga, yaitu folder kerja.
 
 ### Beberapa "laptop" di satu PC
 
