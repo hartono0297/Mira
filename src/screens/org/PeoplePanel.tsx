@@ -5,6 +5,8 @@ import { orgApi, type PersonView } from "../../api/org";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
 import { NameWithLabels } from "../../components/NameWithLabels";
+import { getLang } from "../../i18n/core";
+import { ORG_TEXT } from "../../i18n/org";
 import type { OrgPage } from "./context";
 import { useOrgLive } from "./useOrgLive";
 import "./users.css";
@@ -12,12 +14,14 @@ import "./users.css";
 // Peran yang ditulis di daftar: gabungan superadmin organisasi dan peran di departemen.
 export function roleText(p: Pick<PersonView, "isGuest" | "isSuperadmin" | "departmentRole">): string {
   if (p.isGuest) return ROLE_LABELS.guest;
-  if (p.isSuperadmin) return p.departmentRole === "admin" ? "Superadmin, admin departemen" : ROLE_LABELS.superadmin;
+  if (p.isSuperadmin) return p.departmentRole === "admin" ? ORG_TEXT.people.superadminAndAdmin : ROLE_LABELS.superadmin;
   return p.departmentRole === "admin" ? TEAM_ROLE_LABELS.admin : ROLE_LABELS.member;
 }
 
 // Pesan dari inti Rust masih bisa menyebut "tim"; di tampilan v0.3 namanya departemen.
+// Dalam bahasa Inggris pesan sudah dipetakan dari kodenya, dan "Tim" bisa nama orang.
 export function orgMessage(message: string): string {
+  if (getLang() === "en") return message;
   return message.replace(/\bTim\b/g, "Departemen").replace(/\btim\b/g, "departemen");
 }
 
@@ -53,24 +57,24 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
       <div className="org-head">
         <div>
           <h2 id="people-title" className="set-title">
-            Anggota organisasi
+            {ORG_TEXT.people.title}
           </h2>
-          <p className="hint">Semua orang aktif di organisasi, dengan departemen dan perannya.</p>
+          <p className="hint">{ORG_TEXT.people.hint}</p>
         </div>
       </div>
 
       {live.loading && !live.data && (
         <p className="hint" role="status">
-          Memuat daftar anggota...
+          {ORG_TEXT.people.loading}
         </p>
       )}
 
       {!live.loading && !live.data && (
         <div role="alert">
-          <ErrorAlert title="Daftar anggota belum terbaca">
-            <p>{live.error ? orgMessage(live.error.message) : "Inti Mira tidak mengirim daftar anggota."}</p>
+          <ErrorAlert title={ORG_TEXT.people.loadErrorTitle}>
+            <p>{live.error ? orgMessage(live.error.message) : ORG_TEXT.people.loadErrorEmpty}</p>
             <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
-              Coba lagi
+              {ORG_TEXT.retry}
             </button>
           </ErrorAlert>
         </div>
@@ -79,36 +83,31 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
       {live.data && (
         <>
           {live.error && (
-            <p className="hint">
-              Data terbaru belum bisa dibaca ({orgMessage(live.error.message)}). Yang tampil adalah data terakhir.
-            </p>
+            <p className="hint">{ORG_TEXT.stale(orgMessage(live.error.message))}</p>
           )}
 
           {onlyMe ? (
             <div className="org-empty">
-              <p>
-                Belum ada orang lain di organisasi ini. Rekan bisa bergabung lewat kode undangan dari admin departemen
-                atau superadmin, atau lewat permintaan bergabung dari laptopnya.
-              </p>
+              <p>{ORG_TEXT.people.alone}</p>
             </div>
           ) : (
             <div className="users-tools">
               <div className="field users-search">
-                <label htmlFor={searchId}>Cari</label>
+                <label htmlFor={searchId}>{ORG_TEXT.people.search}</label>
                 <span className="users-search-box">
                   <IconSearch size={16} aria-hidden="true" />
                   <input
                     id={searchId}
                     type="search"
                     value={query}
-                    placeholder="Nama atau label"
+                    placeholder={ORG_TEXT.people.searchPlaceholder}
                     autoComplete="off"
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </span>
               </div>
               <p className="users-count" role="status">
-                {shown.length} orang
+                {ORG_TEXT.people.count(shown.length)}
               </p>
             </div>
           )}
@@ -116,11 +115,11 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
           {!onlyMe && shown.length === 0 && (
             <div className="org-empty users-none">
               <p>
-                <strong>Tidak ada orang yang cocok dengan "{query.trim()}"</strong>
+                <strong>{ORG_TEXT.people.noMatch(query.trim())}</strong>
               </p>
-              <p className="hint">Pencarian memeriksa nama dan label.</p>
+              <p className="hint">{ORG_TEXT.people.noMatchHint}</p>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setQuery("")}>
-                Hapus pencarian
+                {ORG_TEXT.people.clearSearch}
               </button>
             </div>
           )}
@@ -139,10 +138,10 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
                         className="row-name"
                         name={p.displayName}
                         labels={p.labels}
-                        suffix={self ? " (Anda)" : undefined}
+                        suffix={self ? ORG_TEXT.you : undefined}
                       />
                       <span className="row-sub">
-                        {p.isGuest ? "Tamu" : (p.departmentName ?? "Belum ada departemen")}
+                        {p.isGuest ? ORG_TEXT.people.guest : (p.departmentName ?? ORG_TEXT.people.noDepartment)}
                         {!p.isGuest && <>, {roleText(p).toLocaleLowerCase("id")}</>}
                       </span>
                     </div>

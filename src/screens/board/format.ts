@@ -1,22 +1,30 @@
 // Teks dan tanggal yang dipakai bersama layar board, detail task, dan Task saya.
+// Teksnya ada di kamus src/i18n/board.id.ts dan .en.ts (TEKS di teks.ts);
+// semua fungsi di sini membaca bahasa aktif saat dipanggil.
 import type { ColumnId, Priority } from "../../api/board";
+import { subscribeLang } from "../../i18n/core";
+import boardId from "../../i18n/board.id";
+import { TEKS } from "./teks";
 
-export const COLUMN_NAMES: Record<ColumnId, string> = {
-  todo: "To do",
-  doing: "Dikerjakan",
-  done: "Selesai",
-};
+// Nama tampilan kolom bawaan dalam bahasa aktif (objek hidup, bukan salinan).
+export const COLUMN_NAMES: Record<ColumnId, string> = TEKS.kolom;
 
 export const COLUMN_ORDER: ColumnId[] = ["todo", "doing", "done"];
 
-export const PRIORITY_LABELS: Record<Priority, string> = {
-  none: "Tanpa prioritas",
-  low: "Rendah",
-  medium: "Sedang",
-  high: "Tinggi",
-};
+// Nama kolom untuk tampilan. Inti Rust menyimpan dan menyinkronkan nama kolom
+// bawaan dalam bahasa Indonesia ("Dikerjakan"); nama itu ditampilkan dalam
+// bahasa aktif. Nama lain (kalau suatu saat kolom bisa diberi nama) tampil apa adanya.
+export function columnLabel(id: ColumnId, name?: string): string {
+  if (name === undefined || name === boardId.kolom[id]) return COLUMN_NAMES[id] ?? name ?? id;
+  return name;
+}
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+// Kolom dari isi riwayat aktivitas: id ("doing") atau nama tersimpan ("Dikerjakan").
+export function columnFromDetail(detail: string): ColumnId | null {
+  return COLUMN_ORDER.find((c) => c === detail || boardId.kolom[c] === detail) ?? null;
+}
+
+export const PRIORITY_LABELS: Record<Priority, string> = TEKS.prioritas;
 
 // Tanggal lokal hari ini sebagai YYYY-MM-DD.
 export function todayIso(now: Date = new Date()): string {
@@ -44,7 +52,7 @@ export function daysUntil(due: string, now: Date = new Date()): number | null {
 export function formatDue(due: string, now: Date = new Date()): string {
   const d = parseIso(due);
   if (!d) return due;
-  const base = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const base = `${d.getDate()} ${TEKS.tanggal.bulan[d.getMonth()]}`;
   return d.getFullYear() === now.getFullYear() ? base : `${base} ${d.getFullYear()}`;
 }
 
@@ -52,21 +60,21 @@ export function formatDue(due: string, now: Date = new Date()): string {
 export function dueLabel(due: string, now: Date = new Date()): string {
   const n = daysUntil(due, now);
   if (n === null) return due;
-  if (n === 0) return "Hari ini";
-  if (n === 1) return "Besok";
-  if (n < 0) return `Terlambat ${-n} hari`;
+  if (n === 0) return TEKS.tanggal.hariIni;
+  if (n === 1) return TEKS.tanggal.besok;
+  if (n < 0) return TEKS.tanggal.terlambat(-n);
   return formatDue(due, now);
 }
 
-// Waktu RFC 3339 jadi "22 Nov, 09.12" dalam jam lokal.
+// Waktu RFC 3339 jadi "22 Nov, 09.12" (Inggris "22 Nov, 09:12") dalam jam lokal.
 export function formatDateTime(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  const day = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const day = `${d.getDate()} ${TEKS.tanggal.bulan[d.getMonth()]}`;
   const date = d.getFullYear() === now.getFullYear() ? day : `${day} ${d.getFullYear()}`;
-  return `${date}, ${hh}.${mm}`;
+  return TEKS.tanggal.tanggalJam(date, hh, mm);
 }
 
 // Usulan kode proyek dari nama: huruf awal tiap kata, 2 sampai 6 karakter.
@@ -84,19 +92,24 @@ export function suggestCode(name: string): string {
 
 export const PROJECT_CODE_RE = /^[A-Z][A-Z0-9]{1,5}$/;
 
-export const NAME_RULE = "Nama proyek harus 2 sampai 80 karakter.";
+// Teks dalam bahasa aktif. `export let` diperbarui saat bahasa berganti, jadi
+// yang mengimpornya selalu membaca nilai terbaru saat render.
+export let NAME_RULE = TEKS.proyek.namaAturan;
+export let NO_DEPARTMENT = TEKS.proyek.tanpaDepartemen;
+subscribeLang(() => {
+  NAME_RULE = TEKS.proyek.namaAturan;
+  NO_DEPARTMENT = TEKS.proyek.tanpaDepartemen;
+});
 
 // Aturan nama proyek, sama untuk Proyek baru dan Ubah nama proyek. Inti Rust memeriksa ulang.
 export function projectNameProblem(clean: string): string | null {
-  if (!clean) return "Tulis nama proyek dulu.";
+  if (!clean) return TEKS.proyek.namaKosong;
   const length = Array.from(clean).length;
-  return length < 2 || length > 80 ? NAME_RULE : null;
+  return length < 2 || length > 80 ? TEKS.proyek.namaAturan : null;
 }
 
-// Nama departemen untuk kalimat: "Departemen Keuangan". Nama yang sudah diawali
-// "Departemen" tidak diberi awalan lagi. ("team" di inti Rust = departemen.)
+// Nama departemen untuk kalimat: "Departemen Keuangan" (Inggris "Keuangan department").
+// Nama yang sudah menyebut departemen tidak diberi tambahan lagi. ("team" di inti Rust = departemen.)
 export function teamLabel(name: string): string {
-  return /^departemen\b/i.test(name.trim()) ? name.trim() : `Departemen ${name.trim()}`;
+  return TEKS.proyek.departemen(name.trim());
 }
-
-export const NO_DEPARTMENT = "Tanpa departemen";

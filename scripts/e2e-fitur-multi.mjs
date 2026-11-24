@@ -590,13 +590,31 @@ try {
       await sleep(400);
       await todo.getByLabel(/Judul task baru/).press("Escape").catch(() => {});
       await card(pa, TASK).click();
-      const tdlg = pa.getByRole("dialog");
-      const who = tdlg.getByLabel("Penanggung jawab");
+      // Dialog detail task v0.4: Penanggung jawab adalah tombol di group "Rincian task"
+      // yang membuka menu menuitemradio (bukan select lagi).
+      const tdlg = pa.getByRole("dialog").filter({ has: pa.getByRole("button", { name: "Tutup detail task" }) });
+      const who = tdlg.getByRole("group", { name: "Rincian task" }).getByRole("button", { name: /^Penanggung jawab(\s|$)/ });
       await who.waitFor({ timeout: 10000 });
-      // Daftar penanggung jawab dimuat ulang board (polling 15 detik) setelah B jadi anggota.
-      await who.locator("option", { hasText: NODES.B.name }).waitFor({ state: "attached", timeout: 45000 });
-      const budiValue = await who.locator("option", { hasText: NODES.B.name }).getAttribute("value");
-      await who.selectOption(budiValue);
+      // Daftar penanggung jawab dimuat ulang board (polling 15 detik) setelah B jadi
+      // anggota, jadi menu dibuka ulang sampai B ada.
+      const whoDeadline = Date.now() + 45000;
+      let whoPicked = false;
+      while (!whoPicked && Date.now() < whoDeadline) {
+        if (!(await tdlg.isVisible())) await card(pa, TASK).click();
+        await who.click();
+        const menu = tdlg.getByRole("menu", { name: "Penanggung jawab", exact: true });
+        await menu.waitFor({ timeout: 5000 });
+        const item = menu.getByRole("menuitemradio", { name: new RegExp("^" + NODES.B.name) });
+        if (await item.count()) {
+          await item.first().click();
+          await menu.waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+          whoPicked = true;
+        } else {
+          await pa.keyboard.press("Escape");
+          await sleep(2000);
+        }
+      }
+      if (!whoPicked) throw new Error(`${NODES.B.name} tidak muncul di menu Penanggung jawab`);
       await sleep(500);
       await tdlg.getByRole("button", { name: "Tutup detail task" }).click();
       const project = (await must("A", "board_list_projects")).find((p) => p.code === PROJECT_CODE);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { orgApi, subscribeOrg } from "../../api/org";
+import { ORG_TEXT } from "../../i18n/org";
 import "./nav-count.css";
 
 const POLL_MS = 30000;
@@ -50,7 +51,7 @@ export function OrgNavCount() {
   return (
     <span className="nav-count">
       <span aria-hidden="true">{formatCount(count)}</span>
-      <span className="sr-only">, {count} permintaan bergabung menunggu</span>
+      <span className="sr-only">{ORG_TEXT.navWaiting(count)}</span>
     </span>
   );
 }

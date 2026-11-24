@@ -5,6 +5,7 @@ import type { ConversationSummary } from "../../api/chat";
 import { MenuButton } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { CHAT } from "../../i18n/chat";
 import type { ConvRequest } from "./ChatActions";
 import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
 import { AddPeopleDialog, GroupMembers, RenameGroupDialog, type GroupState } from "./GroupMembers";
@@ -25,11 +26,6 @@ type Props = {
 };
 
 type GroupDialog = "rename" | "add";
-
-const GROUP_WAIT: Record<GroupDialog, string> = {
-  rename: "Ganti nama terbuka begitu data grup termuat.",
-  add: "Tambah orang terbuka begitu data grup termuat.",
-};
 
 export function ConversationHeader({
   summary,
@@ -156,15 +152,15 @@ export function ConversationHeader({
             {summary.locked && (
               <span className="chip conv-chip-muted">
                 <IconLock size={12} aria-hidden="true" />
-                Hanya-baca
+                {CHAT.state.readOnly}
               </span>
             )}
-            {summary.former && <span className="chip">Bukan anggota lagi</span>}
-            {summary.archived && <span className="chip">Diarsipkan</span>}
+            {summary.former && <span className="chip">{CHAT.state.former}</span>}
+            {summary.archived && <span className="chip">{CHAT.state.archived}</span>}
             {summary.muted && (
               <span className="chip conv-chip-muted">
                 <IconBellOff size={12} aria-hidden="true" />
-                Dibisukan
+                {CHAT.state.muted}
               </span>
             )}
           </p>
@@ -172,10 +168,10 @@ export function ConversationHeader({
         {isGroup && group?.canAdd && !summary.former && (
           <button type="button" className="btn btn-ghost btn-sm conv-add" onClick={() => setAdding(true)}>
             <IconUserPlus size={16} aria-hidden="true" />
-            Tambah orang
+            {CHAT.header.addPeople}
           </button>
         )}
-        <MenuButton menu={menu} label={`Menu ${title}`} className="conv-icon-btn" />
+        <MenuButton menu={menu} label={CHAT.header.menu(title)} className="conv-icon-btn" />
       </div>
       <div aria-live="polite">
         {error && (
@@ -187,9 +183,9 @@ export function ConversationHeader({
         )}
         {groupFailed && (
           <div className="conv-head-error" ref={groupErrorRef}>
-            <ErrorAlert title="Data grup belum bisa dimuat">
+            <ErrorAlert title={CHAT.header.groupError}>
               {groupError && <p>{groupError.message}</p>}
-              {pending && <p>{GROUP_WAIT[pending]}</p>}
+              {pending && <p>{CHAT.header.groupWait[pending]}</p>}
               <div className="chat-alert-actions">
                 <button
                   type="button"
@@ -198,7 +194,7 @@ export function ConversationHeader({
                   aria-disabled={retrying || undefined}
                   aria-busy={retrying || undefined}
                 >
-                  {retrying ? "Memuat ulang..." : "Coba lagi"}
+                  {retrying ? CHAT.reloading : CHAT.retry}
                 </button>
                 <button
                   type="button"
@@ -208,7 +204,7 @@ export function ConversationHeader({
                     setPending(null);
                   }}
                 >
-                  Batal
+                  {CHAT.cancel}
                 </button>
               </div>
             </ErrorAlert>

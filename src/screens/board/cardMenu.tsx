@@ -16,7 +16,7 @@ import {
 import { menuItems, SEPARATOR, type MenuEntry } from "../../components/ContextMenu";
 import type { BoardView, ColumnId, Priority, TaskCard, TaskPatch } from "../../api/board";
 import type { Place } from "./boardMoves";
-import { formatDue, PRIORITY_LABELS, todayIso } from "./format";
+import { columnLabel, formatDue, PRIORITY_LABELS, todayIso } from "./format";
 import { TEKS_DIALOG, teksDialog } from "./teksDialog";
 import { TEKS_MENU } from "./teksMenu";
 import { boardMenuItems, submenu, type BoardMenuEntry } from "./useBoardMenu";
@@ -67,7 +67,7 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
   const moveItems: MenuEntry[] = [
     ...view.columns.map((c) => ({
       id: `move-${c.id}`,
-      label: c.name,
+      label: columnLabel(c.id, c.name),
       disabled: c.id === columnId && T.sudahDiKolom,
       onSelect: () => actions.move({ columnId: c.id, index: 0 }),
     })),

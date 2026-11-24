@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -16,6 +16,8 @@ use super::view::{
     NewChannelScope, NotifyMode, ProjectChatView, ReceiptView,
 };
 use crate::error::{AppError, AppResult};
+use crate::state::MiraState;
+use crate::ui_lang::{self, UiLang};
 
 /// Default and largest page of messages.
 const DEFAULT_LIMIT: u32 = 100;
@@ -179,9 +181,10 @@ pub async fn chat_pick_files(
     rt: State<'_, ChatRuntime>,
 ) -> AppResult<Vec<PickedFile>> {
     let picked = tauri::async_runtime::spawn_blocking(move || {
+        let lang = UiLang::current(&app.state::<MiraState>());
         app.dialog()
             .file()
-            .set_title("Lampirkan file")
+            .set_title(ui_lang::attach_dialog_title(lang))
             .blocking_pick_files()
     })
     .await
@@ -216,9 +219,10 @@ pub async fn chat_file_save(
     let h = hash.clone();
     let file = run(&rt, move |c| c.file_view(&h)).await?;
     let dest = tauri::async_runtime::spawn_blocking(move || {
+        let lang = UiLang::current(&app.state::<MiraState>());
         app.dialog()
             .file()
-            .set_title("Simpan file")
+            .set_title(ui_lang::save_dialog_title(lang))
             .set_file_name(&file.name)
             .blocking_save_file()
     })

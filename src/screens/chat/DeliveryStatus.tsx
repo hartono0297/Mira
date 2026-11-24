@@ -9,6 +9,7 @@ import {
   type MessageStatus,
   type ReceiptView,
 } from "../../api/chat";
+import { CHAT } from "../../i18n/chat";
 import { deliveryLine } from "./text";
 
 const ICONS: Record<DeliveryState, Icon> = {
@@ -125,25 +126,27 @@ export function DeliveryStatus({ messageId, status, kind, ref }: Props) {
         aria-expanded={open}
         aria-controls={open ? popId : undefined}
         aria-haspopup="dialog"
-        aria-label={`Status: ${line.text}. Lihat rincian per orang`}
+        aria-label={CHAT.status.button(line.text)}
         onClick={toggle}
       >
         <StateIcon state={line.icon} />
         <span>{line.text}</span>
       </button>
       {open && (
-        <div ref={popRef} id={popId} className="conv-pop" role="dialog" aria-label="Status pesan per orang" tabIndex={-1}>
-          <p className="conv-pop-title">Status pesan</p>
-          {loading && !receipts && <p className="conv-pop-note">Memuat status...</p>}
+        <div ref={popRef} id={popId} className="conv-pop" role="dialog" aria-label={CHAT.status.popLabel} tabIndex={-1}>
+          <p className="conv-pop-title">{CHAT.status.popTitle}</p>
+          {loading && !receipts && <p className="conv-pop-note">{CHAT.status.loading}</p>}
           {error && (
             <div className="conv-pop-note" role="alert">
-              <p>Status belum bisa dimuat. {error.message}</p>
+              <p>
+                {CHAT.status.error} {error.message}
+              </p>
               <button type="button" className="link-btn" onClick={() => void load()}>
-                Coba lagi
+                {CHAT.retry}
               </button>
             </div>
           )}
-          {receipts && receipts.length === 0 && <p className="conv-pop-note">Belum ada penerima.</p>}
+          {receipts && receipts.length === 0 && <p className="conv-pop-note">{CHAT.status.empty}</p>}
           {receipts && receipts.length > 0 && (
             <ul className="conv-receipts">
               {receipts.map((r) => (

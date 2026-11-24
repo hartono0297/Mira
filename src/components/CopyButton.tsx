@@ -1,5 +1,6 @@
 import { IconCheck, IconCopy } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
+import { COMPONENTS_TEXT } from "../i18n/components";
 
 type Props = {
   text: string;
@@ -10,7 +11,8 @@ type Props = {
 
 type CopyState = "idle" | "copied" | "failed";
 
-export function CopyButton({ text, label = "Salin", className = "btn btn-ghost btn-sm", autoFocus }: Props) {
+export function CopyButton({ text, label, className = "btn btn-ghost btn-sm", autoFocus }: Props) {
+  const T = COMPONENTS_TEXT.copy;
   const [state, setState] = useState<CopyState>("idle");
   const timer = useRef<number | undefined>(undefined);
 
@@ -32,11 +34,11 @@ export function CopyButton({ text, label = "Salin", className = "btn btn-ghost b
     <span className="copy-row">
       <button type="button" className={className} onClick={copy} autoFocus={autoFocus}>
         {state === "copied" ? <IconCheck size={16} aria-hidden="true" /> : <IconCopy size={16} aria-hidden="true" />}
-        {state === "copied" ? "Tersalin" : label}
+        {state === "copied" ? T.copied : (label ?? T.label)}
       </button>
       <span aria-live="polite" className={state === "failed" ? "field-error" : "sr-only"}>
-        {state === "copied" && "Sudah disalin ke clipboard."}
-        {state === "failed" && "Tidak bisa menyalin otomatis. Pilih teksnya, lalu tekan Ctrl+C."}
+        {state === "copied" && T.copiedLive}
+        {state === "failed" && T.failed}
       </span>
     </span>
   );

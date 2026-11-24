@@ -44,6 +44,11 @@ async function advance(ms: number) {
   });
 }
 
+// Pilihan kantor di kartu langkah. Pemilih bahasa di atas kartu juga berisi radio.
+function officeRadios() {
+  return within(screen.getByRole("main")).queryAllByRole("radio");
+}
+
 function calls(cmd: string) {
   return invoke.mock.calls.filter(([c]) => c === cmd);
 }
@@ -239,7 +244,7 @@ describe("Onboarding: langkah nama", () => {
     });
     setup();
     await searchUntilFound(u, "Beberapa kantor ditemukan");
-    await u.click(screen.getAllByRole("radio")[1]);
+    await u.click(officeRadios()[1]);
     await u.selectOptions(screen.getByLabelText("Departemen"), "Desain");
     await u.type(screen.getByLabelText(NOTE), "Staf gudang");
     await u.click(screen.getByRole("checkbox", { name: /BBBB-2222/ }));
@@ -249,7 +254,7 @@ describe("Onboarding: langkah nama", () => {
     await u.click(screen.getByRole("button", { name: "Lanjut" }));
 
     await screen.findByRole("heading", { name: "Beberapa kantor ditemukan" });
-    expect(screen.getAllByRole("radio")[1]).toBeChecked();
+    expect(officeRadios()[1]).toBeChecked();
     expect(screen.getByLabelText("Departemen")).toHaveValue("t-des");
     expect(screen.getByLabelText(NOTE)).toHaveValue("Staf gudang");
     expect(screen.getByRole("checkbox", { name: /BBBB-2222/ })).toBeChecked();
@@ -321,7 +326,7 @@ describe("Onboarding: kantor ditemukan", () => {
     expect(heading).toHaveFocus();
     expect(screen.getByText("Langkah 2 dari 3")).toBeInTheDocument();
     expect(screen.getByText("7KQ2-M9XD")).toBeInTheDocument();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(officeRadios()).toHaveLength(0);
     expect(screen.getByText("Penguji")).toBeInTheDocument();
     expect(screen.queryByLabelText("Nama tampilan")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Departemen")).toBeEnabled();
@@ -529,7 +534,7 @@ describe("Onboarding: kantor ditemukan", () => {
 
     await advance(GRACE_MS + 500);
     expect(await screen.findByRole("heading", { name: "Beberapa kantor ditemukan" })).toHaveFocus();
-    expect(screen.getAllByRole("radio")).toHaveLength(2);
+    expect(officeRadios()).toHaveLength(2);
     expect(round).toBeGreaterThanOrEqual(2);
     const settled = round;
     await advance(5_000);
@@ -685,16 +690,16 @@ describe("Onboarding: kantor ditemukan", () => {
     expect(screen.getByText("AAAA-1111")).toBeInTheDocument();
     expect(screen.getByText("BBBB-2222")).toBeInTheDocument();
 
-    await u.click(screen.getAllByRole("radio")[0]);
+    await u.click(officeRadios()[0]);
     await u.selectOptions(screen.getByLabelText("Departemen"), "Administrasi");
     expect(screen.getByRole("button", { name: "Kirim permintaan" })).toBeDisabled();
     expect(screen.getByText(/minta ia membacakan sidik organisasi/)).toBeInTheDocument();
 
     await u.click(screen.getByRole("checkbox", { name: /Sidik dari admin kantor sama dengan AAAA-1111/ }));
     // Pindah kantor membatalkan centang.
-    await u.click(screen.getAllByRole("radio")[1]);
+    await u.click(officeRadios()[1]);
     expect(screen.getByRole("checkbox", { name: /BBBB-2222/ })).not.toBeChecked();
-    await u.click(screen.getAllByRole("radio")[0]);
+    await u.click(officeRadios()[0]);
     await u.selectOptions(screen.getByLabelText("Departemen"), "Administrasi");
     await u.click(screen.getByRole("checkbox", { name: /Sidik dari admin kantor sama dengan AAAA-1111/ }));
     await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
@@ -724,7 +729,7 @@ describe("Onboarding: kantor ditemukan", () => {
     await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
     expect(await screen.findByText("Pilih kantor Anda dulu.")).toBeInTheDocument();
 
-    await u.click(screen.getAllByRole("radio")[1]);
+    await u.click(officeRadios()[1]);
     await u.selectOptions(screen.getByLabelText("Departemen"), "Administrasi");
     await u.click(screen.getByRole("button", { name: "Kirim permintaan" }));
     await waitFor(() =>

@@ -117,11 +117,14 @@
   overflow-wrap: anywhere;
 }
 
-/* Fakta laptop: dua pasang kolom di kartu lebar, satu pasang di kartu sempit. */
+/* Fakta laptop: dua pasang kolom di kartu lebar, satu pasang di kartu sempit.
+   Kolom label paling lebar 14em: label panjang (misalnya "Sign-in account
+   (reported by the requesting laptop)") turun baris, bukan memeras kolom nilai
+   sampai alamat IP terpotong di tengah angka. */
 .req-facts {
   margin: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: fit-content(14em) minmax(0, 1fr) fit-content(14em) minmax(0, 1fr);
   gap: 6px 14px;
   font-size: 14px;
 }
@@ -144,7 +147,7 @@
 
 @container (max-width: 600px) {
   .req-facts {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: fit-content(14em) minmax(0, 1fr);
   }
 }
 

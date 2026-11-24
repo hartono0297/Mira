@@ -1,57 +1,51 @@
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { locale } from "../../i18n/core";
+import { SETTINGS_TEXT } from "../../i18n/settings";
 import { Markdown } from "../../updates/Markdown";
 import { useUpdates } from "../../updates/UpdateContext";
-import { isBusy, type RetryTarget, type UpdateState } from "../../updates/updateState";
+import { isBusy, type UpdateState } from "../../updates/updateState";
 import "../../updates/updates.css";
 
-const OFFLINE_TEXT = "Tidak bisa menghubungi GitHub. Coba lagi saat laptop tersambung ke internet.";
-const NOT_CONFIGURED_TEXT =
-  "Versi Mira ini belum disiapkan untuk pembaruan dari dalam aplikasi. Pasang versi baru dengan installer seperti biasa.";
-
-const FAILED_TITLE: Record<RetryTarget, string> = {
-  check: "Pengecekan pembaruan gagal",
-  download: "Unduhan pembaruan gagal",
-  install: "Pembaruan belum terpasang",
-};
+const T = SETTINGS_TEXT.about;
 
 function formatDate(iso: string | null): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString("id-ID", { dateStyle: "long" });
+  return d.toLocaleDateString(locale(), { dateStyle: "long" });
 }
 
 // Kalimat status di wilayah live. Kosong saat belum ada yang perlu diberitahukan.
 function Status({ state, configured }: { state: UpdateState; configured: boolean }) {
   switch (state.status) {
     case "idle":
-      return configured ? null : <p className="update-calm">{NOT_CONFIGURED_TEXT}</p>;
+      return configured ? null : <p className="update-calm">{T.notConfigured}</p>;
     case "checking":
-      return <p>Sedang mengecek pembaruan...</p>;
+      return <p>{T.checking}</p>;
     case "upToDate":
-      return <p>Mira sudah versi terbaru.</p>;
+      return <p>{T.upToDate}</p>;
     case "available": {
       const date = formatDate(state.date);
       return (
         <p>
-          <strong>Versi baru tersedia: Mira {state.version}.</strong>
-          {date && <span className="update-date"> Dirilis {date}.</span>}
+          <strong>{T.available(state.version)}</strong>
+          {date && <span className="update-date"> {T.released(date)}</span>}
         </p>
       );
     }
     case "downloading":
-      return <p>Mengunduh pembaruan...{state.percent !== null && ` ${state.percent}%`}</p>;
+      return <p>{T.downloading}{state.percent !== null && ` ${state.percent}%`}</p>;
     case "ready":
-      return <p>Pembaruan siap dipasang. Mira akan tertutup sebentar lalu terbuka lagi.</p>;
+      return <p>{T.ready}</p>;
     case "installing":
-      return <p>Memasang pembaruan...</p>;
+      return <p>{T.installing}</p>;
     case "error":
-      if (state.kind === "offline") return <p className="update-calm">{OFFLINE_TEXT}</p>;
-      if (state.kind === "notConfigured") return <p className="update-calm">{NOT_CONFIGURED_TEXT}</p>;
+      if (state.kind === "offline") return <p className="update-calm">{T.offline}</p>;
+      if (state.kind === "notConfigured") return <p className="update-calm">{T.notConfigured}</p>;
       return (
-        <ErrorAlert title={FAILED_TITLE[state.retry]}>
+        <ErrorAlert title={T.failedTitle[state.retry]}>
           <p>{state.message}</p>
-          {state.retry === "check" && <p>Coba lagi dengan tombol Cek pembaruan.</p>}
+          {state.retry === "check" && <p>{T.retryHint}</p>}
         </ErrorAlert>
       );
   }
@@ -62,16 +56,16 @@ function Status({ state, configured }: { state: UpdateState; configured: boolean
 function primaryAction(state: UpdateState): { label: string; busy: boolean; run: "download" | "install" } | null {
   switch (state.status) {
     case "available":
-      return { label: "Perbarui sekarang", busy: false, run: "download" };
+      return { label: T.actions.updateNow, busy: false, run: "download" };
     case "downloading":
-      return { label: "Mengunduh...", busy: true, run: "download" };
+      return { label: T.actions.downloading, busy: true, run: "download" };
     case "ready":
-      return { label: "Mulai ulang Mira", busy: false, run: "install" };
+      return { label: T.actions.restart, busy: false, run: "install" };
     case "installing":
-      return { label: "Memasang...", busy: true, run: "install" };
+      return { label: T.actions.installing, busy: true, run: "install" };
     case "error":
-      if (state.retry === "download") return { label: "Unduh lagi", busy: false, run: "download" };
-      if (state.retry === "install") return { label: "Pasang lagi", busy: false, run: "install" };
+      if (state.retry === "download") return { label: T.actions.downloadAgain, busy: false, run: "download" };
+      if (state.retry === "install") return { label: T.actions.installAgain, busy: false, run: "install" };
       return null;
     default:
       return null;
@@ -87,13 +81,13 @@ export function AboutSection() {
   return (
     <section className="set-section about" aria-labelledby="about-title">
       <h2 id="about-title" className="set-title">
-        Tentang dan pembaruan
+        {SETTINGS_TEXT.parts.about}
       </h2>
 
       <div className="about-head">
         <div>
           <p className="about-version">{currentVersion ? `Mira ${currentVersion}` : "Mira"}</p>
-          <p className="hint">{currentVersion ? "Versi yang terpasang di laptop ini." : "Versi belum terbaca."}</p>
+          <p className="hint">{currentVersion ? T.versionInstalled : T.versionUnknown}</p>
         </div>
         <div className="about-buttons">
           <button
@@ -106,11 +100,11 @@ export function AboutSection() {
               if (!busy) void check();
             }}
           >
-            Cek pembaruan
+            {T.check}
           </button>
           {whatsNew.notes && (
             <button type="button" className="btn btn-ghost" onClick={whatsNew.show}>
-              Lihat yang baru
+              {T.seeWhatsNew}
             </button>
           )}
         </div>
@@ -125,7 +119,7 @@ export function AboutSection() {
           className="update-progress"
           max={100}
           value={state.percent ?? undefined}
-          aria-label="Kemajuan unduhan pembaruan"
+          aria-label={T.progressLabel}
         />
       )}
 
@@ -155,19 +149,17 @@ export function AboutSection() {
       <div className="about-auto">
         <label className="check-row">
           <input type="checkbox" checked={autoCheck} onChange={(e) => void setAutoCheck(e.target.checked)} />
-          Cek pembaruan otomatis saat Mira dibuka
+          {T.autoCheck}
         </label>
-        <p className="hint">
-          Butuh internet, dan Mira hanya menghubungi GitHub. Pengecekan otomatis berjalan paling sering sekali sehari.
-        </p>
+        <p className="hint">{T.autoHint}</p>
         <div aria-live="polite">
           {autoCheckError && (
-            <p className="field-error">Pilihan belum tersimpan: {autoCheckError.message}</p>
+            <p className="field-error">{T.autoError(autoCheckError.message)}</p>
           )}
         </div>
       </div>
 
-      <p className="hint">Pembaruan hanya mengganti program Mira. Data dan kunci laptop ini tidak tersentuh.</p>
+      <p className="hint">{T.dataSafe}</p>
     </section>
   );
 }

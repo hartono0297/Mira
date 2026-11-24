@@ -17,11 +17,20 @@ use super::view::{
 use crate::blobs::{BlobHash, BlobStore, should_auto_replicate};
 use crate::error::{AppError, AppResult};
 use crate::permissions::format::format_time;
+use crate::ui_lang::UiLang;
 
 /// Longest `lastPreview` and reply preview.
 pub const PREVIEW_CHARS: usize = 80;
 pub const DELETED_TEXT: &str = "Pesan dihapus";
 pub const FILE_TEXT: &str = "Mengirim file";
+
+pub fn deleted_text(lang: UiLang) -> &'static str {
+    lang.pick(DELETED_TEXT, "Message deleted")
+}
+
+pub fn file_text(lang: UiLang) -> &'static str {
+    lang.pick(FILE_TEXT, "Sent a file")
+}
 
 pub fn person(dir: &Directory, pk: &str) -> Person {
     Person {
@@ -84,8 +93,21 @@ pub fn is_former(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
     Ok(held)
 }
 
-/// Why this laptop may not write in `info`, or `None` when it may.
+/// Why this laptop may not write in `info`, or `None` when it may. In
+/// Indonesian, since it also becomes the `forbidden` error of a send.
 pub fn post_blocked(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
+    post_blocked_in(ctx, info, UiLang::Id)
+}
+
+/// [`post_blocked`] in the display language, for `postBlockedReason`.
+pub fn post_blocked_reason(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
+    post_blocked_in(ctx, info, ctx.lang())
+}
+
+fn post_blocked_in(ctx: &Ctx, info: &ConvInfo, lang: UiLang) -> AppResult<Option<String>> {
+    if lang == UiLang::En {
+        return post_blocked_en(ctx, info);
+    }
     let me = ctx.me();
     if info.deleted {
         return Ok(Some("Percakapan ini sudah dihapus.".into()));
@@ -130,6 +152,40 @@ pub fn post_blocked(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
         ));
     }
     Ok(None)
+}
+
+fn post_blocked_en(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
+    let me = ctx.me();
+    let text = if info.deleted {
+        "This conversation was deleted."
+    } else if !ctx.in_audience(info, me)? {
+        match &info.scope {
+            Scope::Project(_) => {
+                "You're no longer a member of this project. New messages no longer reach your laptop."
+            }
+            Scope::Group(_) => {
+                "You're no longer in this group. New messages no longer reach your laptop."
+            }
+            Scope::Team(_) => {
+                "You're no longer in this department. New messages no longer reach your laptop."
+            }
+            Scope::Direct(..) => "You can no longer send direct messages to this colleague.",
+            Scope::Umum | Scope::Org => "You can't post in this channel.",
+        }
+    } else if info.archived && info.is_project_chat() {
+        "This project chat was archived in an older version of Mira. Project managers can restore it from the menu above."
+    } else if info.archived {
+        "This channel is archived. Restore it before sending messages."
+    } else if let Scope::Team(t) = &info.scope
+        && ctx.dir.teams.get(t).is_some_and(|t| t.archived)
+    {
+        "This department is archived, so its channel is read-only."
+    } else if info.locked && !ctx.dir.is_superadmin(me) {
+        "Only superadmins can post in this channel."
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(text.into()))
 }
 
 pub fn can_post(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
@@ -180,7 +236,7 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
     let (unread, mention_unread) = unread_counts(conn, &info.conv, me)?;
     let (last_at, last_preview) = last_message(ctx, &info.conv)?;
     let admin = can_admin_channel(ctx, info)?;
-    let blocked = post_blocked(ctx, info)?;
+    let blocked = post_blocked_reason(ctx, info)?;
     let former = is_former(ctx, info)?;
     let member_count = u32::try_from(ctx.audience(info)?.len()).unwrap_or(u32::MAX);
     Ok(ConversationSummary {
@@ -278,10 +334,10 @@ fn last_message(ctx: &Ctx, conv: &str) -> AppResult<(Option<String>, Option<Stri
         return Ok((None, None));
     };
     let preview = if deleted {
-        DELETED_TEXT.to_owned()
+        deleted_text(ctx.lang()).to_owned()
     } else {
         let content = if text.trim().is_empty() && files > 0 {
-            FILE_TEXT.to_owned()
+            file_text(ctx.lang()).to_owned()
         } else {
             text.trim().to_owned()
         };
@@ -504,9 +560,9 @@ fn reply_preview(ctx: &Ctx, row: &MessageRow) -> AppResult<Option<ReplyPreview>>
             id: id.clone(),
             author: Some(person(&ctx.dir, &t.author)),
             preview: if t.deleted {
-                DELETED_TEXT.to_owned()
+                deleted_text(ctx.lang()).to_owned()
             } else if t.text.trim().is_empty() {
-                FILE_TEXT.to_owned()
+                file_text(ctx.lang()).to_owned()
             } else {
                 truncate_chars(t.text.trim(), PREVIEW_CHARS)
             },
@@ -515,7 +571,13 @@ fn reply_preview(ctx: &Ctx, row: &MessageRow) -> AppResult<Option<ReplyPreview>>
         None => Some(ReplyPreview {
             id: id.clone(),
             author: None,
-            preview: "Pesan asli belum ada di laptop ini".to_owned(),
+            preview: ctx
+                .lang()
+                .pick(
+                    "Pesan asli belum ada di laptop ini",
+                    "The original message isn't on this laptop yet",
+                )
+                .to_owned(),
             deleted: false,
         }),
     })
@@ -544,11 +606,17 @@ pub fn conv_facts(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConvFacts> {
 
 /// "A", "A dan B", "A, B, dan C".
 pub fn join_names(names: &[String]) -> String {
+    join_names_in(names, UiLang::Id)
+}
+
+/// [`join_names`] by language: "A and B", "A, B, and C" in English.
+pub fn join_names_in(names: &[String], lang: UiLang) -> String {
+    let and = lang.pick("dan", "and");
     match names {
         [] => String::new(),
         [a] => a.clone(),
-        [a, b] => format!("{a} dan {b}"),
-        [rest @ .., last] => format!("{}, dan {last}", rest.join(", ")),
+        [a, b] => format!("{a} {and} {b}"),
+        [rest @ .., last] => format!("{}, {and} {last}", rest.join(", ")),
     }
 }
 
@@ -561,8 +629,20 @@ fn who(ctx: &Ctx, pk: &str) -> String {
     }
 }
 
+/// English name in an event line: "You" as the subject, "you" elsewhere.
+fn who_en(ctx: &Ctx, pk: &str, subject: bool) -> String {
+    match (pk == ctx.me(), subject) {
+        (true, true) => "You".to_owned(),
+        (true, false) => "you".to_owned(),
+        (false, _) => ctx.dir.name(pk),
+    }
+}
+
 /// The group's events as lines for the conversation, oldest first.
 pub fn group_events(ctx: &Ctx, g: &GroupState) -> Vec<ConversationEvent> {
+    if ctx.lang() == UiLang::En {
+        return group_events_en(ctx, g);
+    }
     let mut out = Vec::new();
     for (i, e) in g.events.iter().enumerate() {
         let author = who(ctx, &e.author);
@@ -595,6 +675,49 @@ pub fn group_events(ctx: &Ctx, g: &GroupState) -> Vec<ConversationEvent> {
             }
             EventKind::OwnerChanged { owner } => {
                 format!("{} sekarang pemilik grup.", who(ctx, owner))
+            }
+        };
+        out.push(ConversationEvent {
+            id: format!("{}-{i}", e.op),
+            at: format_time(e.at),
+            text,
+        });
+    }
+    out
+}
+
+fn group_events_en(ctx: &Ctx, g: &GroupState) -> Vec<ConversationEvent> {
+    let names = |pks: Vec<&String>| -> String {
+        let list: Vec<String> = pks.into_iter().map(|m| who_en(ctx, m, false)).collect();
+        join_names_in(&list, UiLang::En)
+    };
+    let mut out = Vec::new();
+    for (i, e) in g.events.iter().enumerate() {
+        let author = who_en(ctx, &e.author, true);
+        let text = match &e.kind {
+            EventKind::Created { members } => {
+                let others: Vec<&String> = members.iter().filter(|m| **m != e.author).collect();
+                if others.is_empty() {
+                    format!("{author} created this group.")
+                } else {
+                    format!("{author} created this group and added {}.", names(others))
+                }
+            }
+            EventKind::Added { members } => {
+                format!("{author} added {}.", names(members.iter().collect()))
+            }
+            EventKind::Removed { member } => {
+                format!("{author} removed {}.", who_en(ctx, member, false))
+            }
+            EventKind::Left => format!("{author} left the group."),
+            EventKind::Renamed { name } => {
+                format!("{author} renamed the group to \"{name}\".")
+            }
+            EventKind::OwnerChanged { owner } if owner == ctx.me() => {
+                "You are now the group owner.".to_owned()
+            }
+            EventKind::OwnerChanged { owner } => {
+                format!("{} is now the group owner.", ctx.dir.name(owner))
             }
         };
         out.push(ConversationEvent {

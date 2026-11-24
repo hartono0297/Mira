@@ -5,6 +5,8 @@ import { actionErrorTitle } from "../../api/messages";
 import { orgApi } from "../../api/org";
 import { orgScreenApi } from "../../api/orgScreen";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { useLang } from "../../i18n/core";
+import { ORG_TEXT } from "../../i18n/org";
 import { makeCtx, type Act, type OrgPage } from "./context";
 import { DepartmentsPanel } from "./DepartmentsPanel";
 import { InvitesPanel } from "./InvitesPanel";
@@ -27,9 +29,9 @@ function validDirectory(data: Directory | null): Directory | null {
 }
 
 function errorHint(error: AppError): string | null {
-  if (error.code === "last_superadmin") return "Jadikan orang lain superadmin dulu, baru lepaskan peran ini.";
-  if (error.code === "not_found") return "Data di layar ini sudah dimuat ulang. Periksa lagi sebelum mencoba.";
-  if (error.code === "forbidden") return "Peran Anda mungkin baru berubah. Data di layar ini sudah dimuat ulang.";
+  if (error.code === "last_superadmin") return ORG_TEXT.lastSuperadminHint;
+  if (error.code === "not_found") return ORG_TEXT.screen.notFoundHint;
+  if (error.code === "forbidden") return ORG_TEXT.screen.forbiddenHint;
   return null;
 }
 
@@ -45,6 +47,8 @@ export function OrgScreen({ state, onRefresh }: Props) {
   const [part, setPart] = useState<Part | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const lang = useLang();
+  const T = ORG_TEXT.screen;
 
   useEffect(() => {
     let alive = true;
@@ -129,16 +133,18 @@ export function OrgScreen({ state, onRefresh }: Props) {
   const parts = useMemo(() => {
     if (!overview) return [];
     const list: { id: Part; label: string; count?: number }[] = [];
-    if (overview.manageOrg) list.push({ id: "users", label: "Pengguna" });
-    else list.push({ id: "people", label: "Anggota" });
-    if (overview.manageOrg) list.push({ id: "departments", label: "Departemen" });
+    const tabs = ORG_TEXT.screen.tabs;
+    if (overview.manageOrg) list.push({ id: "users", label: tabs.users });
+    else list.push({ id: "people", label: tabs.people });
+    if (overview.manageOrg) list.push({ id: "departments", label: tabs.departments });
     if (overview.isSuperadmin || overview.decideJoinTeamIds.length > 0) {
-      list.push({ id: "requests", label: "Permintaan bergabung", count: overview.pendingJoinCount });
+      list.push({ id: "requests", label: tabs.requests, count: overview.pendingJoinCount });
     }
-    if (overview.manageOrg) list.push({ id: "labels", label: "Label" });
-    if (canInvite || canRedeem) list.push({ id: "invites", label: "Undangan" });
+    if (overview.manageOrg) list.push({ id: "labels", label: tabs.labels });
+    if (canInvite || canRedeem) list.push({ id: "invites", label: tabs.invites });
     return list;
-  }, [overview, canInvite, canRedeem]);
+    // lang: label tab ikut bahasa aktif.
+  }, [overview, canInvite, canRedeem, lang]);
 
   // Tab yang tadi dipilih bisa hilang kalau peran berubah: kembali ke tab pertama.
   const current = parts.find((p) => p.id === part) ?? parts[0];
@@ -148,7 +154,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
     <main className="settings org" aria-labelledby="page-title">
       <header className="page-head">
         <h1 id="page-title" className="page-title">
-          Organisasi
+          {T.title}
         </h1>
         <span className="page-sub">
           {orgName}
@@ -156,7 +162,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
             <>
               <span aria-hidden="true">, </span>
               <span className="org-fp">
-                sidik <span className="mono">{fingerprint}</span>
+                {T.fingerprint} <span className="mono">{fingerprint}</span>
               </span>
             </>
           )}
@@ -165,15 +171,15 @@ export function OrgScreen({ state, onRefresh }: Props) {
 
       {overviewLive.loading && !overview && (
         <p className="org-pad hint" role="status">
-          Memuat data organisasi...
+          {T.loading}
         </p>
       )}
       {!overviewLive.loading && !overview && (
         <div className="org-pad org-narrow" role="alert">
-          <ErrorAlert title="Data organisasi belum terbaca">
-            <p>{overviewLive.error?.message ?? "Inti Mira tidak mengirim data organisasi."}</p>
+          <ErrorAlert title={T.loadErrorTitle}>
+            <p>{overviewLive.error?.message ?? T.loadErrorEmpty}</p>
             <button type="button" className="btn btn-ghost org-retry" onClick={() => void overviewLive.reload()}>
-              Coba lagi
+              {ORG_TEXT.retry}
             </button>
           </ErrorAlert>
         </div>
@@ -186,11 +192,8 @@ export function OrgScreen({ state, onRefresh }: Props) {
               <div className="notice">
                 <IconAlertTriangle size={18} aria-hidden="true" />
                 <div>
-                  <strong>Organisasi ini baru punya satu superadmin</strong>
-                  <p>
-                    Kalau laptop superadmin rusak, hilang, atau orangnya keluar, tidak ada yang bisa membuat departemen,
-                    menunjuk admin, atau mengeluarkan orang. Jadikan satu orang lain superadmin lewat Ubah peran.
-                  </p>
+                  <strong>{T.oneSuperadminTitle}</strong>
+                  <p>{T.oneSuperadminBody}</p>
                   {current.id !== "users" && (
                     <button
                       type="button"
@@ -200,7 +203,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
                         setFeedback(null);
                       }}
                     >
-                      Buka daftar Pengguna
+                      {T.openUsers}
                     </button>
                   )}
                 </div>
@@ -208,7 +211,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
             </div>
           )}
 
-          <nav className="org-tabs-wrap" aria-label="Bagian organisasi">
+          <nav className="org-tabs-wrap" aria-label={T.tabsAria}>
             <ul className="org-tabs">
               {parts.map((p) => (
                 <li key={p.id}>
@@ -225,7 +228,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
                     {p.count !== undefined && p.count > 0 && (
                       <span className="nav-count">
                         <span aria-hidden="true">{formatCount(p.count)}</span>
-                        <span className="sr-only">, {p.count} menunggu</span>
+                        <span className="sr-only">{T.waiting(p.count)}</span>
                       </span>
                     )}
                   </button>
@@ -237,9 +240,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
           <div className={`org-main org-main-${current.id}`}>
             <div aria-live="polite" className="org-live">
               {overviewLive.error && (
-                <p className="hint">
-                  Data terbaru belum bisa dibaca ({overviewLive.error.message}). Yang tampil adalah data terakhir.
-                </p>
+                <p className="hint">{ORG_TEXT.stale(overviewLive.error.message)}</p>
               )}
               {feedback?.kind === "ok" && <p className="org-ok">{feedback.text}</p>}
               {feedback?.kind === "error" && (
@@ -259,13 +260,13 @@ export function OrgScreen({ state, onRefresh }: Props) {
                 <InvitesPanel ctx={ctx} canRedeem={canRedeem} />
               ) : dirLive.loading ? (
                 <p className="hint" role="status">
-                  Memuat kode undangan...
+                  {T.invitesLoading}
                 </p>
               ) : (
-                <ErrorAlert title="Kode undangan belum terbaca">
-                  <p>{dirLive.error?.message ?? "Inti Mira tidak mengirim data undangan."}</p>
+                <ErrorAlert title={T.invitesErrorTitle}>
+                  <p>{dirLive.error?.message ?? T.invitesErrorEmpty}</p>
                   <button type="button" className="btn btn-ghost org-retry" onClick={() => void dirLive.reload()}>
-                    Coba lagi
+                    {ORG_TEXT.retry}
                   </button>
                 </ErrorAlert>
               ))}

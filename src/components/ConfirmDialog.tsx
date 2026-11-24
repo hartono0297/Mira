@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { COMPONENTS_TEXT as T } from "../i18n/components";
 import { Dialog, DialogClose } from "./Dialog";
 
 type Props = {
@@ -46,7 +47,7 @@ export function ConfirmDialog({
       <div className="dlg-actions">
         <DialogClose asChild>
           <button type="button" className="btn btn-ghost" data-cancel disabled={busy}>
-            Batal
+            {T.cancel}
           </button>
         </DialogClose>
         <button

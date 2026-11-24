@@ -50,6 +50,7 @@ import {
   signErrorMessage,
 } from "./labels";
 import { checkSignablePdf } from "./stamp";
+import { SIGN_LIST as T } from "../../i18n/sign-list";
 import "./sign.css";
 
 type Feedback = { kind: "ok"; text: string } | { kind: "error"; title: string; error: AppError } | null;
@@ -125,7 +126,7 @@ function useOverview() {
     try {
       const next = validOverview(await signingApi.overview());
       if (!alive.current || mine !== seq.current) return;
-      if (!next) throw toAppError("Inti Mira mengirim data tanda tangan yang tidak lengkap.");
+      if (!next) throw toAppError(T.incompleteData);
       setData(next);
       setError(null);
     } catch (err) {
@@ -170,7 +171,7 @@ function MySignature({
   return (
     <section className="sign-section" aria-labelledby="sign-mine-title">
       <h2 id="sign-mine-title" className="sign-h2">
-        Tanda tangan saya
+        {T.mine.title}
       </h2>
       <div className="sign-mine">
         <span className="sign-mine-icon" aria-hidden="true">
@@ -178,45 +179,40 @@ function MySignature({
         </span>
         {saved ? (
           <div className="sign-mine-text">
-            <p className="sign-mine-main">Tersimpan sejak {formatWhen(saved.createdAt)}, dipakai dengan PIN</p>
+            <p className="sign-mine-main">{T.mine.savedSince(formatWhen(saved.createdAt))}</p>
             {cooling !== null && (
               <p className="sign-mine-wait">
                 <IconClockHour4 size={16} aria-hidden="true" />
-                Bisa dipakai mulai {formatWhen(saved.usableAfter ?? "")}, 24 jam setelah tanda tangan sebelumnya dihapus
-                tanpa PIN.
+                {T.mine.cooling(formatWhen(saved.usableAfter ?? ""))}
               </p>
             )}
             {lock !== null ? (
               <p className="sign-mine-lock">
                 <IconLock size={16} aria-hidden="true" />
-                Terkunci sementara sampai {formatWhen(saved.lockedUntil ?? "")} karena PIN salah beberapa kali.
+                {T.mine.locked(formatWhen(saved.lockedUntil ?? ""))}
               </p>
             ) : (
               saved.failedAttempts > 0 && (
                 <p className="sign-mine-sub">
-                  PIN salah {saved.failedAttempts} kali sejak terakhir benar. Sisa {saved.attemptsLeft} percobaan
-                  sebelum terkunci sementara.
+                  {T.mine.failed(saved.failedAttempts, saved.attemptsLeft)}
                 </p>
               )
             )}
           </div>
         ) : (
           <div className="sign-mine-text">
-            <p className="sign-mine-main">Belum ada tanda tangan tersimpan</p>
-            <p className="sign-mine-sub">
-              Gambar dengan mouse atau pena, atau pakai foto tanda tangan. Gambar disimpan terkunci dan hanya bisa
-              dipakai dengan PIN Anda.
-            </p>
+            <p className="sign-mine-main">{T.mine.noneTitle}</p>
+            <p className="sign-mine-sub">{T.mine.noneHint}</p>
           </div>
         )}
         <div className="sign-mine-action">
           {saved ? (
             <button type="button" className="btn btn-ghost btn-sm" onClick={onDelete}>
-              Hapus tanda tangan
+              {T.mine.delete}
             </button>
           ) : (
             <button type="button" className="btn" onClick={onCreate}>
-              Buat tanda tangan
+              {T.mine.create}
             </button>
           )}
         </div>
@@ -254,7 +250,7 @@ function RequestRow({ r, actions }: { r: RequestSummary; actions: RowActions }) 
   const sign = rowSignItem(r);
   const exportOff = actions.exportingId === r.id ? ROW_MENU.exporting : rowExportOff(r);
   const menu = useContextMenu({
-    label: `Aksi untuk ${r.title}`,
+    label: T.row.menuLabel(r.title),
     items: menuItems(
       { id: "open", label: ROW_MENU.open, icon: <IconExternalLink size={16} />, onSelect: () => actions.open(r.id) },
       !sign.hidden && {
@@ -314,18 +310,18 @@ function RequestRow({ r, actions }: { r: RequestSummary; actions: RowActions }) 
             {r.fromPeer && (
               <span className="sign-row-from">
                 <span className="sr-only">, </span>
-                Diminta oleh {r.requestedByName}
+                {T.row.requestedBy(r.requestedByName)}
               </span>
             )}
             <span className="sign-row-meta">
               <span className="sr-only">, </span>
-              {r.signedCount} dari {r.signerCount} sudah tanda tangan
+              {T.row.signedOf(r.signedCount, r.signerCount)}
               <span aria-hidden="true"> · </span>
               <span className="sr-only">, </span>
               {modeLabel(r.mode)}
               <span aria-hidden="true"> · </span>
               <span className="sr-only">, </span>
-              {r.completedAt ? "selesai" : "terakhir berubah"} {formatWhen(when)}
+              {r.completedAt ? T.row.completedAt(formatWhen(when)) : T.row.changedAt(formatWhen(when))}
             </span>
             {need && (
               <span className="sign-row-file">
@@ -360,7 +356,7 @@ function RequestRow({ r, actions }: { r: RequestSummary; actions: RowActions }) 
         </button>
         <MenuButton
           menu={menu}
-          label={`Aksi lain untuk ${r.title}`}
+          label={T.row.moreLabel(r.title)}
           className="btn btn-ghost btn-sm cmenu-more sign-row-more"
         />
       </div>
@@ -369,7 +365,7 @@ function RequestRow({ r, actions }: { r: RequestSummary; actions: RowActions }) 
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            aria-label={busy ? `Mengunduh file ${r.title}` : `Unduh file ${r.title}${size}`}
+            aria-label={busy ? T.row.downloadingAria(r.title) : T.row.downloadAria(r.title, size)}
             aria-busy={busy || undefined}
             aria-disabled={blocked || undefined}
             onClick={() => {
@@ -377,7 +373,7 @@ function RequestRow({ r, actions }: { r: RequestSummary; actions: RowActions }) 
             }}
           >
             <IconDownload size={16} aria-hidden="true" />
-            {busy ? "Mengunduh..." : downloadLabel(need)}
+            {busy ? T.row.downloading : downloadLabel(need)}
           </button>
         </div>
       )}
@@ -470,7 +466,7 @@ export function SignScreen() {
   async function saveSignature(png: Uint8Array, pin: string) {
     await signingApi.saveSignature(png, pin);
     savedNow.current = true;
-    setFeedback({ kind: "ok", text: "Tanda tangan tersimpan. Mira akan meminta PIN setiap kali Anda memakainya." });
+    setFeedback({ kind: "ok", text: T.feedback.saved });
     await reload();
   }
 
@@ -479,7 +475,7 @@ export function SignScreen() {
     await signingApi.deleteSignature(pin);
     setFeedback({
       kind: "ok",
-      text: "Tanda tangan tersimpan sudah dihapus. Tanda tangan baru bisa langsung dibuat dan dipakai.",
+      text: T.feedback.deletedWithPin,
     });
     await reload();
   }
@@ -492,7 +488,7 @@ export function SignScreen() {
       setForgotOpen(false);
       setFeedback({
         kind: "ok",
-        text: "Tanda tangan tersimpan sudah dihapus. Tanda tangan baru bisa dibuat sekarang dan dipakai 24 jam setelah penghapusan ini.",
+        text: T.feedback.deletedWithoutPin,
       });
       await reload();
       focusMineAction();
@@ -510,7 +506,7 @@ export function SignScreen() {
     setFeedback(null);
     const bad = checkPdfFile(file);
     if (bad) {
-      setFeedback({ kind: "error", title: "PDF belum bisa dibuka", error: { code: "pdf_invalid", message: bad } });
+      setFeedback({ kind: "error", title: T.feedback.pdfError, error: { code: "pdf_invalid", message: bad } });
       pickRef.current?.focus();
       return;
     }
@@ -524,7 +520,7 @@ export function SignScreen() {
       setImported(result);
       setNewOpen(true);
     } catch (err) {
-      setFeedback({ kind: "error", title: "PDF belum bisa dibuka", error: toAppError(err) });
+      setFeedback({ kind: "error", title: T.feedback.pdfError, error: toAppError(err) });
       window.setTimeout(() => pickRef.current?.focus(), 0);
     } finally {
       setImporting(false);
@@ -549,8 +545,8 @@ export function SignScreen() {
       const result = await signingApi.downloadFile(r.id);
       // File yang sedang disalin otomatis tidak diunduh dua kali.
       const text = result?.downloading
-        ? `File ${r.title} sedang disalin. Daftar diperbarui begitu selesai.`
-        : `File ${r.title} sudah ada di laptop ini.`;
+        ? T.feedback.copying(r.title)
+        : T.feedback.downloaded(r.title);
       setFeedback({ kind: "ok", text });
       await reload();
       window.setTimeout(() => {
@@ -560,7 +556,7 @@ export function SignScreen() {
       }, 0);
     } catch (err) {
       const error = toAppError(err);
-      setFeedback({ kind: "error", title: "File belum bisa diunduh", error: { ...error, message: signErrorMessage(error) } });
+      setFeedback({ kind: "error", title: T.feedback.downloadError, error: { ...error, message: signErrorMessage(error) } });
       void reload();
     } finally {
       downloadRef.current = false;
@@ -575,10 +571,10 @@ export function SignScreen() {
     setFeedback(null);
     try {
       const { path } = await signingApi.exportFile(r.id);
-      setFeedback({ kind: "ok", text: `Salinan ${r.title} tersimpan di ${path}` });
+      setFeedback({ kind: "ok", text: T.feedback.exported(r.title, path) });
       void reload();
     } catch (err) {
-      setFeedback({ kind: "error", title: "Salinan belum tersimpan", error: toAppError(err) });
+      setFeedback({ kind: "error", title: T.feedback.exportError, error: toAppError(err) });
     } finally {
       setExportingId(null);
     }
@@ -587,7 +583,7 @@ export function SignScreen() {
   // Dipanggil dari dialog konfirmasi menu baris; error tampil di dialog itu.
   async function cancelRequest(r: RequestSummary) {
     await signingApi.cancel(r.id);
-    setFeedback({ kind: "ok", text: `Permintaan ${r.title} dibatalkan.` });
+    setFeedback({ kind: "ok", text: T.feedback.cancelled(r.title) });
     await reload();
   }
 
@@ -611,25 +607,25 @@ export function SignScreen() {
     <main className="sign" aria-labelledby="page-title">
       <header className="page-head">
         <h1 id="page-title" ref={titleRef} tabIndex={-1} className="page-title">
-          Tanda tangan
+          {T.title}
         </h1>
         <span className="page-sub">
-          {yourTurn > 0 ? `${yourTurn} dokumen menunggu tanda tangan Anda` : "PDF yang ditandatangani di laptop ini"}
+          {yourTurn > 0 ? T.subWaiting(yourTurn) : T.subIdle}
         </span>
       </header>
 
       {loading && !overview && (
         <p className="sign-body hint" role="status">
-          Memuat tanda tangan dan daftar dokumen...
+          {T.loading}
         </p>
       )}
 
       {!loading && !overview && (
         <div className="sign-body" role="alert">
-          <ErrorAlert title="Daftar tanda tangan belum terbaca">
-            <p>{error?.message ?? "Inti Mira tidak mengirim data tanda tangan."}</p>
+          <ErrorAlert title={T.loadErrorTitle}>
+            <p>{error?.message ?? T.loadErrorFallback}</p>
             <button type="button" className="btn btn-ghost btn-sm sign-inline-btn" onClick={() => void reload()}>
-              Coba lagi
+              {T.retry}
             </button>
           </ErrorAlert>
         </div>
@@ -639,7 +635,7 @@ export function SignScreen() {
         <div className="sign-body">
           <div aria-live="polite" className="sign-live">
             {error && (
-              <p className="hint">Data terbaru belum bisa dibaca ({error.message}). Yang tampil adalah data terakhir.</p>
+              <p className="hint">{T.staleData(error.message)}</p>
             )}
             {feedback?.kind === "ok" && <p className="sign-ok">{feedback.text}</p>}
             {feedback?.kind === "error" && (
@@ -653,9 +649,9 @@ export function SignScreen() {
             <section className="sign-section" aria-labelledby="sign-wait-title">
               <div className="sign-head-text">
                 <h2 id="sign-wait-title" className="sign-h2">
-                  Menunggu tanda tangan Anda
+                  {T.waitingTitle}
                 </h2>
-                <p className="hint">Permintaan dari rekan yang mencantumkan nama Anda. Giliran Anda tampil paling atas.</p>
+                <p className="hint">{T.waitingHint}</p>
               </div>
               <ul className="sign-list">
                 {waiting.map((r) => (
@@ -680,12 +676,12 @@ export function SignScreen() {
           <section className="sign-section" aria-labelledby="sign-docs-title">
             <div className="sign-head">
               <h2 id="sign-docs-title" className="sign-h2">
-                Dokumen
+                {T.docs.title}
               </h2>
               <div className="sign-head-actions">
                 <button type="button" className="btn btn-ghost" onClick={() => setVerifyOpen(true)}>
                   <IconFileSearch size={18} aria-hidden="true" />
-                  Periksa file PDF
+                  {T.docs.verify}
                 </button>
                 {overview.canRequest && (
                   <>
@@ -708,7 +704,7 @@ export function SignScreen() {
                       aria-busy={importing || undefined}
                     >
                       <IconFileUpload size={18} aria-hidden="true" />
-                      {importing ? "Membaca PDF..." : "Pilih PDF untuk ditandatangani"}
+                      {importing ? T.docs.reading : T.docs.pick}
                     </button>
                   </>
                 )}
@@ -717,8 +713,7 @@ export function SignScreen() {
 
             {!overview.canRequest && (
               <p className="sign-guest">
-                Sebagai Tamu, Anda tidak bisa meminta tanda tangan, tetapi bisa menandatangani dokumen dari rekan untuk
-                proyek yang boleh Anda buka.
+                {T.docs.guest}
               </p>
             )}
 
@@ -726,8 +721,8 @@ export function SignScreen() {
               <div className="alert">
                 <IconAlertTriangle size={18} aria-hidden="true" />
                 <div>
-                  <strong>{warned === 1 ? "Satu dokumen" : `${warned} dokumen`} perlu diperiksa</strong>
-                  <p>Ada file yang berubah atau hilang setelah ditandatangani. Rinciannya ada di baris bertanda peringatan.</p>
+                  <strong>{T.docs.warnTitle(warned)}</strong>
+                  <p>{T.docs.warnBody}</p>
                 </div>
               </div>
             )}
@@ -735,16 +730,14 @@ export function SignScreen() {
             {requests.length === 0 ? (
               <div className="sign-empty">
                 {waiting.length > 0 ? (
-                  <p>Dokumen lain yang Anda kirim atau sudah Anda tanda tangani muncul di sini.</p>
+                  <p>{T.docs.emptyOthers}</p>
                 ) : overview.canRequest ? (
                   <p>
-                    Belum ada dokumen. Pilih PDF untuk ditandatangani sendiri atau bersama rekan. Permintaan dikirim ke
-                    penanda tangan saat laptop mereka tersambung.
+                    {T.docs.emptyRequester}
                   </p>
                 ) : (
                   <p>
-                    Belum ada dokumen untuk Anda tanda tangani. Permintaan dari rekan muncul di sini begitu laptop
-                    pengirimnya tersambung.
+                    {T.docs.emptySigner}
                   </p>
                 )}
               </div>
@@ -778,9 +771,9 @@ export function SignScreen() {
           if (!next && !forgotNext.current) focusMineAction();
           forgotNext.current = false;
         }}
-        title="Hapus tanda tangan tersimpan?"
-        description="Masukkan PIN tanda tangan Anda. Gambar tanda tangan dan PIN-nya dihapus dari laptop ini, dokumen yang sudah Anda tanda tangani tidak berubah. Tanda tangan baru bisa langsung dibuat dan dipakai."
-        submitLabel="Hapus tanda tangan"
+        title={T.pinDelete.title}
+        description={T.pinDelete.description}
+        submitLabel={T.pinDelete.submit}
         danger
         lockedUntil={overview?.saved?.lockedUntil ?? null}
         onSubmit={deleteWithPin}
@@ -795,7 +788,7 @@ export function SignScreen() {
               setForgotOpen(true);
             }}
           >
-            Lupa PIN?
+            {T.pinDelete.forgot}
           </button>
         }
       />
@@ -806,28 +799,26 @@ export function SignScreen() {
           setForgotOpen(next);
           if (!next) focusMineAction();
         }}
-        title="Hapus tanda tangan tanpa PIN?"
-        confirmLabel="Hapus tanpa PIN"
-        busyLabel="Menghapus..."
+        title={T.forgot.title}
+        confirmLabel={T.forgot.confirm}
+        busyLabel={T.forgot.busy}
         busy={deleting}
         onConfirm={() => void deleteWithoutPin()}
         error={
           deleteError && (
-            <ErrorAlert title="Tanda tangan belum terhapus">
+            <ErrorAlert title={T.forgot.errorTitle}>
               <p>{deleteError.message}</p>
             </ErrorAlert>
           )
         }
       >
         <p>
-          Gambar tanda tangan dan PIN-nya dihapus dari laptop ini. Dokumen yang sudah Anda tanda tangani tidak berubah.
+          {T.forgot.body1}
         </p>
         <p className="sign-confirm-p">
-          Tanda tangan baru yang Anda buat setelah ini baru bisa dipakai 24 jam setelah penghapusan. Masa tunggu ini
-          mencegah orang lain yang memakai laptop Anda saat tidak terkunci menghapus tanda tangan Anda, lalu
-          menandatangani dengan PIN buatannya sendiri.
+          {T.forgot.body2}
         </p>
-        <p className="sign-confirm-p">Penghapusan ini tercatat di jejak audit.</p>
+        <p className="sign-confirm-p">{T.forgot.body3}</p>
       </ConfirmDialog>
 
       <NewRequestDialog

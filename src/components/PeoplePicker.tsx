@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LabelRef, PersonView } from "../api/org";
+import { COMPONENTS_TEXT } from "../i18n/components";
 import { NameWithLabels } from "./NameWithLabels";
 import "./people-picker.css";
 
@@ -32,14 +33,16 @@ function deptKey(p: PersonView): string {
   return p.departmentName ? `dept:${p.departmentName}` : "none";
 }
 
+const T = COMPONENTS_TEXT.people;
+
 function deptText(p: PersonView): string {
-  if (p.isGuest) return "Tamu";
-  return p.departmentName ?? "Belum ada departemen";
+  if (p.isGuest) return T.guest;
+  return p.departmentName ?? T.noDept;
 }
 
 function deptLabel(key: string): string {
-  if (key === "guest") return "Tamu";
-  if (key === "none") return "Belum ada departemen";
+  if (key === "guest") return T.guest;
+  if (key === "none") return T.noDept;
   return key.slice("dept:".length);
 }
 
@@ -97,11 +100,11 @@ export function PeoplePicker({
   );
 
   const filterText = [
-    q ? `nama "${query.trim()}"` : null,
-    activeDept !== "all" ? `saringan ${deptLabel(activeDept)}` : null,
+    q ? T.filterName(query.trim()) : null,
+    activeDept !== "all" ? T.filterDept(deptLabel(activeDept)) : null,
   ]
     .filter(Boolean)
-    .join(" dan ");
+    .join(T.filterJoin);
 
   const resetFilters = () => {
     setQuery("");
@@ -113,7 +116,7 @@ export function PeoplePicker({
     <div className="ppick">
       <div className="ppick-filters">
         <div className="field">
-          <label htmlFor={`${uid}-q`}>Cari nama</label>
+          <label htmlFor={`${uid}-q`}>{T.search}</label>
           <input
             id={`${uid}-q`}
             ref={searchRef}
@@ -124,34 +127,34 @@ export function PeoplePicker({
           />
         </div>
         <div className="field">
-          <label htmlFor={`${uid}-d`}>Departemen</label>
+          <label htmlFor={`${uid}-d`}>{T.dept}</label>
           <select id={`${uid}-d`} value={activeDept} onChange={(e) => setDept(e.target.value)}>
-            <option value="all">Semua departemen</option>
+            <option value="all">{T.allDepts}</option>
             {deptNames.map((name) => (
               <option key={name} value={`dept:${name}`}>
                 {name}
               </option>
             ))}
-            {hasGuest && <option value="guest">Tamu</option>}
-            {hasNone && <option value="none">Belum ada departemen</option>}
+            {hasGuest && <option value="guest">{T.guest}</option>}
+            {hasNone && <option value="none">{T.noDept}</option>}
           </select>
         </div>
       </div>
 
       <p className="hint ppick-count">
-        {selected.size} orang dipilih
+        {T.selected(selected.size)}
         {summaryExtra}
       </p>
 
       {people.length === 0 ? (
         <div className="ppick-empty">
-          <p>Belum ada orang di organisasi ini. Orang baru masuk lewat permintaan bergabung atau kode undangan.</p>
+          <p>{T.empty}</p>
         </div>
       ) : shown.length === 0 ? (
         <div className="ppick-empty">
-          <p>Tidak ada orang yang cocok dengan {filterText}.</p>
+          <p>{T.noMatch(filterText)}</p>
           <button type="button" className="btn btn-ghost btn-sm" onClick={resetFilters}>
-            Tampilkan semua orang
+            {T.showAll}
           </button>
         </div>
       ) : (
@@ -178,7 +181,7 @@ export function PeoplePicker({
                       <NameWithLabels
                         name={p.displayName}
                         labels={labelsOf(p)}
-                        suffix={isMe?.(p.publicKey) ? " (Anda)" : undefined}
+                        suffix={isMe?.(p.publicKey) ? T.me : undefined}
                       />
                     </span>
                     <span id={subId} className="ppick-sub">

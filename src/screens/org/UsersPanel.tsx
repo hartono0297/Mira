@@ -7,7 +7,7 @@ import {
   IconSearch,
   IconShieldCheck,
 } from "@tabler/icons-react";
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, toAppError, type AppError } from "../../api";
 import { formatDate, relativeTime } from "../../api/format";
 import { actionErrorTitle } from "../../api/messages";
@@ -18,6 +18,8 @@ import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
 import { NameWithLabels } from "../../components/NameWithLabels";
+import { useLang } from "../../i18n/core";
+import { ORG_TEXT, USERS_TEXT as T } from "../../i18n/org";
 import type { OrgPage } from "./context";
 import { byName, matches, orgMessage, roleText } from "./PeoplePanel";
 import { useOrgLive } from "./useOrgLive";
@@ -26,12 +28,7 @@ import "./users.css";
 type DeptFilter = "all" | "none" | "guest" | string;
 type StatusFilter = "active" | "online" | "offline" | "removed";
 
-const STATUS_OPTIONS: { id: StatusFilter; label: string }[] = [
-  { id: "active", label: "Semua yang aktif" },
-  { id: "online", label: "Online" },
-  { id: "offline", label: "Offline" },
-  { id: "removed", label: "Dikeluarkan" },
-];
+const STATUS_OPTIONS: StatusFilter[] = ["active", "online", "offline", "removed"];
 
 type Filters = { query: string; dept: DeptFilter; status: StatusFilter };
 const NO_FILTERS: Filters = { query: "", dept: "all", status: "active" };
@@ -60,18 +57,18 @@ function passes(u: UserView, f: Filters): boolean {
 }
 
 function subjectText(dept: DeptFilter, deptName: (id: string) => string): string {
-  if (dept === "all") return "orang";
-  if (dept === "none") return "orang tanpa departemen";
-  if (dept === "guest") return "Tamu";
-  return `orang ${deptName(dept)}`;
+  if (dept === "all") return T.empty.subjectAll;
+  if (dept === "none") return T.empty.subjectNone;
+  if (dept === "guest") return T.empty.subjectGuest;
+  return T.empty.subjectDept(deptName(dept));
 }
 
-const STATUS_CLAUSE: Record<StatusFilter, string | null> = {
-  active: null,
-  online: "sedang online",
-  offline: "sedang offline",
-  removed: "sudah dikeluarkan",
-};
+function statusClause(status: StatusFilter): string | null {
+  if (status === "online") return T.empty.clauseOnline;
+  if (status === "offline") return T.empty.clauseOffline;
+  if (status === "removed") return T.empty.clauseRemoved;
+  return null;
+}
 
 type Loosen = { label: string; next: Filters; note: string };
 
@@ -79,31 +76,31 @@ type Loosen = { label: string; next: Filters; note: string };
 // yang melonggarkan saringan yang paling mungkin memberi hasil.
 function emptyResult(users: UserView[], f: Filters, deptName: (id: string) => string): { title: string; loosen: Loosen } {
   const subject = subjectText(f.dept, deptName);
-  const clauses = [STATUS_CLAUSE[f.status], f.query.trim() ? `cocok dengan "${f.query.trim()}"` : null].filter(Boolean);
-  const title = `Tidak ada ${subject}${clauses.length ? ` yang ${clauses.join(" dan ")}` : ""}`;
+  const clauses = [statusClause(f.status), f.query.trim() ? T.empty.clauseQuery(f.query.trim()) : null].filter(Boolean);
+  const title = T.empty.title(subject, clauses.join(T.empty.and));
   const count = (next: Filters) => users.filter((u) => passes(u, next)).length;
   const people = (n: number) =>
     f.dept === "all"
-      ? `${n} orang`
+      ? T.empty.countAll(n)
       : f.dept === "none"
-        ? `${n} orang tanpa departemen`
+        ? T.empty.countNone(n)
         : f.dept === "guest"
-          ? `${n} Tamu`
-          : `${n} orang di ${deptName(f.dept)}`;
+          ? T.empty.countGuest(n)
+          : T.empty.countDept(n, deptName(f.dept));
 
   if (f.status !== "active") {
     const next = { ...f, status: "active" as const };
     const n = count(next);
     if (n > 0) {
-      const state = f.status === "online" ? "sedang offline" : f.status === "offline" ? "sedang online" : "masih aktif";
-      return { title, loosen: { label: "Hapus saringan status", next, note: `${people(n)} ${state}.` } };
+      const state = f.status === "online" ? T.empty.nowOffline : f.status === "offline" ? T.empty.nowOnline : T.empty.stillActive;
+      return { title, loosen: { label: T.empty.clearStatus, next, note: state(n, people(n)) } };
     }
   }
   if (f.dept !== "all") {
     const next = { ...f, dept: "all" };
     const n = count(next);
     if (n > 0) {
-      return { title, loosen: { label: "Hapus saringan departemen", next, note: `Di departemen lain ada ${n} orang yang cocok.` } };
+      return { title, loosen: { label: T.empty.clearDept, next, note: T.empty.otherDepts(n) } };
     }
   }
   if (f.query.trim()) {
@@ -112,18 +109,18 @@ function emptyResult(users: UserView[], f: Filters, deptName: (id: string) => st
     if (n > 0) {
       return {
         title,
-        loosen: { label: "Hapus pencarian", next, note: "Pencarian memeriksa nama, label, nama laptop, dan alamat IP." },
+        loosen: { label: T.empty.clearSearch, next, note: T.empty.searchScope },
       };
     }
   }
-  return { title, loosen: { label: "Hapus semua saringan", next: NO_FILTERS, note: "Melepas satu saringan saja tetap tidak memberi hasil." } };
+  return { title, loosen: { label: T.empty.clearAll, next: NO_FILTERS, note: T.empty.stillNothing } };
 }
 
 function ErrorBox({ error, title }: { error: AppError; title: string }) {
   return (
     <ErrorAlert title={actionErrorTitle(error, title)}>
       <p>{orgMessage(error.message)}</p>
-      {error.code === "last_superadmin" && <p>Jadikan orang lain superadmin dulu, baru lepaskan peran ini.</p>}
+      {error.code === "last_superadmin" && <p>{ORG_TEXT.lastSuperadminHint}</p>}
     </ErrorAlert>
   );
 }
@@ -136,41 +133,44 @@ function OsIcon({ os }: { os: string }) {
 }
 
 function departmentCell(u: UserView, deptName: (id: string) => string): string {
-  if (u.isGuest) return `Tamu, ${u.guestProjectCount} proyek`;
-  if (u.departmentId === null) return "Belum ada departemen";
+  if (u.isGuest) return T.guestCell(u.guestProjectCount);
+  if (u.departmentId === null) return T.noDepartment;
   return u.departmentName ?? deptName(u.departmentId);
 }
 
 function Status({ u }: { u: UserView }) {
   if (u.status === "removed") {
-    return <span className="users-st">Dikeluarkan{u.removedAt ? ` ${formatDate(u.removedAt)}` : ""}</span>;
+    return <span className="users-st">{T.removedOn(u.removedAt ? formatDate(u.removedAt) : "")}</span>;
   }
   const on = isOnline(u);
   const text = u.isMe
-    ? "Laptop ini"
+    ? T.thisLaptop
     : u.online
-      ? "Online"
+      ? T.online
       : u.lastSeenAt
-        ? `Terakhir terlihat ${relativeTime(u.lastSeenAt)}`
-        : "Belum pernah terlihat";
+        ? T.lastSeen(relativeTime(u.lastSeenAt))
+        : T.neverSeen;
   return (
     <span className="users-st">
       <span className={on ? "users-dot" : "users-dot users-dot-off"} aria-hidden="true" />
       {text}
-      {u.isMe && <span className="sr-only">, online</span>}
+      {u.isMe && <span className="sr-only">{T.onlineSr}</span>}
     </span>
   );
 }
 
 // Teks menu aksi per orang. "Aksi untuk" juga nama tombol titik tiga yang
-// dipakai uji e2e, jadi jangan diubah tanpa mengubah skripnya.
-const MENU_TEXT = {
-  label: (name: string) => `Aksi untuk ${name}`,
-  move: "Ubah departemen",
-  role: "Ubah peran",
-  remove: "Keluarkan dari organisasi",
-  busy: "Tunggu aksi lain selesai",
-};
+// dipakai uji e2e, jadi jangan diubah tanpa mengubah skripnya. Objek kamus ini
+// membaca bahasa aktif setiap kali propertinya dibaca.
+const MENU_TEXT = T.menu;
+
+// Mengganti {kunci} di kalimat kamus dengan isinya (teks atau elemen).
+function fill(template: string, values: Record<string, ReactNode>): ReactNode[] {
+  return template.split(/(\{\w+\})/).map((part, i) => {
+    const key = /^\{(\w+)\}$/.exec(part)?.[1];
+    return <Fragment key={i}>{key !== undefined && key in values ? values[key] : part}</Fragment>;
+  });
+}
 
 type RowActions = {
   onMove: (u: UserView) => void;
@@ -245,11 +245,9 @@ function MoveDialog({
   const [error, setError] = useState<AppError | null>(null);
   const chosen = options.find((d) => d.id === target) ?? null;
   const current = (departments ?? []).find((d) => d.id === user.departmentId) ?? null;
-  const currentName = user.departmentId === null ? null : (user.departmentName ?? current?.name ?? "departemen lama");
-  const who = user.isMe ? "Anda" : user.displayName;
-  const byWho = user.isMe ? "oleh Anda" : "olehnya";
+  const currentName = user.departmentId === null ? null : (user.departmentName ?? current?.name ?? T.move.oldDept);
   const channel = (d: DepartmentView | null, fallback: string) =>
-    d?.channelName ? <span className="users-ch"># {d.channelName}</span> : `channel ${fallback}`;
+    d?.channelName ? <span className="users-ch"># {d.channelName}</span> : T.move.channel(fallback);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -258,7 +256,7 @@ function MoveDialog({
     setError(null);
     try {
       await orgApi.moveMember(user.publicKey, chosen.id);
-      page.notify(`${user.isMe ? "Anda" : user.displayName} sekarang di departemen ${chosen.name}.`);
+      page.notify(user.isMe ? T.move.doneSelf(chosen.name) : T.move.done(user.displayName, chosen.name));
       page.refresh();
       onClose();
     } catch (err) {
@@ -274,36 +272,34 @@ function MoveDialog({
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
-      title={user.isMe ? "Ubah departemen Anda" : `Ubah departemen ${user.displayName}`}
+      title={user.isMe ? T.move.titleSelf : T.move.title(user.displayName)}
     >
       <form className="dlg-form" onSubmit={(e) => void submit(e)}>
         <dl className="users-kv">
-          <dt>Sekarang</dt>
-          <dd>{currentName ?? "Belum ada departemen"}</dd>
+          <dt>{T.move.current}</dt>
+          <dd>{currentName ?? T.noDepartment}</dd>
         </dl>
         {departments === null ? (
           departmentsError ? (
             <div role="alert">
-              <ErrorAlert title="Daftar departemen belum terbaca">
+              <ErrorAlert title={T.move.listErrorTitle}>
                 <p>{orgMessage(departmentsError.message)}</p>
                 <button type="button" className="btn btn-ghost org-retry" onClick={onRetryDepartments}>
-                  Coba lagi
+                  {ORG_TEXT.retry}
                 </button>
               </ErrorAlert>
             </div>
           ) : (
             <p className="hint" role="status">
-              Memuat daftar departemen...
+              {T.move.listLoading}
             </p>
           )
         ) : options.length === 0 ? (
-          <p className="users-note">
-            Belum ada departemen lain yang terbuka. Buat departemen di tab Departemen, lalu pindahkan {who} ke sana.
-          </p>
+          <p className="users-note">{user.isMe ? T.move.noOtherSelf : T.move.noOther(user.displayName)}</p>
         ) : (
           <>
             <div className="field">
-              <label htmlFor={selectId}>Pindah ke</label>
+              <label htmlFor={selectId}>{T.move.target}</label>
               <select
                 id={selectId}
                 value={chosen?.id ?? ""}
@@ -311,7 +307,7 @@ function MoveDialog({
                 onChange={(e) => setTarget(e.target.value)}
               >
                 <option value="" disabled>
-                  Pilih departemen
+                  {T.move.choose}
                 </option>
                 {options.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -322,32 +318,32 @@ function MoveDialog({
             </div>
             {chosen && (
               <p id={hintId} className="users-note">
-                {currentName ? (
-                  <>
-                    {who} keluar dari {channel(current, currentName)} dan masuk ke {channel(chosen, chosen.name)}. Riwayat{" "}
-                    {channel(current, currentName)} tidak terlihat lagi {byWho}.
-                  </>
-                ) : (
-                  <>
-                    {who} masuk ke {channel(chosen, chosen.name)}.
-                  </>
-                )}{" "}
-                Keanggotaan proyek dan grup tidak berubah.
-                {user.departmentRole === "admin" && currentName && ` Hak admin departemen ${currentName} juga hilang.`}
+                {currentName
+                  ? fill(user.isMe ? T.move.fromToSelf : T.move.fromTo, {
+                      name: user.displayName,
+                      from: channel(current, currentName),
+                      to: channel(chosen, chosen.name),
+                    })
+                  : fill(user.isMe ? T.move.toSelf : T.move.to, {
+                      name: user.displayName,
+                      to: channel(chosen, chosen.name),
+                    })}{" "}
+                {T.move.unchanged}
+                {user.departmentRole === "admin" && currentName && T.move.adminLost(currentName)}
               </p>
             )}
           </>
         )}
-        <DialogError error={error} title="Belum dipindahkan" />
+        <DialogError error={error} title={T.move.failTitle} />
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {T.cancel}
             </button>
           </DialogClose>
           {options.length > 0 && (
             <button type="submit" className="btn" disabled={busy || !chosen} aria-busy={busy || undefined}>
-              {busy ? "Memindahkan..." : "Pindahkan"}
+              {busy ? T.move.moving : T.move.submit}
             </button>
           )}
         </div>
@@ -378,7 +374,6 @@ function RoleDialog({
   const lastSuperadmin = user.isSuperadmin && superadminCount <= 1;
   const adminChanged = hasDept && admin !== (user.departmentRole === "admin");
   const saChanged = superadmin !== user.isSuperadmin;
-  const who = user.isMe ? "Anda" : user.displayName;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -400,7 +395,7 @@ function RoleDialog({
         isSuperadmin: superadmin,
         departmentRole: hasDept ? (admin ? "admin" : "member") : null,
       });
-      page.notify(`Peran ${user.isMe ? "Anda" : user.displayName} sekarang: ${text}.`);
+      page.notify(user.isMe ? T.role.doneSelf(text) : T.role.done(user.displayName, text));
       page.refresh();
       onClose();
     } catch (err) {
@@ -418,39 +413,33 @@ function RoleDialog({
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
-      title={user.isMe ? "Ubah peran Anda" : `Ubah peran ${user.displayName}`}
+      title={user.isMe ? T.role.titleSelf : T.role.title(user.displayName)}
     >
       <form className="dlg-form" onSubmit={(e) => void submit(e)}>
         {hasDept ? (
           <fieldset className="role-set">
-            <legend className="users-legend">Peran di departemen {user.departmentName ?? ""}</legend>
+            <legend className="users-legend">{T.role.legend(user.departmentName ?? "")}</legend>
             <label className="role-opt">
               <input type="radio" name={groupName} checked={!admin} onChange={() => setAdmin(false)} />
               <span>
-                <span className="role-title">Anggota</span>
-                <span className="role-desc">Chat di channel departemen dan bekerja di proyek yang diikuti.</span>
+                <span className="role-title">{T.role.member}</span>
+                <span className="role-desc">{T.role.memberDesc}</span>
               </span>
             </label>
             <label className="role-opt">
               <input type="radio" name={groupName} checked={admin} onChange={() => setAdmin(true)} />
               <span>
-                <span className="role-title">Admin departemen</span>
-                <span className="role-desc">
-                  Menyetujui permintaan bergabung ke departemen ini, membuat kode undangan dan proyek departemen, dan
-                  mengatur anggota proyeknya.
-                </span>
+                <span className="role-title">{T.role.admin}</span>
+                <span className="role-desc">{T.role.adminDesc}</span>
               </span>
             </label>
           </fieldset>
         ) : (
-          <p className="users-note">
-            {who} belum masuk departemen, jadi belum bisa dijadikan admin departemen. Masukkan dulu lewat Ubah
-            departemen.
-          </p>
+          <p className="users-note">{user.isMe ? T.role.noDeptSelf : T.role.noDept(user.displayName)}</p>
         )}
 
         <div className="users-sa">
-          <p className="users-legend">Superadmin organisasi</p>
+          <p className="users-legend">{T.role.superadmin}</p>
           <label className={lastSuperadmin ? "role-opt role-opt-off" : "role-opt"} htmlFor={saId}>
             <input
               id={saId}
@@ -461,30 +450,26 @@ function RoleDialog({
               onChange={(e) => setSuperadmin(e.target.checked)}
             />
             <span>
-              <span className="role-title">Jadikan superadmin</span>
-              <span className="role-desc">
-                Mengatur departemen, label, dan pengguna. Bisa memindahkan dan mengeluarkan orang, dan memutuskan
-                permintaan bergabung ke departemen mana pun.
-              </span>
+              <span className="role-title">{T.role.makeSuperadmin}</span>
+              <span className="role-desc">{T.role.superadminDesc}</span>
               {lastSuperadmin && (
                 <span id={saNoteId} className="role-note">
-                  {user.isMe ? "Anda" : user.displayName} satu-satunya superadmin. Jadikan orang lain superadmin dulu,
-                  baru lepaskan peran ini.
+                  {user.isMe ? T.role.onlySuperadminSelf : T.role.onlySuperadmin(user.displayName)}
                 </span>
               )}
             </span>
           </label>
         </div>
 
-        <DialogError error={error} title="Peran belum disimpan" />
+        <DialogError error={error} title={T.role.failTitle} />
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {T.cancel}
             </button>
           </DialogClose>
           <button type="submit" className="btn" disabled={busy || (!adminChanged && !saChanged)} aria-busy={busy || undefined}>
-            {busy ? "Menyimpan..." : "Simpan peran"}
+            {busy ? T.role.saving : T.role.submit}
           </button>
         </div>
       </form>
@@ -503,15 +488,17 @@ export function UsersPanel({ page }: { page: OrgPage }) {
   const searchId = useId();
   const deptId = useId();
   const statusId = useId();
+  const lang = useLang();
 
   const users = useMemo(() => [...(live.data ?? [])].sort(byName), [live.data]);
   const deptOptions: DeptOption[] = useMemo(() => {
     const map = new Map<string, string>();
     for (const d of depts.data ?? []) if (!d.archived) map.set(d.id, d.name);
-    for (const u of users) if (u.departmentId && !map.has(u.departmentId)) map.set(u.departmentId, u.departmentName ?? "Departemen lain");
+    for (const u of users) if (u.departmentId && !map.has(u.departmentId)) map.set(u.departmentId, u.departmentName ?? T.otherDept);
     return [...map].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "id"));
-  }, [depts.data, users]);
-  const deptName = (id: string) => deptOptions.find((d) => d.id === id)?.name ?? "Departemen lain";
+    // lang: nama cadangan "Departemen lain" ikut bahasa aktif.
+  }, [depts.data, users, lang]);
+  const deptName = (id: string) => deptOptions.find((d) => d.id === id)?.name ?? T.otherDept;
 
   const active = users.filter((u) => u.status === "active");
   const superadminCount = active.filter((u) => u.isSuperadmin).length;
@@ -558,27 +545,24 @@ export function UsersPanel({ page }: { page: OrgPage }) {
       <div className="org-head">
         <div>
           <h2 id="users-title" className="set-title" ref={headingRef} tabIndex={-1}>
-            Pengguna
+            {T.title}
           </h2>
-          <p className="hint">
-            Setiap laptop melaporkan nama laptop, sistem, dan versi Mira saat tersambung. Alamat IP dilihat dari
-            sambungan terakhir.
-          </p>
+          <p className="hint">{T.hint}</p>
         </div>
       </div>
 
       {live.loading && !live.data && (
         <p className="hint" role="status">
-          Memuat daftar pengguna...
+          {T.loading}
         </p>
       )}
 
       {!live.loading && !live.data && (
         <div role="alert">
-          <ErrorAlert title="Daftar pengguna belum terbaca">
-            <p>{live.error ? orgMessage(live.error.message) : "Inti Mira tidak mengirim daftar pengguna."}</p>
+          <ErrorAlert title={T.loadErrorTitle}>
+            <p>{live.error ? orgMessage(live.error.message) : T.loadErrorEmpty}</p>
             <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
-              Coba lagi
+              {ORG_TEXT.retry}
             </button>
           </ErrorAlert>
         </div>
@@ -587,60 +571,55 @@ export function UsersPanel({ page }: { page: OrgPage }) {
       {live.data && (
         <>
           {live.error && (
-            <p className="hint">
-              Data terbaru belum bisa dibaca ({orgMessage(live.error.message)}). Yang tampil adalah data terakhir.
-            </p>
+            <p className="hint">{ORG_TEXT.stale(orgMessage(live.error.message))}</p>
           )}
 
           {onlyMe && (
             <div className="org-empty">
-              <p>
-                Baru Anda di organisasi ini. Buat kode undangan di tab Undangan, lalu berikan ke rekan supaya laptopnya
-                bisa bergabung.
-              </p>
+              <p>{T.alone}</p>
             </div>
           )}
 
           <div className="users-tools">
             <div className="field users-search">
-              <label htmlFor={searchId}>Cari</label>
+              <label htmlFor={searchId}>{T.search}</label>
               <span className="users-search-box">
                 <IconSearch size={16} aria-hidden="true" />
                 <input
                   id={searchId}
                   type="search"
                   value={filters.query}
-                  placeholder="Cari nama, laptop, atau IP"
+                  placeholder={T.searchPlaceholder}
                   autoComplete="off"
                   onChange={(e) => set({ query: e.target.value })}
                 />
               </span>
             </div>
             <div className="field users-select">
-              <label htmlFor={deptId}>Departemen</label>
+              <label htmlFor={deptId}>{T.department}</label>
               <select id={deptId} value={filters.dept} onChange={(e) => set({ dept: e.target.value })}>
-                <option value="all">Semua</option>
+                <option value="all">{T.all}</option>
                 {deptOptions.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
                 ))}
-                <option value="none">Belum ada departemen</option>
-                <option value="guest">Tamu</option>
+                <option value="none">{T.noDepartment}</option>
+                <option value="guest">{T.guests}</option>
               </select>
             </div>
             <div className="field users-select">
-              <label htmlFor={statusId}>Status</label>
+              <label htmlFor={statusId}>{T.statusLabel}</label>
               <select id={statusId} value={filters.status} onChange={(e) => set({ status: e.target.value as StatusFilter })}>
                 {STATUS_OPTIONS.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
+                  <option key={s} value={s}>
+                    {T.status[s]}
                   </option>
                 ))}
               </select>
             </div>
             <p className="users-count" role="status">
-              {shown.length} orang
+              {T.count(shown.length)}
             </p>
           </div>
 
@@ -660,14 +639,14 @@ export function UsersPanel({ page }: { page: OrgPage }) {
             <table className="ut" role="table" aria-labelledby="users-title" ref={tableRef}>
               <thead role="rowgroup">
                 <tr role="row">
-                  <th role="columnheader" scope="col">Nama</th>
-                  <th role="columnheader" scope="col">Departemen</th>
-                  <th role="columnheader" scope="col">Laptop dan IP terakhir</th>
-                  <th role="columnheader" scope="col">Sistem dan versi</th>
-                  <th role="columnheader" scope="col">Status</th>
-                  <th role="columnheader" scope="col">Bergabung</th>
+                  <th role="columnheader" scope="col">{T.colName}</th>
+                  <th role="columnheader" scope="col">{T.colDept}</th>
+                  <th role="columnheader" scope="col">{T.colLaptop}</th>
+                  <th role="columnheader" scope="col">{T.colSystem}</th>
+                  <th role="columnheader" scope="col">{T.colStatus}</th>
+                  <th role="columnheader" scope="col">{T.colJoined}</th>
                   <th role="columnheader" scope="col">
-                    <span className="sr-only">Aksi</span>
+                    <span className="sr-only">{T.colActions}</span>
                   </th>
                 </tr>
               </thead>
@@ -728,23 +707,23 @@ function UserRow({
           {initials(u.displayName)}
         </span>
         <span className="ut-who">
-          <NameWithLabels className="ut-n" name={u.displayName} labels={u.labels} suffix={u.isMe ? " (Anda)" : undefined} />
+          <NameWithLabels className="ut-n" name={u.displayName} labels={u.labels} suffix={u.isMe ? ORG_TEXT.you : undefined} />
           <span className="ut-sub">{roleText(u)}</span>
         </span>
       </td>
       <td role="cell" className="ut-dept">
-        <span className="ut-k">Departemen</span>
+        <span className="ut-k">{T.colDept}</span>
         <span className={u.isGuest || u.departmentId === null ? "ut-muted" : undefined}>{departmentCell(u, deptName)}</span>
       </td>
       <td role="cell" className="ut-laptop">
-        <span className="ut-k">Laptop dan IP terakhir</span>
-        {u.device ? <span className="mono ut-mono">{u.device.laptop}</span> : <span className="ut-muted">Belum dilaporkan</span>}
+        <span className="ut-k">{T.colLaptop}</span>
+        {u.device ? <span className="mono ut-mono">{u.device.laptop}</span> : <span className="ut-muted">{T.notReported}</span>}
         <span className={u.lastIp ? "mono ut-mono ut-sub" : "ut-sub"}>
-          {u.lastIp ?? (u.isMe ? "Tidak dicatat" : "Belum terlihat")}
+          {u.lastIp ?? (u.isMe ? T.notRecorded : T.notSeen)}
         </span>
       </td>
       <td role="cell" className="ut-sys">
-        <span className="ut-k">Sistem dan versi</span>
+        <span className="ut-k">{T.colSystem}</span>
         {u.device ? (
           <>
             <span className="ut-os">
@@ -756,16 +735,16 @@ function UserRow({
         ) : (
           <span className="ut-muted">
             <span aria-hidden="true">-</span>
-            <span className="sr-only">Belum dilaporkan</span>
+            <span className="sr-only">{T.notReported}</span>
           </span>
         )}
       </td>
       <td role="cell" className="ut-status">
-        <span className="ut-k">Status</span>
+        <span className="ut-k">{T.colStatus}</span>
         <Status u={u} />
       </td>
       <td role="cell" className="ut-joined">
-        <span className="ut-k">Bergabung</span>
+        <span className="ut-k">{T.colJoined}</span>
         <span>{formatDate(u.joinedAt)}</span>
       </td>
       <td role="cell" className="ut-act">
@@ -802,7 +781,7 @@ function RemoveDialog({
     setError(null);
     try {
       await api.removeMember(user.publicKey);
-      page.notify(`${name} sudah dikeluarkan dari organisasi.`);
+      page.notify(T.remove.done(name));
       page.refresh();
       onRemoved(user);
     } catch (err) {
@@ -817,22 +796,16 @@ function RemoveDialog({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      title={`Keluarkan ${name} dari organisasi?`}
-      confirmLabel={`Keluarkan ${name}`}
-      busyLabel="Mengeluarkan..."
+      title={T.remove.title(name)}
+      confirmLabel={T.remove.confirm(name)}
+      busyLabel={T.remove.busy}
       busy={busy}
       onConfirm={() => void confirm()}
-      error={error && <ErrorBox error={error} title={`${name} belum dikeluarkan`} />}
+      error={error && <ErrorBox error={error} title={T.remove.failTitle(name)} />}
     >
-      <p>
-        {name} keluar dari departemennya dan kehilangan semua perannya. Laptopnya tidak menerima pesan dan perubahan
-        baru lagi, dan laptop rekan menolak sambungan dari laptop itu.
-      </p>
-      <p>Data yang sudah ada di laptop {name} tetap ada di sana. Mira tidak bisa menghapusnya dari jauh.</p>
-      <p>
-        Laptop itu tidak bisa bergabung lagi ke organisasi ini, juga dengan kode undangan baru. Langkah ini tidak bisa
-        dibatalkan.
-      </p>
+      <p>{T.remove.effect(name)}</p>
+      <p>{T.remove.data(name)}</p>
+      <p>{T.remove.final}</p>
     </ConfirmDialog>
   );
 }

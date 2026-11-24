@@ -36,7 +36,7 @@ import { initials } from "../../components/initials";
 import { DetailTabs } from "./DetailTabs";
 import { DuePicker } from "./DuePicker";
 import { dueParts, parseDueInput } from "./dueText";
-import { COLUMN_NAMES, COLUMN_ORDER, formatDateTime, PRIORITY_LABELS } from "./format";
+import { COLUMN_NAMES, COLUMN_ORDER, columnLabel, formatDateTime, PRIORITY_LABELS } from "./format";
 import { LabelPicker } from "./LabelPicker";
 import { PropertyRow } from "./PropertyRow";
 import { Subtasks } from "./Subtasks";
@@ -51,16 +51,21 @@ import "./task.css";
 
 type Field = "title" | "description" | "status" | "assignee" | "due" | "priority" | "labels" | "comment";
 
-const FIELD_NAMES: Record<Field, string> = {
-  title: T.judul,
-  description: T.deskripsi,
-  status: T.status,
-  assignee: T.penanggungJawab,
-  due: T.tenggat,
-  priority: T.prioritas,
-  labels: T.label,
-  comment: T.komentar,
-};
+// Nama, judul, dan teks lain dari T dibaca saat dipakai (bukan saat modul dimuat)
+// supaya mengikuti bahasa aktif.
+function fieldName(field: Field): string {
+  const names: Record<Field, string> = {
+    title: T.judul,
+    description: T.deskripsi,
+    status: T.status,
+    assignee: T.penanggungJawab,
+    due: T.tenggat,
+    priority: T.prioritas,
+    labels: T.label,
+    comment: T.komentar,
+  };
+  return names[field];
+}
 
 const PRIORITIES: Priority[] = ["none", "low", "medium", "high"];
 const ACTIVITY_PREVIEW = 6;
@@ -92,27 +97,33 @@ type Tab = "comments" | "activity";
 // "revoked": izin mengubah dicabut saat masih ada draf yang belum tersimpan.
 type Gone = "task" | "project" | "revoked";
 
-const GONE_TITLE: Record<Gone, string> = {
-  task: T.goneTask,
-  project: T.goneProject,
-  revoked: T.goneRevoked,
-};
+function goneTitle(gone: Gone): string {
+  const titles: Record<Gone, string> = {
+    task: T.goneTask,
+    project: T.goneProject,
+    revoked: T.goneRevoked,
+  };
+  return titles[gone];
+}
 
 // Pemberitahuan saat menutup dengan isian yang belum tersimpan. "Lanjut mengedit"
 // memindah fokus ke tempat yang perlu diurus.
 type Unsaved = { message: string; focus: "failed" | "comment" | "draft" };
 
-const SECTION_TITLE: Record<Section, string> = {
-  subtasks: T.subtaskBelumTersimpan,
-  time: T.waktuBelumTersimpan,
-  timer: T.timerBelumTersimpan,
-};
+function sectionTitle(section: Section): string {
+  const titles: Record<Section, string> = {
+    subtasks: T.subtaskBelumTersimpan,
+    time: T.waktuBelumTersimpan,
+    timer: T.timerBelumTersimpan,
+  };
+  return titles[section];
+}
 
 function errorTitle(field: Field, error: AppError): string {
   if (error.code === "forbidden") return T.tidakBerizin;
   if (error.code === "not_found") return T.taskTidakAdaLagi;
   if (field === "comment") return T.komentarBelumTerkirim;
-  return teksDialog.belumTersimpan(FIELD_NAMES[field]);
+  return teksDialog.belumTersimpan(fieldName(field));
 }
 
 // Ketikan yang belum terkirim di subtask, catatan waktu, dan timer ditandai
@@ -315,7 +326,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   }
 
   const update = (field: Field, patch: Parameters<typeof boardApi.updateTask>[2]) =>
-    run(field, () => boardApi.updateTask(projectId, taskId, patch), teksDialog.tersimpan(FIELD_NAMES[field]));
+    run(field, () => boardApi.updateTask(projectId, taskId, patch), teksDialog.tersimpan(fieldName(field)));
 
   function commitTitle(closing = false): Promise<boolean> {
     return once("title", async () => {
@@ -582,7 +593,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
     return (
       <div className="td-live" aria-live="polite">
         {message && (
-          <ErrorAlert title={SECTION_TITLE[section]}>
+          <ErrorAlert title={sectionTitle(section)}>
             <p>{message}</p>
           </ErrorAlert>
         )}
@@ -824,7 +835,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
         : (people.find((p) => p.publicKey === assigneeKey) ??
           (t.assignee?.publicKey === assigneeKey ? t.assignee : { publicKey: assigneeKey, name: T.anggotaLain }));
     const columns =
-      board?.columns.map((c) => ({ id: c.id, name: c.name })) ??
+      board?.columns.map((c) => ({ id: c.id, name: columnLabel(c.id, c.name) })) ??
       COLUMN_ORDER.map((id) => ({ id, name: COLUMN_NAMES[id] }));
     const columnName = columns.find((c) => c.id === columnId)?.name ?? COLUMN_NAMES[columnId] ?? columnId;
     const StatusIcon = STATUS_ICON[columnId] ?? IconCircle;
@@ -1336,7 +1347,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
                 <div className="notice td-gone">
                   <IconAlertTriangle size={18} aria-hidden="true" />
                   <div>
-                    <strong>{GONE_TITLE[gone]}</strong>
+                    <strong>{goneTitle(gone)}</strong>
                     {gone === "project" && <p>{T.goneProjectSebab}</p>}
                     <p>
                       {keptDrafts(task).length > 0

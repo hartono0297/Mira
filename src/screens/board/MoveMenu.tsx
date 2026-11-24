@@ -1,5 +1,6 @@
 import { IconArrowsMove } from "@tabler/icons-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { TEKS } from "./teks";
 
 export type MoveOption = { key: string; label: string; run: () => void };
 
@@ -83,8 +84,8 @@ export function MoveMenu({ code, options }: Props) {
         ref={buttonRef}
         type="button"
         className="mv-btn"
-        aria-label={`Pindahkan ${code}`}
-        title="Pindahkan"
+        aria-label={TEKS.pindah.tombolLabel(code)}
+        title={TEKS.pindah.tombol}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -99,7 +100,7 @@ export function MoveMenu({ code, options }: Props) {
         <IconArrowsMove size={16} aria-hidden="true" />
       </button>
       {open && (
-        <ul ref={menuRef} id={menuId} role="menu" aria-label={`Pindahkan ${code}`} className="mv-menu" onKeyDown={onMenuKey}>
+        <ul ref={menuRef} id={menuId} role="menu" aria-label={TEKS.pindah.tombolLabel(code)} className="mv-menu" onKeyDown={onMenuKey}>
           {options.map((o) => (
             <li key={o.key} role="none">
               <button

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type AppState, type IdentityInfo, type OrgInfo } from "../../api";
 import { joinApi, type FoundOffice, type JoinDevice, type OutgoingJoinRequest } from "../../api/join";
 import { FirewallGuide } from "../../components/FirewallGuide";
+import { LanguagePicker } from "../../components/LanguagePicker";
 import { Logo } from "../../components/Logo";
 import { firewallName } from "../../platform";
 import { JoinStep } from "./JoinStep";
@@ -11,7 +12,7 @@ import { NotFoundStep } from "./NotFoundStep";
 import { OfficeStep, type OfficeDraft } from "./OfficeStep";
 import { SearchStep, type SearchEnd } from "./SearchStep";
 import { StepHeading } from "./StepHeading";
-import { CHECKING_FIREWALL, FIREWALL_INVITE_LEAD, FIREWALL_LEAD, FIREWALL_SETUP_CONTINUE, STEP } from "./texts";
+import { CHECKING_FIREWALL, FIREWALL_INVITE_LEAD, FIREWALL_LEAD, ONB, STEP } from "./texts";
 import { RejectedStep, WaitingStep } from "./WaitingStep";
 import "./onboarding.css";
 
@@ -184,15 +185,20 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
   return (
     <div className="onb">
       <div className="onb-col">
-        <div className="onb-brand">
-          <Logo size={32} />
-          <span>Mira</span>
+        {/* Pemilih bahasa di setiap langkah, supaya orang baru bisa pindah ke
+            bahasa Inggris sejak awal. Tidak mengambil fokus dari judul langkah. */}
+        <div className="onb-top">
+          <div className="onb-brand">
+            <Logo size={32} />
+            <span>Mira</span>
+          </div>
+          <LanguagePicker variant="compact" />
         </div>
         <main className="onb-card">
           {label && <p className="onb-step">{label}</p>}
           {view.kind === "resume" && (
             <p className="hint" role="status">
-              Memeriksa permintaan bergabung yang tersimpan...
+              {ONB.resume}
             </p>
           )}
           {view.kind === "name" && <NameStep identity={identity} onDone={(saved) => nameDone(saved, view.back)} />}
@@ -207,7 +213,11 @@ export function Onboarding({ state, onIdentity, onOrganization, onReload }: Prop
                 view.invite ? FIREWALL_INVITE_LEAD(firewallName()) : FIREWALL_LEAD(firewallName())
               }
               continueLabel={
-                view.invite ? "Kembali ke kode undangan" : view.setup ? FIREWALL_SETUP_CONTINUE : "Cari kantor"
+                view.invite
+                  ? ONB.firewall.backToInvite
+                  : view.setup
+                    ? ONB.firewall.setupContinue
+                    : ONB.firewall.search
               }
               onContinue={() => {
                 if (view.invite) setView({ kind: "invite", end: view.invite });
@@ -299,7 +309,7 @@ function FirewallStep({
 }) {
   return (
     <div className="onb-form">
-      <StepHeading>Izinkan Mira di jaringan kantor</StepHeading>
+      <StepHeading>{ONB.firewall.heading}</StepHeading>
       <p className="onb-lead">{lead}</p>
       <FirewallGuide
         footer={(status) => {
@@ -307,7 +317,7 @@ function FirewallStep({
           return (
             <div className="onb-actions">
               <button type="button" className={ready ? "btn" : "btn btn-ghost"} onClick={onContinue}>
-                {ready ? continueLabel : "Lewati, atur nanti"}
+                {ready ? continueLabel : ONB.firewall.skip}
               </button>
             </div>
           );

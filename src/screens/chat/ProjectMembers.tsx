@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type ProjectChatView } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import { MemberPanelActions, MemberRow } from "./GroupMembers";
 import { usePeopleDirectory } from "./PeoplePicker";
 
@@ -65,6 +66,8 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
   const titleId = useId();
   const departments = usePeopleDirectory(open);
   const { view, loading, error, reload } = useProjectChatView(conv, open, `${memberCount}|${former}`);
+  const T = CHAT_DIALOGS.projectMembers;
+  const M = CHAT_DIALOGS.members;
 
   useEffect(() => {
     if (!open) return;
@@ -90,12 +93,12 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
     content = (
       <p className="conv-group-state" role="status">
         <IconLoader2 size={16} className="conv-spin" aria-hidden="true" />
-        Memuat anggota...
+        {M.loading}
       </p>
     );
   } else if (!view) {
     content = (
-      <ErrorAlert title="Daftar anggota belum bisa dimuat">
+      <ErrorAlert title={M.loadFailed}>
         <p>{error?.message}</p>
         <button
           type="button"
@@ -104,12 +107,12 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
           disabled={loading}
           aria-busy={loading || undefined}
         >
-          {loading ? "Memuat ulang..." : "Coba lagi"}
+          {loading ? M.retrying : M.retry}
         </button>
       </ErrorAlert>
     );
   } else if (members.length === 0) {
-    content = <p className="conv-group-state">Proyek ini belum punya anggota di Board.</p>;
+    content = <p className="conv-group-state">{T.empty}</p>;
   } else {
     content = (
       <ul className="conv-members">
@@ -119,7 +122,7 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
             person={m.person}
             me={m.me}
             department={departments.get(m.person.publicKey)}
-            chip={m.manager ? "Pengelola proyek" : undefined}
+            chip={m.manager ? T.manager : undefined}
           />
         ))}
       </ul>
@@ -129,9 +132,9 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
   // Catatan ikut data terbaru dari inti Rust; sebelum ada, ikut ringkasan percakapan.
   const isFormer = view ? view.former : former;
   let note: string | null = null;
-  if (isFormer) note = "Anda sudah bukan anggota proyek ini, jadi pesan baru tidak sampai lagi ke laptop Anda.";
-  else if (view?.canManage) note = "Untuk menambah atau mengeluarkan orang, buka Anggota proyek di Board.";
-  else if (view) note = "Pengelola proyek yang mengatur anggotanya di Board.";
+  if (isFormer) note = T.former;
+  else if (view?.canManage) note = T.canManage;
+  else if (view) note = T.managed;
 
   return (
     <div className="conv-group-wrap">
@@ -143,7 +146,7 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((v) => !v)}
       >
-        Proyek · {memberCount} anggota
+        {T.button(memberCount)}
         <IconChevronDown size={14} aria-hidden="true" />
       </button>
       {open && (
@@ -163,17 +166,18 @@ export function ProjectMembers({ conv, memberCount, former }: Props) {
           }}
         >
           <p id={titleId} className="conv-pop-title">
-            Anggota proyek ({count})
+            {T.panelTitle(count)}
           </p>
           {view && error && (
             <p className="conv-group-stale" role="status">
-              Daftar terbaru belum bisa dimuat. Yang tampil adalah daftar terakhir.
+              {M.stale}
             </p>
           )}
           <MemberPanelActions close={close}>{content}</MemberPanelActions>
           <hr className="conv-group-sep" />
           <p className="conv-pop-note">
-            Anggota chat ini selalu sama dengan anggota proyek.{note && ` ${note}`}
+            {T.always}
+            {note && ` ${note}`}
           </p>
         </div>
       )}

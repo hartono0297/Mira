@@ -1,5 +1,6 @@
 import { IconClipboard, IconCopy, IconCut, IconSelectAll } from "@tabler/icons-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { MENU_TEXT } from "../../i18n/components";
 import { menuItems, SEPARATOR, type MenuAction, type MenuEntry } from "./items";
 import { MenuPopup, type MenuAnchor } from "./MenuPopup";
 import { isTextField } from "./useContextMenu";
@@ -14,18 +15,8 @@ function setText(el: HTMLInputElement | HTMLTextAreaElement, text: string, start
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-// Teks menu kolom teks, terkumpul di satu tempat.
-export const TEXT_MENU = {
-  label: "Menu teks",
-  cut: "Potong",
-  copy: "Salin",
-  paste: "Tempel",
-  selectAll: "Pilih semua",
-  noSelection: "Belum ada teks yang dipilih",
-  readOnly: "Kolom ini hanya bisa dibaca",
-  secret: "Isi kolom rahasia tidak bisa disalin",
-  empty: "Kolom ini masih kosong",
-} as const;
+// Teks menu kolom teks, terkumpul di kamus src/i18n/components-menu.*.ts.
+export const TEXT_MENU = MENU_TEXT;
 
 type Field = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
 

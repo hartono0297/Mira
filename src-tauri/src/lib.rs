@@ -31,6 +31,7 @@ pub mod settings;
 pub mod signing;
 pub mod state;
 pub mod team_commands;
+pub mod ui_lang;
 pub mod updater;
 pub mod window_theme;
 

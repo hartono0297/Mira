@@ -4,7 +4,7 @@ import { toAppError, type AppError } from "../../api";
 import { joinApi, type FoundOffice, type JoinDevice } from "../../api/join";
 import { DeviceFacts } from "./DeviceFacts";
 import { StepHeading } from "./StepHeading";
-import { SEARCH_GRACE } from "./texts";
+import { ONB, SEARCH_GRACE } from "./texts";
 
 // Lama pencarian dan jeda antarputaran (kontrak 8.1: mendengarkan 15 detik).
 export const SEARCH_MS = 15_000;
@@ -132,8 +132,8 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
 
   return (
     <div className="onb-form">
-      <StepHeading>Mencari kantor di jaringan...</StepHeading>
-      <p className="onb-lead">Mira mencari kantor yang memakai Mira di Wi-Fi atau LAN yang sedang dipakai laptop ini.</p>
+      <StepHeading>{ONB.search.heading}</StepHeading>
+      <p className="onb-lead">{ONB.search.lead}</p>
 
       <div className="onb-search" role="status">
         <IconLoader2 size={28} className="onb-spin" aria-hidden="true" />
@@ -144,8 +144,8 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
           </div>
         ) : (
           <div>
-            <strong>Mencari</strong>
-            <p className="hint">Pencarian berhenti sendiri setelah 15 detik.</p>
+            <strong>{ONB.search.searching}</strong>
+            <p className="hint">{ONB.search.stopsAfter}</p>
           </div>
         )}
       </div>
@@ -154,7 +154,7 @@ export function SearchStep({ device, deviceError, onFound, onEnd }: Props) {
 
       <div className="onb-actions">
         <button type="button" className="btn btn-ghost" onClick={() => stopRef.current()}>
-          Batal
+          {ONB.search.cancel}
         </button>
       </div>
     </div>

@@ -7,22 +7,8 @@ import {
   type MessageView,
   type Person,
 } from "../../api/chat";
-
-const DAYS = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-const MONTHS = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
+import { CHAT_TEXT as T } from "../../i18n/chat";
+import idText from "../../i18n/chat-text.id";
 
 // Pesan berurutan dari orang yang sama dalam jarak ini digabung di bawah satu nama.
 export const GROUP_GAP_MS = 5 * 60 * 1000;
@@ -34,11 +20,16 @@ function parse(iso: string): Date | null {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-// Jam lokal seperti "09.12".
+// Jam lokal seperti "09.12" (bahasa Inggris "09:12").
 export function formatTime(iso: string): string {
   const d = parse(iso);
   if (!d) return "";
-  return `${pad(d.getHours())}.${pad(d.getMinutes())}`;
+  return T.time(pad(d.getHours()), pad(d.getMinutes()));
+}
+
+// "Senin, 23 November 2026" (bahasa Inggris "Monday, 23 November 2026").
+function longDate(d: Date): string {
+  return T.date(T.days[d.getDay()], d.getDate(), T.months[d.getMonth()], d.getFullYear());
 }
 
 // Kunci hari lokal "2026-11-23", untuk pemisah hari.
@@ -56,27 +47,27 @@ export function dayLabel(iso: string, now: Date = new Date()): string {
   const y = new Date(now);
   y.setDate(now.getDate() - 1);
   const key = dayKey(iso);
-  if (key === today) return "Hari ini";
-  if (key === dayKey(y.toISOString())) return "Kemarin";
-  return `${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  if (key === today) return T.today;
+  if (key === dayKey(y.toISOString())) return T.yesterday;
+  return longDate(d);
 }
 
 // Tanggal dan jam lengkap untuk title dan pembaca layar.
 export function fullTime(iso: string): string {
   const d = parse(iso);
   if (!d) return iso;
-  return `${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} pukul ${formatTime(iso)}`;
+  return T.dateTime(longDate(d), formatTime(iso));
 }
 
 function decimal(n: number): string {
   const rounded = Math.round(n * 10) / 10;
-  return String(rounded).replace(".", ",");
+  return String(rounded).replace(".", T.decimalSeparator);
 }
 
-// Ukuran file: "800 byte", "12 KB", "1,2 MB", "3,4 GB".
+// Ukuran file: "800 byte", "12 KB", "1,2 MB", "3,4 GB" (bahasa Inggris "1.2 MB").
 export function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
-  if (bytes < 1024) return `${bytes} byte`;
+  if (bytes < 1024) return T.bytes(bytes);
   const kb = bytes / 1024;
   if (kb < 1024) return `${Math.round(kb)} KB`;
   const mb = kb / 1024;
@@ -113,20 +104,28 @@ export function conversationTitle(summary: ConversationSummary): string {
   return summary.name;
 }
 
+// Nama yang sudah diawali kata awalan (bahasa aktif atau bahasa Indonesia, karena nama
+// tersimpan biasanya ditulis dalam bahasa Indonesia), misalnya "Proyek Alfa".
+export function hasPrefix(name: string, kind: keyof typeof idText.prefix): boolean {
+  const words = [...new Set([T.prefix[kind], idText.prefix[kind]])].map((w) => w.toLowerCase());
+  const lower = name.toLowerCase();
+  return words.some((w) => lower.startsWith(w) && /^\s/.test(lower.slice(w.length)));
+}
+
 // Sasaran pesan di kolom tulis dan keadaan kosong: "Proyek Alfa" untuk chat proyek (tanpa
 // mengulang kata Proyek kalau namanya sudah diawali kata itu), selain itu sama dengan judul.
 export function conversationTarget(summary: ConversationSummary): string {
   if (summary.kind !== "project") return conversationTitle(summary);
-  return /^proyek\s/i.test(summary.name) ? summary.name : `Proyek ${summary.name}`;
+  return hasPrefix(summary.name, "project") ? summary.name : T.scope.projectNamed(summary.name);
 }
 
 export function scopeLabel(summary: ConversationSummary): string {
-  if (summary.kind === "project") return "Proyek";
-  if (summary.kind === "dm" || !summary.scope) return "Pesan pribadi";
-  if (summary.scope.kind === "org") return "Seluruh kantor";
-  if (summary.scope.kind === "team") return `Departemen ${summary.scope.name}`;
-  if (summary.scope.kind === "group") return "Grup";
-  return `Proyek ${summary.scope.name}`;
+  if (summary.kind === "project") return T.scope.project;
+  if (summary.kind === "dm" || !summary.scope) return T.scope.direct;
+  if (summary.scope.kind === "org") return T.scope.org;
+  if (summary.scope.kind === "team") return T.scope.team(summary.scope.name);
+  if (summary.scope.kind === "group") return T.scope.group;
+  return T.scope.projectNamed(summary.scope.name);
 }
 
 // Mention
@@ -241,20 +240,20 @@ export type StatusLine = { icon: DeliveryState; text: string };
 export function deliveryLine(status: MessageStatus, kind: ConversationSummary["kind"]): StatusLine | null {
   if (kind === "dm") return { icon: status.state, text: DELIVERY_LABELS[status.state] };
   if (status.total <= 0) return null;
-  if (status.read > 0) return { icon: "read", text: `Dibaca ${status.read} dari ${status.total}` };
-  if (status.delivered > 0) return { icon: "delivered", text: `Diterima ${status.delivered} dari ${status.total}` };
+  if (status.read > 0) return { icon: "read", text: T.readCount(status.read, status.total) };
+  if (status.delivered > 0) return { icon: "delivered", text: T.deliveredCount(status.delivered, status.total) };
   if (status.deposited > 0) return { icon: "deposited", text: DELIVERY_LABELS.deposited };
   return { icon: "pending", text: DELIVERY_LABELS.pending };
 }
 
 // Nama penulis di daftar pesan: "Anda" untuk pesan sendiri.
 export function authorName(message: MessageView): string {
-  return message.mine ? "Anda" : message.author.name;
+  return message.mine ? T.you : message.author.name;
 }
 
 // Cuplikan pesan untuk kutipan balasan di komposer.
 export function messagePreview(message: MessageView, max = 80): string {
-  if (message.deleted) return "Pesan dihapus";
+  if (message.deleted) return T.deleted;
   const text = message.text.replace(/\s+/g, " ").trim();
   if (!text) return message.files.length ? message.files.map((f) => f.name).join(", ") : "";
   return text.length > max ? `${text.slice(0, max - 3)}...` : text;

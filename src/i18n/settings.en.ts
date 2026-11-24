@@ -1,0 +1,135 @@
+import type { Dict } from "./core";
+import type id from "./settings.id";
+
+const en: Dict<typeof id> = {
+  title: "Settings",
+  partsNav: "Settings sections",
+  parts: {
+    appearance: "Appearance",
+    language: "Language",
+    network: "Network",
+    device: "This laptop",
+    about: "About and updates",
+  },
+
+  appearance: {
+    modeLegend: "Mode",
+    modes: {
+      light: "Light",
+      dark: "Dark",
+      system: (system: string) => `Match ${system}`,
+    },
+    saving: "Saving your mode choice...",
+    saveErrorTitle: "Mode not saved",
+    saveErrorBody: (message: string, kept: string) => `${message} Switched back to ${kept}. Try choosing again.`,
+    loadErrorTitle: "Couldn't read your saved mode",
+    loadErrorBody: (message: string) =>
+      `${message} For now Mira uses the last choice this window remembers. Choosing a mode again will try to save it.`,
+    themeHeading: "Color theme",
+    inUse: "In use",
+    later: "Later",
+    localOnly: "This setting applies only to this laptop and isn't sent to colleagues.",
+  },
+
+  device: {
+    viewOnly: "The details below are view-only in this version.",
+    displayName: "Display name",
+    fingerprint: "Key fingerprint",
+    fingerprintNote: (store: string) => `A unique marker for this laptop's key. Mira keeps the private key in ${store}.`,
+    keyCreated: "Key created",
+    dataFolder: "Data folder",
+    organization: "Organization",
+    yourRole: "Your role",
+  },
+
+  network: {
+    reading: "Reading network status...",
+    unreadableTitle: "Couldn't read network status",
+    noStatus: "The Mira core didn't send a network status.",
+    retry: "Try reading again",
+    stale: (message: string) => `Couldn't read the latest status (${message}). Showing the last known status.`,
+    thisLaptop: {
+      heading: "This laptop's addresses",
+      noAddress: "This laptop has no network address to share yet. Connect to the office Wi-Fi or LAN cable.",
+      addressHint: "If a colleague's laptop doesn't find this laptop automatically, they can enter one of these addresses.",
+      qrAlt: "QR code with this laptop's link",
+      linkLabel: "This laptop's link",
+      linkHint:
+        "Send this link to a colleague, or ask them to scan the code. They can paste it into the address field when joining, or under Colleague laptop addresses.",
+      copyLink: "Copy link",
+    },
+    attempt: {
+      colleagueLaptop: "a colleague's laptop",
+      failedAt: (when: string, error: string) => `Last attempt ${when} failed: ${error}`,
+      failed: (error: string) => `Last attempt failed: ${error}`,
+      connected: (who: string, when: string) => `Connected to ${who}, ${when}.`,
+      ownedBy: (who: string) => `Address of ${who}, not tried yet.`,
+      triedAt: (when: string) => `Tried ${when}, no answer yet.`,
+      never: "Not tried yet. Mira tries this address regularly.",
+    },
+    manual: {
+      heading: "Colleague laptop addresses",
+      intro: "For colleagues Mira can't find automatically, for example on a different subnet or connected over VPN.",
+      empty: "No addresses added yet.",
+      fillFirst: "Enter a colleague's laptop address first.",
+      added: (address: string) => `Address ${address} added. Mira will try to connect to it.`,
+      addFailedTitle: "Address not added",
+      removed: (address: string) => `Address ${address} deleted.`,
+      removeFailedTitle: "Address not deleted",
+      removeLabel: (address: string) => `Delete address ${address}`,
+      removing: "Deleting...",
+      remove: "Delete",
+      addLabel: "Add a colleague's laptop address",
+      adding: "Adding...",
+      addButton: "Add address",
+      example: "Example: 192.168.1.20, 192.168.1.20:47800, or a link starting with mira:// from a colleague.",
+    },
+    discovery: {
+      heading: "Technical details",
+      mdns: "Automatic discovery (mDNS)",
+      on: "On",
+      off: "Off",
+      mdnsNote: "Colleagues' laptops can still connect through remembered addresses or the ones added above.",
+      udpPort: "UDP port",
+      notListening: "Not listening yet",
+    },
+  },
+
+  about: {
+    offline: "Couldn't reach GitHub. Try again when this laptop is connected to the internet.",
+    notConfigured:
+      "This version of Mira isn't set up for in-app updates. Install new versions with the installer as usual.",
+    failedTitle: {
+      check: "Update check failed",
+      download: "Update download failed",
+      install: "Update not installed",
+    },
+    checking: "Checking for updates...",
+    upToDate: "Mira is up to date.",
+    available: (version: string) => `New version available: Mira ${version}.`,
+    released: (date: string) => `Released ${date}.`,
+    downloading: "Downloading update...",
+    ready: "The update is ready to install. Mira will close briefly and then reopen.",
+    installing: "Installing update...",
+    retryHint: "Try again with the Check for updates button.",
+    actions: {
+      updateNow: "Update now",
+      downloading: "Downloading...",
+      restart: "Restart Mira",
+      installing: "Installing...",
+      downloadAgain: "Download again",
+      installAgain: "Install again",
+    },
+    versionInstalled: "The version installed on this laptop.",
+    versionUnknown: "Version not read yet.",
+    check: "Check for updates",
+    seeWhatsNew: "See what's new",
+    progressLabel: "Update download progress",
+    autoCheck: "Check for updates automatically when Mira opens",
+    autoHint: "Needs internet, and Mira only contacts GitHub. The automatic check runs at most once a day.",
+    autoError: (message: string) => `Choice not saved: ${message}`,
+    dataSafe: "Updates only replace the Mira program. This laptop's data and keys stay untouched.",
+  },
+};
+
+export default en;

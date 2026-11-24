@@ -1,6 +1,7 @@
 import { IconCopy, IconDots } from "@tabler/icons-react";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { toAppError, type AppError } from "../../api";
+import { MENU_TEXT } from "../../i18n/components";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { ErrorAlert } from "../ErrorAlert";
 import { isDisabled, isSeparator, SEPARATOR, type MenuAction, type MenuEntry } from "./items";
@@ -20,9 +21,6 @@ type OpenState = {
   extra?: MenuEntry[];
   focusLast?: boolean;
 };
-
-// Teks Salin untuk teks yang dipilih di dalam baris. Sama dengan menu teks global.
-const COPY_SELECTION = "Salin";
 
 // Event dari portal (dialog, menu) naik lewat pohon React ke baris, padahal
 // elemennya tidak ada di dalam baris. Event seperti itu bukan milik baris.
@@ -149,7 +147,8 @@ export function useContextMenu({ label, items }: Options): ContextMenuHandle {
         ? [
             {
               id: "copy-selection",
-              label: COPY_SELECTION,
+              // Sama dengan Salin di menu teks global.
+              label: MENU_TEXT.copy,
               icon: <IconCopy size={16} />,
               shortcut: "Ctrl+C",
               onSelect: () => navigator.clipboard?.writeText(selected),
@@ -235,7 +234,7 @@ export function useContextMenu({ label, items }: Options): ContextMenuHandle {
           busy={busy}
           danger={confirming.danger ?? true}
           onConfirm={() => void runConfirmed()}
-          error={error && <ErrorAlert title={`${confirming.label} gagal`}>{error.message}</ErrorAlert>}
+          error={error && <ErrorAlert title={MENU_TEXT.failed(confirming.label)}>{error.message}</ErrorAlert>}
         >
           {confirming.confirm.body}
         </ConfirmDialog>

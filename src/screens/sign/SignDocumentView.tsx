@@ -19,6 +19,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { cssRectToPdf, pdfRectToCss } from "../../components/pdf/coords";
 import { PdfViewer, type PdfZoom } from "../../components/pdf/PdfViewer";
+import { DOC_TEXT as T } from "../../i18n/sign-doc";
 import { PlacementBox } from "../../components/pdf/PlacementBox";
 import type { PageGeometry, PageRenderInfo, PdfRect } from "../../components/pdf/types";
 import { PinDialog } from "./pad/PinDialog";
@@ -75,16 +76,14 @@ type FileState =
 
 type Done = "mine" | "all";
 
-const EXPORT_NOTE: Partial<Record<ExportView["state"], string>> = {
-  changed: "Isi salinan ini berbeda dari versi yang ditandatangani. Jangan pakai sebagai dokumen sah.",
-  missing: "File ini sudah dipindah, diganti nama, atau dihapus.",
-};
+// Teks dibaca saat render supaya ikut bahasa aktif.
+function exportNote(state: ExportView["state"]): string | undefined {
+  if (state === "changed") return T.exportNote.changed;
+  if (state === "missing") return T.exportNote.missing;
+  return undefined;
+}
 
-const QUICK_SPOTS: { spot: QuickSpot; label: string }[] = [
-  { spot: "left", label: "Kiri bawah" },
-  { spot: "center", label: "Tengah bawah" },
-  { spot: "right", label: "Kanan bawah" },
-];
+const QUICK_SPOTS: QuickSpot[] = ["left", "center", "right"];
 
 // Error yang berarti data di layar sudah usang; layar dimuat ulang di belakang.
 // not_available: file belum ada di laptop ini, keadaan unduhannya mungkin berubah.
@@ -107,14 +106,15 @@ function signerStatus(
   detail: RequestDetail,
   fileTrusted: boolean,
 ): { text: string; tone: "done" | "now" | "wait" } {
-  if (s.status === "signed") return { text: s.signedAt ? `Sudah, ${formatWhen(s.signedAt)}` : "Sudah", tone: "done" };
-  if (detail.status === "cancelled") return { text: "Belum, permintaan dibatalkan", tone: "wait" };
+  const t = T.signer;
+  if (s.status === "signed") return { text: s.signedAt ? t.signedAt(formatWhen(s.signedAt)) : t.signed, tone: "done" };
+  if (detail.status === "cancelled") return { text: t.cancelled, tone: "wait" };
   if (s.isMe && s.canSignNow) {
-    if (!fileHere(detail)) return { text: "Giliran Anda, menunggu file", tone: "wait" };
-    if (detail.pending) return { text: "Giliran Anda, menunggu tanda tangan rekan", tone: "wait" };
-    return fileTrusted ? { text: "Giliran Anda", tone: "now" } : { text: "Tidak bisa ditandatangani", tone: "wait" };
+    if (!fileHere(detail)) return { text: t.turnNoFile, tone: "wait" };
+    if (detail.pending) return { text: t.turnPending, tone: "wait" };
+    return fileTrusted ? { text: t.turn, tone: "now" } : { text: t.cannotSign, tone: "wait" };
   }
-  return { text: "Menunggu", tone: "wait" };
+  return { text: t.waiting, tone: "wait" };
 }
 
 // Banner bahaya. Langkah lanjutnya beda untuk pengirim: ia sendiri yang
@@ -122,49 +122,36 @@ function signerStatus(
 // File dari rekan yang belum tersalin bukan file hilang, jadi tidak ada banner.
 function integrityProblem(detail: RequestDetail, isRequester: boolean): { title: string; body: ReactNode } | null {
   if (!fileHere(detail) && detail.integrity === "missing") return null;
+  const t = T.problem;
   if (detail.integrity === "changed") {
     return {
       title: integrityLabel("changed"),
       body: (
         <>
-          <p>
-            File yang disimpan Mira tidak lagi cocok dengan sidik file yang tercatat. Isinya mungkin diubah di luar Mira, jadi isi
-            dan tanda tangannya tidak bisa dipercaya.
-          </p>
-          <p>
-            {isRequester
-              ? "Jangan kirim atau cetak file ini. Kalau dokumen ini masih perlu ditandatangani, buat permintaan baru dengan file asli yang Anda simpan."
-              : "Jangan kirim atau cetak file ini. Minta salinan dari pengirim, lalu periksa salinan itu dengan Periksa file PDF di layar Tanda tangan."}
-          </p>
+          <p>{t.changedBody}</p>
+          <p>{isRequester ? t.changedRequester : t.changedOther}</p>
         </>
       ),
     };
   }
   if (detail.integrity === "missing") {
     return {
-      title: "File dokumen tidak ditemukan",
+      title: t.missingTitle,
       body: (
         <>
-          <p>File versi terkini hilang dari folder data Mira, mungkin terhapus atau dipindah. Riwayat tanda tangan tetap ada.</p>
-          <p>Kalau Anda pernah menyimpan salinannya, periksa salinan itu dengan Periksa file PDF di layar Tanda tangan.</p>
+          <p>{t.missingBody}</p>
+          <p>{t.missingHint}</p>
         </>
       ),
     };
   }
   if (detail.sealValid === false) {
     return {
-      title: "Catatan penguncian tidak sah",
+      title: t.sealTitle,
       body: (
         <>
-          <p>
-            Catatan bahwa dokumen ini selesai dan dikunci tidak cocok dengan kunci laptop pencatatnya atau dengan sidik file.
-            Data Mira mungkin diubah di luar aplikasi.
-          </p>
-          <p>
-            {isRequester
-              ? "Anggap dokumen ini belum terkunci. Kalau perlu, buat permintaan baru dengan file asli yang Anda simpan."
-              : "Anggap dokumen ini belum terkunci dan minta salinan dari pengirim."}
-          </p>
+          <p>{t.sealBody}</p>
+          <p>{isRequester ? t.sealRequester : t.sealOther}</p>
         </>
       ),
     };
@@ -414,10 +401,10 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
 
   function describe(rect: PdfRect): string {
     const geo = pages[rect.pageIndex];
-    if (!geo) return `Kotak tanda tangan di halaman ${rect.pageIndex + 1}.`;
+    if (!geo) return T.place.boxOnPage(rect.pageIndex + 1);
     // Jarak dalam poin ikut dibacakan supaya setiap geseran terdengar berbeda.
     const v = placementOffsetsPt(rect, geo);
-    return `Halaman ${rect.pageIndex + 1}, ${describeSpot(rect, geo)}. Kiri ${v.left} pt, bawah ${v.bottom} pt, lebar ${v.width} pt.`;
+    return T.place.describe(rect.pageIndex + 1, describeSpot(rect, geo), v.left, v.bottom, v.width);
   }
 
   function updatePlacement(next: PdfRect, say = true) {
@@ -455,7 +442,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
     const before = placementWidthPt(placement, geo);
     const after = placementWidthPt(next, geo);
     if (Math.abs(after - before) < 0.01) {
-      announce(delta > 0 ? "Kotak sudah ukuran terbesar di halaman ini." : "Kotak sudah ukuran terkecil.", 0);
+      announce(delta > 0 ? T.place.largest : T.place.smallest, 0);
       return;
     }
     updatePlacement(next);
@@ -490,23 +477,17 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
 
   async function submitPin(pin: string) {
     if (!detail || !me) {
-      throw { code: "not_ready", message: "Data dokumen belum selesai dimuat. Tutup dialog lalu coba lagi." } satisfies AppError;
+      throw { code: "not_ready", message: T.pinErrors.notLoaded } satisfies AppError;
     }
     if (!placement) {
-      throw {
-        code: "not_ready",
-        message: "Kotak tanda tangan belum ditempatkan. Tutup dialog, tempatkan kotaknya, lalu coba lagi.",
-      } satisfies AppError;
+      throw { code: "not_ready", message: T.pinErrors.notPlaced } satisfies AppError;
     }
     if (file.status !== "ready") {
-      throw { code: "not_ready", message: "File dokumen belum selesai dibuka. Tunggu sebentar lalu coba lagi." } satisfies AppError;
+      throw { code: "not_ready", message: T.pinErrors.fileNotOpen } satisfies AppError;
     }
     if (file.hash !== detail.currentHash) {
       void load();
-      throw {
-        code: "version_conflict",
-        message: "Dokumen baru saja berganti versi dan sedang dibuka ulang. Tunggu sebentar lalu coba lagi.",
-      } satisfies AppError;
+      throw { code: "version_conflict", message: T.pinErrors.versionChanged } satisfies AppError;
     }
     try {
       const result = await runSignFlow({ pin, detail, bytes: file.data, placement, me, api: signingApi });
@@ -591,7 +572,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
       const detail = toAppError(err);
       setRevealError({
         code: detail.code,
-        message: "File Explorer tidak bisa dibuka dari Mira. Buka folder itu sendiri lewat lokasi di atas.",
+        message: T.revealFailed,
       });
     }
   }
@@ -624,26 +605,26 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
         <header className="page-head sdoc-head">
           <button type="button" className="btn btn-ghost btn-sm" onClick={onBack}>
             <IconArrowLeft size={16} aria-hidden="true" />
-            Kembali
+            {T.back}
           </button>
           <h1 id={titleId} ref={titleRef} tabIndex={-1} className="page-title sdoc-title">
-            Dokumen tanda tangan
+            {T.loadingTitle}
           </h1>
         </header>
         {loading || !loadError ? (
           <p className="sdoc-pad hint" role="status">
-            Memuat dokumen...
+            {T.loading}
           </p>
         ) : (
           <div className="sdoc-pad sdoc-narrow" role="alert">
-            <ErrorAlert title="Dokumen belum bisa dibuka">
+            <ErrorAlert title={T.loadErrorTitle}>
               <p>{loadError.message}</p>
               <div className="sdoc-row">
                 <button type="button" className="btn btn-sm" onClick={() => void load()}>
-                  Coba lagi
+                  {T.retry}
                 </button>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={onBack}>
-                  Kembali ke daftar
+                  {T.backToList}
                 </button>
               </div>
             </ErrorAlert>
@@ -692,8 +673,8 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
             rect={pdfRectToCss(placement, info, info.scale)}
             bounds={{ width: info.cssWidth, height: info.cssHeight }}
             onChange={(css) => updatePlacement(cssRectToPdf(css, info, info.scale), viaKeyboard.current)}
-            label={`Kotak tanda tangan ${me.displayName}`}
-            description="Menandai tempat tanda tangan Anda di halaman. Gambar aslinya baru dipakai setelah PIN dimasukkan."
+            label={T.box.label(me.displayName)}
+            description={T.box.description}
             aspectRatio={aspect}
             minWidth={BOX_MIN_WIDTH_PT * unit}
             step={5 * unit}
@@ -701,7 +682,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
             <span className="sdoc-ph">
               <span className="sdoc-ph-tag">
                 <span className="sdoc-ph-name">{me.displayName}</span>
-                <span className="sdoc-ph-sub">Tanda tangan Anda</span>
+                <span className="sdoc-ph-sub">{T.box.sub}</span>
               </span>
             </span>
           </PlacementBox>
@@ -730,10 +711,10 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
       <div className="notice">
         <IconSignature size={18} aria-hidden="true" />
         <div>
-          <strong>Anda belum punya tanda tangan tersimpan</strong>
-          <p>Buat sekali dengan mouse, pena, atau gambar hasil pindai. Setelah itu cukup masukkan PIN setiap kali menandatangani.</p>
+          <strong>{T.setup.title}</strong>
+          <p>{T.setup.body}</p>
           <button ref={setupBtnRef} type="button" className="btn btn-sm sdoc-notice-btn" onClick={() => setSetupOpen(true)}>
-            Buat tanda tangan
+            {T.setup.button}
           </button>
         </div>
       </div>
@@ -741,7 +722,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
   } else if (canSign && saved && !placing) {
     myPart = (
       <div className="sdoc-act">
-        <p>Tempatkan kotak tanda tangan di halaman, lalu masukkan PIN untuk memakai tanda tangan tersimpan.</p>
+        <p>{T.ready.body}</p>
         <button
           ref={placeBtnRef}
           type="button"
@@ -751,7 +732,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
           aria-describedby={placeOff ? placeHintId : undefined}
         >
           <IconSignature size={18} aria-hidden="true" />
-          Tempatkan tanda tangan
+          {T.ready.button}
         </button>
         {cooling ? (
           <p id={placeHintId} className="sdoc-cooling">
@@ -760,7 +741,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
         ) : (
           placeOff && (
             <p id={placeHintId} className="hint">
-              Tombol aktif setelah file selesai dibuka.
+              {T.ready.waitFile}
             </p>
           )
         )}
@@ -769,35 +750,32 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
   } else if (placing && placement) {
     myPart = (
       <div className="sdoc-act">
-        <p className="sdoc-where">
-          Kotak ada di halaman {placement.pageIndex + 1}
-          {boxGeo ? `, ${describeSpot(placement, boxGeo)}` : ""}.
-        </p>
+        <p className="sdoc-where">{T.placing.where(placement.pageIndex + 1, boxGeo ? describeSpot(placement, boxGeo) : null)}</p>
         {boxOnOtherPage && (
           <div className="sdoc-row">
             <button type="button" className="btn btn-ghost btn-sm" onClick={moveHere}>
-              Pindahkan ke halaman ini
+              {T.placing.moveHere}
             </button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={showBoxPage}>
-              Lihat halaman {placement.pageIndex + 1}
+              {T.placing.showPage(placement.pageIndex + 1)}
             </button>
           </div>
         )}
-        <div className="sdoc-ctl" role="group" aria-label="Posisi cepat di halaman yang tampil">
+        <div className="sdoc-ctl" role="group" aria-label={T.placing.quickGroup}>
           <span className="sdoc-ctl-label" aria-hidden="true">
-            Posisi
+            {T.placing.position}
           </span>
           <div className="sdoc-seg">
-            {QUICK_SPOTS.map((q) => (
-              <button key={q.spot} type="button" className="btn btn-ghost btn-sm" onClick={() => quick(q.spot)}>
-                {q.label}
+            {QUICK_SPOTS.map((spot) => (
+              <button key={spot} type="button" className="btn btn-ghost btn-sm" onClick={() => quick(spot)}>
+                {T.quick[spot]}
               </button>
             ))}
           </div>
         </div>
-        <div className="sdoc-ctl" role="group" aria-label="Ukuran kotak">
+        <div className="sdoc-ctl" role="group" aria-label={T.placing.sizeGroup}>
           <span className="sdoc-ctl-label" aria-hidden="true">
-            Ukuran
+            {T.placing.size}
           </span>
           <div className="sdoc-seg">
             <button
@@ -807,7 +785,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
               aria-disabled={minWidthReached || undefined}
             >
               <IconMinus size={15} aria-hidden="true" />
-              Kecilkan kotak
+              {T.placing.smaller}
             </button>
             <button
               type="button"
@@ -816,14 +794,11 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
               aria-disabled={maxWidthReached || undefined}
             >
               <IconPlus size={15} aria-hidden="true" />
-              Besarkan kotak
+              {T.placing.bigger}
             </button>
           </div>
         </div>
-        <p className="hint">
-          Geser kotak dengan mouse atau tombol panah (tahan Shift untuk lebih jauh). Ubah ukuran dengan menarik sudut kanan bawah,
-          tombol Kecilkan atau Besarkan, atau Alt dan panah.
-        </p>
+        <p className="hint">{T.placing.hint}</p>
         <button
           type="button"
           className="btn sdoc-wide"
@@ -832,7 +807,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
           aria-describedby={signOff ? signHintId : undefined}
         >
           <IconLock size={18} aria-hidden="true" />
-          Selesai dan tanda tangani
+          {T.placing.finish}
         </button>
         {cooling ? (
           <p id={signHintId} className="sdoc-cooling">
@@ -841,54 +816,39 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
         ) : (
           signOff && (
             <p id={signHintId} className="hint">
-              Tombol aktif setelah file selesai dibuka.
+              {T.ready.waitFile}
             </p>
           )
         )}
         <button type="button" className="btn btn-ghost btn-sm" onClick={cancelPlacing}>
-          Batal menempatkan
+          {T.placing.cancel}
         </button>
-        <p className="sdoc-small">
-          Setiap tanda tangan mencatat sidik file versi barunya. Dokumen dikunci setelah semua penanda tangan selesai.
-        </p>
+        <p className="sdoc-small">{T.placing.note}</p>
       </div>
     );
   } else if (d.status === "in_progress" && mySigner?.canSignNow && !fileHere(d)) {
-    myPart = <p className="sdoc-text">Giliran Anda. Tanda tangan bisa dibuat setelah file dokumen ada di laptop ini.</p>;
+    myPart = <p className="sdoc-text">{T.me.turnNoFile}</p>;
   } else if (d.status === "in_progress" && mySigner?.canSignNow && d.pending) {
-    myPart = <p className="sdoc-text">Tunggu tanda tangan terbaru dari rekan sampai, lalu tanda tangani.</p>;
+    myPart = <p className="sdoc-text">{T.me.turnPending}</p>;
   } else if (d.status === "in_progress" && mySigner?.canSignNow && !fileTrusted) {
     myPart = (
       <p className="sdoc-text">
-        Dokumen ini tidak bisa ditandatangani karena filenya berubah atau hilang.{" "}
-        {isRequester
-          ? "Buat permintaan baru dengan file asli yang Anda simpan."
-          : "Minta pengirim membuat permintaan baru dengan file aslinya."}
+        {T.me.untrusted} {isRequester ? T.me.untrustedRequester : T.me.untrustedOther}
       </p>
     );
   } else if (d.status === "in_progress" && mySigner && mySigner.status === "waiting") {
     myPart = (
       <p className="sdoc-text">
-        Belum giliran Anda.
-        {firstWaiting && !firstWaiting.isMe ? ` Menunggu ${firstWaiting.displayName} menandatangani lebih dulu.` : ""}
+        {T.me.notYourTurn}
+        {firstWaiting && !firstWaiting.isMe ? T.me.waitingFor(firstWaiting.displayName) : ""}
       </p>
     );
   } else if (mySigner && mySigner.status === "signed") {
-    myPart = (
-      <p className="sdoc-text">
-        Anda sudah menandatangani{mySigner.signedAt ? ` pada ${formatWhen(mySigner.signedAt)}` : ""}.
-      </p>
-    );
+    myPart = <p className="sdoc-text">{T.me.signed(mySigner.signedAt ? formatWhen(mySigner.signedAt) : null)}</p>;
   } else if (!mySigner) {
-    myPart = (
-      <p className="sdoc-text">
-        {me?.kind === "guest"
-          ? "Anda tidak ada di daftar penanda tangan. Tamu hanya bisa menandatangani dokumen yang mencantumkan namanya."
-          : "Anda tidak ada di daftar penanda tangan dokumen ini."}
-      </p>
-    );
+    myPart = <p className="sdoc-text">{me?.kind === "guest" ? T.me.notListedGuest : T.me.notListed}</p>;
   } else if (d.status === "cancelled") {
-    myPart = <p className="sdoc-text">Permintaan ini sudah dibatalkan, jadi tidak bisa ditandatangani lagi.</p>;
+    myPart = <p className="sdoc-text">{T.me.cancelled}</p>;
   }
 
   // File yang belum ada di laptop ini (atau tanda tangan terbaru yang filenya
@@ -905,8 +865,8 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
         )}
         <span>
           {fileNeedText(need)}
-          {need.downloading && !need.newer && ". Halaman tampil di sini begitu salinannya selesai."}
-          {need.downloading && need.newer && ". Status penanda tangan diperbarui setelah file itu sampai."}
+          {need.downloading && !need.newer && T.arrival.copying}
+          {need.downloading && need.newer && T.arrival.copyingNewer}
         </span>
       </p>
       {need.state === "manual" && (
@@ -918,12 +878,12 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
           aria-busy={downloadBusy || undefined}
         >
           <IconDownload size={16} aria-hidden="true" />
-          {downloadBusy ? "Mengunduh..." : downloadLabel(need)}
+          {downloadBusy ? T.arrival.downloading : downloadLabel(need)}
         </button>
       )}
       <div aria-live="polite">
         {downloadError && (
-          <ErrorAlert title="File belum bisa diunduh">
+          <ErrorAlert title={T.arrival.errorTitle}>
             <p>{downloadError.message}</p>
           </ErrorAlert>
         )}
@@ -950,16 +910,16 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
   } else if (file.status === "missing") {
     viewer = (
       <div className="sdoc-viewer-msg">
-        <p>Isi dokumen tidak bisa ditampilkan karena filenya tidak ditemukan.</p>
+        <p>{T.viewer.missing}</p>
       </div>
     );
   } else if (file.status === "error") {
     viewer = (
       <div className="sdoc-viewer-msg" role="alert">
-        <ErrorAlert title="File dokumen belum bisa dibaca">
+        <ErrorAlert title={T.viewer.errorTitle}>
           <p>{file.error.message}</p>
           <button type="button" className="btn btn-sm sdoc-notice-btn" onClick={() => void loadFile(d, true)}>
-            Coba lagi
+            {T.retry}
           </button>
         </ErrorAlert>
       </div>
@@ -967,7 +927,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
   } else {
     viewer = (
       <div className="sdoc-viewer-msg">
-        <p role="status">Membuka file dokumen...</p>
+        <p role="status">{T.viewer.opening}</p>
       </div>
     );
   }
@@ -977,13 +937,13 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
       <header className="page-head sdoc-head">
         <button type="button" className="btn btn-ghost btn-sm" onClick={onBack}>
           <IconArrowLeft size={16} aria-hidden="true" />
-          Kembali
+          {T.back}
         </button>
         <h1 id={titleId} ref={titleRef} tabIndex={-1} className="page-title sdoc-title">
           {d.title}
         </h1>
         <span className={`chip sdoc-head-chip${d.status === "in_progress" ? " chip-on" : ""}`}>{headerStatusLabel(d)}</span>
-        <span className="page-sub">Diminta oleh {isRequester ? "Anda" : d.requestedBy.displayName}</span>
+        <span className="page-sub">{T.requestedBy(isRequester ? T.you : d.requestedBy.displayName)}</span>
       </header>
 
       {problem && (
@@ -1009,11 +969,11 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
             <IconCircleCheck size={18} aria-hidden="true" />
             <div>
               {done === "all" ? (
-                <strong>Semua sudah menandatangani. Dokumen dikunci dan halaman catatan ditambahkan.</strong>
+                <strong>{T.done.all}</strong>
               ) : (
                 <>
-                  <strong>Tanda tangan tersimpan</strong>
-                  <p>Versi baru dokumen dengan tanda tangan Anda sudah disimpan di laptop ini.</p>
+                  <strong>{T.done.mineTitle}</strong>
+                  <p>{T.done.mineBody}</p>
                 </>
               )}
             </div>
@@ -1026,16 +986,12 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
           {viewer}
         </div>
 
-        <aside className="sdoc-panel" aria-label="Penanda tangan dan tindakan">
+        <aside className="sdoc-panel" aria-label={T.panel}>
           <section className="sdoc-sec" aria-labelledby={`${titleId}-order`}>
             <h2 id={`${titleId}-order`} className="sdoc-h">
-              Urutan penanda tangan
+              {T.order.title}
             </h2>
-            <p className="sdoc-small">
-              {d.mode === "sequential"
-                ? "Berurutan: setiap orang menunggu giliran orang sebelumnya."
-                : "Bebas: siapa saja di daftar boleh menandatangani lebih dulu."}
-            </p>
+            <p className="sdoc-small">{d.mode === "sequential" ? T.order.sequential : T.order.parallel}</p>
             <ol className="sdoc-signers">
               {sortedSigners.map((s, i) => {
                 const st = signerStatus(s, d, fileTrusted);
@@ -1047,7 +1003,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
                     <div className="sdoc-signer-text">
                       <p className="sdoc-signer-name">
                         {s.displayName}
-                        {s.isMe && <span className="sdoc-you"> (Anda)</span>}
+                        {s.isMe && <span className="sdoc-you">{T.order.you}</span>}
                         <span className="sdoc-kind">{kindLabel(s.kind)}</span>
                       </p>
                       <p className="sdoc-signer-state">{st.text}</p>
@@ -1056,23 +1012,15 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
                 );
               })}
             </ol>
-            {othersPending && (
-              <p className="sdoc-small">
-                Dokumen dikirim ke penanda tangan lain saat laptop mereka tersambung. Daftar ini berubah begitu mereka
-                menandatangani.
-              </p>
-            )}
+            {othersPending && <p className="sdoc-small">{T.order.othersPending}</p>}
           </section>
 
           {rejected.length > 0 && (
             <section className="sdoc-sec" aria-labelledby={`${titleId}-rejected`}>
               <h2 id={`${titleId}-rejected`} className="sdoc-h">
-                Versi yang ditolak
+                {T.rejected.title}
               </h2>
-              <p className="sdoc-small">
-                Mira tidak memakai versi ini. Dokumen tetap memakai versi sah terakhir, dan tanda tangan di versi yang
-                ditolak tidak dihitung.
-              </p>
+              <p className="sdoc-small">{T.rejected.body}</p>
               <ul className="sdoc-rejected">
                 {rejected.map((x, i) => (
                   <li key={`${x.signerName}-${x.at}-${i}`} className="sdoc-reject">
@@ -1080,7 +1028,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
                       <IconAlertTriangle size={16} aria-hidden="true" />
                       <span>{rejectedText(x)}</span>
                     </p>
-                    <p className="sdoc-small">Ditandatangani {formatWhen(x.at)}</p>
+                    <p className="sdoc-small">{T.rejected.signedAt(formatWhen(x.at))}</p>
                   </li>
                 ))}
               </ul>
@@ -1090,7 +1038,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
           {myPart && (
             <section className="sdoc-sec" aria-labelledby={`${titleId}-me`}>
               <h2 id={`${titleId}-me`} className="sdoc-h">
-                Tanda tangan Anda
+                {T.mine}
               </h2>
               {myPart}
             </section>
@@ -1098,33 +1046,27 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
 
           <section className="sdoc-sec" aria-labelledby={`${titleId}-seal`}>
             <h2 id={`${titleId}-seal`} className="sdoc-h">
-              Keaslian file
+              {T.seal.title}
             </h2>
             {locked ? (
               <div className="sdoc-lock">
                 <p className="sdoc-lock-head">
                   <IconLock size={16} aria-hidden="true" />
-                  Terkunci
+                  {T.seal.locked}
                 </p>
-                <p>
-                  Isi file dikunci. Perubahan sekecil apa pun terdeteksi di file Mira dan di salinan yang disimpan lewat Simpan
-                  salinan PDF. Salinan lain bisa dicek dengan Periksa file PDF.
-                </p>
+                <p>{T.seal.lockedBody}</p>
               </div>
             ) : d.status === "in_progress" ? (
-              <p className="sdoc-small">
-                Belum terkunci. Setiap tanda tangan menyimpan versi baru dan mencatat sidik filenya. Dokumen dikunci setelah semua
-                penanda tangan selesai.
-              </p>
+              <p className="sdoc-small">{T.seal.inProgress}</p>
             ) : d.status === "cancelled" ? (
-              <p className="sdoc-small">Permintaan dibatalkan, jadi dokumen tidak dikunci.</p>
+              <p className="sdoc-small">{T.seal.cancelled}</p>
             ) : null}
             <dl className="sdoc-dl">
-              <dt>{locked ? "Sidik file akhir" : "Sidik file terkini"}</dt>
+              <dt>{locked ? T.seal.finalHash : T.seal.currentHash}</dt>
               <dd>
                 <HashText hash={d.currentHash} />
               </dd>
-              <dt>Sidik file asli</dt>
+              <dt>{T.seal.originalHash}</dt>
               <dd>
                 <HashText hash={d.originalHash} />
               </dd>
@@ -1133,12 +1075,9 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
 
           <section className="sdoc-sec" aria-labelledby={`${titleId}-copy`}>
             <h2 id={`${titleId}-copy`} className="sdoc-h">
-              Salinan PDF
+              {T.copy.title}
             </h2>
-            <p className="sdoc-small">
-              Salinan disimpan tanpa menimpa file lain, biasanya ke folder Unduhan. Lokasinya tampil setelah tersimpan, dan Mira
-              tetap memeriksa isinya.
-            </p>
+            <p className="sdoc-small">{T.copy.body}</p>
             <button
               type="button"
               className={`btn ${d.status === "completed" ? "" : "btn-ghost "}btn-sm sdoc-fit`}
@@ -1147,20 +1086,20 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
               aria-busy={exporting || undefined}
               aria-describedby={exportBlocked ? exportHintId : undefined}
             >
-              {exporting ? "Menyimpan salinan..." : "Simpan salinan PDF"}
+              {exporting ? T.copy.saving : T.copy.save}
             </button>
             {exportBlocked && (
               <p id={exportHintId} className="sdoc-small">
                 {!fileHere(d)
-                  ? "Salinan bisa disimpan setelah file dokumen ada di laptop ini."
+                  ? T.copy.blockedAbsent
                   : d.integrity === "missing"
-                  ? "Salinan tidak bisa disimpan karena file dokumen ini tidak ditemukan."
-                  : "Salinan tidak bisa disimpan karena isi file ini tidak cocok dengan catatan Mira."}
+                  ? T.copy.blockedMissing
+                  : T.copy.blockedChanged}
               </p>
             )}
             <div aria-live="polite">
               {exportError && (
-                <ErrorAlert title="Salinan belum tersimpan">
+                <ErrorAlert title={T.copy.errorTitle}>
                   <p>{exportError.message}</p>
                 </ErrorAlert>
               )}
@@ -1168,17 +1107,17 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
                 <div className="sdoc-saved">
                   <p className="ok-line">
                     <IconCircleCheck size={16} aria-hidden="true" />
-                    Salinan tersimpan di
+                    {T.copy.savedAt}
                   </p>
                   <p className="mono sdoc-path">{exported}</p>
                   <button type="button" className="btn btn-ghost btn-sm sdoc-fit" onClick={() => void reveal(exported)}>
                     <IconFolderOpen size={16} aria-hidden="true" />
-                    Tampilkan di folder
+                    {T.copy.reveal}
                   </button>
                 </div>
               )}
               {revealError && (
-                <ErrorAlert title="Folder belum bisa dibuka">
+                <ErrorAlert title={T.copy.revealErrorTitle}>
                   <p>{revealError.message}</p>
                 </ErrorAlert>
               )}
@@ -1196,7 +1135,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
                   setCancelOpen(true);
                 }}
               >
-                Batalkan permintaan
+                {T.cancelRequest}
               </button>
             </section>
           )}
@@ -1213,13 +1152,9 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
         <PinDialog
           open={pinOpen}
           onOpenChange={setPinOpen}
-          title="Masukkan PIN"
-          description={
-            d.isLastPending
-              ? "Anda penanda tangan terakhir. Setelah PIN benar, tanda tangan ditempel, halaman catatan ditambahkan, dan dokumen dikunci."
-              : `Setelah PIN benar, tanda tangan Anda ditempel di halaman ${(placement?.pageIndex ?? 0) + 1} dan versi baru disimpan.`
-          }
-          submitLabel="Tanda tangani"
+          title={T.pin.title}
+          description={d.isLastPending ? T.pin.last : T.pin.next((placement?.pageIndex ?? 0) + 1)}
+          submitLabel={T.pin.submit}
           lockedUntil={saved.lockedUntil}
           onSubmit={submitPin}
         />
@@ -1235,7 +1170,7 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
         onConfirm={() => void confirmCancel()}
         error={
           cancelError && (
-            <ErrorAlert title="Permintaan belum dibatalkan">
+            <ErrorAlert title={T.cancelErrorTitle}>
               <p>{cancelError.message}</p>
             </ErrorAlert>
           )
@@ -1250,10 +1185,10 @@ export function SignDocumentView({ requestId, onBack, onChanged, startSigning = 
 function ExportList({ exports }: { exports: ExportView[] }) {
   return (
     <div className="sdoc-exports">
-      <h3 className="sdoc-h3">Salinan yang pernah disimpan</h3>
+      <h3 className="sdoc-h3">{T.copy.history}</h3>
       <ul>
         {exports.map((x) => {
-          const note = EXPORT_NOTE[x.state];
+          const note = exportNote(x.state);
           return (
             <li key={`${x.path}-${x.exportedAt}`} className="sdoc-export" data-state={x.state}>
               <p className="mono sdoc-path">{x.path}</p>

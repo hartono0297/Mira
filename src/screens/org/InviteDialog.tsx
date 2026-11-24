@@ -15,6 +15,7 @@ import { CopyButton } from "../../components/CopyButton";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { INVITE_TEXT } from "../../i18n/org-invites";
 import type { OrgCtx } from "./context";
 
 // Batas proyek per kode undangan Tamu, sama dengan inti Rust.
@@ -25,19 +26,6 @@ type ProjectsState =
   | { status: "loading" }
   | { status: "ready"; list: ProjectSummary[] }
   | { status: "error"; error: AppError };
-
-const ROLE_DESC: Record<InviteRole, string> = {
-  member: "Chat di departemen ini, buat dan kerjakan task di proyek yang ia ikuti.",
-  team_admin:
-    "Menyetujui permintaan bergabung ke departemen ini, membuat kode undangan dan proyek departemen, dan mengatur anggota proyeknya.",
-  guest: "Melihat board dan membaca komentar di proyek yang dipilih. Tidak bisa mengubah task atau berkomentar.",
-};
-
-const VALIDITY_HINT: Record<InviteValidity, string> = {
-  "24h": "Bisa dipakai beberapa orang sampai 24 jam setelah kode dibuat.",
-  "7d": "Bisa dipakai beberapa orang sampai 7 hari setelah kode dibuat.",
-  once: "Untuk satu orang. Kode hangus setelah dipakai, atau setelah 7 hari kalau belum dipakai.",
-};
 
 type Props = {
   open: boolean;
@@ -70,6 +58,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
   const guestHint = useId();
   const pickErrId = useId();
   const isGuest = role === "guest";
+  const T = INVITE_TEXT.dialog;
 
   // Setiap kali dialog dibuka, mulai dari form kosong. Kode lama tidak pernah tampil lagi.
   useEffect(() => {
@@ -110,17 +99,13 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
   const atMax = pickedHere.length >= MAX_GUEST_PROJECTS;
   const guestBlocked = isGuest && (projects.status !== "ready" || teamProjects.length === 0);
   const single = teams.length === 1 && initialTeamId !== undefined;
-  const title = created
-    ? "Kode undangan siap"
-    : single && team
-      ? `Undang ke ${team.name}`
-      : "Undang ke departemen";
+  const title = created ? T.titleReady : single && team ? T.titleTo(team.name) : T.titleDefault;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy || !teamId || guestBlocked) return;
     if (isGuest && pickedHere.length === 0) {
-      setPickError("Centang minimal satu proyek yang boleh dilihat Tamu.");
+      setPickError(T.pickAtLeastOne);
       pickRef.current?.querySelector<HTMLInputElement>("input")?.focus();
       return;
     }
@@ -149,50 +134,42 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
     >
       {created ? (
         <div className="invite-done">
-          <p className="dlg-desc">
-            Kirim kode ini ke orang yang Anda undang lewat jalur yang Anda percaya, misalnya langsung atau lewat pesan
-            pribadi. Ia memasukkannya saat membuka Mira pertama kali.
-          </p>
+          <p className="dlg-desc">{T.sendCode}</p>
           <p className="invite-code mono">
             {created.code}
           </p>
-          <CopyButton text={created.code} label="Salin kode" className="btn" autoFocus />
+          <CopyButton text={created.code} label={T.copy} className="btn" autoFocus />
           <dl className="invite-facts">
             <div>
-              <dt>Peran</dt>
-              <dd>
-                {INVITE_ROLE_LABELS[created.invite.role]} di {created.invite.teamName}
-              </dd>
+              <dt>{T.role}</dt>
+              <dd>{T.roleIn(INVITE_ROLE_LABELS[created.invite.role], created.invite.teamName)}</dd>
             </div>
             {created.invite.role === "guest" && (
               <div>
-                <dt>Proyek</dt>
+                <dt>{T.projects}</dt>
                 <dd>
                   <ul className="guest-facts">
                     {(created.invite.projectIds.length > 0 ? created.invite.projectIds : sentIds).map((id) => {
                       const p = projects.status === "ready" ? projects.list.find((x) => x.id === id) : undefined;
-                      return <li key={id}>{p ? `${p.code} ${p.name}` : "Proyek yang tidak terlihat di laptop ini"}</li>;
+                      return <li key={id}>{p ? `${p.code} ${p.name}` : T.hiddenProject}</li>;
                     })}
                   </ul>
                 </dd>
               </div>
             )}
             <div>
-              <dt>Berlaku sampai</dt>
+              <dt>{T.validUntil}</dt>
               <dd>
                 {formatDateTime(created.invite.expiresAt)}
-                {created.invite.validity === "once" && ", untuk satu orang"}
+                {created.invite.validity === "once" && T.once}
               </dd>
             </div>
           </dl>
-          <p className="notice-plain">
-            Kode ini hanya ditampilkan sekali. Setelah dialog ditutup, Mira tidak bisa menampilkannya lagi. Kalau kode
-            hilang, cabut kode ini lalu buat yang baru.
-          </p>
+          <p className="notice-plain">{T.shownOnce}</p>
           <div className="dlg-actions">
             <DialogClose asChild>
               <button type="button" className="btn btn-ghost">
-                Selesai
+                {T.done}
               </button>
             </DialogClose>
           </div>
@@ -201,11 +178,9 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
         <form className="dlg-form" onSubmit={submit} noValidate>
           {!single && (
             <div className="field">
-              <label htmlFor={teamSelect}>Departemen</label>
+              <label htmlFor={teamSelect}>{T.department}</label>
               {teams.length === 0 ? (
-                <p className="hint">
-                  Anda belum mengelola departemen mana pun. Kode undangan selalu untuk satu departemen.
-                </p>
+                <p className="hint">{T.noTeams}</p>
               ) : (
                 <select id={teamSelect} value={teamId} onChange={(e) => setTeamId(e.target.value)} disabled={busy}>
                   {teams.map((t) => (
@@ -219,7 +194,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
           )}
 
           <fieldset className="role-set">
-            <legend className="set-label">Peran</legend>
+            <legend className="set-label">{T.role}</legend>
             <RoleOption value="member" role={role} onPick={setRole} disabled={busy} />
             {isSA && <RoleOption value="team_admin" role={role} onPick={setRole} disabled={busy} />}
             <RoleOption value="guest" role={role} onPick={setRole} disabled={busy} />
@@ -227,30 +202,25 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
 
           {isGuest && (
             <fieldset className="role-set" aria-describedby={`${guestHint} ${pickErrId}`}>
-              <legend className="set-label">Proyek yang boleh dilihat</legend>
+              <legend className="set-label">{T.guestProjects}</legend>
               <p id={guestHint} className="hint">
-                Tamu hanya bisa melihat board dan komentar proyek yang dicentang, tidak bisa mengubah task. Paling banyak{" "}
-                {MAX_GUEST_PROJECTS} proyek.
+                {T.guestHint(MAX_GUEST_PROJECTS)}
               </p>
               {projects.status === "loading" && (
                 <p className="hint" role="status">
-                  Memuat proyek departemen...
+                  {T.loadingProjects}
                 </p>
               )}
               {projects.status === "error" && (
-                <ErrorAlert title="Daftar proyek belum terbaca">
+                <ErrorAlert title={T.projectsError}>
                   <p>{projects.error.message}</p>
                   <button type="button" className="link-btn" onClick={() => setProjectsAttempt((n) => n + 1)}>
-                    Coba baca lagi
+                    {T.projectsRetry}
                   </button>
                 </ErrorAlert>
               )}
               {projects.status === "ready" && teamProjects.length === 0 && (
-                <p className="notice-plain">
-                  {team ? `Departemen ${team.name}` : "Departemen ini"} belum punya proyek yang terlihat di laptop ini.
-                  Proyek hanya terlihat kalau Anda anggotanya. Buat proyek untuk departemen ini di menu Board, atau minta
-                  pengelola proyek menambahkan Anda, lalu undang Tamu ke proyek itu.
-                </p>
+                <p className="notice-plain">{T.noProjects(team ? team.name : null)}</p>
               )}
               {teamProjects.length > 0 && (
                 <ul className="guest-pick" ref={pickRef}>
@@ -278,7 +248,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
                   })}
                 </ul>
               )}
-              {atMax && <p className="hint">Sudah {MAX_GUEST_PROJECTS} proyek, batas satu kode undangan.</p>}
+              {atMax && <p className="hint">{T.atMax(MAX_GUEST_PROJECTS)}</p>}
               <div id={pickErrId} aria-live="polite">
                 {pickError && <FieldError text={pickError} />}
               </div>
@@ -286,7 +256,7 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
           )}
 
           <div className="field">
-            <label htmlFor={validitySelect}>Kode berlaku selama</label>
+            <label htmlFor={validitySelect}>{T.validFor}</label>
             <select
               id={validitySelect}
               value={validity}
@@ -294,19 +264,19 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
               aria-describedby={validityHint}
               disabled={busy}
             >
-              <option value="24h">24 jam</option>
-              <option value="7d">7 hari</option>
-              <option value="once">Sekali pakai</option>
+              <option value="24h">{T.validity["24h"]}</option>
+              <option value="7d">{T.validity["7d"]}</option>
+              <option value="once">{T.validity.once}</option>
             </select>
             <p id={validityHint} className="hint">
-              {VALIDITY_HINT[validity]}
+              {T.validityHint[validity]}
             </p>
           </div>
 
           <div aria-live="polite">
             {error && (
               <ErrorAlert
-                title={error.code === "forbidden" ? "Anda tidak punya izin mengundang ke departemen ini" : "Kode belum dibuat"}
+                title={error.code === "forbidden" ? T.forbidden : T.failed}
               >
                 <p>{error.message}</p>
               </ErrorAlert>
@@ -316,11 +286,11 @@ export function InviteDialog({ open, onOpenChange, ctx, teams, initialTeamId }: 
           <div className="dlg-actions">
             <DialogClose asChild>
               <button type="button" className="btn btn-ghost" disabled={busy}>
-                Batal
+                {T.cancel}
               </button>
             </DialogClose>
             <button type="submit" className="btn" disabled={busy || !teamId || guestBlocked} aria-busy={busy || undefined}>
-              {busy ? "Membuat kode..." : "Buat kode undangan"}
+              {busy ? T.creating : T.create}
             </button>
           </div>
         </form>
@@ -355,7 +325,7 @@ function RoleOption({
       <span>
         <span className="role-title">{INVITE_ROLE_LABELS[value]}</span>
         <span id={descId} className="role-desc">
-          {ROLE_DESC[value]}
+          {INVITE_TEXT.dialog.roleDesc[value]}
         </span>
       </span>
     </label>

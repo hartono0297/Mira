@@ -467,10 +467,12 @@ describe("Departemen: menu klik kanan", () => {
     expect(screen.queryByLabelText("Nama baru untuk departemen Keuangan")).not.toBeInTheDocument();
   });
 
-  it("bukan superadmin: tab Departemen tidak ada, jadi menu barisnya tidak bisa dibuka", async () => {
-    // Sejak onboarding v0.4, tab Departemen hanya tampil untuk pengelola organisasi.
+  // Sejak onboarding v0.4 (4d9a417) tab Departemen hanya untuk yang boleh
+  // mengelola organisasi, jadi bukan superadmin tidak pernah sampai ke tabel
+  // dan menunya.
+  it("bukan superadmin: tab Departemen tidak ada, jadi menu baris tidak terjangkau", async () => {
     setup({}, memberOverview());
-    await screen.findByRole("heading", { name: "Organisasi" });
+    await screen.findByRole("button", { name: /^Anggota$/ });
     expect(screen.queryByRole("button", { name: /^Departemen$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Departemen aktif" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();

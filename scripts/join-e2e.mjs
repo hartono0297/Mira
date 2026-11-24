@@ -378,7 +378,8 @@ try {
   await startOnboarding("R");
   const rHeading = await waitHeading("R", /^(Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/, 30000).catch((e) => String(e.message));
   check(`R menemukan satu kantor lewat mDNS: "Kantor ditemukan: ${ORG}"`, rHeading === `Kantor ditemukan: ${ORG}`, rHeading);
-  const rRadios = await running.R.page.getByRole("radio").count();
+  // Hanya radio pilihan kantor: pemilih bahasa ringkas di onboarding juga radio.
+  const rRadios = await running.R.page.locator('input[type="radio"][name="office"]').count();
   const rFirst = await bodyText("R");
   check("R: satu kantor terpilih otomatis, tampil dengan sidiknya", rRadios === 0 && rFirst.includes(fpA) && (await running.R.page.locator('select[name="team"]').isEnabled()), `radio ${rRadios}`);
   await shot("R", "j07b-r-satu-kantor.png");

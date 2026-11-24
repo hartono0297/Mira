@@ -4,6 +4,7 @@ import { toAppError, type AppError } from "../../api";
 import { boardApi, type ColumnId, type TaskDetail } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { TEKS_LAYAR } from "./teks";
 
 type Props = {
   projectId: string;
@@ -52,7 +53,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraft
     const clean = title.trim();
     setServer(null);
     if (!clean) {
-      setFieldError("Tulis judul task dulu.");
+      setFieldError(TEKS_LAYAR.tambah.judulKosong);
       inputRef.current?.focus();
       return;
     }
@@ -75,7 +76,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraft
     return (
       <button ref={addRef} type="button" className="qa-open" data-qa-open={columnId} onClick={() => onOpenChange(true)}>
         <IconPlus size={16} aria-hidden="true" />
-        Tambah task
+        {TEKS_LAYAR.tambah.buka}
       </button>
     );
   }
@@ -83,7 +84,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraft
   return (
     <form className="qa" onSubmit={submit} noValidate>
       <label htmlFor={inputId} className="sr-only">
-        Judul task baru di {columnName}
+        {TEKS_LAYAR.tambah.label(columnName)}
       </label>
       <input
         ref={inputRef}
@@ -91,7 +92,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraft
         className="qa-input"
         data-qa={columnId}
         autoComplete="off"
-        placeholder="Judul task"
+        placeholder={TEKS_LAYAR.tambah.placeholder}
         value={title}
         onChange={(e) => onDraftChange(e.target.value)}
         onKeyDown={(e) => {
@@ -105,7 +106,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraft
         readOnly={busy}
       />
       <p id={hintId} className="qa-hint">
-        Enter menyimpan. Escape menutup, teksnya tetap ada saat dibuka lagi.
+        {TEKS_LAYAR.tambah.petunjuk}
       </p>
       <div id={errId} aria-live="polite">
         {fieldError && <FieldError text={fieldError} />}
@@ -113,7 +114,7 @@ export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraft
       <div aria-live="polite">
         {server && (
           <ErrorAlert
-            title={server.code === "forbidden" ? "Anda tidak punya izin membuat task di proyek ini" : "Task belum dibuat"}
+            title={server.code === "forbidden" ? TEKS_LAYAR.tambah.tidakBerizin : TEKS_LAYAR.tambah.belumDibuat}
           >
             <p>{server.message}</p>
           </ErrorAlert>
@@ -121,10 +122,10 @@ export function QuickAdd({ projectId, columnId, columnName, open, draft, onDraft
       </div>
       <div className="qa-actions">
         <button type="button" className="btn btn-ghost btn-sm qa-cancel" onClick={close} disabled={busy}>
-          Tutup
+          {TEKS_LAYAR.tambah.tutup}
         </button>
         <button type="submit" className="btn btn-sm" disabled={busy} aria-busy={busy || undefined}>
-          {busy ? "Menyimpan..." : "Simpan"}
+          {busy ? TEKS_LAYAR.tambah.menyimpan : TEKS_LAYAR.tambah.simpan}
         </button>
       </div>
     </form>

@@ -3,6 +3,7 @@ import { useRef, type MouseEvent } from "react";
 import type { ConversationSummary, MessageView } from "../../api/chat";
 import { MenuButton, menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
 import { initials } from "../../components/initials";
+import { CHAT, CHAT_TEXT } from "../../i18n/chat";
 import { useConversationActions, usePersonMenu } from "./ChatActions";
 import { DeliveryStatus, type DeliveryStatusHandle } from "./DeliveryStatus";
 import { FileCard } from "./FileCard";
@@ -49,8 +50,8 @@ export function MessageItem({
   const name = authorName(message);
   const time = formatTime(message.at);
   const reply = message.replyTo;
-  const replyAuthor = reply?.author ? (reply.author.publicKey === me ? "Anda" : reply.author.name) : null;
-  const replyText = reply ? (reply.deleted ? "Pesan dihapus" : reply.preview) : "";
+  const replyAuthor = reply?.author ? (reply.author.publicKey === me ? CHAT_TEXT.you : reply.author.name) : null;
+  const replyText = reply ? (reply.deleted ? CHAT_TEXT.deleted : reply.preview) : "";
   const live = !message.deleted;
   const conv = useConversationActions();
   const statusRef = useRef<DeliveryStatusHandle>(null);
@@ -180,21 +181,21 @@ export function MessageItem({
               type="button"
               className="conv-quote conv-quote-link"
               onClick={() => onJump(reply.id)}
-              aria-label={`Balasan untuk ${replyAuthor ?? "pesan"}: ${replyText}. Lihat pesan asli`}
+              aria-label={CHAT.message.replyJump(replyAuthor ?? CHAT.message.replyUnknown, replyText)}
             >
               {replyAuthor && <span className="conv-quote-author">{replyAuthor}</span>}
               <span className={reply.deleted ? "conv-quote-text conv-deleted" : "conv-quote-text"}>{replyText}</span>
             </button>
           ) : (
             <div className="conv-quote">
-              <span className="sr-only">Balasan untuk </span>
+              <span className="sr-only">{CHAT.message.replyTo}</span>
               {replyAuthor && <span className="conv-quote-author">{replyAuthor}</span>}
               <span className={reply.deleted ? "conv-quote-text conv-deleted" : "conv-quote-text"}>{replyText}</span>
             </div>
           ))}
 
         {message.deleted ? (
-          <p className="conv-deleted">Pesan dihapus</p>
+          <p className="conv-deleted">{CHAT_TEXT.deleted}</p>
         ) : (
           <>
             {message.text && (
@@ -206,7 +207,7 @@ export function MessageItem({
                     <span
                       key={i}
                       className={s.isMe ? "conv-mention conv-mention-me" : "conv-mention"}
-                      title={s.isMe ? "Menyebut Anda" : undefined}
+                      title={s.isMe ? CHAT.message.mentionsYou : undefined}
                     >
                       {s.text}
                     </span>
@@ -215,7 +216,7 @@ export function MessageItem({
               </p>
             )}
             {message.files.length > 0 && (
-              <ul className="conv-files" aria-label="Lampiran">
+              <ul className="conv-files" aria-label={CHAT.message.files}>
                 {message.files.map((f) => (
                   <li key={f.hash}>
                     <FileCard messageId={message.id} file={f} onDownloaded={onReload} onAnnounce={onAnnounce} />
@@ -232,17 +233,17 @@ export function MessageItem({
 
       {/* Setelah menu dari klik kanan ditutup, fokus kembali ke tombol pertama di bilah ini. */}
       {live && menu.hasItems && (
-        <div className="conv-actions" role="group" aria-label={`Aksi pesan ${name} pukul ${time}`}>
+        <div className="conv-actions" role="group" aria-label={CHAT.message.actions(name, time)}>
           {canReply && (
             <button
               type="button"
               className="conv-action"
               onClick={() => onReply(message)}
-              aria-label={`Balas pesan ${name} pukul ${time}`}
+              aria-label={CHAT.message.replyLabel(name, time)}
               data-menu-focus
             >
               <IconArrowBackUp size={16} aria-hidden="true" />
-              <span>Balas</span>
+              <span>{MENU.reply}</span>
             </button>
           )}
           {message.canDelete && (
@@ -250,11 +251,11 @@ export function MessageItem({
               type="button"
               className="conv-action"
               onClick={() => onDelete(message)}
-              aria-label={`Hapus pesan ${name} pukul ${time}`}
+              aria-label={CHAT.message.deleteLabel(name, time)}
               data-menu-focus={canReply ? undefined : true}
             >
               <IconTrash size={16} aria-hidden="true" />
-              <span>Hapus</span>
+              <span>{CHAT.message.delete}</span>
             </button>
           )}
           <MenuButton

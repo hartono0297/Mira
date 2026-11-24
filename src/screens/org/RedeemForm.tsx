@@ -4,19 +4,23 @@ import { checkInviteCode } from "../../api/inviteCode";
 import { inviteErrorText, type ErrorText } from "../../api/messages";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { getLang } from "../../i18n/core";
+import { ORG_TEXT } from "../../i18n/org";
 import { formatWhileTyping } from "../onboarding/JoinStep";
 import type { OrgCtx } from "./context";
 
 // Pesan Rust lama masih bisa menyebut "tim"; di tampilan istilahnya departemen.
+// Dalam bahasa Inggris pesan sudah dipetakan dari kodenya.
 function deTim(message: string): string {
+  if (getLang() === "en") return message;
   return message.replace(/\btim\b/g, "departemen").replace(/\bTim\b/g, "Departemen");
 }
 
 function redeemErrorText(error: AppError): ErrorText {
   if (error.code === "forbidden") {
     return {
-      title: "Kode ini tidak bisa Anda pakai",
-      body: "Kode undangan hanya untuk orang yang belum punya departemen. Kalau Anda perlu pindah departemen, minta superadmin memindahkan Anda.",
+      title: ORG_TEXT.redeem.forbiddenTitle,
+      body: ORG_TEXT.redeem.forbiddenBody,
     };
   }
   return inviteErrorText({ ...error, message: deTim(error.message) });
@@ -55,7 +59,7 @@ export function RedeemForm({ ctx, labelledBy }: { ctx: OrgCtx; labelledBy?: stri
     try {
       await api.redeemInvite(check.code);
       setCode("");
-      ctx.notify("Kode diterima. Anda sekarang anggota departemen yang tertulis di kode itu.");
+      ctx.notify(ORG_TEXT.redeem.accepted);
       await ctx.reload();
     } catch (err) {
       const error = toAppError(err);
@@ -76,11 +80,11 @@ export function RedeemForm({ ctx, labelledBy }: { ctx: OrgCtx; labelledBy?: stri
     <form className="redeem" onSubmit={submit} noValidate aria-labelledby={labelledBy ?? titleId}>
       {!labelledBy && (
         <h3 id={titleId} className="set-sub">
-          Belum punya departemen? Pakai kode undangan
+          {ORG_TEXT.redeem.title}
         </h3>
       )}
       <div className="field">
-        <label htmlFor={inputId}>Kode undangan</label>
+        <label htmlFor={inputId}>{ORG_TEXT.redeem.label}</label>
         <div className="manual-row">
           <input
             ref={ref}
@@ -95,13 +99,11 @@ export function RedeemForm({ ctx, labelledBy }: { ctx: OrgCtx; labelledBy?: stri
             disabled={busy}
           />
           <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
-            {busy ? "Memeriksa kode..." : "Pakai kode"}
+            {busy ? ORG_TEXT.redeem.checking : ORG_TEXT.redeem.submit}
           </button>
         </div>
         <p id={hintId} className="hint">
-          {labelledBy
-            ? "Kode memasukkan Anda ke departemen yang tertulis di kode itu."
-            : "Kode memasukkan Anda ke departemen yang tertulis di kode itu. Minta kode ke admin departemen atau superadmin."}
+          {labelledBy ? ORG_TEXT.redeem.hintShort : ORG_TEXT.redeem.hintLong}
         </p>
         <div id={errId} aria-live="polite">
           {fieldError && <FieldError text={fieldError} />}

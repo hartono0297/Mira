@@ -1,18 +1,12 @@
 // Pengelompokan halaman Task saya menurut tenggat.
 import type { MyTask } from "../../api/board";
 import { daysUntil } from "./format";
+import { TEKS } from "./teks";
 
 export type GroupId = "late" | "today" | "tomorrow" | "week" | "later" | "none" | "done";
 
-export const GROUP_TITLES: Record<GroupId, string> = {
-  late: "Terlambat",
-  today: "Hari ini",
-  tomorrow: "Besok",
-  week: "7 hari ke depan",
-  later: "Nanti",
-  none: "Tanpa tenggat",
-  done: "Selesai",
-};
+// Judul kelompok dalam bahasa aktif (objek hidup dari kamus board).
+export const GROUP_TITLES: Record<GroupId, string> = TEKS.grup;
 
 export const GROUP_ORDER: GroupId[] = ["late", "today", "tomorrow", "week", "later", "none", "done"];
 

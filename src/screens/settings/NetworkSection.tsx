@@ -6,9 +6,12 @@ import { CopyButton } from "../../components/CopyButton";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { FirewallGuide } from "../../components/FirewallGuide";
+import { SETTINGS_TEXT } from "../../i18n/settings";
 import { firewallName } from "../../platform";
 import { NetStateLine } from "../shell/NetworkPanel";
 import { useNetwork, validStatus } from "../shell/NetworkContext";
+
+const T = SETTINGS_TEXT.network;
 
 // QR dari Rust dipasang sebagai gambar, bukan HTML, jadi isinya tidak bisa menjalankan apa pun.
 export function qrDataUrl(svg: string): string {
@@ -22,23 +25,23 @@ export function NetworkSection() {
   return (
     <section className="set-section" aria-labelledby="network-title">
       <h2 id="network-title" className="set-title">
-        Jaringan
+        {SETTINGS_TEXT.parts.network}
       </h2>
 
       <div role="status" aria-live="polite">
-        {loading && !status && <p className="hint">Membaca status jaringan...</p>}
+        {loading && !status && <p className="hint">{T.reading}</p>}
         {status && <NetStateLine state={status.state} />}
       </div>
       {!loading && !status && (
-        <ErrorAlert title="Status jaringan belum terbaca">
-          <p>{error?.message ?? "Inti Mira tidak mengirim status jaringan."}</p>
+        <ErrorAlert title={T.unreadableTitle}>
+          <p>{error?.message ?? T.noStatus}</p>
           <button type="button" className="btn btn-ghost onb-inline-btn" onClick={() => void reload()}>
-            Coba baca lagi
+            {T.retry}
           </button>
         </ErrorAlert>
       )}
       {status && error && (
-        <p className="hint">Status terbaru belum bisa dibaca ({error.message}). Yang tampil adalah status terakhir.</p>
+        <p className="hint">{T.stale(error.message)}</p>
       )}
 
       {status && (
@@ -58,11 +61,9 @@ export function NetworkSection() {
 function ThisLaptop({ status }: { status: NetworkStatus }) {
   return (
     <>
-      <h3 className="set-sub">Alamat laptop ini</h3>
+      <h3 className="set-sub">{T.thisLaptop.heading}</h3>
       {status.localAddresses.length === 0 ? (
-        <p className="hint">
-          Laptop ini belum punya alamat jaringan yang bisa dibagikan. Sambungkan ke Wi-Fi atau kabel LAN kantor.
-        </p>
+        <p className="hint">{T.thisLaptop.noAddress}</p>
       ) : (
         <>
           <ul className="addr-list">
@@ -72,26 +73,21 @@ function ThisLaptop({ status }: { status: NetworkStatus }) {
               </li>
             ))}
           </ul>
-          <p className="hint">
-            Kalau laptop rekan tidak menemukan laptop ini otomatis, rekan bisa mengisi salah satu alamat ini.
-          </p>
+          <p className="hint">{T.thisLaptop.addressHint}</p>
         </>
       )}
 
       {status.shareLink && (
         <div className="share">
           {status.qrSvg && (
-            <img className="share-qr" src={qrDataUrl(status.qrSvg)} alt="Kode QR berisi tautan laptop ini" width={148} height={148} />
+            <img className="share-qr" src={qrDataUrl(status.qrSvg)} alt={T.thisLaptop.qrAlt} width={148} height={148} />
           )}
           <div className="share-text">
-            <p className="fw-label">Tautan laptop ini</p>
-            <p className="hint">
-              Kirim tautan ini ke rekan, atau minta rekan memindai kodenya. Tautan bisa ditempel di kolom alamat saat
-              bergabung atau di bagian Alamat laptop rekan.
-            </p>
+            <p className="fw-label">{T.thisLaptop.linkLabel}</p>
+            <p className="hint">{T.thisLaptop.linkHint}</p>
             <div className="copy-block">
               <code>{status.shareLink}</code>
-              <CopyButton text={status.shareLink} label="Salin tautan" />
+              <CopyButton text={status.shareLink} label={T.thisLaptop.copyLink} />
             </div>
           </div>
         </div>
@@ -104,26 +100,32 @@ function ThisLaptop({ status }: { status: NetworkStatus }) {
 // tersimpan saat percobaan berikutnya gagal. Jadi error dicek lebih dulu.
 function attemptText(m: ManualAddress, status: NetworkStatus): string {
   const peer = m.publicKey ? status.peers.find((p) => p.publicKey === m.publicKey) : undefined;
-  const who = peer ? peer.displayName : "laptop rekan";
+  const A = T.attempt;
+  const who = peer ? peer.displayName : A.colleagueLaptop;
   if (m.lastError) {
-    return m.lastTriedAt
-      ? `Percobaan terakhir ${relativeTime(m.lastTriedAt)} gagal: ${m.lastError}`
-      : `Percobaan terakhir gagal: ${m.lastError}`;
+    return m.lastTriedAt ? A.failedAt(relativeTime(m.lastTriedAt), m.lastError) : A.failed(m.lastError);
   }
   if (m.publicKey) {
-    return m.lastTriedAt ? `Tersambung ke ${who}, ${relativeTime(m.lastTriedAt)}.` : `Alamat milik ${who}, belum dicoba.`;
+    return m.lastTriedAt ? A.connected(who, relativeTime(m.lastTriedAt)) : A.ownedBy(who);
   }
-  if (m.lastTriedAt) return `Dicoba ${relativeTime(m.lastTriedAt)}, belum ada jawaban.`;
-  return "Belum dicoba. Mira mencoba alamat ini secara berkala.";
+  if (m.lastTriedAt) return A.triedAt(relativeTime(m.lastTriedAt));
+  return A.never;
 }
 
+// Pesan disimpan sebagai jenis + data, lalu dijadikan kalimat saat render,
+// supaya ikut bahasa aktif kalau bahasa diganti saat pesan masih tampil.
+type FieldProblem = { kind: "empty" } | { kind: "invalid"; message: string };
+type Failure = { kind: "add" | "remove"; error: AppError };
+type Done = { kind: "added" | "removed"; address: string };
+
 function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChanged: () => Promise<void> }) {
+  const M = T.manual;
   const [value, setValue] = useState("");
-  const [fieldError, setFieldError] = useState<string | null>(null);
-  const [failure, setFailure] = useState<{ title: string; error: AppError } | null>(null);
+  const [fieldProblem, setFieldProblem] = useState<FieldProblem | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState<Done | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const hintId = useId();
@@ -137,24 +139,24 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
     setDone(null);
     setFailure(null);
     if (!address) {
-      setFieldError("Isi alamat laptop rekan dulu.");
+      setFieldProblem({ kind: "empty" });
       inputRef.current?.focus();
       return;
     }
-    setFieldError(null);
+    setFieldProblem(null);
     setAdding(true);
     try {
       const added = await api.addManualAddress(address);
       setValue("");
-      setDone(`Alamat ${added?.address ?? address} ditambahkan. Mira akan mencoba menyambung ke sana.`);
+      setDone({ kind: "added", address: added?.address ?? address });
       await onChanged();
     } catch (err) {
       const error = toAppError(err);
       if (error.code === "invalid_address") {
-        setFieldError(error.message);
+        setFieldProblem({ kind: "invalid", message: error.message });
         inputRef.current?.focus();
       } else {
-        setFailure({ title: "Alamat belum ditambahkan", error });
+        setFailure({ kind: "add", error });
       }
     } finally {
       setAdding(false);
@@ -167,23 +169,23 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
     setFailure(null);
     try {
       await api.removeManualAddress(address);
-      setDone(`Alamat ${address} dihapus.`);
+      setDone({ kind: "removed", address });
       await onChanged();
     } catch (err) {
-      setFailure({ title: "Alamat belum dihapus", error: toAppError(err) });
+      setFailure({ kind: "remove", error: toAppError(err) });
     } finally {
       setRemoving(null);
     }
   }
 
+  const fieldError = fieldProblem ? (fieldProblem.kind === "empty" ? M.fillFirst : fieldProblem.message) : null;
+
   return (
     <>
-      <h3 className="set-sub">Alamat laptop rekan</h3>
-      <p className="hint">
-        Untuk rekan yang tidak ditemukan otomatis, misalnya karena beda subnet atau tersambung lewat VPN.
-      </p>
+      <h3 className="set-sub">{M.heading}</h3>
+      <p className="hint">{M.intro}</p>
       {manual.length === 0 ? (
-        <p className="hint">Belum ada alamat yang ditambahkan.</p>
+        <p className="hint">{M.empty}</p>
       ) : (
         <ul className="manual-list">
           {manual.map((m) => (
@@ -200,10 +202,10 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
                 onClick={() => void remove(m.address)}
                 disabled={removing !== null}
                 aria-busy={removing === m.address || undefined}
-                aria-label={`Hapus alamat ${m.address}`}
+                aria-label={M.removeLabel(m.address)}
               >
                 <IconTrash size={16} aria-hidden="true" />
-                {removing === m.address ? "Menghapus..." : "Hapus"}
+                {removing === m.address ? M.removing : M.remove}
               </button>
             </li>
           ))}
@@ -212,7 +214,7 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
 
       <form className="manual-form" onSubmit={add} noValidate>
         <div className="field">
-          <label htmlFor={inputId}>Tambah alamat laptop rekan</label>
+          <label htmlFor={inputId}>{M.addLabel}</label>
           <div className="manual-row">
             <input
               ref={inputRef}
@@ -226,11 +228,11 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
               disabled={adding}
             />
             <button type="submit" className="btn" disabled={adding} aria-busy={adding || undefined}>
-              {adding ? "Menambahkan..." : "Tambah alamat"}
+              {adding ? M.adding : M.addButton}
             </button>
           </div>
           <p id={hintId} className="hint">
-            Contoh: 192.168.1.20, 192.168.1.20:47800, atau tautan yang diawali mira:// dari rekan.
+            {M.example}
           </p>
           <div id={errId} aria-live="polite">
             {fieldError && <FieldError text={fieldError} />}
@@ -238,9 +240,9 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
         </div>
       </form>
       <div aria-live="polite" className="set-live">
-        {done && <p className="hint">{done}</p>}
+        {done && <p className="hint">{done.kind === "added" ? M.added(done.address) : M.removed(done.address)}</p>}
         {failure && (
-          <ErrorAlert title={failure.title}>
+          <ErrorAlert title={failure.kind === "add" ? M.addFailedTitle : M.removeFailedTitle}>
             <p>{failure.error.message}</p>
           </ErrorAlert>
         )}
@@ -251,25 +253,26 @@ function ManualAddresses({ status, onChanged }: { status: NetworkStatus; onChang
 
 function Discovery({ status }: { status: NetworkStatus }) {
   const mdns = status.mdns ?? { ok: false, error: null };
+  const D = T.discovery;
   return (
     <>
-      <h3 className="set-sub">Detail teknis</h3>
+      <h3 className="set-sub">{D.heading}</h3>
       <dl className="facts">
         <div>
-          <dt>Penemuan otomatis (mDNS)</dt>
+          <dt>{D.mdns}</dt>
           <dd>
-            {mdns.ok ? "Aktif" : "Tidak aktif"}
+            {mdns.ok ? D.on : D.off}
             {!mdns.ok && (
               <span className="fact-note">
                 {mdns.error ? `${mdns.error} ` : ""}
-                Laptop rekan tetap bisa tersambung lewat alamat yang diingat atau alamat yang ditambahkan di atas.
+                {D.mdnsNote}
               </span>
             )}
           </dd>
         </div>
         <div>
-          <dt>Port UDP</dt>
-          <dd>{status.listenPort ?? "Belum mendengarkan"}</dd>
+          <dt>{D.udpPort}</dt>
+          <dd>{status.listenPort ?? D.notListening}</dd>
         </div>
       </dl>
     </>

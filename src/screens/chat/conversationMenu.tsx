@@ -15,6 +15,7 @@ import {
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type ConversationSummary } from "../../api/chat";
 import { menuItems, SEPARATOR, useContextMenu, type ContextMenuHandle, type MenuEntry } from "../../components/ContextMenu";
+import { CHAT } from "../../i18n/chat";
 import { MENU } from "./menuText";
 import { conversationTitle } from "./text";
 
@@ -22,12 +23,8 @@ import { conversationTitle } from "./text";
 // di bawah kepala percakapan, atau di atas daftar percakapan.
 export type DirectAction = "markRead" | "mute" | "archive" | "lock";
 
-export const ACTION_ERRORS: Record<DirectAction, string> = {
-  markRead: "Belum bisa ditandai sudah dibaca",
-  mute: "Notifikasi belum bisa diubah",
-  archive: "Arsip belum bisa diubah",
-  lock: "Status hanya-baca belum bisa diubah",
-};
+// Objek kamus hidup: ACTION_ERRORS[action] selalu dalam bahasa aktif.
+export const ACTION_ERRORS: Readonly<Record<DirectAction, string>> = CHAT.actionErrors;
 
 export type ActionError = { action: DirectAction; title: string; error: AppError };
 

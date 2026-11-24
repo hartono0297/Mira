@@ -11,6 +11,7 @@ import {
 } from "react";
 import { api, isTauri, toAppError, type AppError } from "../api";
 import { updateCheck, updateDownload, updateInfo, updateInstall, type UpdateInfo } from "../api/updater";
+import { useLang } from "../i18n/core";
 import { notesFor } from "../whats-new";
 import { hasUpdate, initialUpdateState, isBusy, updateReducer, type UpdateState } from "./updateState";
 import { shouldShowWhatsNew } from "./version";
@@ -118,7 +119,10 @@ export function UpdateProvider({ children, now = Date.now }: Props) {
   nowRef.current = now;
 
   const currentVersion = info?.currentVersion ?? null;
-  const notes = notesFor(currentVersion);
+  // Catatan dibaca ulang saat bahasa berganti (versi .en.md kalau ada), dan
+  // notes ada di dependensi useMemo di bawah, jadi nilai konteks ikut berganti.
+  const lang = useLang();
+  const notes = notesFor(currentVersion, lang);
 
   useEffect(() => {
     if (started.current || !isTauri()) return;

@@ -7,6 +7,8 @@ import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { initials } from "../../components/initials";
+import { BOARD_DETAIL } from "../../i18n/board-detail";
+import BOARD_DETAIL_ID from "../../i18n/board-detail.id";
 import { useCreateOptions, type OrgData } from "./createOptions";
 import { PROJECT_CODE_RE, projectNameProblem, suggestCode } from "./format";
 import { describePicked, PeoplePicker } from "./PeoplePicker";
@@ -17,31 +19,26 @@ type Props = {
   onCreated: (project: ProjectSummary) => void;
 };
 
-export const CODE_RULE =
-  "Kode harus 2 sampai 6 karakter, huruf A sampai Z atau angka, dan diawali huruf. Contoh: PA atau WEB2.";
+// Aturan kode dalam bahasa Indonesia, untuk tes. Tampilan memakai BOARD_DETAIL.newProject.codeRule
+// supaya mengikuti bahasa aktif.
+export const CODE_RULE = BOARD_DETAIL_ID.newProject.codeRule;
 
 // Nilai select untuk proyek tanpa departemen.
 const NONE = "";
 
-const TAMU_LATER = "Tamu diundang setelah proyek dibuat, dari panel Anggota proyek.";
-
 function serverTitle(error: AppError): string {
-  if (error.code === "forbidden") return "Anda tidak punya izin membuat proyek";
-  return "Proyek belum dibuat";
+  if (error.code === "forbidden") return BOARD_DETAIL.newProject.forbiddenTitle;
+  return BOARD_DETAIL.newProject.failedTitle;
 }
 
 function serverHint(error: AppError): string | null {
-  if (error.code === "forbidden") {
-    return "Proyek dibuat oleh superadmin atau admin departemen. Minta admin departemen Anda membuatkannya.";
-  }
+  if (error.code === "forbidden") return BOARD_DETAIL.newProject.forbiddenHint;
   return null;
 }
 
 function memberSummary(picked: PersonView[]): string {
-  if (picked.length === 0) {
-    return "Belum ada yang dipilih: proyek ini hanya berisi Anda sebagai pengelola. Anggota dan Tamu bisa ditambah nanti dari panel Anggota proyek.";
-  }
-  return `${describePicked(picked)}, ditambah Anda sebagai pengelola. ${TAMU_LATER}`;
+  if (picked.length === 0) return BOARD_DETAIL.newProject.summaryNone;
+  return BOARD_DETAIL.newProject.summaryPicked(describePicked(picked));
 }
 
 // Penjelasan untuk orang yang tidak berhak membuat proyek, dengan nama admin departemennya kalau ada.
@@ -50,19 +47,20 @@ function CannotCreate({ data }: { data: OrgData }) {
   const admins = (departments.find((d) => d.id === overview.departmentId)?.admins ?? [])
     .filter((a) => a.publicKey !== overview.publicKey)
     .map((a) => a.displayName);
+  const T = BOARD_DETAIL.newProject;
   return (
     <div className="notice">
       <IconLock size={18} aria-hidden="true" />
       <div>
         <p>
-          <strong>Hanya superadmin atau admin departemen yang bisa membuat proyek.</strong>
+          <strong>{T.cannotTitle}</strong>
         </p>
         {overview.isGuest ? (
-          <p>Tamu hanya melihat proyek tempat ia diundang. Minta pengelola proyek menambahkan Anda.</p>
+          <p>{T.cannotGuest}</p>
         ) : admins.length > 0 ? (
-          <p>Minta admin departemen Anda ({admins.join(", ")}) membuatkannya dan menambahkan Anda sebagai anggota.</p>
+          <p>{T.cannotAskAdmins(admins.join(", "))}</p>
         ) : (
-          <p>Minta admin departemen Anda atau superadmin membuatkannya dan menambahkan Anda sebagai anggota.</p>
+          <p>{T.cannotAsk}</p>
         )}
       </div>
     </div>
@@ -102,7 +100,8 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     () => (data ? data.people.filter((p) => !p.isGuest && p.publicKey !== data.overview.publicKey) : []),
     [data],
   );
-  const myName = data?.people.find((p) => p.publicKey === data.overview.publicKey)?.displayName ?? "Anda";
+  const T = BOARD_DETAIL.newProject;
+  const myName = data?.people.find((p) => p.publicKey === data.overview.publicKey)?.displayName ?? T.you;
 
   const values = options ? [...options.departments.map((d) => d.id), ...(options.allowNoDepartment ? [NONE] : [])] : [];
   // Pilihan yang tidak berlaku lagi (departemen diarsipkan, hak berubah) kembali ke bawaan.
@@ -135,7 +134,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     const cleanCode = code.trim().toUpperCase();
     setServer(null);
     const nameProblem = projectNameProblem(cleanName);
-    const codeProblem = PROJECT_CODE_RE.test(cleanCode) ? null : CODE_RULE;
+    const codeProblem = PROJECT_CODE_RE.test(cleanCode) ? null : T.codeRule;
     setNameError(nameProblem);
     setCodeError(codeProblem);
     if (nameProblem) {
@@ -157,10 +156,11 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     } catch (err) {
       const error = toAppError(err);
       // Kode yang sudah dipakai proyek lain juga datang sebagai invalid_input.
-      if (error.code === "invalid_input" && /kode/i.test(error.message)) {
+      // Pesan inti bisa bahasa Indonesia atau Inggris, tergantung bahasa aktif.
+      if (error.code === "invalid_input" && /kode|\bcode\b/i.test(error.message)) {
         setCodeError(error.message);
         codeRef.current?.focus();
-      } else if (error.code === "invalid_input" && /nama proyek/i.test(error.message)) {
+      } else if (error.code === "invalid_input" && /nama proyek|project name/i.test(error.message)) {
         setNameError(error.message);
         nameRef.current?.focus();
       } else {
@@ -177,9 +177,9 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     if (org.status === "loading") {
       return (
         <div className="field">
-          <span className="np-label">Departemen dan anggota</span>
+          <span className="np-label">{T.deptAndMembers}</span>
           <p className="hint" role="status">
-            Memuat daftar departemen dan orang...
+            {T.loadingOrg}
           </p>
         </div>
       );
@@ -187,12 +187,11 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     if (org.status === "error") {
       return (
         <div className="field">
-          <span className="np-label">Departemen dan anggota</span>
+          <span className="np-label">{T.deptAndMembers}</span>
           <p className="hint">
-            Daftar departemen dan orang belum terbaca ({org.error.message}). Proyek bisa dibuat setelah daftarnya
-            terbaca, supaya departemen dan anggotanya tepat.{" "}
+            {T.orgError(org.error.message)}{" "}
             <button type="button" className="link-btn" onClick={org.reload}>
-              Coba baca lagi
+              {T.retryRead}
             </button>
           </p>
         </div>
@@ -200,7 +199,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
     }
     return (
       <div className="field">
-        <label htmlFor={deptId}>Departemen</label>
+        <label htmlFor={deptId}>{T.dept}</label>
         <select
           id={deptId}
           value={deptValue}
@@ -213,12 +212,10 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
               {d.name}
             </option>
           ))}
-          {org.options.allowNoDepartment && <option value={NONE}>Tanpa departemen</option>}
+          {org.options.allowNoDepartment && <option value={NONE}>{T.noDept}</option>}
         </select>
         <p id={deptHintId} className="hint">
-          {pickedDept
-            ? `Admin departemen ${pickedDept.name} ikut mengelola proyek ini bersama Anda, dan Tamu yang diundang lewat departemen ini bisa diberi akses. Proyek hanya terlihat oleh anggota yang Anda pilih.`
-            : "Proyek tanpa departemen dikelola oleh Anda dan superadmin yang menjadi anggota. Proyek hanya terlihat oleh anggota yang Anda pilih."}
+          {pickedDept ? T.deptHint(pickedDept.name) : T.noDeptHint}
         </p>
       </div>
     );
@@ -240,11 +237,11 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
               </span>
               <span className="pp-who">
                 <span className="pp-name">{myName}</span>
-                <span className="pp-dept">Anda, pengelola</span>
+                <span className="pp-dept">{T.youManager}</span>
               </span>
             </>
           }
-          emptyText="Belum ada orang lain yang bisa dipilih. Proyek tetap bisa dibuat, dan anggota ditambah nanti dari panel Anggota proyek."
+          emptyText={T.emptyPeople}
           summary={memberSummary}
         />
       </div>
@@ -259,8 +256,8 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
         if (!next) reset();
         onOpenChange(next);
       }}
-      title="Proyek baru"
-      description="Setiap proyek punya board sendiri. Kode proyek menjadi awalan nomor task."
+      title={T.title}
+      description={T.description}
     >
       {data && options && !options.canCreate ? (
         <>
@@ -268,7 +265,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
           <div className="dlg-actions">
             <DialogClose asChild>
               <button type="button" className="btn btn-ghost">
-                Tutup
+                {T.close}
               </button>
             </DialogClose>
           </div>
@@ -277,7 +274,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
         <form className="np-form np-people" onSubmit={submit} noValidate>
           <div className="np-details">
             <div className="field">
-              <label htmlFor={nameId}>Nama proyek</label>
+              <label htmlFor={nameId}>{T.nameLabel}</label>
               <input
                 ref={nameRef}
                 id={nameId}
@@ -293,7 +290,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
               </div>
             </div>
             <div className="field">
-              <label htmlFor={codeId}>Kode proyek</label>
+              <label htmlFor={codeId}>{T.codeLabel}</label>
               <input
                 ref={codeRef}
                 id={codeId}
@@ -311,8 +308,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
                 disabled={busy}
               />
               <p id={codeHintId} className="hint">
-                2 sampai 6 huruf atau angka, diawali huruf. Task di proyek ini diberi nomor seperti {example}. Kode
-                tidak bisa diganti setelah proyek dibuat.
+                {T.codeHint(example)}
               </p>
               <div id={codeErrId} aria-live="polite">
                 {codeError && <FieldError text={codeError} />}
@@ -332,11 +328,11 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
           <div className="dlg-actions">
             <DialogClose asChild>
               <button type="button" className="btn btn-ghost" disabled={busy}>
-                Batal
+                {T.cancel}
               </button>
             </DialogClose>
             <button type="submit" className="btn" disabled={!canSubmit} aria-busy={busy || undefined}>
-              {busy ? "Membuat proyek..." : "Buat proyek"}
+              {busy ? T.creating : T.create}
             </button>
           </div>
         </form>

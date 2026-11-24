@@ -441,3 +441,31 @@ fn group_ops_out_of_order_converge() {
         assert_eq!(l.chat.group(&conv).unwrap().name, "Dua");
     }
 }
+
+#[test]
+fn group_events_follow_the_language_setting() {
+    let o = office(3);
+    let (a, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
+    let conv = b
+        .chat
+        .create_group("Tim Renovasi", vec![a.pk.clone()])
+        .unwrap()
+        .id;
+    b.chat.group_add(&conv, vec![c.pk.clone()]).unwrap();
+    o.sync_all();
+    for l in [a, b] {
+        l.with_conn(|db| crate::settings::set(db, crate::ui_lang::SETTING_LANGUAGE, "en"))
+            .unwrap();
+    }
+    let ev = events(a, &conv);
+    assert_eq!(ev[0], "Budi created this group and added you.");
+    assert!(ev.contains(&"Budi added Citra.".to_owned()), "{ev:?}");
+    assert_eq!(
+        events(b, &conv)[0],
+        "You created this group and added Sari."
+    );
+    assert_eq!(
+        events(c, &conv)[0],
+        "Budi membuat grup ini dan menambahkan Sari."
+    );
+}

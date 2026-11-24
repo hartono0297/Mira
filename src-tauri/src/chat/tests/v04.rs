@@ -223,11 +223,21 @@ fn peers_cannot_archive_or_delete_a_project_chat_but_may_restore_an_old_archive(
 #[test]
 fn project_label_does_not_repeat_proyek() {
     use crate::chat::sync::project_label;
-    assert_eq!(project_label("Alfa"), "Proyek Alfa");
-    assert_eq!(project_label("Proyek Lintas Kantor"), "Proyek Lintas Kantor");
-    assert_eq!(project_label("proyek kecil"), "proyek kecil");
-    assert_eq!(project_label("Proyeksi"), "Proyek Proyeksi");
-    assert_eq!(project_label("É"), "Proyek É");
+    use crate::ui_lang::UiLang::{En, Id};
+    assert_eq!(project_label("Alfa", Id), "Proyek Alfa");
+    assert_eq!(
+        project_label("Proyek Lintas Kantor", Id),
+        "Proyek Lintas Kantor"
+    );
+    assert_eq!(project_label("proyek kecil", Id), "proyek kecil");
+    assert_eq!(project_label("Proyeksi", Id), "Proyek Proyeksi");
+    assert_eq!(project_label("É", Id), "Proyek É");
+    assert_eq!(project_label("Alfa", En), "Project Alfa");
+    assert_eq!(project_label("Project X", En), "Project X");
+    assert_eq!(
+        project_label("Proyek Lintas Kantor", En),
+        "Proyek Lintas Kantor"
+    );
 }
 
 #[test]
@@ -248,4 +258,26 @@ fn folded_sections_are_kept_per_laptop_in_the_database() {
     assert!(b.chat.overview().unwrap().folded.is_empty());
     a.chat.set_folded(&[]).unwrap();
     assert!(a.chat.overview().unwrap().folded.is_empty());
+}
+
+#[test]
+fn notification_body_by_language() {
+    use crate::chat::sync::notification_body;
+    use crate::ui_lang::UiLang::{En, Id};
+    assert_eq!(notification_body("  Halo ", 0, En), "Halo");
+    assert_eq!(notification_body("", 1, Id), "Mengirim file");
+    assert_eq!(notification_body("", 3, Id), "Mengirim 3 file");
+    assert_eq!(notification_body("", 1, En), "Sent a file");
+    assert_eq!(notification_body("", 3, En), "Sent 3 files");
+}
+
+#[test]
+fn join_names_by_language() {
+    use crate::chat::read::join_names_in;
+    use crate::ui_lang::UiLang::{En, Id};
+    let names: Vec<String> = ["A", "B", "C"].map(String::from).to_vec();
+    assert_eq!(join_names_in(&names[..2], Id), "A dan B");
+    assert_eq!(join_names_in(&names, Id), "A, B, dan C");
+    assert_eq!(join_names_in(&names[..2], En), "A and B");
+    assert_eq!(join_names_in(&names, En), "A, B, and C");
 }

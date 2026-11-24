@@ -1,4 +1,5 @@
 import { Dialog, DialogClose } from "../components/Dialog";
+import { UPDATES_TEXT as T } from "../i18n/updates";
 import { Markdown } from "./Markdown";
 import { useUpdates } from "./UpdateContext";
 import "./updates.css";
@@ -15,13 +16,13 @@ export function WhatsNewDialog() {
       onOpenChange={(open) => {
         if (!open) whatsNew.close();
       }}
-      title={`Yang baru di Mira ${whatsNew.version}`}
+      title={T.whatsNewTitle(whatsNew.version)}
     >
       <Markdown source={whatsNew.notes} />
       <div className="dlg-actions">
         <DialogClose asChild>
           <button type="button" className="btn">
-            Tutup
+            {T.close}
           </button>
         </DialogClose>
       </div>

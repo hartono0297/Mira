@@ -7,6 +7,7 @@ import { COLUMN_NAMES, COLUMN_ORDER, daysUntil, dueLabel } from "./format";
 import { GROUP_TITLES, groupMyTasks, type GroupId } from "./myTasksGroups";
 import { ReminderSettings } from "./ReminderSettings";
 import { PriorityChip } from "./TaskDetail";
+import { TEKS_LAYAR, teksDialog } from "./teks";
 import { TEKS_MENU } from "./teksMenu";
 import { boardMenuItems, submenu, useBoardMenu } from "./useBoardMenu";
 import { useFocusRescue } from "./useFocusRescue";
@@ -185,16 +186,16 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
     if (live.loading && !live.data) {
       return (
         <p className="hint" role="status">
-          Memuat task Anda...
+          {TEKS_LAYAR.saya.memuat}
         </p>
       );
     }
     if (!live.data) {
       return (
         <div role="alert">
-          <ErrorAlert title="Task Anda belum terbaca">
-            <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar task."}</p>
-            <p>Coba baca lagi. Kalau tetap gagal, tutup Mira lalu buka lagi.</p>
+          <ErrorAlert title={TEKS_LAYAR.saya.belumTerbaca}>
+            <p>{live.error?.message ?? TEKS_LAYAR.saya.intiTanpaDaftar}</p>
+            <p>{TEKS_LAYAR.saya.cobaBacaLagi}</p>
             <button
               type="button"
               className="btn btn-ghost btn-sm rem-retry"
@@ -203,7 +204,7 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
                 void live.reload();
               }}
             >
-              Coba lagi
+              {TEKS_LAYAR.saya.cobaLagi}
             </button>
           </ErrorAlert>
         </div>
@@ -213,18 +214,18 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
       return (
         <div className="mt-empty">
           <p>
-            <strong>Belum ada task untuk Anda.</strong>
+            <strong>{TEKS_LAYAR.saya.kosongJudul}</strong>
           </p>
-          <p>Task yang ditugaskan ke Anda di board proyek akan muncul di sini.</p>
+          <p>{TEKS_LAYAR.saya.kosongIsi}</p>
         </div>
       );
     }
     return (
       <>
         {live.error && (
-          <p className="hint">Data terbaru belum terbaca ({live.error.message}). Yang tampil adalah data terakhir.</p>
+          <p className="hint">{teksDialog.dataLama(live.error.message)}</p>
         )}
-        {open.length === 0 && <p className="mt-allclear">Semua task Anda sudah selesai.</p>}
+        {open.length === 0 && <p className="mt-allclear">{TEKS_LAYAR.saya.semuaSelesai}</p>}
         {open.map((g) => (
           <section key={g.id} className="mt-group" aria-labelledby={`${ids}-${g.id}`} data-rescue-group={g.id}>
             <h3 id={`${ids}-${g.id}`} className={`mt-group-title${g.id === "late" ? " td-late" : ""}`}>
@@ -264,9 +265,9 @@ export function MyTasks({ onOpenTask, taskOpen = false }: Props) {
     <section className="mt" aria-labelledby={`${ids}-page`} ref={rootRef} {...rescue}>
       <header className="page-head mt-head">
         <h2 id={`${ids}-page`} className="page-title" ref={headingRef} tabIndex={-1}>
-          Task saya
+          {TEKS_LAYAR.saya.judul}
         </h2>
-        <span className="page-sub">Task yang ditugaskan ke Anda, dikumpulkan dari semua proyek.</span>
+        <span className="page-sub">{TEKS_LAYAR.saya.sub}</span>
       </header>
       <div className="sr-only mt-say" role="status" aria-live="polite">
         <span key={say.n}>{say.text}</span>

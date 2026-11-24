@@ -1,3 +1,4 @@
+import { UPDATES_TEXT as T } from "../i18n/updates";
 import { useUpdates } from "./UpdateContext";
 import "./updates.css";
 
@@ -8,7 +9,7 @@ export function UpdateDot() {
   return (
     <>
       <span className="update-dot" aria-hidden="true" />
-      <span className="sr-only">, ada pembaruan</span>
+      <span className="sr-only">{T.dotLabel}</span>
     </>
   );
 }

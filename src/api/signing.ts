@@ -5,7 +5,9 @@
 // beberapa MB tidak berubah jadi ratusan ribu angka.
 
 import { invoke } from "@tauri-apps/api/core";
+import { API_TEXT } from "../i18n/api";
 import { NO_TAURI_ERROR, isTauri, toAppError } from "./index";
+import { localizeError } from "../i18n/errors";
 
 export type SignMode = "sequential" | "parallel";
 export type SignerKind = "member" | "guest";
@@ -192,7 +194,7 @@ async function call<T>(
   try {
     return await invoke<T>(command, args, headers ? { headers } : undefined);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 
@@ -200,7 +202,7 @@ function toBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (Array.isArray(value)) return Uint8Array.from(value as number[]);
-  throw toAppError("Isi file dari inti Mira tidak berbentuk byte.");
+  throw toAppError(API_TEXT.notBytes);
 }
 
 export const signingApi = {

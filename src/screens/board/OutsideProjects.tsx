@@ -8,6 +8,7 @@ import { orgApi, subscribeOrg } from "../../api/org";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { teamLabel } from "./format";
+import { TEKS_LAYAR } from "./teks";
 import "./members.css";
 
 type Props = {
@@ -21,11 +22,11 @@ type Props = {
 export function outsideLabel(p: OutsideProject): string {
   if (p.code && p.name) return `${p.code} ${p.name}`;
   if (p.name) return p.name;
-  return p.teamName ? `Proyek ${teamLabel(p.teamName)}` : "Proyek tanpa departemen";
+  return p.teamName ? TEKS_LAYAR.luar.proyekDepartemen(teamLabel(p.teamName)) : TEKS_LAYAR.luar.tanpaDepartemen;
 }
 
 function outsideSub(p: OutsideProject): string {
-  return `dibuat ${p.creatorName}, ${p.memberCount} anggota`;
+  return TEKS_LAYAR.luar.sub(p.creatorName, p.memberCount);
 }
 
 export function OutsideProjects({ myKey, onJoined }: Props) {
@@ -83,9 +84,7 @@ export function OutsideProjects({ myKey, onJoined }: Props) {
       const label = outsideLabel(joining);
       setJoining(null);
       setMessage(
-        joining.name
-          ? `Anda sudah menjadi anggota ${label}.`
-          : `Anda sudah menjadi anggota ${label}. Board muncul setelah laptop anggota proyek tersambung.`,
+        joining.name ? TEKS_LAYAR.luar.sudahAnggota(label) : TEKS_LAYAR.luar.sudahAnggotaTunggu(label),
       );
       onJoined(joining.id);
       await reload();
@@ -103,16 +102,16 @@ export function OutsideProjects({ myKey, onJoined }: Props) {
   return (
     <section className="op" aria-labelledby={`${ids}-title`}>
       <h2 id={`${ids}-title`} className="bd-lbl">
-        Proyek lain
+        {TEKS_LAYAR.luar.judul}
       </h2>
       {list.length > 0 && (
-        <p className="bd-nav-note">Proyek yang belum Anda ikuti. Sebagai superadmin, Anda bisa bergabung sendiri.</p>
+        <p className="bd-nav-note">{TEKS_LAYAR.luar.catatan}</p>
       )}
       {loadError && items === null && (
         <p className="bd-nav-note">
-          Daftar proyek lain belum terbaca.{" "}
+          {TEKS_LAYAR.luar.belumTerbaca}{" "}
           <button type="button" className="link-btn" onClick={() => void reload()}>
-            Coba lagi
+            {TEKS_LAYAR.luar.cobaLagi}
           </button>
         </p>
       )}
@@ -129,7 +128,7 @@ export function OutsideProjects({ myKey, onJoined }: Props) {
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
-                  aria-label={`Gabung ke proyek ini: ${outsideLabel(p)}`}
+                  aria-label={TEKS_LAYAR.luar.gabungLabel(outsideLabel(p))}
                   aria-describedby={titleId}
                   disabled={!myKey}
                   onClick={() => {
@@ -137,7 +136,7 @@ export function OutsideProjects({ myKey, onJoined }: Props) {
                     setJoining(p);
                   }}
                 >
-                  Gabung ke proyek ini
+                  {TEKS_LAYAR.luar.gabungTombol}
                 </button>
               </li>
             );
@@ -153,25 +152,23 @@ export function OutsideProjects({ myKey, onJoined }: Props) {
         onOpenChange={(next) => {
           if (!next) setJoining(null);
         }}
-        title={joining ? `Gabung ke ${outsideLabel(joining)}?` : "Gabung ke proyek ini?"}
-        confirmLabel="Gabung"
-        busyLabel="Bergabung..."
+        title={joining ? TEKS_LAYAR.luar.gabungJudul(outsideLabel(joining)) : TEKS_LAYAR.luar.gabungJudulCadangan}
+        confirmLabel={TEKS_LAYAR.luar.gabung}
+        busyLabel={TEKS_LAYAR.luar.bergabung}
         busy={busy}
         danger={false}
         onConfirm={() => void join()}
         error={
           joinError && (
-            <ErrorAlert title="Anda belum bergabung">
+            <ErrorAlert title={TEKS_LAYAR.luar.belumBergabung}>
               <p>{joinError.message}</p>
             </ErrorAlert>
           )
         }
       >
-        <p>
-          Anda akan menjadi anggota proyek ini. Langkah ini tercatat di log organisasi dan terlihat oleh semua anggota.
-        </p>
+        <p>{TEKS_LAYAR.luar.gabungIsi}</p>
         {joining && !joining.name && (
-          <p className="pm-confirm-p">Board muncul setelah laptop anggota proyek tersambung.</p>
+          <p className="pm-confirm-p">{TEKS_LAYAR.luar.boardMenyusul}</p>
         )}
       </ConfirmDialog>
     </section>

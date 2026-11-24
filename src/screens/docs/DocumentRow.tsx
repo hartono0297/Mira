@@ -16,18 +16,14 @@ import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
 import {
   appName,
-  COPY_NAME_LABEL,
+  DOCS,
   downloadLabel,
   editable,
-  EXPORT_LABEL,
   exportBlockedReason,
   fetchState,
-  HISTORY_LABEL,
   menuButtonLabel,
   menuLabel,
-  OPEN_READONLY_LABEL,
   statusLines,
-  WAIT_REASON,
   type StatusKind,
 } from "./text";
 
@@ -71,16 +67,16 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
       {
         id: "edit",
         key: keys.edit(doc.id, null),
-        label: "Buka lagi",
-        busyLabel: "Membuka...",
+        label: DOCS.row.reopen,
+        busyLabel: DOCS.detail.opening,
         icon: icon(IconPencil),
         run: () => actions.edit(doc, null),
       },
       {
         id: "finish",
         key: keys.finish(doc.id),
-        label: "Selesai mengedit",
-        busyLabel: "Menyelesaikan...",
+        label: DOCS.row.finish,
+        busyLabel: DOCS.row.finishing,
         icon: icon(IconCheck),
         run: () => actions.finish(doc),
       },
@@ -89,7 +85,7 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
   if (doc.conflict && doc.conflictVersions.length > 1) {
     // Tamu tidak bisa memilih atau menggabung, jadi tombolnya hanya menunjukkan bentrok.
     const canAct = doc.can.resolve || (editable(doc.kind) && doc.can.edit);
-    const label = canAct ? "Selesaikan bentrok" : "Lihat bentrok";
+    const label = canAct ? DOCS.row.resolveConflict : DOCS.row.viewConflict;
     return [
       {
         id: "conflict",
@@ -110,7 +106,7 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
         id: "download",
         key: keys.download(doc.id, doc.current.id),
         label: downloadLabel(doc.current),
-        busyLabel: "Mengunduh...",
+        busyLabel: DOCS.detail.downloading,
         icon: icon(IconDownload),
         run: () => actions.download(doc, doc.current),
       },
@@ -120,20 +116,20 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
   const open: Btn = {
     id: "open",
     key: keys.open(doc.id, null),
-    label: OPEN_READONLY_LABEL,
-    busyLabel: "Membuka...",
+    label: DOCS.openReadOnly,
+    busyLabel: DOCS.detail.opening,
     icon: icon(IconEye),
     run: () => actions.open(doc, null),
   };
   if (rekan || !editable(doc.kind) || !doc.can.edit) {
-    return [{ ...open, label: rekan || editable(doc.kind) ? OPEN_READONLY_LABEL : "Buka" }];
+    return [{ ...open, label: rekan || editable(doc.kind) ? DOCS.openReadOnly : DOCS.detail.open }];
   }
   return [
     {
       id: "edit",
       key: keys.edit(doc.id, null),
-      label: `Edit di ${app}`,
-      busyLabel: "Membuka...",
+      label: DOCS.row.editIn(app),
+      busyLabel: DOCS.detail.opening,
       icon: icon(IconPencil),
       run: () => actions.edit(doc, null),
     },
@@ -146,7 +142,7 @@ function rowButtons(doc: DocumentSummary, actions: DocActions): Btn[] {
 // sendiri, atau keterangan menunggu untuk aksi lain.
 function blockedReason(actions: DocActions, key: string, busyLabel: string): string | undefined {
   if (isBusy(actions, key)) return busyLabel;
-  return isBlocked(actions, key) ? WAIT_REASON : undefined;
+  return isBlocked(actions, key) ? DOCS.waitReason : undefined;
 }
 
 function menuEntries(doc: DocumentSummary, buttons: Btn[], actions: DocActions) {
@@ -158,9 +154,9 @@ function menuEntries(doc: DocumentSummary, buttons: Btn[], actions: DocActions) 
     doc.can.export && !conflict
       ? {
           id: "export",
-          label: EXPORT_LABEL,
+          label: DOCS.exportCopy,
           icon: icon(IconFileExport),
-          disabled: fetch ? exportBlockedReason(fetch) : blockedReason(actions, exportKey, "Menyimpan..."),
+          disabled: fetch ? exportBlockedReason(fetch) : blockedReason(actions, exportKey, DOCS.detail.saving),
           onSelect: () => actions.exportCopy(doc, doc.current),
         }
       : null;
@@ -173,9 +169,9 @@ function menuEntries(doc: DocumentSummary, buttons: Btn[], actions: DocActions) 
       onSelect: b.run,
     })),
     SEPARATOR,
-    { id: "history", label: HISTORY_LABEL, icon: icon(IconHistory), onSelect: () => actions.showVersions(doc) },
+    { id: "history", label: DOCS.history, icon: icon(IconHistory), onSelect: () => actions.showVersions(doc) },
     exportItem,
-    { id: "copy-name", label: COPY_NAME_LABEL, icon: icon(IconCopy), onSelect: () => actions.copyName(doc) },
+    { id: "copy-name", label: DOCS.copyName, icon: icon(IconCopy), onSelect: () => actions.copyName(doc) },
   );
 }
 

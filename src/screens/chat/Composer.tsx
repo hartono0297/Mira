@@ -12,6 +12,7 @@ import {
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type ConversationSummary, type MessageView, type Person, type PickedFile } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { CHAT } from "../../i18n/chat";
 import { useNetworkOptional, validStatus } from "../shell/NetworkContext";
 import {
   authorName,
@@ -53,19 +54,23 @@ function usePeerOffline(summary: ConversationSummary): boolean {
 function blockedReason(summary: ConversationSummary): string {
   if (summary.postBlockedReason) return summary.postBlockedReason;
   // Chat proyek tidak bisa diarsipkan lagi (v0.4); yang lama mungkin masih diarsipkan.
-  if (summary.archived && summary.kind === "project") return "Chat proyek ini diarsipkan, jadi pesan baru tidak bisa dikirim.";
-  if (summary.archived) return "Channel ini diarsipkan. Kembalikan dari arsip untuk mengirim pesan.";
-  return "Anda tidak bisa mengirim pesan di percakapan ini.";
+  if (summary.archived && summary.kind === "project") return CHAT.composer.projectArchived;
+  if (summary.archived) return CHAT.composer.channelArchived;
+  return CHAT.composer.cannotPost;
 }
-
-const KEPT = "Pesan baru tidak dikirim lagi ke laptop Anda; pesan lama tetap tersimpan di sini.";
 
 // Percakapan yang saya sudah bukan anggotanya lagi: alasan menurut bagiannya.
 export function formerText(summary: ConversationSummary): string {
-  if (summary.kind === "group" || summary.section === "grup") return `Anda sudah tidak ada di grup ini. ${KEPT}`;
-  if (summary.kind === "project" || summary.section === "proyek") return `Anda sudah bukan anggota proyek ini. ${KEPT}`;
-  if (summary.section === "departemen") return `Anda sudah pindah dari departemen ini. ${KEPT}`;
-  return `Anda sudah bukan anggota channel ini. ${KEPT}`;
+  const t = CHAT.composer;
+  const reason =
+    summary.kind === "group" || summary.section === "grup"
+      ? t.formerGroup
+      : summary.kind === "project" || summary.section === "proyek"
+        ? t.formerProject
+        : summary.section === "departemen"
+          ? t.formerDepartment
+          : t.formerChannel;
+  return `${reason} ${t.formerKept}`;
 }
 
 // Sisipkan "@Nama " di posisi kursor, dengan spasi pemisah kalau huruf sebelumnya bukan spasi.
@@ -257,34 +262,34 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
     }
   }
 
-  const placeholder = `Tulis pesan ke ${title}`;
+  const placeholder = CHAT.composer.placeholder(title);
 
   return (
     <div className="conv-composer">
       {offline && summary.peer && (
         <p className="conv-offline">
           <IconPlugConnectedX size={16} aria-hidden="true" />
-          {summary.peer.name} sedang offline. Pesan dititipkan dan terkirim saat laptopnya tersambung.
+          {CHAT.composer.offline(summary.peer.name)}
         </p>
       )}
       {replyTo && (
         <div className="conv-reply-chip">
           <IconArrowBackUp size={16} aria-hidden="true" />
           <p className="conv-reply-text" id={`${ids}-reply`}>
-            <span className="conv-reply-label" title={`Membalas ${authorName(replyTo)}`}>
-              Membalas {authorName(replyTo)}
+            <span className="conv-reply-label" title={CHAT.composer.replying(authorName(replyTo))}>
+              {CHAT.composer.replying(authorName(replyTo))}
             </span>
             <span className="conv-reply-preview" title={messagePreview(replyTo, 400)}>
               {messagePreview(replyTo)}
             </span>
           </p>
-          <button type="button" className="conv-icon-btn conv-icon-sm" onClick={onCancelReply} aria-label="Batal membalas">
+          <button type="button" className="conv-icon-btn conv-icon-sm" onClick={onCancelReply} aria-label={CHAT.composer.cancelReply}>
             <IconX size={16} aria-hidden="true" />
           </button>
         </div>
       )}
       {files.length > 0 && (
-        <ul className="conv-attach-list" aria-label="File yang akan dikirim">
+        <ul className="conv-attach-list" aria-label={CHAT.composer.attachments}>
           {files.map((f) => {
             const name = f.name || baseName(f.path);
             return (
@@ -296,7 +301,7 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
                   type="button"
                   className="conv-icon-btn conv-icon-sm"
                   onClick={() => setFiles((current) => current.filter((p) => p.path !== f.path))}
-                  aria-label={`Hapus lampiran ${name}`}
+                  aria-label={CHAT.composer.removeAttachment(name)}
                   disabled={sending}
                 >
                   <IconX size={14} aria-hidden="true" />
@@ -308,12 +313,14 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
       )}
       <div aria-live="polite">
         {error && (
-          <ErrorAlert title="Pesan belum terkirim">
-            <p>{error.message} Teks dan lampiran masih tersimpan di kolom pesan.</p>
+          <ErrorAlert title={CHAT.composer.sendError}>
+            <p>
+              {error.message} {CHAT.composer.sendErrorKept}
+            </p>
           </ErrorAlert>
         )}
         {attachError && (
-          <ErrorAlert title="File belum bisa dipilih">
+          <ErrorAlert title={CHAT.composer.attachError}>
             <p>{attachError.message}</p>
           </ErrorAlert>
         )}
@@ -323,14 +330,14 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
           type="button"
           className="conv-icon-btn conv-attach-btn"
           onClick={() => void attach()}
-          aria-label="Lampirkan file"
+          aria-label={CHAT.composer.attach}
           disabled={sending}
         >
           <IconPaperclip size={18} aria-hidden="true" />
         </button>
         <div className="conv-input-wrap">
           <label htmlFor={`${ids}-input`} className="sr-only">
-            Pesan untuk {title}
+            {CHAT.composer.inputLabel(title)}
           </label>
           <textarea
             id={`${ids}-input`}
@@ -352,10 +359,10 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
             aria-activedescendant={listOpen ? `${listId}-${activeIndex}` : undefined}
           />
           <span id={`${ids}-hint`} className="sr-only">
-            Enter untuk mengirim, Shift+Enter untuk baris baru, ketik @ untuk menyebut rekan.
+            {CHAT.composer.hint}
           </span>
           {listOpen && (
-            <ul id={listId} role="listbox" aria-label="Sebut rekan" className="conv-mentions">
+            <ul id={listId} role="listbox" aria-label={CHAT.composer.mentionList} className="conv-mentions">
               {suggestions.map((p, i) => (
                 <li
                   key={p.publicKey}
@@ -383,7 +390,7 @@ export function Composer({ summary, me, members, replyTo, onCancelReply, onSent,
           aria-busy={sending || undefined}
         >
           <IconSend size={16} aria-hidden="true" />
-          {sending ? "Mengirim..." : "Kirim"}
+          {sending ? CHAT.composer.sending : CHAT.composer.send}
         </button>
       </div>
     </div>

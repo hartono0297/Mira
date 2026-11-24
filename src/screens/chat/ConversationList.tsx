@@ -10,6 +10,7 @@ import {
 } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { CHAT } from "../../i18n/chat";
 import type { ConvRequest } from "./ChatActions";
 import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
 import {
@@ -128,10 +129,10 @@ export function ConversationList({
       case "umum":
         return (
           <>
-            {has ? rows(list) : note("Belum ada channel umum.")}
+            {has ? rows(list) : note(CHAT.list.noOrgChannel)}
             {overview.canCreateOrgChannel
-              ? addButton("Channel umum baru", onNewChannel)
-              : note("Channel umum dibuat oleh superadmin.")}
+              ? addButton(CHAT.list.newOrgChannel, onNewChannel)
+              : note(CHAT.list.orgChannelBySuperadmin)}
           </>
         );
       case "departemen":
@@ -139,30 +140,30 @@ export function ConversationList({
           ? rows(list)
           : note(
               overview.myDepartment
-                ? `Belum ada channel untuk Departemen ${overview.myDepartment.name}.`
-                : "Belum ada departemen.",
+                ? CHAT.list.noDeptChannel(overview.myDepartment.name)
+                : CHAT.list.noDepartment,
             );
       case "proyek":
         return (
           <>
-            {has ? rows(list) : note("Belum ada proyek yang Anda ikuti.")}
+            {has ? rows(list) : note(CHAT.list.noProjects)}
             {overview.isGuest
-              ? note("Sebagai Tamu, Anda hanya melihat chat proyek yang Anda ikuti.")
-              : overview.otherProjects > 0 && note("Proyek lain tidak tampil karena Anda bukan anggotanya.")}
+              ? note(CHAT.list.guestProjects)
+              : overview.otherProjects > 0 && note(CHAT.list.otherProjects)}
           </>
         );
       case "grup":
         return (
           <>
-            {has ? rows(list) : note("Belum ada grup.")}
-            {overview.canCreateGroup && addButton("Grup baru", onNewGroup)}
+            {has ? rows(list) : note(CHAT.list.noGroups)}
+            {overview.canCreateGroup && addButton(CHAT.list.newGroup, onNewGroup)}
           </>
         );
       case "pribadi":
         return (
           <>
-            {has ? rows(list) : note("Belum ada pesan pribadi.")}
-            {overview.canDirectMessage && addButton("Pesan baru", onNewDirect)}
+            {has ? rows(list) : note(CHAT.list.noDirect)}
+            {overview.canDirectMessage && addButton(CHAT.list.newDirect, onNewDirect)}
           </>
         );
     }
@@ -188,18 +189,18 @@ export function ConversationList({
   }
 
   return (
-    <nav className="chat-list" aria-label="Daftar percakapan" onKeyDown={onRowKey}>
+    <nav className="chat-list" aria-label={CHAT.list.label} onKeyDown={onRowKey}>
       <div className="chat-list-head">
         <h1 id="page-title" className="page-title">
-          Chat
+          {CHAT.title}
         </h1>
         <div className="chat-list-tools">
           <button
             type="button"
             className="chat-icon-btn"
             onClick={onNotify}
-            aria-label="Pengaturan notifikasi chat"
-            title="Pengaturan notifikasi chat"
+            aria-label={CHAT.list.notify}
+            title={CHAT.list.notify}
           >
             <IconBell size={18} aria-hidden="true" />
           </button>
@@ -208,9 +209,11 @@ export function ConversationList({
 
       {staleError && (
         <div className="chat-stale" role="status">
-          <p>Daftar chat belum diperbarui. {staleError.message}</p>
+          <p>
+            {CHAT.list.stale} {staleError.message}
+          </p>
           <button type="button" className="link-btn" onClick={onRetry}>
-            Coba lagi
+            {CHAT.retry}
           </button>
         </div>
       )}
@@ -223,7 +226,7 @@ export function ConversationList({
                 {actionError.title}: {actionError.error.message}
               </p>
               <button type="button" className="link-btn" onClick={() => setActionError(null)}>
-                Tutup
+                {CHAT.close}
               </button>
             </ErrorAlert>
           </div>
@@ -306,16 +309,16 @@ function Section({
 }
 
 function rowLabel(c: ConversationSummary): string {
-  if (c.kind === "dm") return `Pesan pribadi dengan ${c.name}`;
-  if (c.kind === "group") return `Grup ${c.name}`;
-  if (c.kind === "project") return `Chat proyek ${c.name}`;
-  return `Channel ${c.name}`;
+  if (c.kind === "dm") return CHAT.list.rowDirect(c.name);
+  if (c.kind === "group") return CHAT.list.rowGroup(c.name);
+  if (c.kind === "project") return CHAT.list.rowProject(c.name);
+  return CHAT.list.rowChannel(c.name);
 }
 
 // Keadaan yang ditulis di bawah nama, supaya baris yang diredam tidak hanya dibedakan lewat warna.
 function rowState(c: ConversationSummary): string | null {
-  if (c.former) return "Bukan anggota lagi";
-  if (c.archived) return "Diarsipkan";
+  if (c.former) return CHAT.state.former;
+  if (c.archived) return CHAT.state.archived;
   return null;
 }
 
@@ -346,9 +349,9 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
   // Nama lengkap untuk pembaca layar. Lencana dan ikon di dalam tombol hanya tampilan.
   const label = [
     rowLabel(c),
-    c.locked ? "hanya-baca" : "",
+    c.locked ? CHAT.list.readOnly : "",
     state?.toLowerCase() ?? "",
-    c.muted ? "dibisukan" : "",
+    c.muted ? CHAT.list.muted : "",
     unreadText(c.unread, c.mentionUnread),
   ]
     .filter(Boolean)
@@ -371,7 +374,7 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
         aria-current={current ? "true" : undefined}
         aria-label={label}
         onClick={() => onSelect(c.id)}
-        title={[shown, c.locked ? "hanya-baca" : "", state?.toLowerCase() ?? ""].filter(Boolean).join(", ")}
+        title={[shown, c.locked ? CHAT.list.readOnly : "", state?.toLowerCase() ?? ""].filter(Boolean).join(", ")}
       >
         {c.kind === "dm" ? (
           <span className="chat-av" aria-hidden="true">

@@ -447,3 +447,36 @@ fn replies_mentions_and_pages() {
         "invalid_input"
     );
 }
+
+#[test]
+fn english_setting_changes_notification_and_preview_text() {
+    let o = office();
+    connect_all(&o);
+    let (a, b) = (&o.l[0], &o.l[1]);
+    let umum = o.umum();
+    b.with_conn(|c| crate::settings::set(c, crate::ui_lang::SETTING_LANGUAGE, "en"))
+        .unwrap();
+    a.chat.send(&umum, "Hello", None, vec![], vec![]).unwrap();
+    pull(a, b);
+    let notes = b.hooks.take_notifications();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].title, "Sari in #umum");
+    assert_eq!(notes[0].body, "Hello");
+
+    let m = a.chat.send(&umum, "oops", None, vec![], vec![]).unwrap();
+    a.chat.delete_message(&umum, &m.id).unwrap();
+    pull(a, b);
+    let preview = |l: &crate::chat::testutil::Laptop| {
+        l.chat
+            .overview()
+            .unwrap()
+            .conversations
+            .into_iter()
+            .find(|s| s.id == umum)
+            .unwrap()
+            .last_preview
+    };
+    assert_eq!(preview(b).as_deref(), Some("Message deleted"));
+    // The sender's laptop still uses Indonesian.
+    assert_eq!(preview(a).as_deref(), Some("Pesan dihapus"));
+}

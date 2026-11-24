@@ -5,6 +5,10 @@ import { signingApi, type VerifyResult } from "../../api/signing";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { checkPdfFile, formatWhen, readFileBytes, shortHash } from "./labels";
+import { SIGN_DIALOGS } from "../../i18n/sign-dialogs";
+
+// Dibaca saat dipakai, supaya mengikuti bahasa aktif.
+const T = () => SIGN_DIALOGS.verify;
 
 type Props = {
   open: boolean;
@@ -22,7 +26,7 @@ function Signers({ signers }: { signers: VerifyResult["signers"] }) {
       {signers.map((s, i) => (
         <li key={`${i}-${s.displayName}`}>
           <span className="sign-verify-name">{s.displayName}</span>
-          <span className="sign-verify-when">{s.signedAt ? formatWhen(s.signedAt) : "Belum menandatangani"}</span>
+          <span className="sign-verify-when">{s.signedAt ? formatWhen(s.signedAt) : T().notSigned}</span>
         </li>
       ))}
     </ul>
@@ -33,7 +37,7 @@ function Result({ checked }: { checked: Checked }) {
   const { result, fileName } = checked;
   const hash = (
     <p className="sign-verify-hash">
-      {fileName}, sidik file <span className="mono">{shortHash(result.fileHash)}</span>
+      {fileName}, {T().fileHash} <span className="mono">{shortHash(result.fileHash)}</span>
     </p>
   );
 
@@ -42,9 +46,9 @@ function Result({ checked }: { checked: Checked }) {
       <div className="sign-verify sign-verify-ok">
         <IconShieldCheck size={22} aria-hidden="true" />
         <div>
-          <strong>File ini asli: sama persis dengan dokumen yang selesai ditandatangani</strong>
+          <strong>{T().finalTitle}</strong>
           {result.title && <p className="sign-verify-title">{result.title}</p>}
-          {result.completedAt && <p>Selesai {formatWhen(result.completedAt)}</p>}
+          {result.completedAt && <p>{T().completed(formatWhen(result.completedAt))}</p>}
           <Signers signers={result.signers} />
           {hash}
         </div>
@@ -57,20 +61,20 @@ function Result({ checked }: { checked: Checked }) {
       <div className="sign-verify sign-verify-mid">
         <IconInfoCircle size={22} aria-hidden="true" />
         <div>
-          <strong>File ini sama dengan salah satu versi yang tercatat</strong>
+          <strong>{T().versionTitle}</strong>
           {result.title && <p className="sign-verify-title">{result.title}</p>}
           <p>
             {result.completedAt
-              ? `Dokumen ini selesai ditandatangani ${formatWhen(result.completedAt)}, tetapi file ini versi sebelum semua tanda tangan lengkap. Versi final ada di Mira.`
-              : "Penandatanganan dokumen ini belum selesai. File ini hanya memuat tanda tangan yang sudah ada saat versi ini dibuat."}
+              ? T().versionCompleted(formatWhen(result.completedAt))
+              : T().versionOpen}
           </p>
           {result.signers.length > 0 ? (
             <>
-              <p className="sign-verify-sub">Sudah menandatangani di versi ini:</p>
+              <p className="sign-verify-sub">{T().versionSigners}</p>
               <Signers signers={result.signers} />
             </>
           ) : (
-            <p>Versi ini belum memuat tanda tangan siapa pun.</p>
+            <p>{T().versionNoSigners}</p>
           )}
           {hash}
         </div>
@@ -82,12 +86,9 @@ function Result({ checked }: { checked: Checked }) {
       <div className="sign-verify sign-verify-bad">
         <IconAlertTriangle size={22} aria-hidden="true" />
         <div>
-          <strong>File ini berubah setelah ditandatangani di Mira</strong>
-          {result.title && <p>Dokumen aslinya: {result.title}</p>}
-          <p>
-            Isinya tidak sama dengan versi mana pun yang tercatat. Jangan pakai file ini sebagai bukti. Pakai salinan
-            yang disimpan dari Mira.
-          </p>
+          <strong>{T().changedTitle}</strong>
+          {result.title && <p>{T().changedOriginal(result.title)}</p>}
+          <p>{T().changedBody}</p>
           {hash}
         </div>
       </div>
@@ -97,11 +98,8 @@ function Result({ checked }: { checked: Checked }) {
     <div className="sign-verify sign-verify-unknown">
       <IconFileSearch size={22} aria-hidden="true" />
       <div>
-        <strong>Mira tidak mengenali file ini</strong>
-        <p>
-          Tidak ada catatan untuk file ini di laptop ini. Bisa jadi file ini dari laptop lain, belum pernah
-          ditandatangani di Mira, atau sudah diubah sampai tidak dikenali lagi.
-        </p>
+        <strong>{T().unknownTitle}</strong>
+        <p>{T().unknownBody}</p>
         {hash}
       </div>
     </div>
@@ -154,8 +152,8 @@ export function VerifyDialog({ open, onOpenChange, onOpenRequest }: Props) {
       onOpenChange={(next) => {
         if (!busy) onOpenChange(next);
       }}
-      title="Periksa file PDF"
-      description="Cocokkan PDF yang Anda terima atau simpan dengan catatan tanda tangan di laptop ini. File tidak disimpan."
+      title={T().title}
+      description={T().description}
     >
       <div className="sign-form">
         <input
@@ -177,13 +175,13 @@ export function VerifyDialog({ open, onOpenChange, onOpenRequest }: Props) {
             aria-busy={busy || undefined}
           >
             <IconFileSearch size={18} aria-hidden="true" />
-            {busy ? "Memeriksa..." : checked ? "Periksa file lain" : "Pilih file PDF"}
+            {busy ? T().checking : checked ? T().checkAnother : T().pick}
           </button>
         </div>
 
         <div aria-live="polite" className="sign-live">
           {error && (
-            <ErrorAlert title="File belum bisa diperiksa">
+            <ErrorAlert title={T().errorTitle}>
               <p>{error.message}</p>
             </ErrorAlert>
           )}
@@ -193,12 +191,12 @@ export function VerifyDialog({ open, onOpenChange, onOpenRequest }: Props) {
         <div className="dlg-actions">
           {requestId && onOpenRequest && (
             <button type="button" className="btn btn-ghost" onClick={() => onOpenRequest(requestId)}>
-              Buka dokumen
+              {T().openDoc}
             </button>
           )}
           <DialogClose asChild>
             <button type="button" className={checked ? "btn" : "btn btn-ghost"} disabled={busy}>
-              Tutup
+              {T().close}
             </button>
           </DialogClose>
         </div>

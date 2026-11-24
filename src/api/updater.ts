@@ -1,6 +1,7 @@
 // Kontrak pembaruan dengan inti Rust (docs/plans/updater.md, "Kontrak Rust dan tampilan").
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { isTauri, NO_TAURI_ERROR, toAppError } from ".";
+import { localizeError } from "../i18n/errors";
 
 export type UpdateInfo = { currentVersion: string; configured: boolean };
 
@@ -24,7 +25,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 

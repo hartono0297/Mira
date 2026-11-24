@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appState } from "../../test/fixtures";
+import { renderInLang } from "../../test/i18n";
 import type { AppState, OrgInfo } from "../../api";
 import { Shell } from "./Shell";
 
@@ -27,6 +28,22 @@ function renderShell() {
 
 beforeEach(() => {
   counts.value = { chat: 0, board: 0, sign: 0, org: 0 };
+});
+
+describe("menu sidebar dalam bahasa Inggris", () => {
+  it("label dan arti angka berbahasa Inggris", () => {
+    counts.value = { chat: 3, board: 1, sign: 0, org: 2 };
+    const state = appState() as AppState & { organization: OrgInfo };
+    renderInLang(() => <Shell state={state} onRefresh={vi.fn()} />);
+    const nav = screen.getByRole("navigation", { name: "Main menu" });
+    expect(within(nav).getByRole("button", { name: "Chat, 3 unread" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Board, 1 task due today or overdue" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Documents" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Signatures" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Organization, 2 join requests waiting" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByText(/Dokumen|Tanda tangan|Organisasi|Pengaturan/)).not.toBeInTheDocument();
+  });
 });
 
 describe("angka di menu sidebar", () => {

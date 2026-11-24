@@ -18,6 +18,7 @@ import { DocsScreen } from "../docs/DocsScreen";
 import { OrgScreen } from "../org/OrgScreen";
 import { SettingsScreen, type SettingsPart } from "../settings/SettingsScreen";
 import { SignScreen } from "../sign/SignScreen";
+import { SHELL_TEXT as T } from "../../i18n/shell";
 import { UpdateDot } from "../../updates/UpdateDot";
 import { NetworkPanel } from "./NetworkPanel";
 import { NetworkProvider } from "./NetworkContext";
@@ -26,25 +27,20 @@ import "./shell.css";
 
 export type Section = "chat" | "board" | "docs" | "sign" | "org" | "settings";
 
-const NAV: { id: Section; label: string; icon: Icon }[] = [
-  { id: "chat", label: "Chat", icon: IconMessage },
-  { id: "board", label: "Board", icon: IconLayoutKanban },
-  { id: "docs", label: "Dokumen", icon: IconFileText },
-  { id: "sign", label: "Tanda tangan", icon: IconSignature },
-  { id: "org", label: "Organisasi", icon: IconBuildingCommunity },
-  { id: "settings", label: "Pengaturan", icon: IconSettings },
+// Label dibaca dari T.nav saat render, supaya ikut bahasa aktif.
+const NAV: { id: Section; icon: Icon }[] = [
+  { id: "chat", icon: IconMessage },
+  { id: "board", icon: IconLayoutKanban },
+  { id: "docs", icon: IconFileText },
+  { id: "sign", icon: IconSignature },
+  { id: "org", icon: IconBuildingCommunity },
+  { id: "settings", icon: IconSettings },
 ];
 
-// Arti angka di menu, dibacakan setelah labelnya: "Chat, 3 belum dibaca".
-const COUNT_MEANING: Record<keyof NavCounts, string> = {
-  chat: "belum dibaca",
-  board: "task tenggat hari ini atau lewat",
-  sign: "menunggu tanda tangan Anda",
-  org: "permintaan bergabung menunggu",
-};
+const COUNTED: readonly Section[] = ["chat", "board", "sign", "org"];
 
 function isCounted(id: Section): id is keyof NavCounts {
-  return id in COUNT_MEANING;
+  return COUNTED.includes(id);
 }
 
 type Props = {
@@ -71,9 +67,9 @@ export function Shell({ state, onRefresh }: Props) {
             <Logo size={24} />
             <span>Mira</span>
           </p>
-          <nav aria-label="Menu utama">
+          <nav aria-label={T.mainMenu}>
             <ul className="side-nav">
-              {NAV.map(({ id, label, icon: NavIcon }) => (
+              {NAV.map(({ id, icon: NavIcon }) => (
                 <li key={id}>
                   <button
                     type="button"
@@ -82,8 +78,8 @@ export function Shell({ state, onRefresh }: Props) {
                     onClick={() => setSection(id)}
                   >
                     <NavIcon size={18} aria-hidden="true" />
-                    {label}
-                    {isCounted(id) && <SidebarCount count={counts[id]} meaning={COUNT_MEANING[id]} />}
+                    {T.nav[id]}
+                    {isCounted(id) && <SidebarCount count={counts[id]} meaning={T.countMeaning[id](counts[id])} />}
                     {id === "settings" && <UpdateDot />}
                   </button>
                 </li>
@@ -99,7 +95,7 @@ export function Shell({ state, onRefresh }: Props) {
               <p className="side-me-name">{name}</p>
               <p className="side-me-org">
                 {org.name}
-                <span className="sr-only">, peran </span>
+                <span className="sr-only">{T.roleLabel}</span>
                 <span aria-hidden="true"> · </span>
                 {ROLE_LABELS[org.role]}
               </p>

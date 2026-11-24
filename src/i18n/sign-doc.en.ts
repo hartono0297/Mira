@@ -1,0 +1,171 @@
+import type { Dict } from "./core";
+import type id from "./sign-doc.id";
+
+const en: Dict<typeof id> = {
+  exportNote: {
+    changed: "This copy no longer matches the signed version. Don't use it as the official document.",
+    missing: "This file was moved, renamed, or deleted.",
+  },
+  quick: {
+    left: "Bottom left",
+    center: "Bottom center",
+    right: "Bottom right",
+  },
+  signer: {
+    signedAt: (when: string) => `Signed, ${when}`,
+    signed: "Signed",
+    cancelled: "Not signed, request canceled",
+    turnNoFile: "Your turn, waiting for the file",
+    turnPending: "Your turn, waiting for a colleague's signature",
+    turn: "Your turn",
+    cannotSign: "Can't be signed",
+    waiting: "Waiting",
+  },
+  problem: {
+    changedBody:
+      "The file Mira stored no longer matches its recorded file fingerprint. Someone may have changed it outside Mira, so its content and signatures can't be trusted.",
+    changedRequester:
+      "Don't send or print this file. If this document still needs signing, create a new request with the original file you kept.",
+    changedOther:
+      "Don't send or print this file. Ask the sender for a copy, then check it with Check a PDF file on the Signatures screen.",
+    missingTitle: "Document file not found",
+    missingBody: "The latest version is missing from Mira's data folder. It may have been deleted or moved. The signature history is still here.",
+    missingHint: "If you saved a copy earlier, check it with Check a PDF file on the Signatures screen.",
+    sealTitle: "Invalid lock record",
+    sealBody:
+      "The record saying this document was completed and locked doesn't match the key of the laptop that recorded it, or the file fingerprint. Someone may have changed Mira's data outside the app.",
+    sealRequester: "Treat this document as not locked. If needed, create a new request with the original file you kept.",
+    sealOther: "Treat this document as not locked and ask the sender for a copy.",
+  },
+  place: {
+    boxOnPage: (page: number) => `Signature box on page ${page}.`,
+    describe: (page: number, spot: string, left: number, bottom: number, width: number) =>
+      `Page ${page}, ${spot}. Left ${left} pt, bottom ${bottom} pt, width ${width} pt.`,
+    largest: "The box is already as large as this page allows.",
+    smallest: "The box is already at its smallest size.",
+  },
+  pinErrors: {
+    notLoaded: "The document hasn't finished loading. Close the dialog and try again.",
+    notPlaced: "The signature box hasn't been placed yet. Close the dialog, place the box, then try again.",
+    fileNotOpen: "The document file hasn't finished opening. Wait a moment and try again.",
+    versionChanged: "The document just got a new version and is reopening. Wait a moment and try again.",
+  },
+  revealFailed: "Mira couldn't open File Explorer. Open the folder yourself using the location above.",
+  back: "Back",
+  loadingTitle: "Signature document",
+  loading: "Loading document...",
+  loadErrorTitle: "Couldn't open the document",
+  retry: "Try again",
+  backToList: "Back to the list",
+  box: {
+    label: (name: string) => `Signature box for ${name}`,
+    description: "Marks where your signature goes on the page. Your actual signature image is only used after you enter your PIN.",
+    sub: "Your signature",
+  },
+  setup: {
+    title: "You don't have a saved signature yet",
+    body: "Create one once with a mouse, a pen, or a scanned image. After that, you only need your PIN each time you sign.",
+    button: "Create signature",
+  },
+  ready: {
+    body: "Place the signature box on the page, then enter your PIN to use your saved signature.",
+    button: "Place signature",
+    waitFile: "This button works once the file has finished opening.",
+  },
+  placing: {
+    where: (page: number, spot: string | null) => `The box is on page ${page}${spot ? `, ${spot}` : ""}.`,
+    moveHere: "Move to this page",
+    showPage: (page: number) => `Go to page ${page}`,
+    quickGroup: "Quick positions on the visible page",
+    position: "Position",
+    sizeGroup: "Box size",
+    size: "Size",
+    smaller: "Make box smaller",
+    bigger: "Make box larger",
+    hint: "Drag the box with the mouse or move it with the arrow keys (hold Shift to move further). Resize it by dragging the bottom right corner, with the Smaller and Larger buttons, or with Alt and the arrow keys.",
+    finish: "Finish and sign",
+    cancel: "Cancel placing",
+    note: "Each signature records the fingerprint of the new version. Mira locks the document once every signer has signed.",
+  },
+  me: {
+    turnNoFile: "It's your turn. You can sign once the document file is on this laptop.",
+    turnPending: "Wait for the latest signature from your colleague to arrive, then sign.",
+    untrusted: "This document can't be signed because its file changed or went missing.",
+    untrustedRequester: "Create a new request with the original file you kept.",
+    untrustedOther: "Ask the sender to create a new request with the original file.",
+    notYourTurn: "It's not your turn yet.",
+    waitingFor: (name: string) => ` Waiting for ${name} to sign first.`,
+    signed: (when: string | null) => `You signed${when ? ` on ${when}` : ""}.`,
+    notListedGuest: "You're not on the signer list. Guests can only sign documents that list their name.",
+    notListed: "You're not on the signer list for this document.",
+    cancelled: "This request was canceled, so it can't be signed anymore.",
+  },
+  arrival: {
+    copying: ". The pages appear here once the copy is done.",
+    copyingNewer: ". Signer status updates once that file arrives.",
+    downloading: "Downloading...",
+    errorTitle: "Couldn't download the file",
+  },
+  viewer: {
+    missing: "The document can't be shown because its file wasn't found.",
+    errorTitle: "Couldn't read the document file",
+    opening: "Opening the document file...",
+  },
+  requestedBy: (name: string) => `Requested by ${name}`,
+  you: "you",
+  done: {
+    all: "Everyone has signed. Mira locked the document and added the signature record page.",
+    mineTitle: "Signature saved",
+    mineBody: "A new version of the document with your signature is saved on this laptop.",
+  },
+  panel: "Signers and actions",
+  order: {
+    title: "Signing order",
+    sequential: "In order: each person waits for the previous person's turn.",
+    parallel: "Any order: anyone on the list can sign first.",
+    you: " (you)",
+    othersPending: "The document reaches other signers when their laptops connect. This list updates as they sign.",
+  },
+  rejected: {
+    title: "Rejected versions",
+    body: "Mira doesn't use these versions. The document stays on the last valid version, and signatures on rejected versions don't count.",
+    signedAt: (when: string) => `Signed ${when}`,
+  },
+  mine: "Your signature",
+  seal: {
+    title: "File authenticity",
+    locked: "Locked",
+    lockedBody:
+      "The file content is locked. Mira detects even the smallest change in its own file and in copies saved with Save a PDF copy. You can check other copies with Check a PDF file.",
+    inProgress:
+      "Not locked yet. Each signature saves a new version and records its file fingerprint. Mira locks the document once every signer has signed.",
+    cancelled: "The request was canceled, so the document isn't locked.",
+    finalHash: "Final file fingerprint",
+    currentHash: "Current file fingerprint",
+    originalHash: "Original file fingerprint",
+  },
+  copy: {
+    title: "PDF copy",
+    body: "Mira saves the copy without overwriting other files, usually to your Downloads folder. Its location appears once it's saved, and Mira keeps checking its content.",
+    saving: "Saving copy...",
+    save: "Save a PDF copy",
+    blockedAbsent: "You can save a copy once the document file is on this laptop.",
+    blockedMissing: "A copy can't be saved because this document file wasn't found.",
+    blockedChanged: "A copy can't be saved because this file doesn't match Mira's records.",
+    errorTitle: "Copy not saved",
+    savedAt: "Copy saved to",
+    reveal: "Show in folder",
+    revealErrorTitle: "Couldn't open the folder",
+    history: "Saved copies",
+  },
+  cancelRequest: "Cancel request",
+  cancelErrorTitle: "Request not canceled",
+  pin: {
+    title: "Enter your PIN",
+    last: "You're the last signer. Once your PIN is correct, your signature is added, the signature record page is attached, and the document is locked.",
+    next: (page: number) => `Once your PIN is correct, your signature is added on page ${page} and the new version is saved.`,
+    submit: "Sign",
+  },
+};
+
+export default en;

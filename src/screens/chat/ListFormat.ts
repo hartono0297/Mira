@@ -1,4 +1,6 @@
 import { CHAT_SECTIONS, type ChatOverview, type ChatSection, type ConversationSummary, type ScopeKind } from "../../api/chat";
+import { CHAT_TEXT as T } from "../../i18n/chat";
+import { hasPrefix } from "./text";
 
 export const MAX_CHANNEL_NAME = 40;
 
@@ -18,20 +20,17 @@ export function normalizeChannelName(input: string): string {
     .replace(/-+$/, "");
 }
 
-const SCOPE_PREFIX: Record<ScopeKind, string> = { org: "", team: "Departemen", project: "Proyek", group: "Grup" };
-
 // "Departemen Desain", "Proyek Alfa". Nama yang sudah diawali kata itu tidak diberi awalan lagi.
 export function scopeLabel(kind: ScopeKind, name: string): string {
-  if (kind === "org") return "Seluruh kantor";
-  const prefix = SCOPE_PREFIX[kind];
-  return name.toLowerCase().startsWith(`${prefix.toLowerCase()} `) ? name : `${prefix} ${name}`;
+  if (kind === "org") return T.scope.org;
+  return hasPrefix(name, kind) ? name : `${T.prefix[kind]} ${name}`;
 }
 
 // Kalimat untuk pembaca layar: "3 pesan belum dibaca, 1 menyebut Anda".
 export function unreadText(unread: number, mentions: number): string {
   if (unread <= 0 && mentions <= 0) return "";
-  const parts = [`${Math.max(unread, mentions)} pesan belum dibaca`];
-  if (mentions > 0) parts.push(`${mentions} menyebut Anda`);
+  const parts = [T.unread(Math.max(unread, mentions))];
+  if (mentions > 0) parts.push(T.mentionsYou(mentions));
   return parts.join(", ");
 }
 
@@ -51,13 +50,8 @@ export function sectionOf(c: ConversationSummary): ChatSection {
   return "umum";
 }
 
-export const SECTION_TITLES: Record<ChatSection, string> = {
-  umum: "Umum",
-  departemen: "Departemen",
-  proyek: "Proyek",
-  grup: "Grup",
-  pribadi: "Pesan pribadi",
-};
+// Judul bagian, selalu dalam bahasa aktif (objek kamus hidup, dibaca saat render).
+export const SECTION_TITLES: Readonly<Record<ChatSection, string>> = T.sections;
 
 // Percakapan per bagian, urutan bagian tetap (CHAT_SECTIONS). Di dalam bagian urutan dari inti
 // dipertahankan: yang diarsipkan atau bukan anggota lagi sudah ada di akhir.

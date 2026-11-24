@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "rea
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type ChatOverview, type ConversationSummary, type Person } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { CHAT } from "../../i18n/chat";
 import { ChatActionsContext, type ChatActions, type ConvRequest } from "./ChatActions";
 import { Conversation, type FocusRequest } from "./Conversation";
 import { ConversationList } from "./ConversationList";
@@ -130,22 +131,22 @@ function ChatScreenInner() {
         <div className="chat-list">
           <div className="chat-list-head">
             <h1 id="page-title" className="page-title">
-              Chat
+              {CHAT.title}
             </h1>
           </div>
         </div>
         <div className="chat-main">
           {live.loading ? (
             <p className="chat-pad hint" role="status">
-              Memuat chat...
+              {CHAT.screen.loading}
             </p>
           ) : (
             <div className="chat-pad chat-narrow" role="alert">
-              <ErrorAlert title="Daftar chat belum terbaca">
-                <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar chat."}</p>
-                <p>Pesan tersimpan di laptop ini, tidak ada yang hilang. Tunggu sebentar lalu coba lagi.</p>
+              <ErrorAlert title={CHAT.screen.errorTitle}>
+                <p>{live.error?.message ?? CHAT.screen.errorNoList}</p>
+                <p>{CHAT.screen.errorSafe}</p>
                 <button type="button" className="btn btn-ghost btn-sm chat-retry" onClick={() => void reload()}>
-                  Coba lagi
+                  {CHAT.retry}
                 </button>
               </ErrorAlert>
             </div>
@@ -180,7 +181,7 @@ function ChatScreenInner() {
             menambah baris grid. Kosong saat tidak ada error, jadi tingginya nol. */}
         <div aria-live="polite" className="chat-dm-error">
           {dmError && (
-            <ErrorAlert title="Pesan pribadi belum bisa dibuka">
+            <ErrorAlert title={CHAT.screen.dmError}>
               <p>{dmError.message}</p>
               <button
                 type="button"
@@ -191,7 +192,7 @@ function ChatScreenInner() {
                   requestFocus(current?.id ?? null, "title");
                 }}
               >
-                Tutup
+                {CHAT.close}
               </button>
             </ErrorAlert>
           )}
@@ -243,20 +244,9 @@ function EmptyChat({ guest, titleRef }: { guest: boolean; titleRef: Ref<HTMLHead
   return (
     <div className="chat-empty">
       <h2 className="chat-empty-title" ref={titleRef} tabIndex={-1}>
-        Belum ada percakapan
+        {CHAT.screen.emptyTitle}
       </h2>
-      {guest ? (
-        <p>
-          Sebagai Tamu, Anda hanya bisa chat di proyek yang Anda diundang ke dalamnya. Chat proyek itu muncul di
-          bagian Proyek begitu laptop Anda tersambung dengan laptop rekan di kantor. Kalau belum muncul juga, minta
-          admin proyek memeriksa undangan Anda.
-        </p>
-      ) : (
-        <p>
-          Channel #umum, channel departemen, dan chat proyek Anda muncul di sini begitu data kantor tersalin dari
-          laptop rekan. Sementara itu Anda bisa membuat grup atau mengirim pesan pribadi dari daftar di kiri.
-        </p>
-      )}
+      {guest ? <p>{CHAT.screen.emptyGuest}</p> : <p>{CHAT.screen.emptyMember}</p>}
     </div>
   );
 }

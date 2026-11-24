@@ -4,6 +4,7 @@ import { toAppError, type AppError } from "../../api";
 import { chatApi, type ConversationSummary, type Person } from "../../api/chat";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import { PeoplePicker, usePeopleDirectory } from "./PeoplePicker";
 import "./conversation.css";
 
@@ -19,8 +20,8 @@ export function normalizeGroupName(value: string): string {
 // Pesan untuk kolom nama grup, atau null kalau nama boleh dipakai.
 export function groupNameError(value: string): string | null {
   const name = normalizeGroupName(value);
-  if (!name) return "Isi nama grup.";
-  if ([...name].length > GROUP_NAME_MAX) return `Nama grup paling panjang ${GROUP_NAME_MAX} karakter.`;
+  if (!name) return CHAT_DIALOGS.newGroup.nameEmpty;
+  if ([...name].length > GROUP_NAME_MAX) return CHAT_DIALOGS.newGroup.nameTooLong(GROUP_NAME_MAX);
   return null;
 }
 
@@ -33,6 +34,7 @@ type Props = {
 };
 
 export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props) {
+  const T = CHAT_DIALOGS.newGroup;
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [tried, setTried] = useState(false);
@@ -43,7 +45,7 @@ export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props)
 
   const nameError = groupNameError(name);
   // Tanpa orang dipilih boleh: grupnya berisi saya saja, orang lain ditambah belakangan.
-  const pickError = selected.length > GROUP_PICK_MAX ? `Paling banyak ${GROUP_PICK_MAX} orang sekaligus.` : null;
+  const pickError = selected.length > GROUP_PICK_MAX ? T.pickTooMany(GROUP_PICK_MAX) : null;
   const ready = !nameError && !pickError;
 
   function reset() {
@@ -81,12 +83,12 @@ export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props)
         if (!next) reset();
         onOpenChange(next);
       }}
-      title="Grup baru"
-      description="Grup untuk percakapan dengan beberapa rekan dari departemen mana pun. Hanya anggota grup yang menerima pesannya."
+      title={T.title}
+      description={T.description}
     >
       <form className="group-form" onSubmit={(e) => void submit(e)} noValidate>
         <div className="field">
-          <label htmlFor={`${ids}-name`}>Nama grup</label>
+          <label htmlFor={`${ids}-name`}>{T.nameLabel}</label>
           <input
             id={`${ids}-name`}
             type="text"
@@ -107,18 +109,14 @@ export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props)
           selected={selected}
           onChange={setSelected}
           disabled={busy}
-          emptyText="Belum ada rekan lain yang bisa dimasukkan ke grup. Tamu tidak bisa dimasukkan ke grup."
-          hint={
-            count === 0
-              ? "Belum ada yang dipilih. Grup bisa dibuat berisi Anda saja, lalu tambah orang belakangan. Tamu tidak bisa dimasukkan ke grup."
-              : `${count} orang dipilih, ditambah Anda. Tamu tidak bisa dimasukkan ke grup.`
-          }
+          emptyText={T.empty}
+          hint={count === 0 ? T.hintNone : T.hintSome(count)}
         />
         <div aria-live="polite">{tried && pickError && people.length > 0 && <InlineError text={pickError} />}</div>
 
         <div aria-live="polite">
           {error && (
-            <ErrorAlert title="Grup belum dibuat">
+            <ErrorAlert title={T.failed}>
               <p>{error.message}</p>
             </ErrorAlert>
           )}
@@ -127,7 +125,7 @@ export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props)
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {CHAT_DIALOGS.common.cancel}
             </button>
           </DialogClose>
           <button
@@ -137,7 +135,7 @@ export function NewGroupDialog({ open, onOpenChange, people, onCreated }: Props)
             aria-busy={busy || undefined}
             disabled={busy}
           >
-            {busy ? "Membuat grup..." : "Buat grup"}
+            {busy ? T.creating : T.create}
           </button>
         </div>
       </form>

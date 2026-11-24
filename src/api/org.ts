@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri, NO_TAURI_ERROR, toAppError } from ".";
+import { localizeError } from "../i18n/errors";
 import type { Role, TeamRole } from "./types";
 
 export type PersonRef = { publicKey: string; displayName: string };
@@ -125,7 +126,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 

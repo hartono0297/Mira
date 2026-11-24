@@ -29,11 +29,12 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { BoardCard } from "./BoardCard";
 import { applyMove, blockedText, locate, neighbourPlace, samePlace, type Direction, type Place } from "./boardMoves";
 import { cardDragActive, cardMenuEntries, type CardMenuActions } from "./cardMenu";
-import { COLUMN_NAMES, NO_DEPARTMENT, teamLabel } from "./format";
+import { columnLabel, teamLabel } from "./format";
 import type { MoveOption } from "./MoveMenu";
 import { ProjectMembersPanel, useProjectMembers } from "./ProjectMembersPanel";
 import { QuickAdd } from "./QuickAdd";
 import { RenameProjectDialog } from "./RenameProjectDialog";
+import { TEKS, TEKS_LAYAR, teksDialog } from "./teks";
 import { TEKS_MENU } from "./teksMenu";
 import { useBoardLive } from "./useBoardLive";
 import { useCardDrag } from "./useCardDrag";
@@ -79,9 +80,10 @@ function isBoardView(value: unknown): value is BoardView {
 }
 
 function moveErrorTitle(error: AppError, code: string): string {
-  if (error.code === "forbidden") return `Anda tidak punya izin memindah ${code}`;
-  if (error.code === "not_found") return `${code} sudah tidak ada di board ini`;
-  return `${code} belum dipindah`;
+  const T = TEKS_LAYAR.board;
+  if (error.code === "forbidden") return T.tidakBerizinPindah(code);
+  if (error.code === "not_found") return T.sudahTidakAda(code);
+  return T.belumDipindah(code);
 }
 
 function withoutTask(view: BoardView, taskId: string): BoardView {
@@ -254,7 +256,7 @@ export function ProjectBoard({
     const placed = locate(next, taskId);
     if (!placed) return;
     const code = placed.task.code;
-    const colName = next.columns.find((c) => c.id === to.columnId)?.name ?? COLUMN_NAMES[to.columnId];
+    const colName = columnLabel(to.columnId, next.columns.find((c) => c.id === to.columnId)?.name);
     const seq = ++moveSeq.current;
     const target: Place = { columnId: to.columnId, index: placed.index };
     setPendingMoves((list) => [...list, { seq, taskId, to: target }]);
@@ -271,7 +273,7 @@ export function ProjectBoard({
         settle();
         return;
       }
-      say(`${code} dipindah ke ${colName}, posisi ${placed.index + 1} dari ${placed.size}.`);
+      say(TEKS_LAYAR.board.dipindah(code, colName, placed.index + 1, placed.size));
       // Data akhir bisa memasang ulang kartu; fokus dikembalikan kalau belum pindah ke tempat lain.
       const active = document.activeElement;
       if (keepFocus && (!active || active === document.body || active.closest(`[data-card="${taskId}"]`)))
@@ -288,8 +290,8 @@ export function ProjectBoard({
       if (gone()) return;
       if (keepFocus) focusAfter.current = taskId;
       const error = toAppError(err);
-      setFailure({ title: moveErrorTitle(error, code), message: error.message, note: "Kartu dikembalikan ke tempat semula." });
-      say(`${code} belum dipindah.`);
+      setFailure({ title: moveErrorTitle(error, code), message: error.message, note: TEKS_LAYAR.board.dikembalikan });
+      say(TEKS_LAYAR.board.belumDipindahSr(code));
       void reload();
     }
   }
@@ -314,13 +316,13 @@ export function ProjectBoard({
       .filter((c) => c.id !== at.columnId)
       .map((c) => ({
         key: `col-${c.id}`,
-        label: `Ke ${c.name}`,
+        label: TEKS_LAYAR.board.keKolom(columnLabel(c.id, c.name)),
         run: () => void move(taskId, { columnId: c.id, index: 0 }, true),
       }));
     if (at.index > 0)
-      opts.push({ key: "up", label: "Naik satu posisi", run: () => void move(taskId, { columnId: at.columnId, index: at.index - 1 }, true) });
+      opts.push({ key: "up", label: TEKS_MENU.kartu.naik, run: () => void move(taskId, { columnId: at.columnId, index: at.index - 1 }, true) });
     if (at.index < at.size - 1)
-      opts.push({ key: "down", label: "Turun satu posisi", run: () => void move(taskId, { columnId: at.columnId, index: at.index + 1 }, true) });
+      opts.push({ key: "down", label: TEKS_MENU.kartu.turun, run: () => void move(taskId, { columnId: at.columnId, index: at.index + 1 }, true) });
     return opts;
   }
 
@@ -388,13 +390,13 @@ export function ProjectBoard({
   function renamed(updated: ProjectSummary) {
     setRenaming(false);
     if (data) setData({ ...data, project: { ...data.project, ...updated } });
-    say(`Nama proyek diubah menjadi ${updated.name}.`);
+    say(TEKS_LAYAR.board.namaDiubah(updated.name));
     void reload();
     onProjectsChanged();
   }
 
   async function created(task: TaskDetail) {
-    say(`${task.code} dibuat di ${COLUMN_NAMES[task.columnId] ?? task.columnId}.`);
+    say(TEKS_LAYAR.board.dibuat(task.code, columnLabel(task.columnId)));
     await reload();
     onProjectsChanged();
   }
@@ -405,17 +407,17 @@ export function ProjectBoard({
     if (live.loading)
       return (
         <p className="bd-pad hint" role="status">
-          Memuat board...
+          {TEKS_LAYAR.layar.memuatBoard}
         </p>
       );
     const notFound = live.error?.code === "not_found";
     return (
       <div className="bd-pad bd-narrow" role="alert">
-        <ErrorAlert title={notFound ? "Proyek ini tidak ditemukan" : "Board belum terbaca"}>
-          <p>{live.error?.message ?? "Inti Mira tidak mengirim data board."}</p>
-          <p>{notFound ? "Pilih proyek lain dari daftar di kiri." : "Tunggu sebentar lalu coba lagi. Data tersimpan di laptop ini, tidak ada yang hilang."}</p>
+        <ErrorAlert title={notFound ? TEKS_LAYAR.board.tidakDitemukan : TEKS_LAYAR.board.belumTerbaca}>
+          <p>{live.error?.message ?? TEKS_LAYAR.board.intiTanpaBoard}</p>
+          <p>{notFound ? TEKS_LAYAR.board.pilihLain : TEKS_LAYAR.board.tungguBoard}</p>
           <button type="button" className="btn btn-ghost btn-sm bd-retry" onClick={() => void reload()}>
-            Coba lagi
+            {TEKS_LAYAR.layar.cobaLagi}
           </button>
         </ErrorAlert>
       </div>
@@ -425,6 +427,7 @@ export function ProjectBoard({
   const { project } = view;
   const readOnly = !view.canCreate;
   const memberCount = members.view?.registered ? members.view.members.length : null;
+  const T = TEKS_LAYAR.board;
 
   return (
     <div className="pb" ref={rootRef} {...rescue}>
@@ -434,28 +437,26 @@ export function ProjectBoard({
           {project.name}
         </h2>
         <span className="chip pb-team">
-          <span className="sr-only">Departemen proyek: </span>
-          {project.teamName ? teamLabel(project.teamName) : NO_DEPARTMENT}
+          <span className="sr-only">{T.departemenSr}</span>
+          {project.teamName ? teamLabel(project.teamName) : TEKS.proyek.tanpaDepartemen}
         </span>
-        <span className="page-sub">
-          {project.taskCount} task, {project.openCount} belum selesai
-        </span>
+        <span className="page-sub">{T.jumlahTask(project.taskCount, project.openCount)}</span>
         <div className="pb-actions">
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             aria-haspopup="dialog"
-            aria-label={memberCount === null ? "Anggota" : `Anggota, ${memberCount} orang`}
+            aria-label={memberCount === null ? T.anggota : T.anggotaLabel(memberCount)}
             onClick={() => setShowMembers(true)}
           >
             <IconUsers size={16} aria-hidden="true" />
-            Anggota
+            {T.anggota}
             {memberCount !== null && <span className="pb-members-n">{memberCount}</span>}
           </button>
           {project.canManage && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRenaming(true)}>
               <IconPencil size={16} aria-hidden="true" />
-              Ubah nama proyek
+              {T.ubahNama}
             </button>
           )}
           <button
@@ -466,7 +467,7 @@ export function ProjectBoard({
             onClick={() => setShowKeys((v) => !v)}
           >
             <IconKeyboard size={16} aria-hidden="true" />
-            Pintasan keyboard
+            {T.pintasan}
           </button>
           {view.canCreate && (
             <button
@@ -475,7 +476,7 @@ export function ProjectBoard({
               onClick={() => openQuickAdd("todo")}
             >
               <IconPlus size={16} aria-hidden="true" />
-              Task baru
+              {T.taskBaru}
             </button>
           )}
         </div>
@@ -484,16 +485,13 @@ export function ProjectBoard({
       {readOnly && (
         <p className="pb-readonly">
           <IconEye size={16} aria-hidden="true" />
-          Board ini hanya bisa dilihat. Anda bisa membuka task dan membaca komentarnya, tapi tidak bisa menambah, memindah,
-          atau mengubah apa pun.
+          {T.hanyaLihat}
         </p>
       )}
 
       <div id={keysId} className="pb-keys" hidden={!showKeys}>
         <p>
-          {readOnly
-            ? "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya. Shift + F10 atau tombol Menu membuka menu aksi kartu, sama dengan klik kanan."
-            : "Pilih kartu dengan Tab, lalu Enter untuk membuka detailnya. Alt + panah kiri atau kanan memindah kartu ke kolom sebelah, Alt + panah atas atau bawah mengubah urutannya. Tombol panah empat arah di kartu membuka pilihan yang sama. Shift + F10 atau tombol Menu membuka menu aksi kartu, sama dengan klik kanan."}
+          {readOnly ? T.pintasanLihat : T.pintasanUbah}
         </p>
       </div>
 
@@ -503,7 +501,7 @@ export function ProjectBoard({
 
       <div aria-live="polite" className="pb-live">
         {live.error && (
-          <p className="hint">Data terbaru belum terbaca ({live.error.message}). Yang tampil adalah data terakhir.</p>
+          <p className="hint">{teksDialog.dataLama(live.error.message)}</p>
         )}
         {failure && (
           <ErrorAlert title={failure.title}>
@@ -519,17 +517,18 @@ export function ProjectBoard({
             const done = col.id === "done";
             const others = col.tasks.filter((t) => t.id !== dragId);
             const dropHere = drop && drop.columnId === col.id ? drop.index : null;
+            const colName = columnLabel(col.id, col.name);
             let k = 0;
             return (
               <ColumnSection
                 key={col.id}
-                menuLabel={TEKS_MENU.kolom.menu(col.name)}
+                menuLabel={TEKS_MENU.kolom.menu(colName)}
                 menuItems={
                   view.canCreate
                     ? [
                         {
                           id: "new-task",
-                          label: TEKS_MENU.kolom.taskBaru(col.name),
+                          label: TEKS_MENU.kolom.taskBaru(colName),
                           icon: <IconPlus size={16} />,
                           onSelect: () => openQuickAdd(col.id),
                         },
@@ -543,11 +542,11 @@ export function ProjectBoard({
               >
                 {/* Fokus kembali ke judul kolom setelah menu kolom dari klik kanan ditutup. */}
                 <h3 id={`${titleId}-${col.id}`} className="pb-colh" tabIndex={-1} data-menu-focus>
-                  {col.name}
+                  {colName}
                   <span className="pb-count">
                     <span className="sr-only">, </span>
                     {col.tasks.length}
-                    <span className="sr-only"> task</span>
+                    <span className="sr-only">{T.jumlahKolomSr(col.tasks.length)}</span>
                   </span>
                 </h3>
                 <ul className="pb-list">
@@ -583,12 +582,12 @@ export function ProjectBoard({
                   })}
                   {dropHere !== null && dropHere >= others.length && <li className="pb-drop" aria-hidden="true" />}
                 </ul>
-                {col.tasks.length === 0 && dropHere === null && <p className="pb-empty">Belum ada task di kolom ini.</p>}
+                {col.tasks.length === 0 && dropHere === null && <p className="pb-empty">{T.kolomKosong}</p>}
                 {view.canCreate && (
                   <QuickAdd
                     projectId={projectId}
                     columnId={col.id}
-                    columnName={col.name}
+                    columnName={colName}
                     open={adding === col.id}
                     draft={drafts[col.id]}
                     onDraftChange={(text) => setDrafts((d) => ({ ...d, [col.id]: text }))}
