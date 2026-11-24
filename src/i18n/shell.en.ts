@@ -40,6 +40,7 @@ const en: Dict<typeof id> = {
     lastSeen: (when: string) => `Last seen ${when}`,
     neverSeen: "Never seen",
     dotLabel: (state: string) => `${state.replace(/\.+$/, "")}. Open Organization`,
+    dotRetry: (state: string) => `${state.replace(/\.+$/, "")}. Try reading again`,
   },
 };
 

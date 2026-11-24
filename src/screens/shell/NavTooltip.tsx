@@ -12,11 +12,21 @@
 //   tampil di sidebar lebar.
 //
 // position: fixed di document.body, jadi tidak terpotong overflow sidebar.
-import { useEffect, useState } from "react";
+// Setelah tampil, tingginya diukur dan posisinya dijaga 8 px di dalam jendela
+// (tooltip profil di dasar sidebar bisa dua baris).
+//
+// Kursor: muncul setelah 300 ms supaya tidak berkedip saat kursor hanya
+// lewat. Kalau tooltip baru saja tampil, pindah ke ikon lain langsung
+// berganti. Fokus keyboard: langsung.
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const ME_SELECTOR = ".side-me";
 const GAP = 8;
+const EDGE = 8;
+export const HOVER_DELAY = 300;
+// Jeda antar-ikon (celah 2 px di antara tombol) yang tetap dianggap "masih tampil".
+const WARM_MS = 300;
 
 type Tip = { text: string; x: number; y: number };
 
@@ -49,8 +59,13 @@ export function tipText(el: HTMLElement): string {
   return textWithout(el, '[aria-hidden="true"]');
 }
 
+export function clampTop(center: number, height: number, viewport: number): number {
+  return Math.max(EDGE, Math.min(center - height / 2, viewport - height - EDGE));
+}
+
 export function NavTooltip({ rootId, compact }: { rootId: string; compact: boolean }) {
   const [tip, setTip] = useState<Tip | null>(null);
+  const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const root = document.getElementById(rootId);
@@ -59,24 +74,52 @@ export function NavTooltip({ rootId, compact }: { rootId: string; compact: boole
     let focused: HTMLElement | null = null;
     // Fokus karena klik tidak memunculkan tooltip; hanya fokus dari keyboard.
     let pointerFocus = false;
+    let visible = false;
+    let warmUntil = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const update = () => {
-      const el = hovered ?? focused;
-      const text = el ? tipText(el) : "";
-      if (!el || !text) {
-        setTip(null);
+    const show = (el: HTMLElement) => {
+      const text = tipText(el);
+      if (!text) {
+        hide();
         return;
       }
       const r = el.getBoundingClientRect();
+      visible = true;
       setTip({ text, x: r.right + GAP, y: r.top + r.height / 2 });
     };
+    const hide = () => {
+      if (visible) warmUntil = Date.now() + WARM_MS;
+      visible = false;
+      setTip(null);
+    };
+    const update = (instant: boolean) => {
+      clearTimeout(timer);
+      timer = undefined;
+      const el = hovered ?? focused;
+      if (!el) {
+        hide();
+        return;
+      }
+      if (instant || visible || Date.now() < warmUntil) {
+        show(el);
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = undefined;
+        const now = hovered ?? focused;
+        if (now) show(now);
+      }, HOVER_DELAY);
+    };
     const onOver = (e: PointerEvent) => {
-      hovered = findTarget(e.target, root, compact);
-      update();
+      const next = findTarget(e.target, root, compact);
+      if (next === hovered) return;
+      hovered = next;
+      update(false);
     };
     const onLeave = () => {
       hovered = null;
-      update();
+      update(true);
     };
     const onDown = () => {
       pointerFocus = true;
@@ -84,11 +127,11 @@ export function NavTooltip({ rootId, compact }: { rootId: string; compact: boole
     const onFocusIn = (e: FocusEvent) => {
       focused = pointerFocus ? null : findTarget(e.target, root, compact);
       pointerFocus = false;
-      update();
+      update(true);
     };
     const onFocusOut = () => {
       focused = null;
-      update();
+      update(true);
     };
     // Escape menutup tooltip tanpa memindahkan fokus (WCAG 1.4.13).
     const onKey = (e: KeyboardEvent) => {
@@ -96,7 +139,8 @@ export function NavTooltip({ rootId, compact }: { rootId: string; compact: boole
       if (e.key === "Escape" && (hovered || focused)) {
         hovered = null;
         focused = null;
-        setTip(null);
+        clearTimeout(timer);
+        hide();
       }
     };
 
@@ -107,6 +151,7 @@ export function NavTooltip({ rootId, compact }: { rootId: string; compact: boole
     root.addEventListener("focusout", onFocusOut);
     document.addEventListener("keydown", onKey, true);
     return () => {
+      clearTimeout(timer);
       root.removeEventListener("pointerover", onOver);
       root.removeEventListener("pointerleave", onLeave);
       root.removeEventListener("pointerdown", onDown, true);
@@ -117,9 +162,15 @@ export function NavTooltip({ rootId, compact }: { rootId: string; compact: boole
     };
   }, [rootId, compact]);
 
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!tip || !el) return;
+    el.style.top = `${clampTop(tip.y, el.getBoundingClientRect().height, window.innerHeight)}px`;
+  }, [tip]);
+
   if (!tip) return null;
   return createPortal(
-    <div role="tooltip" className="nav-tip" style={{ left: tip.x, top: tip.y }}>
+    <div ref={box} role="tooltip" className="nav-tip" style={{ left: tip.x, top: tip.y }}>
       {tip.text}
     </div>,
     document.body,

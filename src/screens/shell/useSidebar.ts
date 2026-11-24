@@ -2,13 +2,17 @@
 // disimpan di pengaturan lokal inti Rust, sama seperti mode tema; salinan di
 // localStorage hanya untuk frame pertama. Jendela di bawah 900 px selalu
 // mulai ringkas, dan membukanya di sana tidak mengubah pilihan tersimpan.
-import { useCallback, useEffect, useRef, useState } from "react";
+//
+// tauri.conf.json memberi jendela minWidth 900, jadi "sempit" hanya terjadi
+// kalau WebView diperbesar (zoom), karena lebar dalam px CSS ikut mengecil.
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, isTauri } from "../../api";
 import { isMac } from "../../platform";
 
 export const SIDEBAR_SETTING_KEY = "shell.sidebar";
 export const SIDEBAR_CACHE_KEY = "mira.sidebar";
 export const NARROW_QUERY = "(max-width: 899px)";
+export const SIDEBAR_ID = "main-sidebar";
 
 type SidebarValue = "collapsed" | "expanded";
 
@@ -41,26 +45,58 @@ function narrowQuery(): MediaQueryList | null {
   return window.matchMedia(NARROW_QUERY);
 }
 
-// Dialog modal terbuka: pintasan sidebar tidak boleh mengubah apa pun di
-// belakangnya. Dialog Radix (components/Dialog, TaskDetail) tidak memberi
-// aria-modal, jadi dikenali dari role dan data-state yang selalu ia pasang.
-const MODAL_SELECTOR = '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], [role="dialog"][data-state="open"]';
+// Saat ini pintasan sidebar tidak boleh mengubah apa pun di belakang layar:
+// - dialog modal terbuka. Dialog Radix (components/Dialog, TaskDetail) tidak
+//   memberi aria-modal, jadi dikenali dari role dan data-state yang selalu ia pasang;
+// - menu konteks atau menu Pindahkan terbuka (role="menu");
+// - tenggat sedang diseret di Kalender (kelas cal-dragging di <html>, dipasang
+//   useDueDrag); sidebar yang berubah lebar memindahkan sel di bawah kursor.
+const BLOCKING_SELECTOR =
+  '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], [role="dialog"][data-state="open"], [role="menu"]';
+const CAL_DRAGGING = "cal-dragging";
 
-function modalOpen(): boolean {
-  return document.querySelector(MODAL_SELECTOR) !== null;
+function shortcutBlocked(): boolean {
+  return (
+    document.querySelector(BLOCKING_SELECTOR) !== null || document.documentElement.classList.contains(CAL_DRAGGING)
+  );
 }
 
+// Huruf yang diketik menentukan (Ctrl+X di Dvorak ada di posisi tombol B dan
+// bukan pintasan ini). Posisi tombol hanya dipakai kalau tata letaknya tidak
+// mengetik huruf Latin, misalnya keyboard Rusia.
 export function isSidebarShortcut(e: KeyboardEvent, mac: boolean = isMac()): boolean {
   if (e.altKey || e.shiftKey) return false;
   const mod = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
-  return mod && (e.code === "KeyB" || e.key.toLowerCase() === "b");
+  if (!mod) return false;
+  const key = e.key.toLowerCase();
+  return /^[a-z]$/.test(key) ? key === "b" : e.code === "KeyB";
 }
 
 export function sidebarKeys(mac: boolean = isMac()): string {
   return mac ? "Cmd+B" : "Ctrl+B";
 }
 
-export function useSidebar(): {
+const NET_AREA = ".side-net, .side-net-dot";
+const NET_FOCUS = ".side-dot, .side-retry";
+const TOGGLE = ".side-toggle";
+
+// Elemen yang difokus bisa hilang saat bentuk sidebar berganti (tombol Coba
+// baca lagi di panel lebar, ikon jaringan di mode ringkas). Fokus lalu jatuh
+// ke <body>; di sini ia dipindah ke padanannya, atau ke tombol ringkas/lebarkan.
+function restoreFocus(before: Element | null): void {
+  if (!before || before.isConnected) return;
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  const root = document.getElementById(SIDEBAR_ID);
+  if (!root) return;
+  const wasNet = before.closest(NET_AREA) !== null;
+  const target = (wasNet ? root.querySelector<HTMLElement>(NET_FOCUS) : null) ?? root.querySelector<HTMLElement>(TOGGLE);
+  target?.focus();
+}
+
+// resetKey: berganti saat pengguna memilih menu. Sidebar yang dibuka sementara
+// di jendela sempit lalu tertutup lagi, supaya isi layar kembali lega.
+export function useSidebar(resetKey?: unknown): {
   collapsed: boolean;
   chosen: boolean;
   narrow: boolean;
@@ -72,6 +108,7 @@ export function useSidebar(): {
   const [peek, setPeek] = useState(false);
   const userChanged = useRef(false);
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const focusBefore = useRef<Element | null>(null);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -103,10 +140,22 @@ export function useSidebar(): {
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
-  const state = useRef({ chosen, narrow });
-  state.current = { chosen, narrow };
+  useEffect(() => {
+    setPeek(false);
+  }, [resetKey]);
+
+  const collapsed = narrow ? !peek : chosen;
+
+  useLayoutEffect(() => {
+    restoreFocus(focusBefore.current);
+    focusBefore.current = null;
+  }, [collapsed]);
+
+  const state = useRef({ chosen, narrow, peek });
+  state.current = { chosen, narrow, peek };
 
   const toggle = useCallback(() => {
+    focusBefore.current = document.activeElement;
     if (state.current.narrow) {
       setPeek((p) => !p);
       return;
@@ -126,7 +175,19 @@ export function useSidebar(): {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.repeat || !isSidebarShortcut(e) || modalOpen()) return;
+      if (e.defaultPrevented || e.repeat) return;
+      if (e.key === "Escape") {
+        // Escape menutup sidebar yang dibuka sementara, asal fokus di sidebar
+        // atau tidak di mana pun (Escape di isian layar milik isian itu).
+        const active = document.activeElement;
+        const free = !active || active === document.body || active.closest(`#${SIDEBAR_ID}`) !== null;
+        if (state.current.narrow && state.current.peek && free && !shortcutBlocked()) {
+          focusBefore.current = active;
+          setPeek(false);
+        }
+        return;
+      }
+      if (!isSidebarShortcut(e) || shortcutBlocked()) return;
       e.preventDefault();
       toggle();
     };
@@ -134,5 +195,5 @@ export function useSidebar(): {
     return () => window.removeEventListener("keydown", onKey);
   }, [toggle]);
 
-  return { collapsed: narrow ? !peek : chosen, chosen, narrow, toggle };
+  return { collapsed, chosen, narrow, toggle };
 }

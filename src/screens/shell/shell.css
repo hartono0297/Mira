@@ -492,7 +492,6 @@
   font-weight: 600;
   line-height: 1.35;
   white-space: pre-line;
-  transform: translateY(-50%);
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }

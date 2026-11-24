@@ -61,7 +61,7 @@ export function Shell({ state, onRefresh }: Props) {
   const name = state.identity.displayName ?? "";
   const org = state.organization;
   const counts = useNavCounts();
-  const sidebar = useSidebar();
+  const sidebar = useSidebar(section);
 
   // Perubahan direktori bisa mengubah peran laptop ini atau mengeluarkannya.
   useEffect(() => subscribe("mira://directory", onRefresh), [onRefresh]);

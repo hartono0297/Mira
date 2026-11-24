@@ -43,6 +43,8 @@ const id = {
     // Sidebar ringkas: satu ikon status. Klik membuka Organisasi. Titik di
     // akhir status ("Memeriksa jaringan...") dibuang supaya tidak berderet.
     dotLabel: (state: string) => `${state.replace(/\.+$/, "")}. Buka Organisasi`,
+    // Status tidak terbaca: klik membaca ulang.
+    dotRetry: (state: string) => `${state.replace(/\.+$/, "")}. Coba baca lagi`,
   },
 };
 

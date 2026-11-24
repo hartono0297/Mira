@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appState } from "../../test/fixtures";
 import { renderInLang } from "../../test/i18n";
 import type { AppState, OrgInfo } from "../../api";
+import { clampTop, HOVER_DELAY } from "./NavTooltip";
 import { Shell } from "./Shell";
 
 // Layar dan panel jaringan diganti tiruan: tes ini hanya memeriksa menu sidebar.
@@ -119,7 +120,7 @@ describe("sidebar ringkas", () => {
     const aside = document.getElementById("main-sidebar");
     expect(aside?.tagName).toBe("ASIDE");
     const toggle = screen.getByRole("button", { name: "Ringkas menu" });
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).not.toHaveAttribute("aria-expanded");
     expect(toggle).toHaveAttribute("aria-controls", "main-sidebar");
     expect(toggle).toHaveAttribute("aria-keyshortcuts", "Control+B");
     expect(document.querySelector(".shell")).not.toHaveClass("side-collapsed");
@@ -127,7 +128,6 @@ describe("sidebar ringkas", () => {
     await user.click(toggle);
     expect(document.querySelector(".shell")).toHaveClass("side-collapsed");
     expect(toggle).toHaveAccessibleName("Lebarkan menu");
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(window.localStorage.getItem("mira.sidebar")).toBe("collapsed");
   });
 
@@ -169,7 +169,7 @@ describe("sidebar ringkas", () => {
     await user.hover(screen.getByRole("button", { name: "Board" }));
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     await user.hover(screen.getByRole("button", { name: "Ringkas menu" }));
-    expect(screen.getByRole("tooltip")).toHaveTextContent("Ringkas menu (Ctrl+B)");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Ringkas menu (Ctrl+B)");
   });
 
   it("klik tidak memunculkan tooltip karena fokus", async () => {
@@ -190,9 +190,79 @@ describe("sidebar ringkas", () => {
     expect(within(me).getByText(state.identity.displayName ?? "")).toBeInTheDocument();
     expect(me).toHaveTextContent(state.organization.name);
     await user.hover(me);
-    const tip = screen.getByRole("tooltip");
+    const tip = await screen.findByRole("tooltip");
     expect(tip).toHaveTextContent(state.identity.displayName ?? "");
     expect(tip).toHaveTextContent(state.organization.name);
     expect(tip.textContent).not.toContain(", peran ");
+  });
+});
+
+describe("tooltip sidebar ringkas", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("kursor: muncul setelah jeda, lalu langsung berganti antar ikon", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("mira.sidebar", "collapsed");
+    renderShell();
+    const started = Date.now();
+    await user.hover(screen.getByRole("button", { name: "Board" }));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Board");
+    expect(Date.now() - started).toBeGreaterThanOrEqual(HOVER_DELAY - 20);
+    await user.hover(screen.getByRole("button", { name: "Kalender" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Kalender");
+  });
+
+  it("tetap di dalam jendela di dekat tepi bawah", () => {
+    expect(clampTop(580, 60, 600)).toBe(532);
+    expect(clampTop(10, 60, 600)).toBe(8);
+    expect(clampTop(300, 60, 600)).toBe(270);
+  });
+
+  it("posisi diukur setelah tampil", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("mira.sidebar", "collapsed");
+    const height = vi.spyOn(window, "innerHeight", "get").mockReturnValue(600);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const tip = this.classList.contains("nav-tip");
+      const h = tip ? 60 : 40;
+      const top = tip ? 0 : 560;
+      return { x: 10, y: top, top, left: 10, right: 54, bottom: top + h, width: 44, height: h, toJSON: () => ({}) };
+    });
+    renderShell();
+    await user.tab();
+    const tip = screen.getByRole("tooltip");
+    expect(tip.style.top).toBe("532px");
+    expect(tip.style.left).toBe("62px");
+    expect(height).toHaveBeenCalled();
+  });
+});
+
+describe("jendela sempit", () => {
+  afterEach(() => {
+    delete (window as { matchMedia?: unknown }).matchMedia;
+  });
+
+  it("sidebar yang dibuka sementara tertutup lagi setelah memilih menu, tanpa disimpan", async () => {
+    const user = userEvent.setup();
+    window.matchMedia = vi.fn(
+      () =>
+        ({
+          matches: true,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    renderShell();
+    const shell = document.querySelector(".shell");
+    expect(shell).toHaveClass("side-collapsed");
+    await user.click(screen.getByRole("button", { name: "Lebarkan menu" }));
+    expect(shell).not.toHaveClass("side-collapsed");
+    await user.click(screen.getByRole("button", { name: "Board" }));
+    expect(shell).toHaveClass("side-collapsed");
+    expect(screen.getByText("Layar board")).toBeInTheDocument();
+    expect(window.localStorage.getItem("mira.sidebar")).toBeNull();
   });
 });

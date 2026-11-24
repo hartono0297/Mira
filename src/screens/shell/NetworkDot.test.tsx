@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NetState } from "../../api";
@@ -49,13 +49,55 @@ describe("status jaringan di sidebar ringkas", () => {
     expect(screen.getByRole("button", { name: "Memeriksa jaringan. Buka Organisasi" })).toHaveClass("side-dot-plain");
   });
 
-  it("merah kalau status tidak terbaca", async () => {
-    invoke.mockImplementation(async () => {
-      throw { code: "network", message: "Jaringan belum siap." };
+  it("merah kalau status tidak terbaca, dan klik membaca ulang", async () => {
+    const user = userEvent.setup();
+    let fail = true;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd !== "get_network_status") return null;
+      if (fail) throw { code: "network", message: "Jaringan belum siap." };
+      return network({ state: "lan" });
     });
-    renderDot();
-    const dot = await screen.findByRole("button", { name: "Status jaringan belum terbaca. Buka Organisasi" });
+    const { onOpenOrg } = renderDot();
+    const dot = await screen.findByRole("button", { name: "Status jaringan belum terbaca. Coba baca lagi" });
     expect(dot).toHaveClass("side-dot-bad");
+
+    fail = false;
+    await user.click(dot);
+    expect(await screen.findByRole("button", { name: "Tersambung lewat LAN kantor. Buka Organisasi" })).toBeInTheDocument();
+    expect(onOpenOrg).not.toHaveBeenCalled();
+  });
+
+  it("status lama yang gagal diperbarui juga bisa dibaca ulang", async () => {
+    let calls = 0;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd !== "get_network_status") return null;
+      calls += 1;
+      if (calls > 1) throw { code: "network", message: "Jaringan belum siap." };
+      return network({ state: "lan" });
+    });
+    vi.useFakeTimers();
+    try {
+      renderDot();
+      await act(async () => {});
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(
+      await screen.findByRole("button", {
+        name: "Tersambung lewat LAN kantor. Belum bisa diperbarui. Yang tampil adalah status terakhir. Coba baca lagi",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("tidak tampil saat laptop belum masuk organisasi, sama dengan panel lebar", async () => {
+    invoke.mockImplementation(router({ get_network_status: network({ state: "no_org" }) }));
+    renderDot();
+    await act(async () => {});
+    expect(screen.getByRole("region", { name: "Jaringan kantor" })).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("klik membuka Organisasi", async () => {

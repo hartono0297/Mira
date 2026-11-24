@@ -1,7 +1,14 @@
 import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { router } from "../../test/fixtures";
-import { NARROW_QUERY, SIDEBAR_CACHE_KEY, SIDEBAR_SETTING_KEY, useSidebar } from "./useSidebar";
+import {
+  isSidebarShortcut,
+  NARROW_QUERY,
+  SIDEBAR_CACHE_KEY,
+  SIDEBAR_ID,
+  SIDEBAR_SETTING_KEY,
+  useSidebar,
+} from "./useSidebar";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -193,5 +200,156 @@ describe("useSidebar", () => {
     act(() => result.current.toggle());
     expect(invoke).not.toHaveBeenCalled();
     expect(result.current.collapsed).toBe(true);
+  });
+});
+
+describe("pintasan Ctrl+B", () => {
+  const ev = (init: Partial<KeyboardEvent>) => new KeyboardEvent("keydown", { ctrlKey: true, ...init });
+
+  it("dicocokkan dari huruf yang diketik, bukan posisi tombol", () => {
+    expect(isSidebarShortcut(ev({ key: "b", code: "KeyB" }), false)).toBe(true);
+    expect(isSidebarShortcut(ev({ key: "B", code: "KeyB" }), false)).toBe(true);
+    // Dvorak: tombol fisik KeyB mengetik x, dan b ada di KeyN.
+    expect(isSidebarShortcut(ev({ key: "x", code: "KeyB" }), false)).toBe(false);
+    expect(isSidebarShortcut(ev({ key: "b", code: "KeyN" }), false)).toBe(true);
+    // Huruf bukan Latin (Rusia): posisi tombol dipakai.
+    expect(isSidebarShortcut(ev({ key: "и", code: "KeyB" }), false)).toBe(true);
+    expect(isSidebarShortcut(ev({ key: "и", code: "KeyN" }), false)).toBe(false);
+  });
+
+  it("macOS memakai Cmd, bukan Ctrl", () => {
+    expect(isSidebarShortcut(ev({ key: "b", code: "KeyB" }), true)).toBe(false);
+    expect(isSidebarShortcut(new KeyboardEvent("keydown", { key: "b", metaKey: true }), true)).toBe(true);
+  });
+
+  it("diabaikan saat menu konteks terbuka", () => {
+    const { result } = renderHook(() => useSidebar());
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    document.body.appendChild(menu);
+    try {
+      act(() => pressCtrlB());
+      expect(result.current.collapsed).toBe(false);
+    } finally {
+      menu.remove();
+    }
+  });
+
+  it("diabaikan saat tenggat sedang diseret di Kalender", () => {
+    const { result } = renderHook(() => useSidebar());
+    document.documentElement.classList.add("cal-dragging");
+    try {
+      act(() => pressCtrlB());
+      expect(result.current.collapsed).toBe(false);
+    } finally {
+      document.documentElement.classList.remove("cal-dragging");
+    }
+  });
+});
+
+describe("sidebar yang dibuka sementara di jendela sempit", () => {
+  it("tertutup lagi saat menu dipilih", () => {
+    media.matches = true;
+    const { result, rerender } = renderHook(({ section }) => useSidebar(section), { initialProps: { section: "chat" } });
+    act(() => result.current.toggle());
+    expect(result.current.collapsed).toBe(false);
+    rerender({ section: "board" });
+    expect(result.current.collapsed).toBe(true);
+  });
+
+  it("Escape menutupnya, kecuali fokus ada di isian di luar sidebar", () => {
+    media.matches = true;
+    const { result } = renderHook(() => useSidebar());
+    act(() => result.current.toggle());
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    try {
+      input.focus();
+      act(() => {
+        fireEvent.keyDown(input, { key: "Escape" });
+      });
+      expect(result.current.collapsed).toBe(false);
+      input.blur();
+    } finally {
+      input.remove();
+    }
+
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "Escape" });
+    });
+    expect(result.current.collapsed).toBe(true);
+  });
+
+  it("Escape tidak mengubah sidebar lebar biasa", () => {
+    const { result } = renderHook(() => useSidebar());
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "Escape" });
+    });
+    expect(result.current.collapsed).toBe(false);
+  });
+});
+
+describe("fokus saat sidebar berganti bentuk", () => {
+  // Kerangka kecil yang meniru sidebar: tombol coba lagi hanya di panel lebar,
+  // ikon jaringan hanya di mode ringkas.
+  function Frame({ retry = true }: { retry?: boolean }) {
+    const { collapsed, toggle } = useSidebar();
+    return (
+      <aside id={SIDEBAR_ID}>
+        <button type="button" className="side-toggle" onClick={toggle}>
+          balik
+        </button>
+        <button type="button" className="side-link">
+          menu
+        </button>
+        {collapsed ? (
+          <section className="side-net-dot">
+            <button type="button" className="side-dot">
+              ikon
+            </button>
+          </section>
+        ) : (
+          <section className="side-net">
+            {retry && (
+              <button type="button" className="side-retry">
+                coba lagi
+              </button>
+            )}
+          </section>
+        )}
+      </aside>
+    );
+  }
+
+  it("tombol coba lagi yang hilang memindahkan fokus ke ikon jaringan, lalu kembali", () => {
+    const { getByText } = render(<Frame />);
+    getByText("coba lagi").focus();
+    act(() => pressCtrlB(getByText("coba lagi")));
+    expect(getByText("ikon")).toHaveFocus();
+    act(() => pressCtrlB(getByText("ikon")));
+    expect(getByText("coba lagi")).toHaveFocus();
+  });
+
+  it("tanpa padanan, fokus pindah ke tombol ringkas/lebarkan", () => {
+    const { getByText } = render(<Frame retry={false} />);
+    act(() => pressCtrlB());
+    getByText("ikon").focus();
+    act(() => pressCtrlB(getByText("ikon")));
+    expect(getByText("balik")).toHaveFocus();
+  });
+
+  it("fokus yang tidak hilang tidak dipindahkan", () => {
+    const { getByText } = render(<Frame />);
+    getByText("menu").focus();
+    act(() => pressCtrlB(getByText("menu")));
+    expect(getByText("menu")).toHaveFocus();
+  });
+
+  it("tanpa fokus sebelumnya, fokus tidak dipindahkan", () => {
+    const { getByText } = render(<Frame />);
+    act(() => pressCtrlB());
+    expect(getByText("balik")).not.toHaveFocus();
+    expect(document.activeElement).toBe(document.body);
   });
 });
