@@ -1135,3 +1135,55 @@ async fn rogue_office_with_the_same_id_is_flagged_and_gets_nothing() {
     );
     shutdown(&[&a, &b, &r, &n]).await;
 }
+
+#[test]
+fn join_info_announces_the_ad_level_and_settings() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let state = MiraState::new(
+        Ok(dir.path().to_path_buf()),
+        Box::new(MemoryKeyStore::new()),
+    );
+    let desain = state
+        .with_core(|c| {
+            identity::save_display_name(&mut c.db, &mut c.identity, "Andi")?;
+            org::create_organization(&mut c.db, &c.identity, "CV Maju Jaya")?;
+            Ok(permissions::create_team(&mut c.db, &c.identity, "Tim Desain", clock::now())?.id)
+        })
+        .expect("office");
+    let info = || MiraBackend::new(state.clone()).join_info().expect("member");
+    // No device profile yet: neither the v0.4 fields nor the AD claim.
+    assert_eq!(info().extras, 0);
+    assert_eq!(info().ad_domain, None);
+    state
+        .with_core(|c| {
+            join::publish_device(c);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(info().extras, crate::network::JOIN_INFO_EXTRAS_AD);
+    state
+        .with_core(|c| {
+            permissions::set_ad_settings(
+                &mut c.db,
+                &c.identity,
+                "Maju.co.id",
+                vec![crate::ad::OuMapping {
+                    ou: "Desain".into(),
+                    team: desain.clone(),
+                }],
+                clock::now(),
+            )
+        })
+        .expect("AD settings");
+    let i = info();
+    assert_eq!(i.ad_domain.as_deref(), Some("maju.co.id"));
+    assert_eq!(i.ad_ou_map.len(), 1);
+    assert_eq!(i.ad_ou_map[0].team, desain);
+    // The test override still decides `extras`.
+    let v04 = MiraBackend::new(state.clone())
+        .with_join_extras(crate::network::JOIN_INFO_EXTRAS)
+        .join_info()
+        .expect("member");
+    assert_eq!(v04.extras, 1);
+    assert_eq!(v04.ad_domain.as_deref(), Some("maju.co.id"));
+}

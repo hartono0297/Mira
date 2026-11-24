@@ -148,7 +148,8 @@ impl OrgState {
             | Body::LabelRename { .. }
             | Body::LabelArchive { .. }
             | Body::LabelAssign { .. }
-            | Body::LabelUnassign { .. } => sa_only(),
+            | Body::LabelUnassign { .. }
+            | Body::AdSettingsSet { .. } => sa_only(),
             Body::TeamMemberAdd { team, .. } => one_of(author, sa, admin(team, author), team),
             Body::TeamMemberRemove { team, member } => {
                 if member == author {

@@ -196,6 +196,15 @@ const id = {
       requestNotFound: "Permintaan bergabung tidak ditemukan.",
       requestNotHere: "Permintaan bergabung tidak ditemukan di laptop ini. Mungkin sudah diputuskan di laptop lain.",
     },
+    ad: {
+      domainInvalid: "Domain tidak valid. Contoh: kantor.co.id",
+      ouMapMax: "Pemetaan OU paling banyak 100 baris.",
+      ouNameRule: "Nama OU harus 1 sampai 64 karakter, tanpa baris baru, tab, atau karakter tak terlihat.",
+      ouMapTooLong: "Pemetaan OU terlalu panjang untuk disimpan. Kurangi barisnya atau singkat nama OU-nya.",
+      settingsWaitForLaptops: "Pengaturan AD baru bisa disimpan setelah semua laptop kantor memakai Mira versi terbaru.",
+      requesterOutdated: "Mira di laptop peminta terlalu lama untuk kantor yang memakai pengaturan AD. Minta peminta memperbarui Mira dulu, lalu mengirim permintaan lagi.",
+      oldVersionAd: "Kantor ini masih punya laptop Mira versi lama. Kirim ulang permintaan tanpa data AD.",
+    },
     misc: {
       initIncomplete: "Inisialisasi Mira tidak selesai.",
       internalBefore: "Mira mengalami kesalahan internal sebelumnya. Tutup lalu buka lagi aplikasinya.",
@@ -438,6 +447,8 @@ const id = {
     pinWrongLocked: (minutes: string) => `PIN salah. Tanda tangan dikunci sementara, coba lagi dalam sekitar ${minutes} menit.`,
     updateFailed: (detail: string) => `Pembaruan gagal: ${detail}.`,
     pinWrongLeft: (left: string) => `PIN salah. Sisa ${left} kali lagi sebelum dikunci sementara.`,
+    adOuDeptMissing: (ou: string) => `Departemen untuk OU "${ou}" tidak ditemukan atau sudah dihapus.`,
+    adOuDuplicate: (ou: string) => `OU "${ou}" tercantum lebih dari sekali. Satu OU hanya bisa dipetakan ke satu departemen.`,
   },
 };
 

@@ -114,6 +114,7 @@ fn request_with(
         app_version: "0.3.0".into(),
         note: note.map(str::to_owned),
         account: account.map(str::to_owned),
+        ad: None,
         at: format_time(at),
         nonce: rand_hex16(),
     };
@@ -1183,6 +1184,7 @@ fn request_for_a_copy_of_the_organization_is_rejected() {
         app_version: "0.3.0".into(),
         note: None,
         account: None,
+        ad: None,
         at: format_time(w.sim.now),
         nonce: rand_hex16(),
     };

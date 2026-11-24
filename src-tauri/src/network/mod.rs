@@ -107,6 +107,11 @@ pub struct JoinDept {
 /// `note` and `account` (docs/plans/v04-onboarding.md).
 pub const JOIN_INFO_EXTRAS: u32 = 1;
 
+/// `JoinInfoWire.extras` of a member that also accepts the AD claim (`ad`)
+/// in join requests (docs/plans/onboarding-ad.md). Mira v0.4.0 compares
+/// `extras >= 1`, so it still reads 2 as "takes `note` and `account`".
+pub const JOIN_INFO_EXTRAS_AD: u32 = 2;
+
 /// Answer to `join_info_get` (v0.3): the organization's genesis record, its
 /// short fingerprint and the open departments. The requester checks the
 /// genesis record itself; the fingerprint is only shown.
@@ -116,10 +121,18 @@ pub struct JoinInfoWire {
     pub fingerprint: String,
     pub departments: Vec<JoinDept>,
     /// v0.4: which optional join request fields this member accepts
-    /// ([`JOIN_INFO_EXTRAS`]). Absent (0) from v0.3 members. v0.3 parses
-    /// this struct without `deny_unknown_fields`, so it ignores the field.
+    /// ([`JOIN_INFO_EXTRAS`], [`JOIN_INFO_EXTRAS_AD`]). Absent (0) from v0.3
+    /// members. v0.3 parses this struct without `deny_unknown_fields`, so
+    /// it ignores the field.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub extras: u32,
+    /// AD onboarding: the organization's AD domain, lowercase. Absent when
+    /// not set and from older members (which ignore it, like `extras`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ad_domain: Option<String>,
+    /// AD onboarding: OU to department rows whose department is open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ad_ou_map: Vec<crate::ad::OuMapping>,
 }
 
 fn is_zero(v: &u32) -> bool {

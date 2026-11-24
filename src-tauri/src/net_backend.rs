@@ -97,6 +97,17 @@ fn source(s: AddressSource) -> peers::AddressSource {
     }
 }
 
+/// Requesters read `join_info` answers up to `MAX_JOIN_FRAME` (Mira v0.4.0
+/// too). The OU mapping only feeds department suggestions, so it is left
+/// out rather than making the whole answer unreadable. 1 KiB is kept for
+/// the message envelope (`{"t":"join_info","info":...}`).
+pub(crate) fn fit_join_info(info: &mut JoinInfoWire) {
+    let size = |i: &JoinInfoWire| serde_json::to_vec(i).map_or(usize::MAX, |v| v.len());
+    if !info.ad_ou_map.is_empty() && size(info) > wire::MAX_JOIN_FRAME - 1024 {
+        info.ad_ou_map.clear();
+    }
+}
+
 /// `SyncBackend` over the shared `MiraState`.
 pub struct MiraBackend {
     state: MiraState,
@@ -105,8 +116,9 @@ pub struct MiraBackend {
     /// next periodic sync.
     net: OnceLock<Network>,
     /// Test override of `extras` in `join_info` answers. `None`:
-    /// `JOIN_INFO_EXTRAS` when every member runs a recent enough Mira
-    /// (`permissions::join::join_extras_allowed`), 0 otherwise.
+    /// `JOIN_INFO_EXTRAS_AD` or `JOIN_INFO_EXTRAS` when every member runs a
+    /// recent enough Mira (`permissions::join::join_ad_allowed`,
+    /// `join_extras_allowed`), 0 otherwise.
     join_extras: Option<u32>,
 }
 
@@ -303,22 +315,31 @@ impl SyncBackend for MiraBackend {
 
     fn join_info(&self) -> Option<JoinInfoWire> {
         let r = self.state.with_core(|c| permissions::join_info(&c.db));
-        log_err("join_info", r).flatten().map(|info| JoinInfoWire {
-            org: org_record(info.org),
-            fingerprint: info.fingerprint,
-            departments: info
-                .departments
-                .into_iter()
-                .map(|d| JoinDept {
-                    id: d.id,
-                    name: d.name,
-                })
-                .collect(),
-            extras: self.join_extras.unwrap_or(if info.extras {
+        log_err("join_info", r).flatten().map(|info| {
+            let extras = if info.accepts_ad {
+                network::JOIN_INFO_EXTRAS_AD
+            } else if info.extras {
                 network::JOIN_INFO_EXTRAS
             } else {
                 0
-            }),
+            };
+            let mut wire = JoinInfoWire {
+                org: org_record(info.org),
+                fingerprint: info.fingerprint,
+                departments: info
+                    .departments
+                    .into_iter()
+                    .map(|d| JoinDept {
+                        id: d.id,
+                        name: d.name,
+                    })
+                    .collect(),
+                extras: self.join_extras.unwrap_or(extras),
+                ad_domain: info.ad_domain,
+                ad_ou_map: info.ad_ou_map,
+            };
+            fit_join_info(&mut wire);
+            wire
         })
     }
 

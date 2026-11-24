@@ -723,6 +723,8 @@ mod tests {
                         name: "Keuangan".into(),
                     }],
                     extras: crate::network::JOIN_INFO_EXTRAS,
+                    ad_domain: None,
+                    ad_ou_map: Vec::new(),
                 },
             },
             Msg::JoinRequest {

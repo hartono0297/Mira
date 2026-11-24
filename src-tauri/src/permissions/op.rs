@@ -293,6 +293,15 @@ pub enum Body {
         os: String,
         app_version: String,
     },
+    // ----- AD onboarding (docs/plans/onboarding-ad.md) -----
+    /// Superadmin sets the organization's AD domain (empty: none) and the
+    /// OU to department mapping. The latest applied one wins. Mira v0.4.0
+    /// refuses it, so it is only written once every member is past
+    /// `JOIN_AD_SINCE` (`join::ad_settings_allowed`).
+    AdSettingsSet {
+        domain: String,
+        ou_map: Vec<crate::ad::OuMapping>,
+    },
 }
 
 impl Body {
@@ -327,6 +336,7 @@ impl Body {
             Body::LabelAssign { .. } => "label_assign",
             Body::LabelUnassign { .. } => "label_unassign",
             Body::DeviceSet { .. } => "device_set",
+            Body::AdSettingsSet { .. } => "ad_settings_set",
         }
     }
 }
@@ -730,6 +740,14 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
             need(is_valid_laptop_name(laptop), "nama laptop tidak valid")?;
             need(is_valid_os_name(os), "nama sistem operasi tidak valid")?;
             need(is_valid_app_version(app_version), "versi Mira tidak valid")?;
+        }
+        Body::AdSettingsSet { domain, ou_map } => {
+            org_scope(p)?;
+            need(
+                domain.is_empty() || super::join::is_valid_ad_domain(domain),
+                "domain AD tidak valid",
+            )?;
+            super::join::check_ou_map(ou_map)?;
         }
     }
     Ok(at)

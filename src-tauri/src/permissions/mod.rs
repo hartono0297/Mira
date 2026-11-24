@@ -39,9 +39,10 @@ pub use actions::{
 };
 pub use causal::heads;
 pub use fold::{
-    ChannelState, DeviceInfo, FoldResult, GuestAccess, InviteState, JoinDecision, LabelState,
-    MemberKind, MemberState, MemberStatus, OrgState, Outcome, ProjectMember, ProjectState, Reason,
-    TeamMember, TeamRole, TeamState, UMUM_CHANNEL_NAME, fold, project_id_for, umum_channel_id,
+    AdSettings, ChannelState, DeviceInfo, FoldResult, GuestAccess, InviteState, JoinDecision,
+    LabelState, MemberKind, MemberState, MemberStatus, OrgState, Outcome, ProjectMember,
+    ProjectState, Reason, TeamMember, TeamRole, TeamState, UMUM_CHANNEL_NAME, fold, project_id_for,
+    umum_channel_id,
 };
 pub use invite::{
     JoinProofData, NormalizedCode, build_join_proof, generate_invite_code, invite_key_message,
@@ -57,22 +58,25 @@ pub use store::{
     op_ids_for, ops_for, peer_auth, rejected_changes,
 };
 pub use join::{
-    JoinRequestPayload, SignedJoinRequest, matching_code, org_fingerprint, org_fingerprint_short,
-    request_code,
+    AdBlocker, JOIN_AD_SINCE, JoinAdClaim, JoinExtras, JoinRequestPayload, SignedJoinRequest,
+    ad_blockers, ad_settings_allowed, join_ad_allowed, matching_code, org_fingerprint,
+    org_fingerprint_short, request_code,
 };
 pub use join_store::{
-    DeviceProfile, JoinDepartment, JoinInfo, JoinIngest, JoinRecord, JoinRequestRefusal,
-    JoinRequestView, JoinStatusAnswer, JoinTarget, OutgoingJoinRequest, OutgoingStatus, Seen,
-    MAX_PENDING_PER_IP, MAX_PENDING_REQUESTS, cancel_join_request, ip_group, join_request_id, create_join_request, ingest_join_records, install_approved_org,
-    join_info, join_record_ids_for, join_records_for, join_status_for, mark_join_rejected,
-    mark_join_sent, outgoing_join_request, pending_join_requests, prune_join_requests,
+    DeviceProfile, JoinAdView, JoinDepartment, JoinInfo, JoinIngest, JoinRecord, JoinRequestRefusal,
+    JoinRequestView, JoinStatusAnswer, JoinTarget, MAX_PENDING_PER_IP, MAX_PENDING_REQUESTS,
+    OutgoingJoinRequest, OutgoingStatus, Seen, cancel_join_request, create_join_request,
+    ingest_join_records, install_approved_org, ip_group, join_info, join_record_ids_for,
+    join_records_for, join_request_id, join_status_for, mark_join_rejected, mark_join_sent,
+    open_departments, outgoing_join_request, pending_join_requests, prune_join_requests,
     receive_join_request, unknown_join_record_ids,
 };
 pub(crate) use org_actions::{register_own_project_in, register_project_for_in};
 pub use org_actions::{
-    add_project_member, approve_join, assign_label, create_label, ensure_device_op, move_member,
-    recompute, reject_join, remove_project_member, rename_department, rename_label,
-    require_state, set_department_archived, set_label_archived,
+    AD_SETTINGS_GATE_CLOSED, REQUESTER_OUTDATED, add_project_member, approve_join, assign_label,
+    create_label, ensure_device_op, move_member, recompute, reject_join, remove_project_member,
+    rename_department, rename_label, require_state, set_ad_settings, set_department_archived,
+    set_label_archived,
 };
 pub use query::*;
 pub use view::{

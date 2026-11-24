@@ -28,11 +28,14 @@ use super::actions::JoinAcceptedData;
 use super::fold::{MemberStatus, OrgState};
 use super::format::{format_time, is_lower_hex, parse_time};
 use super::join::{
-    JOIN_NOTE_MAX_CHARS, JOIN_REQUEST_VALIDITY, JOIN_REQUEST_VERSION, JoinExtras,
-    JoinRequestPayload, SignedJoinRequest, VerifiedJoinRequest, is_valid_join_account,
-    is_valid_join_note, join_extras_allowed, org_fingerprint, org_fingerprint_short, request_code,
-    request_id, sign_join_request, verify_join_request,
+    JOIN_NOTE_MAX_CHARS, JOIN_REQUEST_VALIDITY, JOIN_REQUEST_VERSION, JoinAdClaim, JoinExtras,
+    JoinRequestPayload, SignedJoinRequest, VerifiedJoinRequest, fit_ad_claim,
+    is_below_ad_threshold, is_valid_ad_dn, is_valid_ad_text, is_valid_ad_user,
+    is_valid_join_account, is_valid_join_note, join_ad_allowed, join_extras_allowed,
+    org_fingerprint, org_fingerprint_short, request_code, request_id, sign_join_request,
+    strip_join_text, verify_join_request,
 };
+use crate::ad::OuMapping;
 use super::op::{Body, CLOCK_SLACK, MAX_CLOCK_AHEAD, SignedOp, verify_op};
 use super::store::{
     display_name_for, ingest_in, load_ops, load_state, op_ids_for, ops_for, require_org,
@@ -98,6 +101,11 @@ pub struct OutgoingJoinRequest {
     pub display_name: String,
     /// v0.4: the note signed in the request, if any.
     pub note: Option<String>,
+    /// AD onboarding: the claim signed in the request, if any. Sent to the
+    /// screen with every field present (`null` when unknown), like
+    /// `JoinAdClaim` in src/api/join.ts.
+    #[serde(serialize_with = "ad_claim_for_screen")]
+    pub ad: Option<JoinAdClaim>,
     pub created_at: String,
     pub status: OutgoingStatus,
     pub decided_by_name: Option<String>,
@@ -129,6 +137,32 @@ impl JoinRecord {
     pub fn body(&self) -> String {
         serde_json::to_string(self).expect("join record always serializes")
     }
+}
+
+/// `JoinAdClaim` as the screen reads it: `null` for missing fields (the
+/// signed form leaves them out).
+fn ad_claim_for_screen<S: serde::Serializer>(
+    claim: &Option<JoinAdClaim>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Screen<'a> {
+        domain: &'a str,
+        user: &'a str,
+        dn: Option<&'a str>,
+        name: Option<&'a str>,
+        department: Option<&'a str>,
+    }
+    claim
+        .as_ref()
+        .map(|c| Screen {
+            domain: &c.domain,
+            user: &c.user,
+            dn: c.dn.as_deref(),
+            name: c.name.as_deref(),
+            department: c.department.as_deref(),
+        })
+        .serialize(s)
 }
 
 fn seen_message(request_id: &str, ip: Option<&str>, at: &str) -> Vec<u8> {
@@ -189,6 +223,37 @@ fn clean_account(account: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The AD claim read from the system, cleaned like the login name: the
+/// person cannot change it, so parts that do not fit the request format
+/// are left out rather than refused. A bad domain or account name drops the
+/// whole claim; a bad DN, name or department drops only that part.
+fn clean_ad_claim(claim: Option<&JoinAdClaim>) -> Option<JoinAdClaim> {
+    let c = claim?;
+    let domain = crate::ad::dn::normalize_domain(&c.domain)?;
+    let user = c.user.trim();
+    if !is_valid_ad_user(user) {
+        return None;
+    }
+    let text = |v: &Option<String>| {
+        v.as_deref()
+            .map(|t| strip_join_text(t).trim().to_owned())
+            .filter(|t| is_valid_ad_text(t))
+    };
+    let dn = c
+        .dn
+        .as_deref()
+        .map(str::trim)
+        .filter(|dn| is_valid_ad_dn(dn, &domain))
+        .map(str::to_owned);
+    Some(JoinAdClaim {
+        user: user.to_owned(),
+        dn,
+        name: text(&c.name),
+        department: text(&c.department),
+        domain,
+    })
+}
+
 /// Signs a new request for `target` and keeps it in `join_outbox`,
 /// replacing any earlier one. Needs a display name and no organization.
 /// The genesis record in `target` must be valid; the request is pinned to
@@ -197,6 +262,11 @@ fn clean_account(account: Option<&str>) -> Option<String> {
 /// `extras` (v0.4) adds the note and login name. Pass `None` for an office
 /// with v0.3 members: they refuse requests that carry either field. With
 /// both empty the request has the v0.3 shape anyway.
+///
+/// `extras.ad` (AD onboarding) must only be set for an office whose members
+/// all answered `extras >= 2`. When the request would exceed
+/// `MAX_JOIN_REQUEST_BYTES`, the claim's `dn` is dropped, then the claim
+/// ([`fit_ad_claim`]); the returned request shows what was kept.
 pub fn create_join_request(
     conn: &mut Connection,
     identity: &Identity,
@@ -211,6 +281,7 @@ pub fn create_join_request(
         .to_owned();
     let note = clean_note(extras.and_then(|e| e.note.as_deref()))?;
     let account = clean_account(extras.and_then(|e| e.account.as_deref()));
+    let ad = clean_ad_claim(extras.and_then(|e| e.ad.as_ref()));
     let org = &target.org;
     if org::validate_org_record(org).is_err()
         || !org.verify_genesis()
@@ -224,7 +295,7 @@ pub fn create_join_request(
     if org::load_organization(&tx)?.is_some() {
         return Err(AppError::AlreadyInOrg);
     }
-    let payload = JoinRequestPayload {
+    let mut payload = JoinRequestPayload {
         v: JOIN_REQUEST_VERSION,
         org: org.id.clone(),
         org_fp: org_fingerprint(org),
@@ -236,9 +307,11 @@ pub fn create_join_request(
         app_version: device.app_version.clone(),
         note,
         account,
+        ad,
         at: format_time(now),
         nonce: random_hex16(),
     };
+    fit_ad_claim(&mut payload);
     let signed = sign_join_request(&payload, |m| identity.sign(m));
     // The same checks the approver will run, so a bad field fails here.
     verify_join_request(&signed, org).map_err(|d| {
@@ -332,6 +405,7 @@ pub fn outgoing_join_request(conn: &Connection) -> AppResult<Option<OutgoingJoin
         team_name: row.team_name,
         display_name: parsed.name,
         note: parsed.note,
+        ad: parsed.ad,
         created_at: row.created_at,
         status: if row.status == "rejected" {
             OutgoingStatus::Rejected
@@ -486,6 +560,16 @@ pub struct JoinInfo {
     /// ([`join_extras_allowed`]).
     #[serde(default)]
     pub extras: bool,
+    /// AD onboarding: the organization's AD domain, if set.
+    #[serde(default)]
+    pub ad_domain: Option<String>,
+    /// AD onboarding: the OU mapping rows whose department is open.
+    #[serde(default)]
+    pub ad_ou_map: Vec<OuMapping>,
+    /// AD onboarding: requests with `ad` are taken here
+    /// ([`join_ad_allowed`]).
+    #[serde(default)]
+    pub accepts_ad: bool,
 }
 
 /// Organization record and open departments, sorted by name. `None` when
@@ -515,9 +599,19 @@ pub fn join_info(conn: &Connection) -> AppResult<Option<JoinInfo>> {
             .cmp(&b.name.to_lowercase())
             .then_with(|| a.id.cmp(&b.id))
     });
+    let ad_ou_map = state
+        .ad
+        .ou_map
+        .iter()
+        .filter(|row| state.open_team(&row.team).is_some())
+        .cloned()
+        .collect();
     Ok(Some(JoinInfo {
         fingerprint: org_fingerprint_short(&state.org),
         extras: join_extras_allowed(&state),
+        accepts_ad: join_ad_allowed(&state),
+        ad_domain: state.ad.domain.clone(),
+        ad_ou_map,
         org: state.org,
         departments,
     }))
@@ -543,15 +637,18 @@ pub enum JoinRequestRefusal {
     /// v0.4 fields (`note`, `account`) while some member of the office
     /// still runs an older Mira ([`join_extras_allowed`]).
     ExtrasNotAccepted,
+    /// The AD claim (`ad`) while some member of the office still runs a
+    /// Mira older than `JOIN_AD_SINCE` ([`join_ad_allowed`]).
+    AdNotAccepted,
 }
 
 impl JoinRequestRefusal {
     pub fn code(self) -> &'static str {
         match self {
             JoinRequestRefusal::NotMember => "not_member",
-            JoinRequestRefusal::Invalid | JoinRequestRefusal::ExtrasNotAccepted => {
-                "invalid_request"
-            }
+            JoinRequestRefusal::Invalid
+            | JoinRequestRefusal::ExtrasNotAccepted
+            | JoinRequestRefusal::AdNotAccepted => "invalid_request",
             JoinRequestRefusal::WrongKey => "wrong_key",
             JoinRequestRefusal::Expired => "request_expired",
             JoinRequestRefusal::TeamNotFound => "team_not_found",
@@ -582,6 +679,9 @@ impl JoinRequestRefusal {
             }
             JoinRequestRefusal::ExtrasNotAccepted => {
                 "Kantor ini masih punya laptop Mira versi lama. Kirim ulang permintaan tanpa keterangan."
+            }
+            JoinRequestRefusal::AdNotAccepted => {
+                "Kantor ini masih punya laptop Mira versi lama. Kirim ulang permintaan tanpa data AD."
             }
         }
     }
@@ -829,6 +929,9 @@ pub fn receive_join_request(
     }
     // Members on an older Mira would refuse the forwarded request and the
     // `join_approve` op that carries it.
+    if req.payload.has_ad() && !join_ad_allowed(&state) {
+        return Err(JoinRequestRefusal::AdNotAccepted);
+    }
     if req.payload.has_extras() && !join_extras_allowed(&state) {
         return Err(JoinRequestRefusal::ExtrasNotAccepted);
     }
@@ -1012,6 +1115,7 @@ pub fn ingest_join_records(
     }
     prune_join_requests(&tx, &state, now)?;
     let extras_ok = join_extras_allowed(&state);
+    let ad_ok = join_ad_allowed(&state);
     let mut out = JoinIngest::default();
     for body in bodies {
         let Ok(record) = serde_json::from_str::<JoinRecord>(body) else {
@@ -1028,7 +1132,7 @@ pub fn ingest_join_records(
         };
         // Not stored while the gate is closed here (see
         // `receive_join_request`); offered again on the next sync.
-        if req.payload.has_extras() && !extras_ok {
+        if (req.payload.has_extras() && !extras_ok) || (req.payload.has_ad() && !ad_ok) {
             continue;
         }
         let seen = &record.seen;
@@ -1086,6 +1190,66 @@ pub struct JoinRequestView {
     pub note: Option<String>,
     /// v0.4: the requester's login name, from the signed request.
     pub account: Option<String>,
+    /// AD onboarding: the claim from the signed request (reported by the
+    /// requester's laptop), with what this office makes of it.
+    pub ad: Option<JoinAdView>,
+    /// The office has AD settings and the requester's Mira is older than
+    /// `JOIN_AD_SINCE`: approving is refused until it updates.
+    pub requester_outdated: bool,
+}
+
+/// The AD claim of a pending request, as the approver's card shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinAdView {
+    pub domain: String,
+    pub user: String,
+    pub dn: Option<String>,
+    pub name: Option<String>,
+    pub department: Option<String>,
+    /// OUs of `dn`, innermost first.
+    pub ous: Vec<String>,
+    /// Department suggested from the claim (`ad::dept::suggest`).
+    pub suggested_team_id: Option<String>,
+    /// The suggested department exists in this office.
+    pub department_in_mira: bool,
+}
+
+impl JoinAdView {
+    /// `departments`: (id, name) of the open departments.
+    pub fn new(claim: JoinAdClaim, departments: &[(String, String)], map: &[OuMapping]) -> Self {
+        let ous = claim
+            .dn
+            .as_deref()
+            .map(crate::ad::dn::ous)
+            .unwrap_or_default();
+        let suggestion = crate::ad::dept::suggest(
+            claim.department.as_deref(),
+            claim.dn.as_deref(),
+            departments,
+            map,
+        );
+        JoinAdView {
+            domain: claim.domain,
+            user: claim.user,
+            dn: claim.dn,
+            name: claim.name,
+            department: claim.department,
+            ous,
+            suggested_team_id: suggestion.team_id,
+            department_in_mira: suggestion.in_mira,
+        }
+    }
+}
+
+/// (id, name) of the open departments, for `ad::dept::suggest`.
+pub fn open_departments(state: &OrgState) -> Vec<(String, String)> {
+    state
+        .teams
+        .values()
+        .filter(|t| !t.deleted && !t.archived)
+        .map(|t| (t.id.clone(), t.name.clone()))
+        .collect()
 }
 
 struct PendingRow {
@@ -1128,6 +1292,7 @@ pub fn pending_join_requests(
             })
         })?
         .collect::<Result<_, _>>()?;
+    let departments = open_departments(state);
     let mut out = Vec::new();
     for row in rows {
         if !state.may_decide_join(me, &row.team) || state.join_decisions.contains_key(&row.id) {
@@ -1141,7 +1306,12 @@ pub fn pending_join_requests(
             continue;
         };
         let p = req.payload;
+        let requester_outdated = state.ad.set && is_below_ad_threshold(&p.app_version);
         out.push(JoinRequestView {
+            ad: p
+                .ad
+                .map(|claim| JoinAdView::new(claim, &departments, &state.ad.ou_map)),
+            requester_outdated,
             id: row.id,
             code: row.code,
             team_name: state

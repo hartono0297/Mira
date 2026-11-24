@@ -760,6 +760,7 @@ fn resend_extras(old: &OutgoingJoinRequest, office_accepts: bool) -> Option<Join
     (office_accepts && has_extras(old)).then(|| JoinExtras {
         note: old.note.clone(),
         account: login_account(),
+        ad: None,
     })
 }
 
@@ -864,6 +865,7 @@ pub async fn send_request(
     let extras = accepts_extras.then(|| JoinExtras {
         note: note.map(str::to_owned),
         account: login_account(),
+        ad: None,
     });
     let out = state.with_core(|c| {
         permissions::create_join_request(
@@ -1410,6 +1412,7 @@ mod tests {
             decided_at: None,
             last_sent_at: None,
             last_error: None,
+            ad: None,
         };
         let v = serde_json::to_value(&out).unwrap();
         assert_eq!(
@@ -1453,6 +1456,8 @@ mod tests {
             seen_by_name: None,
             note: Some("Staf gudang".into()),
             account: None,
+            ad: None,
+            requester_outdated: false,
         };
         let v = serde_json::to_value(&card).unwrap();
         assert_eq!(
@@ -1534,6 +1539,7 @@ mod tests {
                 app_version: "0.4.0".into(),
                 note: note.map(str::to_owned),
                 account: None,
+                ad: None,
                 at: "2026-11-23T08:00:00Z".into(),
                 nonce: "cd".repeat(16),
             };
@@ -1557,6 +1563,7 @@ mod tests {
                 decided_at: None,
                 last_sent_at: None,
                 last_error: None,
+                ad: None,
             }
         };
         let with = request(Some("Staf gudang"));

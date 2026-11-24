@@ -1,3 +1,4 @@
+mod ad_tests;
 mod causal_tests;
 mod db_tests;
 mod fold_tests;
