@@ -14,7 +14,7 @@ const en: Dict<typeof id> = {
     label: "Signature PIN",
     locked: (clock: string) => `Too many wrong PINs. Try again at ${clock}.`,
     cooling: (when: string) =>
-      `This signature can be used from ${when}, 24 hours after the previous signature was deleted without a PIN.`,
+      `You can use this signature from ${when}, 24 hours after the previous signature was deleted without a PIN.`,
     errorTitle: "Can't continue yet",
     cancel: "Cancel",
     checking: "Checking PIN...",
@@ -43,7 +43,7 @@ const en: Dict<typeof id> = {
     importing: "Processing image...",
     pickOther: "Choose another file",
     pickFile: "Choose an image file",
-    importHint: "PNG or JPG, up to 5 MB. Photograph your signature on white paper; the white background is removed automatically.",
+    importHint: "PNG or JPG, up to 5 MB. Photograph your signature on white paper; Mira removes the white background automatically.",
     cancel: "Cancel",
     preparing: "Preparing image...",
     next: "Continue to PIN",
@@ -63,7 +63,7 @@ const en: Dict<typeof id> = {
     save: "Save signature",
   },
   image: {
-    toPngFailed: "The signature image couldn't be converted to PNG. Try again.",
+    toPngFailed: "Couldn't convert the signature image to PNG. Try again.",
     tooComplex: "The image is too complex to save. Use a photo with a cleaner background.",
     wrongType: "This file isn't a PNG or JPG image. Choose a photo or scan of your signature.",
     tooLarge: "The image is larger than 5 MB. Make it smaller or choose another file.",

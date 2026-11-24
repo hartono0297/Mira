@@ -17,8 +17,8 @@ const en: Dict<typeof id> = {
     stale: "Couldn't load the latest list. Showing the last one loaded.",
   },
   newChannel: {
-    title: "New public channel",
-    description: "Everyone in the office can read and post in a public channel, except Guests.",
+    title: "New general channel",
+    description: "Everyone in the office except guests can read and post in a general channel.",
     nameLabel: "Channel name",
     previewAs: "Shows as ",
     rules: (max: number) => `Lowercase letters, numbers, and hyphens. Spaces become hyphens. Up to ${max} characters.`,
@@ -26,7 +26,7 @@ const en: Dict<typeof id> = {
     nameEmpty: "Enter a channel name first.",
     lockHint:
       "For an announcements channel, you can make it read-only from the channel menu after creating it. Then only superadmins can post there.",
-    forbidden: "Only superadmins can create public channels",
+    forbidden: "Only superadmins can create general channels",
     failed: "Channel not created",
     creating: "Creating channel...",
     create: "Create channel",
@@ -125,7 +125,7 @@ const en: Dict<typeof id> = {
     always: "This chat always has the same members as the project.",
     former: "You're no longer a member of this project, so new messages don't reach your laptop anymore.",
     canManage: "To add or remove people, open Project members on the Board.",
-    managed: "The project managers choose its members on the Board.",
+    managed: "Project managers choose its members on the Board.",
   },
 };
 

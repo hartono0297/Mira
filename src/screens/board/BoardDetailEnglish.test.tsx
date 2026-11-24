@@ -103,7 +103,7 @@ describe("Detail board dalam bahasa Inggris", () => {
     const confirm = await screen.findByRole("dialog", { name: "Remove Gita Tamu from the project?" });
     expect(
       within(confirm).getByText(
-        "Gita Tamu stops receiving new data from this project, and the project disappears from their board. Their Guest access to this project through an invite is revoked too.",
+        "Gita Tamu stops receiving new data from this project, and the project disappears from their board. Their guest access to this project through an invite is revoked too.",
       ),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
@@ -136,7 +136,7 @@ describe("Detail board dalam bahasa Inggris", () => {
   it("ringkasan orang terpilih memakai jamak bahasa Inggris", () => {
     setLang("en");
     expect(describePicked([PEOPLE[0]])).toBe("1 person from 1 department");
-    expect(describePicked(PEOPLE)).toBe("1 person from 1 department, 1 person without a department, and 1 Guest");
+    expect(describePicked(PEOPLE)).toBe("1 person from 1 department, 1 person without a department, and 1 guest");
   });
 
   it("dialog ubah nama proyek memakai teks Inggris", () => {

@@ -40,7 +40,7 @@ const en: Dict<typeof id> = {
 
   saidAdded: (title: string) => `Subtask ${title} added.`,
   saidSaved: "Subtask title saved.",
-  saidReverted: "Title change cancelled.",
+  saidReverted: "Title change canceled.",
   saidDone: (done: number, total: number) => `Done. ${done} of ${total} subtasks done.`,
   saidReopened: (done: number, total: number) => `Reopened. ${done} of ${total} subtasks done.`,
   saidDeleted: (title: string) => `Subtask ${title} deleted.`,
@@ -49,7 +49,7 @@ const en: Dict<typeof id> = {
   saidBottom: "This subtask is already at the bottom.",
   saidAssigned: (title: string, name: string) => `Assignee of ${title}: ${name}.`,
   saidUnassigned: (title: string) => `${title} has no assignee.`,
-  saidDragCancelled: "Drag cancelled.",
+  saidDragCancelled: "Drag canceled.",
 };
 
 export default en;

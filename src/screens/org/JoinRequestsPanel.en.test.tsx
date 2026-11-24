@@ -58,7 +58,7 @@ describe("Permintaan bergabung dalam bahasa Inggris", () => {
     expect(within(rina).getByText("Sign-in account (reported by the requesting laptop)")).toBeInTheDocument();
     expect(within(rina).getByText("Not sent")).toBeInTheDocument();
     expect(within(rina).getByRole("button", { name: "Approve Rina's request" })).toBeInTheDocument();
-    expect(CARD_TEXT.codeLabel).toBe("Matching code");
+    expect(CARD_TEXT.codeLabel).toBe("Match code");
     // Data peminta tidak diterjemahkan.
     expect(within(rina).getByText("Drafter baru di proyek Gedung B.")).toBeInTheDocument();
 

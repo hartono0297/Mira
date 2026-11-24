@@ -161,13 +161,13 @@ fn post_blocked_en(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
     } else if !ctx.in_audience(info, me)? {
         match &info.scope {
             Scope::Project(_) => {
-                "You are no longer a member of this project. New messages are no longer sent to your laptop."
+                "You're no longer a member of this project. New messages no longer reach your laptop."
             }
             Scope::Group(_) => {
-                "You are no longer in this group. New messages are no longer sent to your laptop."
+                "You're no longer in this group. New messages no longer reach your laptop."
             }
             Scope::Team(_) => {
-                "You are no longer in this department. New messages are no longer sent to your laptop."
+                "You're no longer in this department. New messages no longer reach your laptop."
             }
             Scope::Direct(..) => "You can no longer send direct messages to this colleague.",
             Scope::Umum | Scope::Org => "You can't post in this channel.",
@@ -575,7 +575,7 @@ fn reply_preview(ctx: &Ctx, row: &MessageRow) -> AppResult<Option<ReplyPreview>>
                 .lang()
                 .pick(
                     "Pesan asli belum ada di laptop ini",
-                    "The original message is not on this laptop yet",
+                    "The original message isn't on this laptop yet",
                 )
                 .to_owned(),
             deleted: false,

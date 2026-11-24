@@ -11,7 +11,7 @@ const en: Dict<typeof id> = {
     memuatProyek: "Loading projects...",
     belumAdaProyek: "No projects yet.",
     proyekBaru: "New project",
-    catatanBuat: "Projects are created by the superadmin or a department admin.",
+    catatanBuat: "A superadmin or a department admin creates projects.",
     artiTenggat: "tasks due today or overdue",
     belumSelesaiSr: (n: number) => ` ${plural(n, "task", "tasks")} not done`,
     keluarSr: (code: string, name: string) => `You left project ${code} ${name}.`,
@@ -59,7 +59,7 @@ const en: Dict<typeof id> = {
     pintasan: "Keyboard shortcuts",
     taskBaru: "New task",
     hanyaLihat:
-      "This board is view only. You can open tasks and read their comments, but you can't add, move, or change anything.",
+      "This board is view-only. You can open tasks and read their comments, but you can't add, move, or change anything.",
     pintasanLihat:
       "Select a card with Tab, then press Enter to open its details. Shift + F10 or the Menu key opens the card actions menu, same as right-click.",
     pintasanUbah:
@@ -89,7 +89,7 @@ const en: Dict<typeof id> = {
     sudahAnggotaTunggu: (label: string) =>
       `You're now a member of ${label}. The board appears once a project member's laptop connects.`,
     judul: "Other projects",
-    catatan: "Projects you haven't joined. As the superadmin, you can join them yourself.",
+    catatan: "Projects you haven't joined. As a superadmin, you can join them yourself.",
     belumTerbaca: "Couldn't read the other projects.",
     cobaLagi: "Try again",
     gabungLabel: (label: string) => `Join this project: ${label}`,
@@ -100,7 +100,7 @@ const en: Dict<typeof id> = {
     bergabung: "Joining...",
     belumBergabung: "You haven't joined",
     gabungIsi:
-      "You'll become a member of this project. This step is recorded in the organization log and visible to all members.",
+      "You'll become a member of this project. The organization log records this step, and all members can see it.",
     boardMenyusul: "The board appears once a project member's laptop connects.",
   },
 

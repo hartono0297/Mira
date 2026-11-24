@@ -23,7 +23,7 @@ const en: Dict<typeof id> = {
     // Timer
     timerGroup: "Your timer",
     start: "Start timer",
-    startHint: "Your timer still running on another task in this project will be stopped.",
+    startHint: "This stops any timer of yours still running on another task in this project.",
     stop: "Stop timer",
     stopDialog: "Stop timer",
     stopAt: "Stop at",
@@ -58,7 +58,7 @@ const en: Dict<typeof id> = {
     started: "Timer running.",
     stopped: (long: string) => `Timer stopped. ${long} logged.`,
     stoppedPlain: "Timer stopped.",
-    logged: (long: string) => `Entry of ${long} saved.`,
+    logged: (long: string) => `Logged ${long}.`,
     deleted: "Time entry deleted.",
   },
 };

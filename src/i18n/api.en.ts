@@ -46,24 +46,24 @@ const en: Dict<typeof id> = {
   },
   offlineHint: "If you're out of the office, turn on the office VPN.",
   inviteError: {
-    invalidTitle: "Invite code not valid",
+    invalidTitle: "Invalid invite code",
     notFoundTitle: "Code not recognized",
     notFoundBody:
       "The colleague's laptop that Mira found doesn't know this code. Check the code letter by letter, or ask a department admin for a new one.",
-    expiredTitle: "Code has expired",
+    expiredTitle: "Code expired",
     expiredBody: "This code is past its validity period. Ask the department admin who invited you for a new one.",
     usedTitle: "Code already used",
     usedBody: "This single-use code has already been used to join. Ask a department admin for a new one.",
     revokedTitle: "Code revoked",
-    revokedBody: "An admin cancelled this code. Ask a department admin for a new one.",
+    revokedBody: "An admin revoked this code. Ask a department admin for a new one.",
     noPeerTitle: "No colleague's laptop found yet",
     noPeerBody:
-      "Only a laptop of an organization member with Mira open can check the code. Try these steps, then press Join again:",
+      "Only an organization member's laptop with Mira open can check the code. Try these steps, then press Join again:",
     noPeerSteps: [
       "Connect this laptop to the same office Wi-Fi or LAN cable as your colleagues. Guest Wi-Fi usually keeps laptops apart.",
       "If you're out of the office, turn on the office VPN.",
       "Make sure the firewall on this laptop and on your colleague's laptop allows Mira (Windows Firewall on Windows, macOS Firewall on a MacBook).",
-      "Ask a colleague to open Settings > Network in Mira, then enter their laptop address in the Colleague's laptop address field.",
+      "Ask a colleague to open Settings > Network in Mira, then enter the laptop address under Colleague laptop addresses.",
     ],
     peerUnreachableTitle: "Colleague's laptop couldn't check the code",
     peerUnreachableBody: (message: string) =>
@@ -107,7 +107,7 @@ const en: Dict<typeof id> = {
   },
   pickFilesTitle: "Choose files for the library",
   saveCopyTitle: "Save a copy",
-  notBytes: "The file content from Mira's core isn't in byte form.",
+  notBytes: "The Mira core sent file content that isn't in byte form.",
 };
 
 export default en;

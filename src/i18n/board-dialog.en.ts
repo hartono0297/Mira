@@ -33,7 +33,7 @@ const en: Dict<typeof id> = {
     pakai: "Use",
     tanggalPetunjuk: "Day/month/year, for example 27/11/2026.",
     tanggalKosong: "Enter a date first, for example 27/11/2026.",
-    tanggalSalah: "That date wasn't recognised. Write day/month/year, for example 27/11/2026.",
+    tanggalSalah: "That date wasn't recognized. Write day/month/year, for example 27/11/2026.",
     tanggalTidakAda: "That date isn't on the calendar. Check the day and month.",
     hariIni: "Today",
     besok: "Tomorrow",
@@ -134,7 +134,7 @@ const en: Dict<typeof id> = {
     labelSudahAda: (label: string) => `The label "${label}" already exists.`,
     judulDiubahRekan: (title: string) =>
       `This title was just changed on another laptop to "${title}". Your text replaces it if you press Enter, leave this field, or close the dialog. Press Escape to use that title.`,
-    dataLama: (message: string) => `Couldn't read the latest data (${message}). Showing the last data received.`,
+    dataLama: (message: string) => `Couldn't read the latest data (${message}). Showing the last data loaded.`,
     // "Budi (you)", "Budi (no longer a project member)", "Budi (you, no longer a project member)".
     namaOrang: (name: string, mine: boolean, former = false) => {
       const notes = [mine ? "you" : "", former ? "no longer a project member" : ""].filter(Boolean);

@@ -212,7 +212,7 @@ describe("format board dalam bahasa Inggris", () => {
     expect(parseMinutes("2 hours")).toEqual({ minutes: 120, reason: null });
     expect(parseMinutes("45 min")).toEqual({ minutes: 45, reason: null });
     expect(parseMinutes("1j 30m")).toEqual({ minutes: 90, reason: null });
-    expect(parseMinutes("abc").reason).toMatch(/wasn't recognised/);
+    expect(parseMinutes("abc").reason).toMatch(/wasn't recognized/);
   });
 
   it("nama kolom, departemen, dan riwayat aktivitas", () => {

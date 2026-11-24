@@ -39,7 +39,7 @@ const en: Dict<typeof id> = {
         "Mira couldn't find a readable PDF structure. Make sure the file ends in .pdf and opens in another app. If it doesn't, ask the sender to send it again.",
     },
     password: {
-      title: "The PDF is password protected",
+      title: "The PDF is password-protected",
       detail:
         "Mira can't open locked PDFs yet. Unlock it in another PDF app, save it without a password, then open it here again.",
     },

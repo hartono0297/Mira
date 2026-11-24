@@ -6,9 +6,9 @@ const en: Dict<typeof id> = {
   subWaiting: (n: number) => `${n} ${plural(n, "document is", "documents are")} waiting for your signature`,
   subIdle: "PDFs signed on this laptop",
   loading: "Loading your signature and documents...",
-  incompleteData: "Mira sent incomplete signature data.",
+  incompleteData: "The Mira core sent incomplete signature data.",
   loadErrorTitle: "Couldn't read the signature list",
-  loadErrorFallback: "Mira didn't send any signature data.",
+  loadErrorFallback: "The Mira core didn't send any signature data.",
   retry: "Try again",
   staleData: (message: string) => `Couldn't read the latest data (${message}). Showing the last data loaded.`,
 
@@ -25,7 +25,7 @@ const en: Dict<typeof id> = {
       `Wrong PIN ${failed} ${plural(failed, "time", "times")} since the last correct one. ${left} ${plural(left, "attempt", "attempts")} left before a temporary lock.`,
     noneTitle: "No saved signature yet",
     noneHint:
-      "Draw with a mouse or pen, or use a photo of your signature. The image is stored locked and can only be used with your PIN.",
+      "Draw with a mouse or pen, or use a photo of your signature. Mira stores the image locked, and it only works with your PIN.",
     delete: "Delete signature",
     create: "Create signature",
   },
@@ -48,7 +48,7 @@ const en: Dict<typeof id> = {
     reading: "Reading PDF...",
     pick: "Choose a PDF to sign",
     guest:
-      "As a Guest, you can't request signatures, but you can sign documents from colleagues for projects you're allowed to open.",
+      "As a guest, you can't request signatures, but you can sign documents from colleagues for projects you're allowed to open.",
     warnTitle: (n: number) => `${n === 1 ? "One document needs" : `${n} documents need`} checking`,
     warnBody: "Some files changed or went missing after signing. The rows with a warning have the details.",
     emptyOthers: "Other documents you send or have signed show up here.",
@@ -69,13 +69,13 @@ const en: Dict<typeof id> = {
     downloadError: "Couldn't download the file",
     exported: (title: string, path: string) => `Copy of ${title} saved to ${path}`,
     exportError: "Copy not saved",
-    cancelled: (title: string) => `Request ${title} cancelled.`,
+    cancelled: (title: string) => `Request ${title} canceled.`,
   },
 
   pinDelete: {
     title: "Delete saved signature?",
     description:
-      "Enter your signature PIN. The signature image and its PIN are removed from this laptop. Documents you already signed stay as they are. You can create and use a new signature right away.",
+      "Enter your signature PIN. Mira removes the signature image and its PIN from this laptop. Documents you already signed stay as they are. You can create and use a new signature right away.",
     submit: "Delete signature",
     forgot: "Forgot PIN?",
   },
@@ -85,10 +85,10 @@ const en: Dict<typeof id> = {
     confirm: "Delete without PIN",
     busy: "Deleting...",
     errorTitle: "Signature not deleted",
-    body1: "The signature image and its PIN are removed from this laptop. Documents you already signed stay as they are.",
+    body1: "Mira removes the signature image and its PIN from this laptop. Documents you already signed stay as they are.",
     body2:
       "A new signature you create after this can only be used 24 hours after the deletion. The wait stops someone using your unlocked laptop from deleting your signature and signing with a PIN of their own.",
-    body3: "This deletion is recorded in the audit trail.",
+    body3: "The audit trail records this deletion.",
   },
 };
 

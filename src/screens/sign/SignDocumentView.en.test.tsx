@@ -134,7 +134,7 @@ describe("SignDocumentView in English", () => {
 
     await user.click(await screen.findByRole("button", { name: "Place signature" }));
     expect(screen.getByRole("button", { name: "Bottom right" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Done, sign now" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finish and sign" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Box size" })).toBeInTheDocument();
 
     // Hanya teks dari kamus layar ini; arah posisi (describeSpot) berasal dari signFlow.

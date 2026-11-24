@@ -20,7 +20,7 @@ const en: Dict<typeof id> = {
   nameTaken: (name: string) => `Label ${name} already exists.`,
   nameTakenRemoved: (name: string) =>
     `Label ${name} is in the Deleted section. Restore it so the people who used it get it back too.`,
-  restored: (name: string) => `Label ${name} restored. It shows next to the names of the people who had it again.`,
+  restored: (name: string) => `Label ${name} restored. It's back next to the names of the people who had it.`,
   restoreFail: (name: string) => `Label ${name} not restored`,
   title: "Labels",
   intro: (max: number) =>

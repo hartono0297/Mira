@@ -80,7 +80,7 @@ describe("dialog chat dalam bahasa Inggris", () => {
   it("Channel umum baru: petunjuk, pratinjau, dan validasi dalam bahasa Inggris", async () => {
     const user = userEvent.setup();
     renderInLang(() => <NewChannelDialog open onOpenChange={() => {}} onCreated={() => {}} />);
-    expect(screen.getByRole("dialog", { name: "New public channel" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "New general channel" })).toBeInTheDocument();
     expect(screen.getByText(/^Lowercase letters, numbers, and hyphens\./)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Create channel" }));
     expect(screen.getByText("Enter a channel name first.")).toBeInTheDocument();

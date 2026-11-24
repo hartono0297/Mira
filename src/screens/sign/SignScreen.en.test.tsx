@@ -98,7 +98,7 @@ describe("SignScreen dalam bahasa Inggris", () => {
   it("ganti bahasa ke Indonesia langsung berlaku", async () => {
     api.overview.mockResolvedValue(overview({ canRequest: false }));
     renderInLang(() => <SignScreen />);
-    expect(await screen.findByText(/As a Guest, you can't request signatures/)).toBeInTheDocument();
+    expect(await screen.findByText(/As a guest, you can't request signatures/)).toBeInTheDocument();
     act(() => setLang("id"));
     expect(screen.getByText(/Sebagai Tamu, Anda tidak bisa meminta tanda tangan/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Tanda tangan" })).toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("SignScreen dalam bahasa Inggris", () => {
     renderInLang(() => <SignScreen />);
     await user.click(await screen.findByRole("button", { name: "Delete signature" }));
     await user.click(await screen.findByRole("button", { name: "Forgot PIN?" }));
-    expect(await screen.findByText("This deletion is recorded in the audit trail.")).toBeInTheDocument();
+    expect(await screen.findByText("The audit trail records this deletion.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete without PIN" })).toBeInTheDocument();
   });
 });

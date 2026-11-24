@@ -7,7 +7,7 @@ const en: Dict<typeof id> = {
     signersMax: (max: number) =>
       `Up to ${max} signers per request. Untick a name first to choose someone else.`,
     droppedGuest: (who: string) =>
-      `Mira removed ${who} from the signers because Guests can only sign documents in projects they're allowed to open.`,
+      `Mira removed ${who} from the signers because guests can only sign documents in projects they're allowed to open.`,
     droppedProject: (who: string, _many: boolean) =>
       `Mira removed ${who} from the signers because they can't open this project.`,
     and: "and",
@@ -19,7 +19,7 @@ const en: Dict<typeof id> = {
     titleHint: (max: number) => `Shown in the list and on the PDF's signature record page. Up to ${max} characters.`,
     projectLabel: "Project",
     noProject: "No project",
-    projectHint: "Guests can only be chosen for projects they're allowed to open. Without a project, only members are listed.",
+    projectHint: "You can only choose guests for projects they're allowed to open. Without a project, only members are listed.",
     projectsLoading: "Loading projects...",
     projectsError: (message: string) =>
       `Couldn't read the project list (${message}). You can still create the request without a project.`,
@@ -87,7 +87,7 @@ const en: Dict<typeof id> = {
     hashAfter: "File fingerprint after",
     hash: "File fingerprint",
     valid: "Valid entry",
-    invalidRecord: "The entry's signature doesn't match. It may have been changed outside Mira.",
+    invalidRecord: "The entry's signature doesn't match. Someone may have changed it outside Mira.",
   },
 };
 

@@ -72,7 +72,7 @@ const en: Dict<typeof id> = {
     toSelf: "You join {to}.",
     to: "{name} joins {to}.",
     unchanged: "Project and group memberships stay the same.",
-    adminLost: (dept: string) => ` Department admin rights for ${dept} are removed too.`,
+    adminLost: (dept: string) => ` Department admin rights for ${dept} end too.`,
     failTitle: "Not moved",
     moving: "Moving...",
     submit: "Move",
@@ -91,9 +91,9 @@ const en: Dict<typeof id> = {
     adminDesc:
       "Approves join requests to this department, creates invite codes and department projects, and manages project members.",
     noDeptSelf:
-      "You aren't in a department yet, so you can't be made a department admin. Add yourself to one first with Change department.",
+      "You aren't in a department yet, so you can't become a department admin. Add yourself to one first with Change department.",
     noDept: (name: string) =>
-      `${name} isn't in a department yet, so they can't be made a department admin. Add them to one first with Change department.`,
+      `${name} isn't in a department yet, so they can't become a department admin. Add them to one first with Change department.`,
     superadmin: "Organization superadmin",
     makeSuperadmin: "Make superadmin",
     superadminDesc:
@@ -135,7 +135,7 @@ const en: Dict<typeof id> = {
     title: (name: string) => `Remove ${name} from the organization?`,
     confirm: (name: string) => `Remove ${name}`,
     busy: "Removing...",
-    failTitle: (name: string) => `${name} was not removed`,
+    failTitle: (name: string) => `${name} wasn't removed`,
     effect: (name: string) =>
       `${name} leaves their department and loses all their roles. Their laptop stops receiving new messages and changes, and colleagues' laptops refuse connections from it.`,
     data: (name: string) => `Data already on ${name}'s laptop stays there. Mira can't delete it remotely.`,

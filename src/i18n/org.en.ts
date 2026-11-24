@@ -10,8 +10,8 @@ const en: Dict<typeof id> = {
   screen: {
     title: "Organization",
     fingerprint: "fingerprint",
-    notFoundHint: "This screen has been reloaded. Check the data again before you retry.",
-    forbiddenHint: "Your role may have just changed. This screen has been reloaded.",
+    notFoundHint: "Mira reloaded this screen. Check the data again before you retry.",
+    forbiddenHint: "Your role may have just changed. Mira reloaded this screen.",
     tabs: {
       users: "Users",
       people: "Members",

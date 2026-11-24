@@ -50,7 +50,7 @@ const en: Dict<typeof id> = {
   saveCopyFile: (name: string) => `Save a copy of ${name}`,
   copyFileName: "Copy file name",
   fileBusy: "Wait for the other action to finish",
-  fileNameCopied: (name: string) => `Copied the name ${name}.`,
+  fileNameCopied: (name: string) => `File name ${name} copied.`,
   fileNameCopyFailed: "Couldn't copy the file name. Select it and press Ctrl+C.",
 
   personMenu: (name: string) => `Actions for ${name}`,

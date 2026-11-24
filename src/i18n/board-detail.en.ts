@@ -38,11 +38,11 @@ const en: Dict<typeof id> = {
     codeRule: "The code must be 2 to 6 characters, letters A to Z or digits, starting with a letter. For example: PA or WEB2.",
     forbiddenTitle: "You don't have permission to create projects",
     failedTitle: "Project not created",
-    forbiddenHint: "Projects are created by a superadmin or a department admin. Ask your department admin to create it for you.",
+    forbiddenHint: "A superadmin or a department admin creates projects. Ask your department admin to create it for you.",
     summaryNone:
-      "Nobody selected yet: this project will have only you, as its manager. You can add members and Guests later from the Project members panel.",
+      "Nobody selected yet: this project will have only you, as its manager. You can add members and guests later from the Project members panel.",
     summaryPicked: (picked: string) =>
-      `${picked}, plus you as the manager. Guests are invited after the project is created, from the Project members panel.`,
+      `${picked}, plus you as the manager. You can invite guests from the Project members panel once the project exists.`,
     cannotTitle: "Only a superadmin or a department admin can create projects.",
     cannotGuest: "Guests only see the projects they're invited to. Ask a project manager to add you.",
     cannotAskAdmins: (names: string) => `Ask your department admin (${names}) to create it and add you as a member.`,
@@ -53,13 +53,13 @@ const en: Dict<typeof id> = {
     loadingOrg: "Loading departments and people...",
     orgError: (message: string) =>
       `Couldn't read the departments and people (${message}). You can create the project once the list loads, so its department and members are right.`,
-    retryRead: "Read again",
+    retryRead: "Try reading again",
     dept: "Department",
     noDept: "No department",
     deptHint: (dept: string) =>
-      `The ${dept} department admins help you manage this project, and Guests invited through this department can be given access. Only the members you pick can see the project.`,
+      `The ${dept} department admins help you manage this project, and you can give access to guests invited through this department. Only the members you pick can see the project.`,
     noDeptHint:
-      "A project without a department is managed by you and any superadmin who is a member. Only the members you pick can see the project.",
+      "You and any superadmin who is a member manage a project without a department. Only the members you pick can see the project.",
     emptyPeople:
       "There's nobody else to pick yet. You can still create the project and add members later from the Project members panel.",
     close: "Close",
@@ -108,7 +108,7 @@ const en: Dict<typeof id> = {
     leaveFailed: "You haven't left the project",
     removeBody: (name: string) =>
       `${name} stops receiving new data from this project, and the project disappears from their board.`,
-    removeInvite: "Their Guest access to this project through an invite is revoked too.",
+    removeInvite: "Their guest access to this project through an invite is revoked too.",
     addBack: "A project manager can add them back at any time.",
     leaveBody: "You stop receiving new data from this project, and the project disappears from your board.",
     leaveLast:
@@ -119,7 +119,7 @@ const en: Dict<typeof id> = {
   },
   addMembers: {
     title: "Add project members",
-    description: "People you add can see this project's board, chat, and documents. You can add Guests here too.",
+    description: "People you add can see this project's board, chat, and documents. You can add guests here too.",
     pickOne: "Pick at least one person.",
     someone: "This person",
     loading: "Loading people...",
@@ -145,7 +145,7 @@ const en: Dict<typeof id> = {
     joinMany: (head: string, last: string) => `${head}, and ${last}`,
     inDept: (n: number, depts: number) => `${people(n)} from ${depts} ${plural(depts, "department", "departments")}`,
     withoutDept: (n: number) => `${people(n)} without a department`,
-    guests: (n: number) => `${n} ${plural(n, "Guest", "Guests")}`,
+    guests: (n: number) => `${n} ${plural(n, "guest", "guests")}`,
     picked: (summary: string) => `${summary} selected.`,
     noneSelected: "Nobody selected yet.",
     noMatch: (query: string) => `No names match "${query}".`,

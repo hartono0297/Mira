@@ -55,7 +55,7 @@ const en: Dict<typeof id> = {
   restoring: "Restoring...",
   renameLabel: (name: string) => `New name for department ${name}`,
   renameHintChange: (from: string, to: string) => `Channel # ${from} becomes # ${to}.`,
-  renameHint: "The department channel is renamed too. Chat history stays the same.",
+  renameHint: "The department channel gets the new name too. Chat history stays the same.",
   renamed: (from: string, to: string, channel: string) =>
     `Department ${from} is now called ${to}. Its channel is now # ${channel}.`,
   saving: "Saving...",

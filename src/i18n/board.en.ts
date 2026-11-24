@@ -27,7 +27,7 @@ const en: Dict<typeof id> = {
     kurangDariSemenitPanjang: "less than 1 minute",
     isian: {
       kosong: "Enter a duration first, for example 1h 30m.",
-      tidakDikenali: "That duration wasn't recognised. Write for example 90, 1h 30m, 1:30, or 1.5h.",
+      tidakDikenali: "That duration wasn't recognized. Write for example 90, 1h 30m, 1:30, or 1.5h.",
       terlaluSingkat: "The shortest duration is 1 minute.",
       terlaluLama: "The longest duration is 24 hours (1440 minutes).",
     },

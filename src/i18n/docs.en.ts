@@ -33,7 +33,7 @@ const en: Dict<typeof id> = {
   fetch: {
     copying: "The content is being copied from a colleague's laptop.",
     waiting: "The content is copied automatically once the colleague's laptop that has it connects.",
-    manual: "Files over 20 MB aren't copied automatically. Download it if you need to open it.",
+    manual: "Files over 20 MB aren't copied automatically. Download the file if you need to open it.",
   },
   downloadLabel: (size: string) => `Download from a colleague (${size})`,
 
@@ -46,7 +46,7 @@ const en: Dict<typeof id> = {
   waitReason: "Wait for the other action to finish",
   copyFailedTitle: "Couldn't copy the file name",
   clipboardMissing: "The clipboard isn't available in this window.",
-  copied: (name: string) => `Copied the name ${name}.`,
+  copied: (name: string) => `File name ${name} copied.`,
 
   exportBlocked: {
     copying: "The content is still being copied from a colleague's laptop",
@@ -77,7 +77,7 @@ const en: Dict<typeof id> = {
   notAvailable: "No colleague's laptop that has this file is connected right now.",
 
   errorTitle: {
-    forbidden: "You don't have permission to do this",
+    forbidden: "You don't have permission for this",
     notFound: "This file or version no longer exists",
     download: "Couldn't download the file",
     add: "Couldn't add the file",
@@ -94,7 +94,7 @@ const en: Dict<typeof id> = {
     editingRetry: "This file is being edited. Finish editing first, then try again.",
     editingWait: "This file is being edited. Wait until the editing is done.",
     notAvailable: "Try again when the colleague's laptop that has this version is on and connected to Mira.",
-    notFound: "The file list has been reloaded. Check it again before you retry.",
+    notFound: "Mira reloaded the file list. Check it again before you retry.",
     openFailed: "Make sure Microsoft Office, or an app for this file type, is installed on this laptop.",
   },
 
@@ -111,9 +111,9 @@ const en: Dict<typeof id> = {
     loadingDocs: "Loading documents...",
     listErrorTitle: "Couldn't read the document list",
     listMissing: "The Mira core didn't send a document list.",
-    retryRead: "Try again",
+    retryRead: "Try reading again",
     emptyBody:
-      "Add Word, Excel, PDF, or any other files. Each time a Word or Excel file is saved, Mira records a new version, so you can still open and restore older ones.",
+      "Add Word, Excel, PDF, or any other files. Each time someone saves a Word or Excel file, Mira records a new version, so you can still open and restore older ones.",
     listLabel: (place: string) => `Files in ${place}`,
   },
 

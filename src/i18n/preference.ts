@@ -57,6 +57,17 @@ export async function loadStoredLang(): Promise<void> {
 
 export type LangSaveError = { error: AppError; kept: Lang };
 
+// Penyimpanan app.language berurutan untuk seluruh aplikasi, supaya tulisan tiba
+// di inti Rust sesuai urutan klik. Tanpa ini, klik cepat id -> en -> id bisa
+// berakhir dengan "en" tersimpan sementara layar memakai "id".
+let saveQueue: Promise<unknown> = Promise.resolve();
+
+function queueSave(lang: Lang): Promise<unknown> {
+  const save = saveQueue.then(() => api.setSetting(LANG_SETTING_KEY, lang));
+  saveQueue = save.catch(() => undefined);
+  return save;
+}
+
 // Untuk pemilih bahasa: ganti langsung berlaku, lalu disimpan ke inti Rust.
 // Kalau gagal tersimpan, bahasa dikembalikan ke pilihan terakhir yang tersimpan.
 export function useLanguageChoice() {
@@ -74,20 +85,22 @@ export function useLanguageChoice() {
     if (next === getLang()) return;
     userChose = true;
     const id = ++latest.current;
-    const before = confirmed.current;
     setError(null);
     setLang(next);
     writeCachedLang(next);
     if (!isTauri()) return;
     setSaving(true);
     try {
-      await api.setSetting(LANG_SETTING_KEY, next);
-      if (id === latest.current) confirmed.current = next;
+      await queueSave(next);
+      // Antrean berurutan: yang berhasil terakhir adalah isi inti Rust sekarang,
+      // walaupun sudah ada pilihan yang lebih baru di belakangnya.
+      confirmed.current = next;
     } catch (err) {
       if (id === latest.current) {
-        setLang(before);
-        writeCachedLang(before);
-        setError({ error: toAppError(err), kept: before });
+        const kept = confirmed.current;
+        setLang(kept);
+        writeCachedLang(kept);
+        setError({ error: toAppError(err), kept });
       }
     } finally {
       if (id === latest.current) setSaving(false);

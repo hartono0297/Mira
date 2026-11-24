@@ -30,7 +30,7 @@ const en: Dict<typeof id> = {
     stale: "The chat list isn't up to date.",
     noOrgChannel: "No general channels yet.",
     newOrgChannel: "New general channel",
-    orgChannelBySuperadmin: "General channels are created by a superadmin.",
+    orgChannelBySuperadmin: "Only a superadmin can create general channels.",
     noDeptChannel: (department: string) => `No channels for Department ${department} yet.`,
     noDepartment: "No department yet.",
     noProjects: "You're not in any projects yet.",

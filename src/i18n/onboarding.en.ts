@@ -74,7 +74,7 @@ const en: Dict<typeof id> = {
   adminIt: {
     summary: "For IT admins",
     explain:
-      "A new office is set up only once, by an IT admin or superadmin, on the laptop of the first person to use Mira. Everyone else just asks to join.",
+      "An IT admin or superadmin sets up a new office only once, on the laptop of the first person to use Mira. Everyone else just asks to join.",
     button: "Set up Mira for a new office",
     officeSeen:
       "There's already a Mira office on this network, so don't set up a new one. Ask to join that office with Search again, a colleague's laptop address, or an invite code.",
@@ -146,9 +146,9 @@ const en: Dict<typeof id> = {
       "The approver's laptop must be on and connected to the same network.",
       "Contact the office admin directly and tell them your laptop name.",
     ],
-    cancelFailed: "Request not cancelled",
+    cancelFailed: "Request not canceled",
     cancel: "Cancel request",
-    cancelling: "Cancelling...",
+    cancelling: "Canceling...",
   },
   rejected: {
     heading: "Request declined",

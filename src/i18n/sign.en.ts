@@ -6,12 +6,12 @@ const en: Dict<typeof id> = {
     your_turn: "Your turn",
     waiting_others: "Waiting for others",
     signed: "Signed by you",
-    not_involved: "You are not a signer",
+    not_involved: "You're not a signer",
   },
   status: {
     in_progress: "In progress",
     completed: "Completed, locked",
-    cancelled: "Cancelled",
+    cancelled: "Canceled",
   },
   requestState: {
     waitingFile: "Waiting for the file",
@@ -20,7 +20,7 @@ const en: Dict<typeof id> = {
     waitingSigners: "Waiting for signers",
   },
   headerProgress: (status: string, signed: number, total: number) => `${status}, ${signed} of ${total} signed`,
-  sealInvalid: "Completed, lock not valid",
+  sealInvalid: "Completed, lock invalid",
   mode: {
     sequential: "In order",
     parallel: "Any order",
@@ -37,7 +37,7 @@ const en: Dict<typeof id> = {
     created: "Request created",
     signed: "Signed",
     completed: "All signed, document locked",
-    cancelled: "Request cancelled",
+    cancelled: "Request canceled",
     exported: "PDF copy saved outside Mira",
     signature_saved: "Created a new signature",
     signature_deleted: "Deleted a signature",
@@ -71,7 +71,7 @@ const en: Dict<typeof id> = {
   cancelConfirm: {
     title: "Cancel this request?",
     confirmLabel: "Cancel request",
-    busyLabel: "Cancelling...",
+    busyLabel: "Canceling...",
     body: "Signers who haven't signed yet won't be able to sign. Existing signatures stay in the audit trail. You can't undo a cancellation.",
   },
   rowMenu: {
@@ -91,9 +91,9 @@ const en: Dict<typeof id> = {
   },
   signError: {
     version_not_prefix:
-      "Mira rejected this signature because the previous version isn't fully contained in it. Signatures can only be added after the existing content. Try again. If it's still rejected, ask the requester to create a new request.",
+      "Mira rejected this signature because the previous version isn't fully contained in it. Signatures can only be added after the existing content. Try again. If it's still rejected, ask the sender to create a new request.",
     version_changes_content:
-      "Mira rejected this signature because it changes the document beyond the signature stamp. Try again. If it's still rejected, ask the requester to create a new request.",
+      "Mira rejected this signature because it changes the document beyond the signature stamp. Try again. If it's still rejected, ask the sender to create a new request.",
     not_available:
       "No connected colleague's laptop has this file yet. Try again when the laptop that has it is on and connected to Mira.",
   },
@@ -119,7 +119,7 @@ const en: Dict<typeof id> = {
   exportNotice: (count: number) =>
     `${count > 1 ? `${count} copies` : "One copy"} saved outside Mira ${count > 1 ? "have" : "has"} changed. See the PDF copies section for details.`,
   cooling: (when: string) =>
-    `Your new signature can be used from ${when}, because your previous signature was deleted without a PIN.`,
+    `You can use your new signature from ${when}, because your previous signature was deleted without a PIN.`,
   size: {
     bytes: (n: number) => `${n} ${plural(n, "byte", "bytes")}`,
   },

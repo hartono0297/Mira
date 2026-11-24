@@ -17,7 +17,7 @@ const en: Dict<typeof id> = {
     "Windows will show an administrator permission window. If your account isn't an administrator, that window asks for an admin name and password.",
   started: "The Windows permission window is open. After you choose Yes there, press Check again.",
   notStartedTitle: "The Windows permission window didn't open",
-  notStartedBody: "It may have been closed or cancelled. Try again, or send the command below to your IT team.",
+  notStartedBody: "It may have been closed or canceled. Try again, or send the command below to your IT team.",
   requestErrorTitle: "Couldn't ask for permission",
   noAdmin: "No administrator rights?",
   noAdminBody:
