@@ -93,6 +93,7 @@ export function KopiProfileSection({ person }: Props) {
         <ProfileBody
           profile={load.profile}
           person={person}
+          onGiven={() => void reload()}
           onChanged={() => {
             void reload();
             void reloadOverview();
@@ -103,13 +104,17 @@ export function KopiProfileSection({ person }: Props) {
   );
 }
 
+// onGiven memuat ulang profil saja (dialog sudah memuat ulang ringkasan);
+// onChanged dipakai setelah menyembunyikan, yang mengubah keduanya.
 function ProfileBody({
   profile,
   person,
+  onGiven,
   onChanged,
 }: {
   profile: KopiProfile;
   person: KopiPerson;
+  onGiven: () => void;
   onChanged: () => void;
 }) {
   const { overview } = useKopi();
@@ -117,7 +122,7 @@ function ProfileBody({
   return (
     <>
       <Summary profile={profile} tiers={overview.tiers} peerWeight={overview.peerWeight} workWeight={overview.workWeight} />
-      <GiveButton person={person} onGiven={onChanged} />
+      <GiveButton person={person} onGiven={onGiven} />
       <History entries={profile.history} isSuperadmin={overview.isSuperadmin} onChanged={onChanged} />
     </>
   );
@@ -187,22 +192,25 @@ function Summary({
 
 function GiveButton({ person, onGiven }: { person: KopiPerson; onGiven: () => void }) {
   const { overview } = useKopi();
-  const [open, setOpen] = useState(false);
+  // Target ditetapkan saat tombol diklik, jadi dialog yang dibuka sebelum tengah
+  // malam tidak memakai hari kemarin dari render lama. null: dialog tertutup.
+  const [target, setTarget] = useState<KopiTarget | null>(null);
+  const [sent, setSent] = useState("");
   const noteId = useId();
   if (!overview || !overview.canGive || person.publicKey === overview.me) return null;
-  const target: KopiTarget = { kind: "profile", day: kopiToday() };
+  const todayKey = kopiTargetKey(person.publicKey, { kind: "profile", day: kopiToday() });
   let why: string | null = null;
-  if (overview.givenTargets.includes(kopiTargetKey(person.publicKey, target))) why = T.profile.givenToday;
+  if (overview.givenTargets.includes(todayKey)) why = T.profile.givenToday;
   else if (overview.givenToday >= overview.dailyLimit) why = T.profile.noneLeft(overview.dailyLimit);
   return (
     <div className="kopi-give-row">
       <button
         type="button"
-        className="btn btn-ghost btn-sm"
+        className="btn btn-ghost btn-sm kopi-btn kopi-tap"
         aria-disabled={why ? true : undefined}
         aria-describedby={why ? noteId : undefined}
         onClick={() => {
-          if (!why) setOpen(true);
+          if (!why) setTarget({ kind: "profile", day: kopiToday() });
         }}
       >
         <IconCoffee size={16} aria-hidden="true" />
@@ -213,7 +221,21 @@ function GiveButton({ person, onGiven }: { person: KopiPerson; onGiven: () => vo
           {why}
         </p>
       )}
-      <KopiGiveDialog open={open} onClose={() => setOpen(false)} to={person} target={target} onGiven={onGiven} />
+      <p className="sr-only" role="status">
+        {sent}
+      </p>
+      {target && (
+        <KopiGiveDialog
+          open
+          onClose={() => setTarget(null)}
+          to={person}
+          target={target}
+          onGiven={(name) => {
+            setSent(T.give.sent(name));
+            onGiven();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -266,19 +288,28 @@ function History({
                 <IconCoffee size={16} className="kopi-entry-icon" aria-hidden="true" />
                 <div className="kopi-entry-body">
                   <p className="kopi-entry-head">
-                    <strong>{e.from.name}</strong> {via(e.target)}
+                    <span>
+                      <strong>{e.from.name}</strong>, {via(e.target)}
+                    </span>
                     {e.hidden && <span className="chip kopi-hidden-chip">{T.profile.hiddenChip}</span>}
                   </p>
                   <p className="kopi-entry-reason">{e.reason}</p>
                   <Time at={e.at} />
                 </div>
                 {isSuperadmin && (
+                  // aria-disabled, bukan disabled: tombol yang baru diklik tetap memegang fokus.
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm kopi-entry-act"
-                    aria-label={e.hidden ? T.profile.unhideFor(e.from.name) : T.profile.hideFor(e.from.name)}
-                    onClick={() => void toggle(e.id, !e.hidden)}
-                    disabled={busy !== null}
+                    className="btn btn-ghost btn-sm kopi-btn kopi-tap kopi-entry-act"
+                    aria-label={
+                      e.hidden
+                        ? T.profile.unhideFor(e.from.name, relativeTime(e.at))
+                        : T.profile.hideFor(e.from.name, relativeTime(e.at))
+                    }
+                    onClick={() => {
+                      if (busy === null) void toggle(e.id, !e.hidden);
+                    }}
+                    aria-disabled={busy !== null || undefined}
                     aria-busy={busy === e.id || undefined}
                   >
                     {e.hidden ? T.profile.unhide : T.profile.hide}
@@ -302,7 +333,7 @@ function History({
         </ul>
       )}
       {entries.length > HISTORY_PREVIEW && (
-        <button type="button" className="link-btn kopi-more" aria-expanded={all} onClick={() => setAll((v) => !v)}>
+        <button type="button" className="link-btn kopi-more kopi-tap" aria-expanded={all} onClick={() => setAll((v) => !v)}>
           {all ? T.profile.showLess : T.profile.showAll(entries.length)}
         </button>
       )}

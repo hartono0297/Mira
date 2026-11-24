@@ -10,16 +10,22 @@ const kopi = vi.hoisted(() => ({ overview: null as KopiOverview | null, reload: 
 
 vi.mock("../../components/useKopi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../components/useKopi")>()),
-  useKopi: () => ({ overview: kopi.overview, badgeOf: () => null, reload: kopi.reload }),
+  useKopi: () => ({ overview: kopi.overview, error: null, badgeOf: () => null, reload: kopi.reload }),
 }));
 
 vi.mock("../../components/KopiGiveDialog", () => ({
-  KopiGiveDialog: (p: { to: { name: string }; target: KopiTarget; context?: string; onClose: () => void; onGiven?: () => void }) => (
+  KopiGiveDialog: (p: {
+    to: { name: string };
+    target: KopiTarget;
+    context?: string;
+    onClose: () => void;
+    onGiven?: (name: string) => void;
+  }) => (
     <div role="dialog" aria-label="Dialog kopi tiruan">
       <p>untuk {p.to.name}</p>
       <p>target {JSON.stringify(p.target)}</p>
       <p>konteks {p.context}</p>
-      <button type="button" onClick={p.onGiven}>
+      <button type="button" onClick={() => p.onGiven?.(p.to.name)}>
         Tiruan terkirim
       </button>
       <button type="button" onClick={p.onClose}>
@@ -111,9 +117,12 @@ describe("TaskKopiThanks", () => {
     expect(dlg).toHaveTextContent(`target {"kind":"task","project":"${PROJECT}","task":"t1"}`);
     expect(dlg).toHaveTextContent("konteks Kirim kontrak");
     await user.click(screen.getByRole("button", { name: "Tiruan terkirim" }));
-    expect(kopi.reload).toHaveBeenCalled();
+    // Dialog sudah memuat ulang ringkasan; tombol tidak memuat ulang lagi.
+    expect(kopi.reload).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Tiruan tutup" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+    // Live region milik komponen ini tetap ada setelah dialog tertutup.
+    expect(screen.getByRole("status")).toHaveTextContent("Kopi terkirim untuk Sari.");
   });
 
   it("tidak tampil untuk task yang belum selesai", () => {
@@ -148,6 +157,7 @@ describe("TaskKopiThanks", () => {
     kopi.overview = overview({ givenToday: 3 });
     render(<TaskKopiThanks projectId={PROJECT} task={task()} me={ME} />);
     const btn = screen.getByRole("button", { name: "Thank Sari" });
+    expect(btn).toHaveClass("kopi-btn", "kopi-tap");
     expect(btn).toHaveAccessibleDescription("You've given all of today's coffee (3 a day). You can give more tomorrow.");
   });
 });

@@ -7,7 +7,9 @@ import type { TaskCard } from "../../api/board";
 import { kopiTargetKey, type KopiOverview, type KopiTarget } from "../../api/kopi";
 import { KopiGiveDialog } from "../../components/KopiGiveDialog";
 import { useKopi } from "../../components/useKopi";
+import { KOPI_TEXT } from "../../i18n/kopi";
 import { KOPI_ENTRY } from "../../i18n/kopi-entry";
+import "../../components/kopi.css";
 import "./task-kopi.css";
 
 type TaskLike = Pick<TaskCard, "id" | "title" | "columnId" | "assignee">;
@@ -31,6 +33,8 @@ function taskTarget(projectId: string, task: TaskLike): KopiTarget {
 export function TaskKopiThanks({ projectId, task, me }: { projectId: string; task: TaskLike; me: string }) {
   const kopi = useKopi();
   const [open, setOpen] = useState(false);
+  // Pengumuman setelah dialog tertutup; live region tetap ada di DOM.
+  const [sent, setSent] = useState("");
   const reasonId = useId();
   const state = taskKopiState(kopi.overview, projectId, task, me);
   const who = task.assignee;
@@ -42,7 +46,7 @@ export function TaskKopiThanks({ projectId, task, me }: { projectId: string; tas
       {/* aria-disabled, bukan disabled: tombol tetap bisa difokus supaya alasannya terbaca. */}
       <button
         type="button"
-        className="btn btn-ghost btn-sm"
+        className="btn btn-ghost btn-sm kopi-btn kopi-tap"
         aria-disabled={disabled || undefined}
         aria-describedby={disabled ? reasonId : undefined}
         onClick={() => {
@@ -57,6 +61,9 @@ export function TaskKopiThanks({ projectId, task, me }: { projectId: string; tas
           {state.disabled}
         </p>
       )}
+      <p className="sr-only" role="status">
+        {sent}
+      </p>
       {open && (
         <KopiGiveDialog
           open
@@ -64,7 +71,7 @@ export function TaskKopiThanks({ projectId, task, me }: { projectId: string; tas
           to={who}
           target={taskTarget(projectId, task)}
           context={task.title}
-          onGiven={() => void kopi.reload()}
+          onGiven={(name) => setSent(KOPI_TEXT.give.sent(name))}
         />
       )}
     </div>

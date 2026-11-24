@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { toAppError } from "../api";
 import { kopiApi, kopiTargetKey, type KopiPerson, type KopiTarget } from "../api/kopi";
 import { KOPI_TEXT as T } from "../i18n/kopi";
@@ -20,11 +20,16 @@ type Props = {
   target: KopiTarget;
   // Potongan pesan atau judul task yang diberi kopi, ditampilkan sebagai pengingat.
   context?: string;
-  onGiven?: () => void;
+  // Dipanggil setelah kopi terkirim, dengan nama penerima, supaya pemanggil
+  // bisa mengumumkannya lewat live region yang tetap ada setelah dialog tertutup.
+  // Ringkasan Kopi sudah dimuat ulang oleh dialog ini.
+  onGiven?: (name: string) => void;
 };
 
 // Dialog Beri kopi: alasan wajib, sisa jatah hari ini, dan catatan bahwa
 // alasan terlihat oleh semua orang. Escape dan Batal menutup kecuali saat mengirim.
+// Pemanggil sebaiknya memasang dialog hanya saat terbuka; isian juga dikosongkan
+// saat ditutup, jadi alasan lama tidak pernah tampil lagi.
 export function KopiGiveDialog({ open, onClose, to, target, context, onGiven }: Props) {
   const { overview, reload } = useKopi();
   const [reason, setReason] = useState("");
@@ -34,15 +39,12 @@ export function KopiGiveDialog({ open, onClose, to, target, context, onGiven }: 
   const field = useRef<HTMLTextAreaElement>(null);
   const ids = useId();
 
-  // Isian kosong lagi setiap kali dialog dibuka.
-  useEffect(() => {
-    if (open) {
-      setReason("");
-      setCheck(false);
-      setError(null);
-      setBusy(false);
-    }
-  }, [open]);
+  function close() {
+    setReason("");
+    setCheck(false);
+    setError(null);
+    onClose();
+  }
 
   const max = overview?.reasonMax ?? REASON_MAX;
   const limit = overview?.dailyLimit ?? DAILY_LIMIT;
@@ -69,10 +71,12 @@ export function KopiGiveDialog({ open, onClose, to, target, context, onGiven }: 
     try {
       await kopiApi.give({ to: to.publicKey, target, reason: reason.trim() });
       void reload();
-      onGiven?.();
-      onClose();
+      onGiven?.(to.name);
+      close();
     } catch (err) {
       setError(toAppError(err).message);
+      // Isian tetap bisa difokus selama mengirim (readOnly, bukan disabled).
+      field.current?.focus();
     } finally {
       setBusy(false);
     }
@@ -82,12 +86,16 @@ export function KopiGiveDialog({ open, onClose, to, target, context, onGiven }: 
   const counterId = `${ids}-counter`;
   const hintId = `${ids}-hint`;
   const errorId = `${ids}-error`;
+  const quotaId = `${ids}-quota`;
+  // Tombol kirim tidak memakai disabled: saat sibuk ia sedang difokus, dan saat
+  // terhalang alasannya harus tetap terbaca. Klik diabaikan di submit().
+  const sendOff = busy || blocked !== null;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next && !busy) onClose();
+        if (!next && !busy) close();
       }}
       title={T.give.title(to.name)}
       onOpenAutoFocus={(e) => {
@@ -113,7 +121,7 @@ export function KopiGiveDialog({ open, onClose, to, target, context, onGiven }: 
             onChange={(e) => setReason(e.target.value)}
             aria-invalid={showReasonError || undefined}
             aria-describedby={`${hintId} ${counterId}${showReasonError ? ` ${errorId}` : ""}`}
-            disabled={busy}
+            readOnly={busy}
           />
           <div className="kopi-give-meta">
             <p id={hintId} className="hint">
@@ -130,7 +138,7 @@ export function KopiGiveDialog({ open, onClose, to, target, context, onGiven }: 
           )}
         </div>
         {(blocked || left !== null) && (
-          <p className={`kopi-give-quota${blocked ? " kopi-give-blocked" : ""}`}>
+          <p id={quotaId} className={`kopi-give-quota${blocked ? " kopi-give-blocked" : ""}`}>
             {blocked ?? (left !== null ? T.give.left(left, limit) : null)}
           </p>
         )}
@@ -149,8 +157,9 @@ export function KopiGiveDialog({ open, onClose, to, target, context, onGiven }: 
           </DialogClose>
           <button
             type="submit"
-            className="btn"
-            disabled={busy || blocked !== null}
+            className="btn kopi-btn"
+            aria-disabled={sendOff || undefined}
+            aria-describedby={blocked ? quotaId : undefined}
             aria-busy={busy || undefined}
           >
             {busy ? T.give.sending : T.give.send}

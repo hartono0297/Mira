@@ -56,6 +56,16 @@
   height: 10px;
 }
 
+/* Nama dan ikon kopi dalam satu baris di daftar orang (Organisasi), yang
+   barisnya berupa kolom flex. */
+.kopi-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  min-width: 0;
+}
+
 /* Dialog Beri kopi */
 
 .kopi-give {
@@ -299,14 +309,13 @@
   color: var(--accent-text);
 }
 
-/* Entri tersembunyi: ditandai chip teks dan garis putus, bukan hanya pudar. */
+/* Entri tersembunyi: chip teks "Disembunyikan" dan bingkai putus-putus
+   (--border-strong, 3:1 di atas latar), isinya tetap terbaca utuh. Outline
+   dengan offset negatif supaya tidak menggeser tata letak daftar. */
 .kopi-entry-hidden {
-  background: var(--card);
-}
-
-.kopi-entry-hidden .kopi-entry-reason {
-  text-decoration: line-through;
-  text-decoration-color: var(--text-sec);
+  outline: 1px dashed var(--border-strong);
+  outline-offset: -4px;
+  border-radius: 10px;
 }
 
 .kopi-entry-body {
@@ -337,7 +346,41 @@
 
 .kopi-more {
   align-self: flex-start;
-  min-height: 32px;
+}
+
+/* Tombol Kopi di profil, riwayat, dan task: area sentuh minimal 44px. */
+.kopi-tap,
+.btn.kopi-tap {
+  min-height: 44px;
+}
+
+/* Tombol Kopi yang tidak bisa dipakai memakai aria-disabled (tetap bisa difokus
+   dan alasannya terbaca), bukan disabled. Dipakai profil, dialog, dan task.
+   Tombol garis: pudar 0,75 seperti .btn:disabled, teks tetap 7,06:1 (terang)
+   dan 8,8:1 (gelap). Tombol utama (Kirim kopi) tidak dipudarkan, karena putih di
+   atas aksen yang pudar hanya 3,42:1; ia memakai rupa tombol garis dengan
+   --text-sec di atas --card (5,86:1 dan 7,61:1). Hover tidak menyorot. */
+.btn.btn-ghost.kopi-btn[aria-disabled="true"] {
+  opacity: 0.75;
+}
+
+.btn.kopi-btn:not(.btn-ghost)[aria-disabled="true"]:not([aria-busy="true"]) {
+  background: var(--card);
+  border-color: var(--border-strong);
+  color: var(--text-sec);
+}
+
+.btn.kopi-btn[aria-disabled="true"]:hover {
+  filter: none;
+}
+
+.btn.btn-ghost.kopi-btn[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+/* Sedang mengirim: tetap berwarna aksen, kursor progress. */
+.btn.kopi-btn[aria-busy="true"] {
+  cursor: progress;
 }
 
 @media (max-width: 420px) {

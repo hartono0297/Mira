@@ -7,6 +7,7 @@ import { kopiTargetKey, type KopiOverview, type KopiTarget } from "../../api/kop
 import type { MenuAction } from "../../components/ContextMenu";
 import { KopiGiveDialog } from "../../components/KopiGiveDialog";
 import { useKopi } from "../../components/useKopi";
+import { KOPI_TEXT } from "../../i18n/kopi";
 import { KOPI_ENTRY } from "../../i18n/kopi-entry";
 
 // Panjang cuplikan pesan yang tampil di dialog, supaya pemberi ingat pesan mana.
@@ -36,8 +37,12 @@ export function messageSnippet(message: MessageView): string {
   return line.length > SNIPPET_MAX ? `${line.slice(0, SNIPPET_MAX - 3).trimEnd()}...` : line;
 }
 
-// Item menu dan dialognya. `item` null kalau tidak tampil.
-export function useKopiMessage(message: MessageView): { item: MenuAction | null; element: ReactNode } {
+// Item menu dan dialognya. `item` null kalau tidak tampil. announce: live region
+// percakapan, dipakai untuk "Kopi terkirim untuk <nama>." setelah dialog tertutup.
+export function useKopiMessage(
+  message: MessageView,
+  announce?: (text: string) => void,
+): { item: MenuAction | null; element: ReactNode } {
   const kopi = useKopi();
   const [open, setOpen] = useState(false);
   const state = kopiMessageState(kopi.overview, message);
@@ -58,7 +63,7 @@ export function useKopiMessage(message: MessageView): { item: MenuAction | null;
       to={message.author}
       target={messageTarget(message)}
       context={messageSnippet(message)}
-      onGiven={() => void kopi.reload()}
+      onGiven={(name) => announce?.(KOPI_TEXT.give.sent(name))}
     />
   ) : null;
   return { item, element };

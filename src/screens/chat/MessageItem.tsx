@@ -75,7 +75,7 @@ export function MessageItem({
   }
 
   const mention = conv?.mention;
-  const kopi = useKopiMessage(message);
+  const kopi = useKopiMessage(message, onAnnounce);
   // Pesan dihapus tanpa item: klik kanan di sana tidak membuka menu pesan.
   const menu = useContextMenu({
     label: MENU.messageMenu(name, time),
@@ -173,7 +173,7 @@ export function MessageItem({
                 <PersonName person={message.author} />
               )}
             </span>
-            <KopiMark publicKey={message.author.publicKey} />
+            <KopiMark publicKey={message.author.publicKey} minTier="andalan" />
             <time dateTime={message.at} title={fullTime(message.at)}>
               {time}
             </time>

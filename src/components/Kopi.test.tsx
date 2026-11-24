@@ -1,14 +1,14 @@
 // Komponen fitur Kopi: ikon di samping nama, dialog Beri kopi, bagian Kopi di profil.
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KopiBadge, KopiOverview, KopiProfile } from "../api/kopi";
 import { renderInLang } from "../test/i18n";
 import { KopiGiveDialog } from "./KopiGiveDialog";
 import { KopiMark } from "./KopiMark";
 import { KopiProfileSection } from "./KopiProfileSection";
 import { kopiToday } from "./kopiText";
-import { resetKopiStore } from "./useKopi";
+import { KOPI_EVENT_DELAY_MS, reloadKopi, resetKopiStore, useKopi } from "./useKopi";
 
 const api = vi.hoisted(() => ({
   overview: vi.fn(),
@@ -18,6 +18,26 @@ const api = vi.hoisted(() => ({
   setSettings: vi.fn(),
   board: vi.fn(),
 }));
+
+// Event fitur dipicu langsung dari tes.
+const feature = vi.hoisted(() => ({ handlers: new Map<string, Set<() => void>>() }));
+
+function fire(topic: string) {
+  for (const h of feature.handlers.get(topic) ?? []) h();
+}
+
+vi.mock("../api", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../api")>();
+  return {
+    ...orig,
+    subscribeFeature: (topic: string, handler: () => void) => {
+      const set = feature.handlers.get(topic) ?? new Set<() => void>();
+      set.add(handler);
+      feature.handlers.set(topic, set);
+      return () => set.delete(handler);
+    },
+  };
+});
 
 vi.mock("../api/kopi", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api/kopi")>();
@@ -107,8 +127,14 @@ async function loaded() {
   });
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   resetKopiStore();
+  feature.handlers.clear();
+  api.overview.mockReset();
   api.overview.mockResolvedValue(overview());
   api.profile.mockResolvedValue(profile());
   api.give.mockResolvedValue(undefined);
@@ -126,6 +152,22 @@ describe("KopiMark", () => {
     );
     expect(await screen.findByRole("img", { name: "Andalan, 9 kopi" })).toHaveAttribute("data-tier", "andalan");
     expect(screen.getByRole("img", { name: "Anak baru, 5 kopi" })).toBeInTheDocument();
+  });
+
+  it("minTier: chat hanya menampilkan Andalan ke atas", async () => {
+    api.overview.mockResolvedValue(
+      overview({ badges: [badge(PK_B, 2, 3, "anak_baru"), badge(PK_C, 5, 4, "andalan"), badge(ME, 70, 0, "legenda")] }),
+    );
+    render(
+      <>
+        <KopiMark publicKey={PK_B} minTier="andalan" />
+        <KopiMark publicKey={PK_C} minTier="andalan" />
+        <KopiMark publicKey={ME} minTier="andalan" />
+      </>,
+    );
+    expect(await screen.findByRole("img", { name: "Andalan, 9 kopi" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Legenda, 70 kopi" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Anak baru/ })).not.toBeInTheDocument();
   });
 
   it("tidak tampil untuk orang dengan skor 0 atau tanpa badge", async () => {
@@ -164,6 +206,72 @@ describe("KopiMark", () => {
     ));
     expect(await screen.findByRole("img", { name: "Newcomer, 1 coffee" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Legend, 60 coffees" })).toBeInTheDocument();
+  });
+});
+
+describe("useKopi", () => {
+  function Probe({ onRender }: { onRender: () => void }) {
+    const { overview: o } = useKopi();
+    onRender();
+    return <span>{o?.givenToday}</span>;
+  }
+
+  it("ringkasan yang sama tidak membuat snapshot baru (tidak render ulang)", async () => {
+    const onRender = vi.fn();
+    render(<Probe onRender={onRender} />);
+    await loaded();
+    const before = onRender.mock.calls.length;
+    await act(async () => {
+      await reloadKopi();
+    });
+    expect(api.overview).toHaveBeenCalledTimes(2);
+    expect(onRender).toHaveBeenCalledTimes(before);
+
+    api.overview.mockResolvedValue(overview({ givenToday: 2 }));
+    await act(async () => {
+      await reloadKopi();
+    });
+    expect(onRender.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("hanya satu kopi_overview berjalan; permintaan selama itu jadi satu ulangan", async () => {
+    const pending: ((o: KopiOverview) => void)[] = [];
+    api.overview.mockImplementation(() => new Promise<KopiOverview>((r) => pending.push(r)));
+    const a = reloadKopi();
+    const b = reloadKopi();
+    const c = reloadKopi();
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+    expect(api.overview).toHaveBeenCalledTimes(1);
+
+    pending[0](overview());
+    await new Promise((r) => setTimeout(r, 0));
+    // Satu ulangan untuk b dan c, bukan dua.
+    expect(api.overview).toHaveBeenCalledTimes(2);
+    pending[1](overview({ givenToday: 2 }));
+    await a;
+    expect(api.overview).toHaveBeenCalledTimes(2);
+  });
+
+  it("event fitur dalam jendela 2 detik digabung jadi satu muat ulang", async () => {
+    vi.useFakeTimers();
+    render(<KopiMark publicKey={PK_B} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.overview).toHaveBeenCalledTimes(1);
+
+    fire("kopi");
+    fire("board");
+    fire("kopi");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(KOPI_EVENT_DELAY_MS - 1);
+    });
+    expect(api.overview).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(api.overview).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -219,7 +327,10 @@ describe("KopiGiveDialog", () => {
     await user.click(screen.getByRole("button", { name: "Kirim kopi" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(api.give).toHaveBeenCalledWith({ to: PK_B, target: TARGET, reason: "Terima kasih sudah cek gambar" });
-    expect(onGiven).toHaveBeenCalled();
+    // Nama penerima untuk pengumuman "Kopi terkirim untuk Budi."
+    expect(onGiven).toHaveBeenCalledWith("Budi");
+    // Ringkasan dimuat ulang sekali oleh dialog (muatan pertama + satu).
+    await waitFor(() => expect(api.overview).toHaveBeenCalledTimes(2));
   });
 
   it("menampilkan error dari API dan tetap terbuka", async () => {
@@ -233,7 +344,9 @@ describe("KopiGiveDialog", () => {
     expect(await screen.findByText("Kopi belum terkirim")).toBeInTheDocument();
     expect(screen.getByText("Jatah kopi hari ini sudah habis.")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Kirim kopi" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Kirim kopi" })).not.toHaveAttribute("aria-disabled");
+    // Fokus kembali ke isian alasan supaya bisa langsung diperbaiki atau dikirim ulang.
+    expect(screen.getByLabelText("Alasan")).toHaveFocus();
   });
 
   it("tombol kirim sibuk saat mengirim", async () => {
@@ -246,8 +359,13 @@ describe("KopiGiveDialog", () => {
     await user.paste("Terima kasih");
     await user.click(screen.getByRole("button", { name: "Kirim kopi" }));
     const busy = screen.getByRole("button", { name: "Mengirim kopi..." });
-    expect(busy).toBeDisabled();
+    // aria-disabled, bukan disabled: tombol yang baru diklik tetap memegang fokus.
+    expect(busy).not.toBeDisabled();
+    expect(busy).toHaveFocus();
+    expect(busy).toHaveAttribute("aria-disabled", "true");
     expect(busy).toHaveAttribute("aria-busy", "true");
+    await user.click(busy);
+    expect(api.give).toHaveBeenCalledTimes(1);
     await act(async () => finish());
   });
 
@@ -263,14 +381,21 @@ describe("KopiGiveDialog", () => {
     api.overview.mockResolvedValue(overview({ givenToday: 3 }));
     open();
     expect(await screen.findByText("Jatah 3 kopi hari ini sudah terpakai. Besok bisa memberi lagi.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Kirim kopi" })).toBeDisabled();
+    const send = screen.getByRole("button", { name: "Kirim kopi" });
+    expect(send).toHaveAttribute("aria-disabled", "true");
+    expect(send).toHaveAccessibleDescription("Jatah 3 kopi hari ini sudah terpakai. Besok bisa memberi lagi.");
   });
 
   it("memberi tahu kalau pesan ini sudah diberi kopi", async () => {
     api.overview.mockResolvedValue(overview({ givenTargets: ["message:m1"] }));
     open();
     expect(await screen.findByText("Anda sudah memberi kopi untuk ini.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Kirim kopi" })).toBeDisabled();
+    const send = screen.getByRole("button", { name: "Kirim kopi" });
+    expect(send).toHaveAttribute("aria-disabled", "true");
+    expect(send).toHaveAccessibleDescription("Anda sudah memberi kopi untuk ini.");
+    const user = userEvent.setup();
+    await user.click(send);
+    expect(api.give).not.toHaveBeenCalled();
   });
 });
 
@@ -296,14 +421,14 @@ describe("KopiProfileSection", () => {
     render(<KopiProfileSection person={BUDI} />);
     expect(await screen.findByText("Terima kasih sudah cek gambar lantai 2")).toBeInTheDocument();
     expect(screen.getByText("Citra")).toBeInTheDocument();
-    expect(screen.getByText("untuk pesan", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("Citra").parentElement).toHaveTextContent("Citra, lewat pesan chat");
     expect(screen.getByText("Revisi denah")).toBeInTheDocument();
-    expect(screen.getByText("Tugas dari rekan selesai")).toBeInTheDocument();
+    expect(screen.getByText("Task dari rekan selesai")).toBeInTheDocument();
     expect(screen.getByText("Task di proyek lain")).toBeInTheDocument();
     expect(screen.getByText("Selesai tepat waktu")).toBeInTheDocument();
   });
 
-  it("tombol Beri kopi mengirim dengan target profil hari ini", async () => {
+  it("tombol Beri kopi mengirim dengan target profil hari ini, lalu mengumumkannya", async () => {
     const user = userEvent.setup();
     render(<KopiProfileSection person={BUDI} />);
     await user.click(await screen.findByRole("button", { name: "Beri kopi" }));
@@ -317,6 +442,45 @@ describe("KopiProfileSection", () => {
         reason: "Selalu sigap membantu",
       }),
     );
+    // Live region di luar dialog, tetap ada setelah dialog tertutup.
+    expect(await screen.findByText("Kopi terkirim untuk Budi.")).toHaveAttribute("role", "status");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // Profil dimuat ulang; ringkasan hanya sekali (oleh dialog), bukan dua kali.
+    await waitFor(() => expect(api.profile).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.overview).toHaveBeenCalledTimes(2);
+  });
+
+  it("hari target profil ditetapkan saat tombol diklik, bukan saat render", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 24, 23, 59, 0));
+    const user = userEvent.setup();
+    render(<KopiProfileSection person={BUDI} />);
+    const btn = await screen.findByRole("button", { name: "Beri kopi" });
+    // Lewat tengah malam sebelum tombol diklik.
+    vi.setSystemTime(new Date(2026, 10, 25, 0, 1, 0));
+    await user.click(btn);
+    await user.click(await screen.findByLabelText("Alasan"));
+    await user.paste("Terima kasih");
+    await user.click(screen.getByRole("button", { name: "Kirim kopi" }));
+    await waitFor(() =>
+      expect(api.give).toHaveBeenCalledWith({
+        to: PK_B,
+        target: { kind: "profile", day: "2026-11-25" },
+        reason: "Terima kasih",
+      }),
+    );
+  });
+
+  it("dialog dibuka lagi dengan isian kosong", async () => {
+    const user = userEvent.setup();
+    render(<KopiProfileSection person={BUDI} />);
+    await user.click(await screen.findByRole("button", { name: "Beri kopi" }));
+    await user.paste("Alasan lama");
+    await user.click(screen.getByRole("button", { name: "Batal" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Beri kopi" }));
+    expect(await screen.findByLabelText("Alasan")).toHaveValue("");
   });
 
   it("tombol Beri kopi tidak tampil untuk diri sendiri", async () => {
@@ -370,10 +534,11 @@ describe("KopiProfileSection", () => {
       ],
     });
     render(<KopiProfileSection person={BUDI} />);
-    await user.click(await screen.findByRole("button", { name: "Sembunyikan kopi dari Citra" }));
+    // Nama aksesibel memuat waktu, supaya dua kopi dari orang yang sama bisa dibedakan.
+    await user.click(await screen.findByRole("button", { name: /^Sembunyikan kopi dari Citra, .+/ }));
     expect(api.hide).toHaveBeenCalledWith("1".repeat(64), true);
     expect(screen.getByText("Disembunyikan")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Tampilkan lagi kopi dari Andi" }));
+    await user.click(screen.getByRole("button", { name: /^Tampilkan lagi kopi dari Andi, .+/ }));
     expect(api.hide).toHaveBeenCalledWith("2".repeat(64), false);
   });
 
@@ -409,7 +574,9 @@ describe("KopiProfileSection", () => {
 
   it("memakai teks Inggris", async () => {
     renderInLang(() => <KopiProfileSection person={BUDI} />);
-    expect(await screen.findByText("Go-to")).toBeInTheDocument();
+    expect(await screen.findByText("Regular")).toBeInTheDocument();
+    expect(screen.getByText("Level")).toBeInTheDocument();
+    expect(screen.getByText("Citra").parentElement).toHaveTextContent("Citra, via a chat message");
     expect(screen.getByText("From colleagues")).toBeInTheDocument();
     expect(screen.getByText("From work")).toBeInTheDocument();
     expect(screen.getByText("Task in another project")).toBeInTheDocument();

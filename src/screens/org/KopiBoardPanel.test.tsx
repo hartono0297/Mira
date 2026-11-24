@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, OrgInfo } from "../../api";
 import type { KopiBoard, KopiBoardRow, KopiOverview } from "../../api/kopi";
+import { resetKopiStore } from "../../components/useKopi";
 import { appState, directory, router, rustError } from "../../test/fixtures";
 import { memberOverview, ME, overview as orgOverview, PK_B, PK_C } from "../../test/orgFixtures";
 import type { OrgPage } from "./context";
@@ -82,6 +83,7 @@ function renderPanel(p: OrgPage = page()) {
 beforeEach(() => {
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   invoke.mockReset();
+  resetKopiStore();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 10, 24, 10, 0, 0));
 });
@@ -105,6 +107,16 @@ describe("Kopi: papan bulanan", () => {
     expect(within(first).getByText("Skor").nextSibling).toHaveTextContent("62");
     expect(screen.getByRole("heading", { name: "Paling banyak membantu bulan ini" })).toBeInTheDocument();
     expect(calls("kopi_board")[0]).toMatchObject({ month: "2026-11" });
+  });
+
+  it("ringkasan datang dari cache useKopi: satu kopi_overview walau bulan berganti", async () => {
+    answer();
+    const { user } = renderPanel();
+    await screen.findByRole("list", { name: "Peringkat November 2026" });
+    await user.click(screen.getByRole("button", { name: "Bulan sebelumnya" }));
+    await screen.findByRole("list", { name: "Peringkat Oktober 2026" });
+    expect(calls("kopi_overview")).toHaveLength(1);
+    expect(calls("kopi_board").map((a) => a.month)).toEqual(["2026-11", "2026-10"]);
   });
 
   it("paling banyak 10 orang", async () => {
@@ -143,28 +155,32 @@ describe("Kopi: papan bulanan", () => {
     expect(calls("kopi_board").map((a) => a.month)).toContain("2026-12");
   });
 
-  it("kosong bulan ini: menyebut cara memberi Kopi", async () => {
+  it("kosong bulan ini: menyebut cara memberi kopi", async () => {
     answer({ kopi_board: (args?: Record<string, unknown>) => board(String(args?.month), []) });
     renderPanel();
-    expect(await screen.findByText(/Belum ada Kopi bulan ini\./)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Belum ada kopi bulan ini. Beri kopi ke rekan yang membantu lewat menu klik kanan pesannya, atau selesaikan task paling lambat di hari tenggat.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: /Peringkat/ })).not.toBeInTheDocument();
   });
 
   it("kosong bulan lalu: menyebut bulannya", async () => {
     answer({ kopi_board: (args?: Record<string, unknown>) => board(String(args?.month), []) });
     const { user } = renderPanel();
-    await screen.findByText(/Belum ada Kopi bulan ini\./);
+    await screen.findByText(/Belum ada kopi bulan ini\./);
     await user.click(screen.getByRole("button", { name: "Bulan sebelumnya" }));
-    expect(await screen.findByText("Tidak ada Kopi pada Oktober 2026.")).toBeInTheDocument();
+    expect(await screen.findByText("Tidak ada kopi pada Oktober 2026.")).toBeInTheDocument();
   });
 
   it("menampilkan teks memuat selama data belum datang", async () => {
     answer({ kopi_overview: () => new Promise(() => {}) });
     renderPanel();
-    expect(screen.getByText("Memuat Kopi...")).toBeInTheDocument();
+    expect(screen.getByText("Memuat kopi...")).toBeInTheDocument();
   });
 
-  it("error: pesan dari Rust, lalu Coba lagi memuat ulang", async () => {
+  it("error papan: pesan dari Rust, lalu Coba lagi memuat ulang", async () => {
     let fail = true;
     answer({
       kopi_board: (args?: Record<string, unknown>) => {
@@ -173,27 +189,45 @@ describe("Kopi: papan bulanan", () => {
       },
     });
     const { user } = renderPanel();
-    expect(await screen.findByText("Data Kopi belum terbaca")).toBeInTheDocument();
+    expect(await screen.findByText("Papan November 2026 belum terbaca")).toBeInTheDocument();
     expect(screen.getByText("Database terkunci.")).toBeInTheDocument();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Coba lagi" }));
     expect(await screen.findByRole("list", { name: "Peringkat November 2026" })).toBeInTheDocument();
-    expect(screen.queryByText("Data Kopi belum terbaca")).not.toBeInTheDocument();
+    expect(screen.queryByText("Papan November 2026 belum terbaca")).not.toBeInTheDocument();
+  });
+
+  it("error ringkasan: pesan dari Rust, lalu Coba lagi memuat ulang", async () => {
+    let fail = true;
+    answer({
+      kopi_overview: () => {
+        if (fail) throw { code: "database", message: "Database terkunci." };
+        return kopiOverview();
+      },
+    });
+    const { user } = renderPanel();
+    expect(await screen.findByText("Data kopi belum terbaca")).toBeInTheDocument();
+    expect(screen.getByText("Database terkunci.")).toBeInTheDocument();
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Coba lagi" }));
+    expect(await screen.findByRole("list", { name: "Peringkat November 2026" })).toBeInTheDocument();
+    expect(screen.queryByText("Data kopi belum terbaca")).not.toBeInTheDocument();
   });
 
   it("data yang tidak terbaca dari inti tampil sebagai error", async () => {
     answer({ kopi_overview: null });
     renderPanel();
-    expect(await screen.findByText("Inti Mira mengirim data Kopi yang tidak terbaca.")).toBeInTheDocument();
+    expect(await screen.findByText("Inti Mira mengirim data kopi yang tidak terbaca.")).toBeInTheDocument();
   });
 
-  it("menjelaskan cara mendapat Kopi dan tabel tingkatan dari inti", async () => {
+  it("menjelaskan cara mendapat kopi dan tabel tingkatan dari inti", async () => {
     answer();
     renderPanel();
-    expect(await screen.findByRole("heading", { name: "Cara mendapat Kopi" })).toBeInTheDocument();
-    expect(screen.getByText(/Satu Kopi rekan bernilai 3 poin skor\./)).toBeInTheDocument();
-    expect(screen.getByText(/Satu Kopi kerja bernilai 1 poin\./)).toBeInTheDocument();
-    expect(screen.getByText(/memberi paling banyak 3 Kopi per hari/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Cara mendapat kopi" })).toBeInTheDocument();
+    expect(screen.getByText(/Satu kopi dari rekan bernilai 3 poin skor\./)).toBeInTheDocument();
+    expect(screen.getByText(/Satu kopi dari kerja bernilai 1 poin\./)).toBeInTheDocument();
+    expect(screen.getByText(/memberi paling banyak 3 kopi per hari/)).toBeInTheDocument();
+    expect(screen.queryByText(/Tidak ada Kopi negatif/)).not.toBeInTheDocument();
     const table = screen.getByRole("table", { name: "Tingkatan" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows.map((r) => r.textContent)).toEqual(["Anak baru0", "Andalan15", "Senior60", "Legenda180"]);
@@ -211,8 +245,8 @@ describe("Kopi: keterangan saat dimatikan", () => {
     expect(screen.getByText(/Superadmin mematikan papan bulanan\./)).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: /Peringkat/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Bulan sebelumnya" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Cara mendapat Kopi" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cara mendapat kopi" })).toBeInTheDocument();
   });
 
   it("fitur mati untuk anggota: panel menjelaskan fitur dimatikan", async () => {
@@ -224,8 +258,8 @@ describe("Kopi: keterangan saat dimatikan", () => {
     expect(await screen.findByText("Fitur Kopi sedang dimatikan")).toBeInTheDocument();
     expect(screen.getByText(/Superadmin mematikan Kopi untuk seluruh kantor\./)).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: /Peringkat/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Cara mendapat Kopi" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Cara mendapat kopi" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 });
 
@@ -234,7 +268,7 @@ describe("Kopi: sakelar superadmin", () => {
     answer();
     renderPanel();
     await screen.findByRole("list", { name: "Peringkat November 2026" });
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Pengaturan Kopi" })).not.toBeInTheDocument();
   });
 
@@ -248,11 +282,11 @@ describe("Kopi: sakelar superadmin", () => {
       },
     });
     const { user, page: p } = renderPanel();
-    const sw = await screen.findByRole("switch", { name: /Papan bulanan/ });
+    const sw = await screen.findByRole("checkbox", { name: /Papan bulanan/ });
     expect(sw).toBeChecked();
     await user.click(sw);
     expect(calls("kopi_set_settings")).toEqual([{ enabled: true, board: false }]);
-    await waitFor(() => expect(screen.getByRole("switch", { name: /Papan bulanan/ })).not.toBeChecked());
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /Papan bulanan/ })).not.toBeChecked());
     expect(p.notify).toHaveBeenCalledWith("Papan bulanan dimatikan.");
     expect(screen.getByText("Papan bulanan dimatikan")).toBeInTheDocument();
   });
@@ -267,7 +301,7 @@ describe("Kopi: sakelar superadmin", () => {
       },
     });
     const { user, page: p } = renderPanel();
-    const sw = await screen.findByRole("switch", { name: /Fitur Kopi/ });
+    const sw = await screen.findByRole("checkbox", { name: /Fitur Kopi/ });
     await user.click(sw);
     const dialog = await screen.findByRole("dialog", { name: "Matikan fitur Kopi?" });
     expect(calls("kopi_set_settings")).toEqual([]);
@@ -275,15 +309,15 @@ describe("Kopi: sakelar superadmin", () => {
     await user.click(within(dialog).getByRole("button", { name: "Batal" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls("kopi_set_settings")).toEqual([]);
-    expect(screen.getByRole("switch", { name: /Fitur Kopi/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Fitur Kopi/ })).toBeChecked();
 
-    await user.click(screen.getByRole("switch", { name: /Fitur Kopi/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Fitur Kopi/ }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Matikan Kopi" }));
     expect(calls("kopi_set_settings")).toEqual([{ enabled: false, board: false }]);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(p.notify).toHaveBeenCalledWith("Fitur Kopi dimatikan untuk seluruh kantor.");
     expect(await screen.findByText("Fitur Kopi sedang dimatikan")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: /Fitur Kopi/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Fitur Kopi/ })).not.toBeChecked();
   });
 
   it("menyalakan fitur langsung menyimpan tanpa konfirmasi", async () => {
@@ -293,21 +327,29 @@ describe("Kopi: sakelar superadmin", () => {
       kopi_set_settings: null,
     });
     const { user } = renderPanel();
-    await user.click(await screen.findByRole("switch", { name: /Fitur Kopi/ }));
+    await user.click(await screen.findByRole("checkbox", { name: /Fitur Kopi/ }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(calls("kopi_set_settings")).toEqual([{ enabled: true, board: true }]);
   });
 
-  it("sibuk saat menyimpan: sakelar nonaktif dan teks Menyimpan", async () => {
+  it("sibuk saat menyimpan: kotak centang aria-disabled, fokus tetap, klik diabaikan", async () => {
     answer({
       kopi_overview: kopiOverview({ isSuperadmin: true }),
       kopi_set_settings: () => new Promise(() => {}),
     });
     const { user } = renderPanel();
-    await user.click(await screen.findByRole("switch", { name: /Papan bulanan/ }));
+    const box = await screen.findByRole("checkbox", { name: /Papan bulanan/ });
+    await user.click(box);
     expect(await screen.findByText("Menyimpan...")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: /Papan bulanan/ })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: /Fitur Kopi/ })).toBeDisabled();
+    expect(box).not.toBeDisabled();
+    expect(box).toHaveFocus();
+    expect(box).toHaveAttribute("aria-disabled", "true");
+    expect(box).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Fitur Kopi/ })).toHaveAttribute("aria-disabled", "true");
+    await user.click(box);
+    await user.click(screen.getByRole("checkbox", { name: /Fitur Kopi/ }));
+    expect(calls("kopi_set_settings")).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("error saat menyimpan tampil di dekat sakelar", async () => {
@@ -316,10 +358,10 @@ describe("Kopi: sakelar superadmin", () => {
       kopi_set_settings: rustError("forbidden", "Hanya superadmin yang bisa mengubah pengaturan Kopi."),
     });
     const { user } = renderPanel();
-    await user.click(await screen.findByRole("switch", { name: /Papan bulanan/ }));
+    await user.click(await screen.findByRole("checkbox", { name: /Papan bulanan/ }));
     expect(await screen.findByText("Pengaturan Kopi belum tersimpan")).toBeInTheDocument();
     expect(screen.getByText("Hanya superadmin yang bisa mengubah pengaturan Kopi.")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: /Papan bulanan/ })).toBeEnabled();
+    expect(screen.getByRole("checkbox", { name: /Papan bulanan/ })).not.toHaveAttribute("aria-disabled");
   });
 
   it("error saat mematikan fitur tampil di dialog konfirmasi", async () => {
@@ -328,7 +370,7 @@ describe("Kopi: sakelar superadmin", () => {
       kopi_set_settings: rustError("database", "Database terkunci."),
     });
     const { user } = renderPanel();
-    await user.click(await screen.findByRole("switch", { name: /Fitur Kopi/ }));
+    await user.click(await screen.findByRole("checkbox", { name: /Fitur Kopi/ }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Matikan Kopi" }));
     expect(await within(dialog).findByText("Database terkunci.")).toBeInTheDocument();

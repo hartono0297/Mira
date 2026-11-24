@@ -1,10 +1,11 @@
 import { IconChevronLeft, IconChevronRight, IconCoffee, IconInfoCircle } from "@tabler/icons-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { subscribeFeature, toAppError, type AppError } from "../../api";
-import { kopiApi, type KopiBoard, type KopiBoardRow, type KopiOverview, type KopiTier } from "../../api/kopi";
+import { kopiApi, type KopiBoard, type KopiBoardRow, type KopiOverview } from "../../api/kopi";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { reloadKopi } from "../../components/useKopi";
+import { kopiTierName } from "../../components/kopiText";
+import { KOPI_BAD_DATA, reloadKopi, useKopi } from "../../components/useKopi";
 import { locale, useLang } from "../../i18n/core";
 import { KOPI_BOARD_TEXT as T } from "../../i18n/kopi-board";
 import type { OrgPage } from "./context";
@@ -17,8 +18,6 @@ const WORK_DAILY_LIMIT = 3;
 const BOARD_MAX = 10;
 // Cadangan kalau event fitur tidak datang, sama dengan useKopi.
 const POLL_MS = 60000;
-
-type Data = { overview: KopiOverview; board: KopiBoard };
 
 export function monthOf(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -34,45 +33,40 @@ function monthLabel(month: string, lang: Parameters<typeof locale>[0]): string {
   return new Intl.DateTimeFormat(locale(lang), { month: "long", year: "numeric" }).format(new Date(y, m - 1, 1));
 }
 
-function tierName(tier: KopiTier): string {
-  return T.tiers[tier] ?? tier;
-}
-
-function valid(overview: unknown, board: unknown): boolean {
-  const o = overview as KopiOverview | null;
+function validBoard(board: unknown): board is KopiBoard {
   const b = board as KopiBoard | null;
-  return (
-    !!o &&
-    typeof o === "object" &&
-    typeof o.enabled === "boolean" &&
-    Array.isArray(o.tiers) &&
-    !!b &&
-    typeof b === "object" &&
-    typeof b.month === "string" &&
-    Array.isArray(b.rows)
-  );
+  return !!b && typeof b === "object" && typeof b.month === "string" && Array.isArray(b.rows);
 }
 
-// Overview dan papan satu bulan. Muat ulang saat fitur kopi atau board
-// berubah (Kopi kerja dihitung dari board), setelah aksi di halaman, dan
-// setiap menit. Data terakhir tetap tampil kalau muat ulang gagal.
+// Pesan error ringkasan dari cache useKopi; data berbentuk aneh punya teks sendiri.
+function overviewMessage(error: AppError): string {
+  return error.code === KOPI_BAD_DATA ? T.badData : error.message;
+}
+
+// Papan satu bulan. Ringkasan (overview) datang dari cache useKopi, jadi di sini
+// hanya papan yang dimuat. Muat ulang saat fitur kopi atau board berubah (Kopi
+// kerja dihitung dari board), setelah aksi di halaman, dan setiap menit.
+// Teks memuat hanya tampil untuk muatan pertama dan saat bulan berganti; muat
+// ulang di belakang tidak membuat papan berkedip. Data terakhir tetap tampil
+// kalau muat ulang gagal.
 function useKopiBoard(month: string, version: number) {
-  const [data, setData] = useState<Data | null>(null);
+  const [board, setBoard] = useState<KopiBoard | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const [loading, setLoading] = useState(true);
   const monthRef = useRef(month);
   monthRef.current = month;
   const seq = useRef(0);
   const alive = useRef(true);
+  const lastVersion = useRef(version);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (quiet = false) => {
     const mine = ++seq.current;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     try {
-      const [overview, board] = await Promise.all([kopiApi.overview(), kopiApi.board(monthRef.current)]);
-      if (!valid(overview, board)) throw { code: "bad_data", message: T.badData };
+      const next = await kopiApi.board(monthRef.current);
+      if (!validBoard(next)) throw { code: KOPI_BAD_DATA, message: T.badData };
       if (!alive.current || mine !== seq.current) return;
-      setData({ overview, board });
+      setBoard(next);
       setError(null);
     } catch (err) {
       if (!alive.current || mine !== seq.current) return;
@@ -84,13 +78,19 @@ function useKopiBoard(month: string, version: number) {
 
   useEffect(() => {
     void reload();
-  }, [reload, month, version]);
+  }, [reload, month]);
+
+  useEffect(() => {
+    if (version === lastVersion.current) return;
+    lastVersion.current = version;
+    void reload(true);
+  }, [reload, version]);
 
   useEffect(() => {
     alive.current = true;
-    const stopKopi = subscribeFeature("kopi", () => void reload());
-    const stopBoard = subscribeFeature("board", () => void reload());
-    const timer = window.setInterval(() => void reload(), POLL_MS);
+    const stopKopi = subscribeFeature("kopi", () => void reload(true));
+    const stopBoard = subscribeFeature("board", () => void reload(true));
+    const timer = window.setInterval(() => void reload(true), POLL_MS);
     return () => {
       alive.current = false;
       stopKopi();
@@ -99,16 +99,27 @@ function useKopiBoard(month: string, version: number) {
     };
   }, [reload]);
 
-  return { data, error, loading, reload };
+  return { board, error, loading, reload };
 }
 
 export function KopiBoardPanel({ page }: { page: OrgPage }) {
   const lang = useLang();
   const thisMonth = monthOf(new Date());
   const [month, setMonth] = useState(thisMonth);
+  const kopi = useKopi();
   const live = useKopiBoard(month, page.version);
-  const data = live.data;
-  const overview = data?.overview ?? null;
+  const overview = kopi.overview;
+  const retry = () => {
+    void reloadKopi();
+    void live.reload();
+  };
+  // Data terakhir tetap tampil; keterangan kalau muat ulang ringkasan atau papan gagal.
+  const stale =
+    overview && kopi.error
+      ? overviewMessage(kopi.error)
+      : live.error && !live.loading && live.board?.month === month
+        ? live.error.message
+        : null;
 
   return (
     <section className="set-section kb" aria-labelledby="kopi-title">
@@ -122,28 +133,36 @@ export function KopiBoardPanel({ page }: { page: OrgPage }) {
         </div>
       </div>
 
-      {live.loading && !data && (
+      {!overview && !kopi.error && (
         <p className="hint" role="status">
           {T.loading}
         </p>
       )}
 
-      {!live.loading && !data && (
+      {!overview && kopi.error && (
         <div role="alert">
           <ErrorAlert title={T.loadErrorTitle}>
-            <p>{live.error?.message ?? T.loadErrorEmpty}</p>
-            <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
+            <p>{overviewMessage(kopi.error) || T.loadErrorEmpty}</p>
+            <button type="button" className="btn btn-ghost org-retry" onClick={retry}>
               {T.retry}
             </button>
           </ErrorAlert>
         </div>
       )}
 
-      {data && overview && (
+      {overview && (
         <>
-          {live.error && !live.loading && data.board.month === month && <p className="hint">{T.stale(live.error.message)}</p>}
+          {stale && <p className="hint">{T.stale(stale)}</p>}
 
-          {overview.isSuperadmin && <KopiSettings overview={overview} page={page} reload={live.reload} />}
+          {overview.isSuperadmin && (
+            <KopiSettings
+              overview={overview}
+              page={page}
+              reload={async () => {
+                await Promise.all([reloadKopi(), live.reload(true)]);
+              }}
+            />
+          )}
 
           {!overview.enabled ? (
             <div className="notice kb-notice">
@@ -160,7 +179,8 @@ export function KopiBoardPanel({ page }: { page: OrgPage }) {
                   month={month}
                   thisMonth={thisMonth}
                   lang={lang}
-                  data={data}
+                  me={overview.me}
+                  board={live.board}
                   loading={live.loading}
                   error={live.error}
                   onMonth={setMonth}
@@ -188,21 +208,23 @@ type BoardProps = {
   month: string;
   thisMonth: string;
   lang: Parameters<typeof locale>[0];
-  data: Data;
+  me: string;
+  board: KopiBoard | null;
   loading: boolean;
   error: AppError | null;
   onMonth: (month: string) => void;
   onRetry: () => void;
 };
 
-function BoardSection({ month, thisMonth, lang, data, loading, error, onMonth, onRetry }: BoardProps) {
+function BoardSection({ month, thisMonth, lang, me, board, loading, error, onMonth, onRetry }: BoardProps) {
   const label = monthLabel(month, lang);
   const isNow = month === thisMonth;
-  const ready = data.board.month === month;
+  const ready = board?.month === month;
   // Urutan dari inti sudah skor terbesar dulu; diurutkan lagi (stabil) supaya
   // tampilan tetap benar kalau inti lama mengirim urutan lain.
-  const rows: KopiBoardRow[] = ready
-    ? [...data.board.rows].sort((a, b) => b.score - a.score).slice(0, BOARD_MAX)
+  const rows: KopiBoardRow[] =
+    board && ready
+      ? [...board.rows].sort((a, b) => b.score - a.score).slice(0, BOARD_MAX)
     : [];
 
   return (
@@ -273,9 +295,9 @@ function BoardSection({ month, thisMonth, lang, data, loading, error, onMonth, o
               <div className="kb-who">
                 <span className="kb-name" data-testid="kb-name">
                   {r.person.name}
-                  {r.person.publicKey === data.overview.me && <span className="kb-you">{T.you}</span>}
+                  {r.person.publicKey === me && <span className="kb-you">{T.you}</span>}
                 </span>
-                <span className="kb-tier">{tierName(r.tier)}</span>
+                <span className="kb-tier">{kopiTierName(r.tier)}</span>
               </div>
               <dl className="kb-stats">
                 <div>
@@ -330,7 +352,7 @@ function HowSection({ overview }: { overview: KopiOverview }) {
         <tbody>
           {tiers.map((t) => (
             <tr key={t.tier}>
-              <td>{tierName(t.tier)}</td>
+              <td>{kopiTierName(t.tier)}</td>
               <td>{t.minScore}</td>
             </tr>
           ))}
@@ -374,6 +396,7 @@ function KopiSettings({
   };
 
   const onFeature = () => {
+    if (busy) return;
     if (overview.enabled) {
       setError(null);
       setConfirm(true);
@@ -383,6 +406,7 @@ function KopiSettings({
   };
 
   const onBoard = () => {
+    if (busy) return;
     const next = !overview.boardEnabled;
     void save("board", overview.enabled, next, next ? T.boardOnDone : T.boardOffDone);
   };
@@ -393,24 +417,25 @@ function KopiSettings({
         {T.settingsTitle}
       </h3>
       <p className="hint">{T.settingsHint}</p>
-      <div className="kb-switches">
-        <Switch
+      <fieldset className="kb-opts">
+        <legend className="sr-only">{T.settingsTitle}</legend>
+        <Option
           label={T.featureSwitch}
           hint={T.featureSwitchHint}
           checked={overview.enabled}
-          disabled={busy !== null}
+          locked={busy !== null}
           saving={busy === "enabled" && !confirm}
           onChange={onFeature}
         />
-        <Switch
+        <Option
           label={T.boardSwitch}
           hint={overview.enabled ? T.boardSwitchHint : `${T.boardSwitchHint} ${T.boardSwitchNeedsFeature}`}
           checked={overview.boardEnabled}
-          disabled={busy !== null}
+          locked={busy !== null}
           saving={busy === "board"}
           onChange={onBoard}
         />
-      </div>
+      </fieldset>
       <div aria-live="polite">
         {error && !confirm && (
           <ErrorAlert title={T.saveFail}>
@@ -447,44 +472,47 @@ function KopiSettings({
   );
 }
 
-type SwitchProps = {
+type OptionProps = {
   label: string;
   hint: string;
   checked: boolean;
-  disabled: boolean;
+  // Sedang menyimpan salah satu pengaturan: perubahan diabaikan. aria-disabled,
+  // bukan disabled, supaya kotak yang baru diklik tetap memegang fokus.
+  locked: boolean;
   saving: boolean;
   onChange: () => void;
 };
 
-// Sakelar: kotak centang dengan role switch, jadi Spasi dan pembaca layar
-// bekerja seperti biasa. Keadaannya juga ditulis (Nyala/Mati), bukan warna saja.
-function Switch({ label, hint, checked, disabled, saving, onChange }: SwitchProps) {
-  const id = useId();
+// Kotak centang biasa, pola yang sama dengan pengaturan pengingat di Board.
+// Nilainya baru berubah setelah tersimpan, jadi selama menyimpan kotak tetap
+// menunjukkan keadaan lama dan teks Menyimpan tampil di sebelahnya.
+function Option({ label, hint, checked, locked, saving, onChange }: OptionProps) {
+  const hintId = useId();
   return (
-    <label className="kb-switch">
-      <span className="kb-switch-text">
-        <span className="kb-switch-label" id={`${id}-l`}>
-          {label}
-        </span>
-        <span className="hint" id={`${id}-h`}>
-          {hint}
-        </span>
-      </span>
-      <span className="kb-switch-ctl">
-        <span className="kb-switch-state" aria-hidden="true">
-          {saving ? T.saving : checked ? T.on : T.off}
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          aria-labelledby={`${id}-l`}
-          aria-describedby={`${id}-h`}
-          checked={checked}
-          disabled={disabled}
-          aria-busy={saving || undefined}
-          onChange={onChange}
-        />
-      </span>
-    </label>
+    <div className="kb-opt-row">
+      <div className="kb-opt-line">
+        <label className="kb-opt">
+          <input
+            type="checkbox"
+            checked={checked}
+            aria-describedby={hintId}
+            aria-disabled={locked || undefined}
+            aria-busy={saving || undefined}
+            onChange={() => {
+              if (!locked) onChange();
+            }}
+          />
+          <span>{label}</span>
+        </label>
+        {saving && (
+          <span className="kb-saving" role="status">
+            {T.saving}
+          </span>
+        )}
+      </div>
+      <p className="hint kb-opt-hint" id={hintId}>
+        {hint}
+      </p>
+    </div>
   );
 }

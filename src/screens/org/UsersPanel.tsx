@@ -17,6 +17,7 @@ import { MenuButton, menuItems, SEPARATOR, useContextMenu, type MenuEntry } from
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { KopiMark } from "../../components/KopiMark";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { useLang } from "../../i18n/core";
 import { ORG_TEXT, USERS_TEXT as T } from "../../i18n/org";
@@ -707,7 +708,10 @@ function UserRow({
           {initials(u.displayName)}
         </span>
         <span className="ut-who">
-          <NameWithLabels className="ut-n" name={u.displayName} labels={u.labels} suffix={u.isMe ? ORG_TEXT.you : undefined} />
+          <span className="kopi-name">
+            <NameWithLabels className="ut-n" name={u.displayName} labels={u.labels} suffix={u.isMe ? ORG_TEXT.you : undefined} />
+            <KopiMark publicKey={u.publicKey} />
+          </span>
           <span className="ut-sub">{roleText(u)}</span>
         </span>
       </td>

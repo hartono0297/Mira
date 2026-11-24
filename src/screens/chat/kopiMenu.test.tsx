@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { KopiOverview, KopiTarget } from "../../api/kopi";
+import type { KopiBadge, KopiOverview, KopiTarget } from "../../api/kopi";
 import { setLang } from "../../i18n/core";
 import { ChatActionsContext, type ChatActions } from "./ChatActions";
 import { Conversation } from "./Conversation";
@@ -27,11 +27,20 @@ vi.mock("../../api/chat", async (importOriginal) => ({
   subscribeChat: () => () => {},
 }));
 
-const kopi = vi.hoisted(() => ({ overview: null as KopiOverview | null, reload: vi.fn(async () => {}) }));
+const kopi = vi.hoisted(() => ({
+  overview: null as KopiOverview | null,
+  badges: [] as KopiBadge[],
+  reload: vi.fn(async () => {}),
+}));
 
 vi.mock("../../components/useKopi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../components/useKopi")>()),
-  useKopi: () => ({ overview: kopi.overview, badgeOf: () => null, reload: kopi.reload }),
+  useKopi: () => ({
+    overview: kopi.overview,
+    error: null,
+    badgeOf: (pk: string) => kopi.badges.find((b) => b.publicKey === pk) ?? null,
+    reload: kopi.reload,
+  }),
 }));
 
 // Dialog Kopi punya tes sendiri; di sini cukup props yang diterimanya.
@@ -41,13 +50,13 @@ vi.mock("../../components/KopiGiveDialog", () => ({
     target: KopiTarget;
     context?: string;
     onClose: () => void;
-    onGiven?: () => void;
+    onGiven?: (name: string) => void;
   }) => (
     <div role="dialog" aria-label="Dialog kopi tiruan">
       <p>untuk {p.to.name}</p>
       <p>target {JSON.stringify(p.target)}</p>
       <p>konteks {p.context}</p>
-      <button type="button" onClick={p.onGiven}>
+      <button type="button" onClick={() => p.onGiven?.(p.to.name)}>
         Tiruan terkirim
       </button>
       <button type="button" onClick={p.onClose}>
@@ -93,6 +102,7 @@ const itemNames = () => screen.getAllByRole("menuitem").map((m) => m.textContent
 beforeEach(() => {
   setLang("id");
   kopi.overview = overview();
+  kopi.badges = [];
   kopi.reload.mockClear();
   chat.messages.mockResolvedValue(
     view([
@@ -198,8 +208,30 @@ describe("Menu pesan: Beri kopi", () => {
     expect(dlg).toHaveTextContent("konteks Draft kontraknya sudah saya kirim.");
 
     await user.click(screen.getByRole("button", { name: "Tiruan terkirim" }));
-    expect(kopi.reload).toHaveBeenCalled();
+    // Dialog sudah memuat ulang ringkasan; menu tidak memuat ulang lagi.
+    expect(kopi.reload).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Tiruan tutup" }));
     expect(screen.queryByRole("dialog", { name: "Dialog kopi tiruan" })).toBeNull();
+    // Diumumkan lewat live region percakapan, yang tetap ada setelah dialog tertutup.
+    expect(screen.getByText("Kopi terkirim untuk Sari Uji.")).toBeInTheDocument();
+  });
+});
+
+describe("Ikon kopi di samping nama pengirim", () => {
+  function tierBadge(tier: KopiBadge["tier"]): KopiBadge {
+    return { publicKey: PK_B, peer: 5, work: 4, score: 19, tier };
+  }
+
+  it("tidak tampil untuk Anak baru di chat", async () => {
+    kopi.badges = [tierBadge("anak_baru")];
+    renderConv();
+    await screen.findByText("Draft kontraknya sudah saya kirim.");
+    expect(screen.queryByRole("img", { name: /kopi/ })).toBeNull();
+  });
+
+  it("tampil mulai Andalan", async () => {
+    kopi.badges = [tierBadge("andalan")];
+    renderConv();
+    expect(await screen.findByRole("img", { name: "Andalan, 9 kopi" })).toBeInTheDocument();
   });
 });

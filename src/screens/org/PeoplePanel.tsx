@@ -4,6 +4,7 @@ import { ROLE_LABELS, TEAM_ROLE_LABELS } from "../../api";
 import { orgApi, type PersonView } from "../../api/org";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { KopiMark } from "../../components/KopiMark";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { getLang } from "../../i18n/core";
 import { ORG_TEXT } from "../../i18n/org";
@@ -134,12 +135,15 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
                       {initials(p.displayName)}
                     </span>
                     <div className="row-main">
-                      <NameWithLabels
-                        className="row-name"
-                        name={p.displayName}
-                        labels={p.labels}
-                        suffix={self ? ORG_TEXT.you : undefined}
-                      />
+                      <span className="kopi-name">
+                        <NameWithLabels
+                          className="row-name"
+                          name={p.displayName}
+                          labels={p.labels}
+                          suffix={self ? ORG_TEXT.you : undefined}
+                        />
+                        <KopiMark publicKey={p.publicKey} />
+                      </span>
                       <span className="row-sub">
                         {p.isGuest ? ORG_TEXT.people.guest : (p.departmentName ?? ORG_TEXT.people.noDepartment)}
                         {!p.isGuest && <>, {roleText(p).toLocaleLowerCase("id")}</>}

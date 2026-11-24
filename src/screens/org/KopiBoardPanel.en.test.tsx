@@ -2,6 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KopiBoard, KopiOverview } from "../../api/kopi";
+import { resetKopiStore } from "../../components/useKopi";
 import { setLang } from "../../i18n/core";
 import { router } from "../../test/fixtures";
 import { renderInLang } from "../../test/i18n";
@@ -60,6 +61,7 @@ function page(): OrgPage {
 beforeEach(() => {
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   invoke.mockReset();
+  resetKopiStore();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 10, 24, 10, 0, 0));
 });
@@ -80,22 +82,22 @@ describe("Kopi dalam bahasa Inggris", () => {
     const list = await screen.findByRole("list", { name: "Ranking for November 2026" });
     expect(screen.getByRole("heading", { name: "Coffee", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Most helpful this month" })).toBeInTheDocument();
-    expect(within(list).getByText("Go-to")).toBeInTheDocument();
+    expect(within(list).getByText("Regular")).toBeInTheDocument();
     expect(within(list).getByText("From colleagues")).toBeInTheDocument();
     expect(within(list).getByText("From work")).toBeInTheDocument();
     expect(within(list).getByText("Score")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Previous month" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next month" })).toBeDisabled();
-    expect(screen.getByRole("heading", { name: "How to earn Coffee" })).toBeInTheDocument();
-    expect(screen.getByText(/One colleague Coffee is worth 3 score points\./)).toBeInTheDocument();
-    expect(screen.getByText(/One work Coffee is worth 1 point\./)).toBeInTheDocument();
-    const table = screen.getByRole("table", { name: "Tiers" });
+    expect(screen.getByRole("heading", { name: "How to earn coffee" })).toBeInTheDocument();
+    expect(screen.getByText(/One coffee from a colleague is worth 3 score points\./)).toBeInTheDocument();
+    expect(screen.getByText(/One coffee from work is worth 1 point\./)).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "Levels" });
     expect(within(table).getByText("Newcomer")).toBeInTheDocument();
     expect(within(table).getByText("Legend")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Coffee settings" })).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Monthly board" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Monthly board" })).toBeChecked();
 
-    await user.click(screen.getByRole("switch", { name: "Coffee" }));
+    await user.click(screen.getByRole("checkbox", { name: "Coffee" }));
     const dialog = await screen.findByRole("dialog", { name: "Turn Coffee off?" });
     expect(within(dialog).getByRole("button", { name: "Turn Coffee off" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
@@ -140,6 +142,6 @@ describe("Kopi dalam bahasa Inggris", () => {
       }),
     );
     renderInLang(() => <KopiBoardPanel page={page()} />, "en");
-    expect(await screen.findByText(/No Coffee yet this month\./)).toBeInTheDocument();
+    expect(await screen.findByText(/No coffee yet this month\./)).toBeInTheDocument();
   });
 });
