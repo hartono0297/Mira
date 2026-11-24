@@ -5,12 +5,18 @@ const en: Dict<typeof id> = {
   nav: {
     chat: "Chat",
     board: "Board",
+    calendar: "Calendar",
     docs: "Documents",
     sign: "Signatures",
     org: "Organization",
     settings: "Settings",
   },
   mainMenu: "Main menu",
+  sidebar: {
+    collapse: "Collapse menu",
+    expand: "Expand menu",
+    withKeys: (label: string, keys: string) => `${label} (${keys})`,
+  },
   countMeaning: {
     chat: (_n: number) => "unread",
     board: (n: number) => plural(n, "task due today or overdue", "tasks due today or overdue"),
@@ -33,6 +39,7 @@ const en: Dict<typeof id> = {
     offline: ", offline",
     lastSeen: (when: string) => `Last seen ${when}`,
     neverSeen: "Never seen",
+    dotLabel: (state: string) => `${state.replace(/\.+$/, "")}. Open Organization`,
   },
 };
 

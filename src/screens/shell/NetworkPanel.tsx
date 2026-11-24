@@ -1,28 +1,11 @@
-import {
-  IconBan,
-  IconPlugConnected,
-  IconPlugConnectedX,
-  IconRefresh,
-  IconSearch,
-  IconUsers,
-  type Icon,
-} from "@tabler/icons-react";
+import { IconPlugConnectedX, IconRefresh } from "@tabler/icons-react";
 import { useId } from "react";
 import type { NetState, PeerView } from "../../api";
 import { relativeTime } from "../../api/format";
 import { NET_STATE_TEXT, OFFLINE_HINT } from "../../api/messages";
 import { SHELL_TEXT } from "../../i18n/shell";
 import { useNetwork, validStatus } from "./NetworkContext";
-
-const STATE_ICON: Record<NetState, { icon: Icon; tone: "ok" | "bad" | "plain" }> = {
-  starting: { icon: IconSearch, tone: "plain" },
-  no_org: { icon: IconUsers, tone: "plain" },
-  alone: { icon: IconUsers, tone: "plain" },
-  lan: { icon: IconPlugConnected, tone: "ok" },
-  vpn: { icon: IconPlugConnected, tone: "ok" },
-  offline: { icon: IconPlugConnectedX, tone: "bad" },
-  removed: { icon: IconBan, tone: "bad" },
-};
+import { NetworkDot, STATE_ICON } from "./NetworkDot";
 
 export function sortPeers(peers: PeerView[]): PeerView[] {
   const byName = (a: PeerView, b: PeerView) => a.displayName.localeCompare(b.displayName, "id");
@@ -49,7 +32,13 @@ export function NetStateLine({ state, compact = false }: { state: NetState; comp
   );
 }
 
-export function NetworkPanel({ onOpenOrg }: { onOpenOrg: () => void }) {
+// compact: sidebar ringkas, panel diganti satu ikon status (NetworkDot).
+export function NetworkPanel({ onOpenOrg, compact = false }: { onOpenOrg: () => void; compact?: boolean }) {
+  if (compact) return <NetworkDot onOpenOrg={onOpenOrg} />;
+  return <NetworkList onOpenOrg={onOpenOrg} />;
+}
+
+function NetworkList({ onOpenOrg }: { onOpenOrg: () => void }) {
   const { data, error, loading, reload } = useNetwork();
   const status = validStatus(data);
   const listTitle = useId();

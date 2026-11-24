@@ -3,12 +3,19 @@ const id = {
   nav: {
     chat: "Chat",
     board: "Board",
+    calendar: "Kalender",
     docs: "Dokumen",
     sign: "Tanda tangan",
     org: "Organisasi",
     settings: "Pengaturan",
   },
   mainMenu: "Menu utama",
+  // Tombol ringkas/lebarkan di bawah logo. keys: "Ctrl+B" atau "Cmd+B".
+  sidebar: {
+    collapse: "Ringkas menu",
+    expand: "Lebarkan menu",
+    withKeys: (label: string, keys: string) => `${label} (${keys})`,
+  },
   // Arti angka di menu, dibacakan setelah labelnya: "Chat, 3 belum dibaca".
   // Parameter n hanya dipakai bahasa Inggris untuk jamak.
   countMeaning: {
@@ -33,6 +40,9 @@ const id = {
     offline: ", offline",
     lastSeen: (when: string) => `Terakhir terlihat ${when}`,
     neverSeen: "Belum pernah terlihat",
+    // Sidebar ringkas: satu ikon status. Klik membuka Organisasi. Titik di
+    // akhir status ("Memeriksa jaringan...") dibuang supaya tidak berderet.
+    dotLabel: (state: string) => `${state.replace(/\.+$/, "")}. Buka Organisasi`,
   },
 };
 
