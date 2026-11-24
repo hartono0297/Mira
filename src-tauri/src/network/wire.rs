@@ -725,6 +725,7 @@ mod tests {
                     extras: crate::network::JOIN_INFO_EXTRAS,
                     ad_domain: None,
                     ad_ou_map: Vec::new(),
+                    ad_outdated: Some(3),
                 },
             },
             Msg::JoinRequest {

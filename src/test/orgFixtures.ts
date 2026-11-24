@@ -29,6 +29,7 @@ export function overview(extra: Partial<OrgOverview> = {}): OrgOverview {
     decideJoinTeamIds: [TEAM_1, TEAM_2],
     pendingJoinCount: 0,
     manageOrg: true,
+    listUsers: true,
     ...extra,
   };
 }
@@ -40,7 +41,7 @@ export function adminOverview(extra: Partial<OrgOverview> = {}): OrgOverview {
 
 // Anggota biasa: tidak memutuskan apa pun.
 export function memberOverview(extra: Partial<OrgOverview> = {}): OrgOverview {
-  return overview({ isSuperadmin: false, manageOrg: false, decideJoinTeamIds: [], ...extra });
+  return overview({ isSuperadmin: false, manageOrg: false, listUsers: false, decideJoinTeamIds: [], ...extra });
 }
 
 export function department(id: string, name: string, extra: Partial<DepartmentView> = {}): DepartmentView {

@@ -107,6 +107,7 @@ const OVERVIEW: OrgOverview = {
   decideJoinTeamIds: [],
   pendingJoinCount: 0,
   manageOrg: true,
+  listUsers: true,
 };
 
 beforeEach(() => {

@@ -64,9 +64,9 @@ describe("Tawaran domain AD di Organisasi", () => {
     expect(
       within(offer).getByRole("heading", { name: "Pakai macf.co.id sebagai domain AD kantor ini?" }),
     ).toBeInTheDocument();
-    expect(offer).toHaveTextContent(/akun domain macf\.co\.id akan mengisi nama dan departemen dari akun Windows-nya/);
+    expect(offer).toHaveTextContent(/akun domain macf\.co\.id akan mengisi nama dari akun Windows-nya, dan departemen kalau sudah dicocokkan/);
     expect(within(offer).getByRole("button", { name: "Pakai macf.co.id" })).toBeInTheDocument();
-    expect(within(offer).getByRole("button", { name: "Nanti" })).toBeInTheDocument();
+    expect(within(offer).getByRole("button", { name: "Sembunyikan" })).toBeInTheDocument();
     // Tenang: kotak netral, bukan .notice atau .alert.
     expect(offer).toHaveClass("org-other");
     expect(offer).not.toHaveClass("notice");
@@ -128,12 +128,12 @@ describe("Tawaran domain AD di Organisasi", () => {
     expect(within(offer).getByText("Ada laptop yang belum diperbarui.")).toBeInTheDocument();
   });
 
-  it("Nanti menyembunyikan tawaran dan diingat untuk organisasi ini", async () => {
+  it("Sembunyikan: tawaran hilang dan diingat untuk organisasi ini", async () => {
     const user = userEvent.setup();
     answer(adSettings({ machineDomain: "macf.co.id" }));
     const first = render(<OrgScreen state={state} onRefresh={vi.fn()} />);
     const offer = await screen.findByTestId("org-domain-offer");
-    await user.click(within(offer).getByRole("button", { name: "Nanti" }));
+    await user.click(within(offer).getByRole("button", { name: "Sembunyikan" }));
     expect(screen.queryByTestId("org-domain-offer")).not.toBeInTheDocument();
     expect(screen.getByText(/Tawaran disembunyikan/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Organisasi", level: 1 })).toHaveFocus();
@@ -158,7 +158,7 @@ describe("Tawaran domain AD di Organisasi", () => {
       answer(adSettings({ machineDomain: "macf.co.id" }));
       render(<OrgScreen state={state} onRefresh={vi.fn()} />);
       const offer = await screen.findByTestId("org-domain-offer");
-      await user.click(within(offer).getByRole("button", { name: "Nanti" }));
+      await user.click(within(offer).getByRole("button", { name: "Sembunyikan" }));
       expect(screen.queryByTestId("org-domain-offer")).not.toBeInTheDocument();
     } finally {
       get.mockRestore();
@@ -186,7 +186,7 @@ describe("Tawaran domain AD di Organisasi", () => {
       "Budi, versi 0.4.0",
       "Sari, versi belum dilaporkan",
     ]);
-    expect(within(offer).getByRole("button", { name: "Nanti" })).toBeInTheDocument();
+    expect(within(offer).getByRole("button", { name: "Sembunyikan" })).toBeInTheDocument();
   });
 
   it("bahasa Inggris tanpa kata Indonesia", async () => {
@@ -196,7 +196,7 @@ describe("Tawaran domain AD di Organisasi", () => {
     expect(within(offer).getByRole("heading", { name: "Use macf.co.id as this office's AD domain?" })).toBeInTheDocument();
     expect(offer).toHaveTextContent("macf.co.id can be used once these laptops update Mira:");
     expect(offer).toHaveTextContent("Budi, version 0.4.0");
-    expect(within(offer).getByRole("button", { name: "Not now" })).toBeInTheDocument();
-    expect(offer.textContent).not.toMatch(/\b(Pakai|Nanti|kantor|laptop berikut|versi)\b/);
+    expect(within(offer).getByRole("button", { name: "Hide" })).toBeInTheDocument();
+    expect(offer.textContent).not.toMatch(/\b(Pakai|Sembunyikan|kantor|laptop berikut|versi)\b/);
   });
 });

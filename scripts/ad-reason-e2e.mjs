@@ -125,7 +125,7 @@ const LBL = {
     offerTitle: (d) => `Pakai ${d} sebagai domain AD kantor ini?`,
     offerUse: (d) => `Pakai ${d}`,
     // Kartu permintaan: cocokkan OU.
-    matchOpen: (n) => `Cocokkan OU akun ${n} ke departemen`, // aria-label tombol
+    matchOpen: (n) => `Cocokkan OU ini ke departemen (akun ${n})`, // aria-label tombol
     matchOpenText: "Cocokkan OU ini ke departemen...",
     matchDeptLabel: "Departemen di Mira",
     matchSubmit: "Cocokkan",

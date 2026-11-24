@@ -106,7 +106,7 @@ describe("Departemen: keadaan", () => {
   });
 
   it("bukan superadmin tidak melihat tab Departemen (v0.4: halaman admin saja)", async () => {
-    setup({ org_departments: [lanskap] }, memberOverview());
+    setup({ org_departments: [lanskap] }, memberOverview({ listUsers: false }));
     expect(await screen.findByRole("button", { name: "Anggota" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Departemen$/ })).not.toBeInTheDocument();
     expect(invoke).not.toHaveBeenCalledWith("org_departments", expect.anything());
@@ -473,7 +473,7 @@ describe("Departemen: menu klik kanan", () => {
   // mengelola organisasi, jadi bukan superadmin tidak pernah sampai ke tabel
   // dan menunya.
   it("bukan superadmin: tab Departemen tidak ada, jadi menu baris tidak terjangkau", async () => {
-    setup({}, memberOverview());
+    setup({}, memberOverview({ listUsers: false }));
     await screen.findByRole("button", { name: /^Anggota$/ });
     expect(screen.queryByRole("button", { name: /^Departemen$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Departemen aktif" })).not.toBeInTheDocument();

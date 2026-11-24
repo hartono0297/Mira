@@ -110,6 +110,9 @@ pub struct MemberState {
     /// (made concurrently with `suspension_op`). A `member_reinstate` must
     /// have seen all of them.
     pub joint_suspensions: Vec<String>,
+    /// The suspension in force, or one of the joint ones, was made by a
+    /// superadmin. Only a superadmin may then lift it or add to it.
+    pub suspended_by_superadmin: bool,
 }
 
 /// What a member had when suspended (docs/plans/perbaikan-bergabung.md).
@@ -250,6 +253,10 @@ pub struct OrgState {
     pub join_decisions: BTreeMap<String, JoinDecision>,
     /// Active Directory settings (`ad_settings_set`, the latest wins).
     pub ad: AdSettings,
+    /// 0.5.1: a `member_suspend` was applied. From then on a laptop older
+    /// than `join::suspend_threshold` must not be admitted (it cannot read
+    /// the log).
+    pub suspend_used: bool,
 }
 
 /// The organization's Active Directory settings (docs/plans/onboarding-ad.md).
@@ -529,6 +536,7 @@ impl OrgState {
             suspension_op: None,
             snapshot: None,
             joint_suspensions: Vec::new(),
+            suspended_by_superadmin: false,
         };
         let umum = ChannelState {
             id: umum_channel_id(&org.id),
@@ -549,6 +557,7 @@ impl OrgState {
             labels: BTreeMap::new(),
             join_decisions: BTreeMap::new(),
             ad: AdSettings::default(),
+            suspend_used: false,
         }
     }
 
@@ -839,6 +848,7 @@ impl OrgState {
         m.suspended_by = None;
         m.suspension_op = None;
         m.joint_suspensions.clear();
+        m.suspended_by_superadmin = false;
         if let Some((team, role)) = snapshot.department
             && let Some(t) = self.teams.get_mut(&team).filter(|t| !t.deleted && !t.archived)
         {
@@ -858,8 +868,9 @@ impl OrgState {
                 });
             }
         }
+        // Archived labels take nobody (`label_assign` refuses them).
         for label in &snapshot.labels {
-            if let Some(l) = self.labels.get_mut(label) {
+            if let Some(l) = self.labels.get_mut(label).filter(|l| !l.archived) {
                 l.members.insert(pk.to_owned());
             }
         }
@@ -883,10 +894,10 @@ impl OrgState {
             .then(|| team.id.clone())
     }
 
-    /// The department whose admin `author` is and through which they may
-    /// reinstate `target`: the snapshot's department, when the target was a
-    /// regular member there and not a superadmin.
-    pub(crate) fn reinstate_admin_team(&self, author: &str, target: &str) -> Option<String> {
+    /// The department whose admin `author` is, when `target` is suspended
+    /// and was a regular member there (not a superadmin). Through it the
+    /// admin may add a suspension made concurrently with another one.
+    pub(crate) fn snapshot_admin_team(&self, author: &str, target: &str) -> Option<String> {
         let m = self.member(target)?;
         let snapshot = m.snapshot.as_ref()?;
         if m.status != MemberStatus::Suspended || m.kind != MemberKind::Member || snapshot.superadmin
@@ -896,6 +907,16 @@ impl OrgState {
         let (team, role) = snapshot.department.as_ref()?;
         (*role == TeamRole::Member && self.team_role(team, author) == Some(TeamRole::Admin))
             .then(|| team.clone())
+    }
+
+    /// The department through which `author` may reinstate `target`: as
+    /// [`Self::snapshot_admin_team`], and no superadmin took part in the
+    /// suspension (an admin never lifts a superadmin's suspension).
+    pub(crate) fn reinstate_admin_team(&self, author: &str, target: &str) -> Option<String> {
+        if self.member(target)?.suspended_by_superadmin {
+            return None;
+        }
+        self.snapshot_admin_team(author, target)
     }
 
     /// Whether `author` may write `member_suspend` for `target` now (the
@@ -1101,6 +1122,7 @@ impl OrgState {
                     m.suspended_by = None;
                     m.suspension_op = None;
                     m.joint_suspensions.clear();
+                    m.suspended_by_superadmin = false;
                     m.snapshot = None;
                 }
             }
@@ -1110,20 +1132,24 @@ impl OrgState {
                 // (checked in `causal.rs`). The UI never offers this
                 // (`may_suspend` refuses a suspended target).
                 if self.member(member).map(|m| m.status) == Some(MemberStatus::Suspended) {
-                    if !self.is_superadmin(&author)
-                        && self.reinstate_admin_team(&author, member).is_none()
-                    {
+                    let by_superadmin = self.is_superadmin(&author);
+                    if !by_superadmin && self.snapshot_admin_team(&author, member).is_none() {
                         return Err(Reason::NotAuthorized);
                     }
                     if let Some(m) = self.members.get_mut(member) {
                         m.joint_suspensions.push(op.id.clone());
+                        m.suspended_by_superadmin |= by_superadmin;
                     }
+                    self.suspend_used = true;
                     return Ok(());
                 }
                 self.may_suspend(&author, member)?;
+                let by_superadmin = self.is_superadmin(&author);
                 let snapshot = self.snapshot_of(member);
                 self.strip_member(member);
+                self.suspend_used = true;
                 if let Some(m) = self.members.get_mut(member) {
+                    m.suspended_by_superadmin = by_superadmin;
                     m.status = MemberStatus::Suspended;
                     m.is_superadmin = false;
                     m.suspended_at = Some(at);
@@ -1368,6 +1394,7 @@ impl OrgState {
                         suspension_op: None,
                         snapshot: None,
                         joint_suspensions: Vec::new(),
+                        suspended_by_superadmin: false,
                     },
                 );
                 self.live_team_mut(&p.team)?.members.insert(
@@ -1673,6 +1700,7 @@ impl OrgState {
                         suspension_op: None,
                         snapshot: None,
                         joint_suspensions: Vec::new(),
+                        suspended_by_superadmin: false,
                     },
                 );
             }

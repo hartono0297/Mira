@@ -1,15 +1,15 @@
 // 0.5.1 dalam bahasa Inggris: status nonaktif, dialog Nonaktifkan atau keluarkan,
-// Aktifkan lagi, dan tombol di tab Anggota tanpa kata Indonesia.
+// Aktifkan lagi, dan tampilan admin departemen tanpa kata Indonesia.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, OrgInfo } from "../../api";
 import { formatDate } from "../../api/format";
-import type { PersonView, UserView } from "../../api/org";
+import type { UserView } from "../../api/org";
 import { setLang } from "../../i18n/core";
 import { appState, directory, router } from "../../test/fixtures";
 import { renderInLang } from "../../test/i18n";
-import { adminOverview, department, ME, overview, person, PK_B, PK_C, TEAM_1, user } from "../../test/orgFixtures";
+import { adminOverview, department, ME, overview, PK_B, PK_C, TEAM_1, user } from "../../test/orgFixtures";
 import { OrgScreen } from "./OrgScreen";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -80,7 +80,7 @@ describe("Pengguna 0.5.1 dalam bahasa Inggris", () => {
     await ue.click(await screen.findByRole("button", { name: "Users" }));
     await screen.findByText("Wulan");
 
-    expect(screen.getByRole("option", { name: "Active and deactivated" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Everyone except removed" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Deactivated" })).toBeInTheDocument();
     const sari = rowOf("Sari");
     expect(within(sari).getByText("Deactivated")).toBeInTheDocument();
@@ -110,7 +110,7 @@ describe("Pengguna 0.5.1 dalam bahasa Inggris", () => {
     dialog = await screen.findByRole("dialog", { name: "Deactivate or remove Wulan?" });
     expect(
       await within(dialog).findByText(
-        "Not available yet. Update these laptops to Mira 0.5.1 first: Sari (Mira 0.5.0) and Rudi (version not reported).",
+        "Not available yet. Update these laptops to Mira 0.5.1 first: Sari (Mira 0.5.0) and Rudi (version not reported). If this is only temporary, update those laptops first. Remove for good can't be undone.",
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("radio", { name: /^Deactivate/ })).toBeDisabled();
@@ -120,29 +120,38 @@ describe("Pengguna 0.5.1 dalam bahasa Inggris", () => {
     expect(dialog.textContent ?? "").not.toMatch(INDONESIAN);
   });
 
-  it("tab Anggota: tombol admin departemen dalam bahasa Inggris", async () => {
-    const people: (PersonView & Record<string, unknown>)[] = [
-      person(ME, "Penguji", { departmentRole: "admin" }),
-      { ...person(PK_B, "Bayu"), status: "active", canSuspend: true },
-      {
-        ...person(PK_C, "Dewi"),
-        status: "suspended",
-        suspendedAt: SUSPENDED_AT,
-        suspendedByName: "Penguji",
-        canReinstate: true,
-      },
-    ];
-    answer({ org_overview: adminOverview(), org_people: people, org_suspend_gate: { allowed: true, outdated: [] } });
+  it("admin departemen: petunjuk, menu, dan dialog Nonaktifkan dalam bahasa Inggris", async () => {
+    answer({
+      org_overview: adminOverview({ listUsers: true }),
+      org_users: [
+        user(ME, "Penguji", { departmentRole: "admin", lastIp: null }),
+        user(PK_B, "Bayu", { canSuspend: true }),
+        user(PK_C, "Dewi", {
+          status: "suspended",
+          online: false,
+          suspendedAt: SUSPENDED_AT,
+          suspendedByName: "Penguji",
+          canReinstate: true,
+        }),
+      ],
+      org_suspend_gate: { allowed: true, outdated: [] },
+    });
     const ue = userEvent.setup();
     renderInLang(() => <OrgScreen state={state} onRefresh={vi.fn()} />, "en");
-    await ue.click(await screen.findByRole("button", { name: "Members" }));
     await screen.findByText("Bayu");
 
-    expect(screen.getByRole("button", { name: "Deactivate, Bayu" })).toHaveTextContent("Deactivate");
-    expect(screen.getByRole("button", { name: "Reactivate, Dewi" })).toHaveTextContent("Reactivate");
-    expect(screen.getByText(`Deactivated ${formatDate(SUSPENDED_AT)} by Penguji`)).toBeInTheDocument();
+    expect(screen.getByText(/People in your department, including anyone deactivated from it/)).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Department" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Removed" })).not.toBeInTheDocument();
+    expect(within(rowOf("Dewi")).getByText(`Deactivated ${formatDate(SUSPENDED_AT)} by Penguji`)).toBeInTheDocument();
 
-    await ue.click(screen.getByRole("button", { name: "Deactivate, Bayu" }));
+    await ue.click(screen.getByRole("button", { name: "Actions for Dewi" }));
+    expect(screen.getByRole("menuitem", { name: "Reactivate" })).toBeInTheDocument();
+    await ue.keyboard("{Escape}");
+
+    await ue.click(screen.getByRole("button", { name: "Actions for Bayu" }));
+    expect(screen.queryByRole("menuitem", { name: "Change department" })).not.toBeInTheDocument();
+    await ue.click(screen.getByRole("menuitem", { name: "Deactivate" }));
     const dialog = await screen.findByRole("dialog", { name: "Deactivate Bayu?" });
     expect(await within(dialog).findByRole("button", { name: "Deactivate Bayu" })).toBeEnabled();
     expect(dialog.textContent ?? "").not.toMatch(INDONESIAN);

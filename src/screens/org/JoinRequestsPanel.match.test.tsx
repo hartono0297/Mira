@@ -114,7 +114,7 @@ async function card(name: string): Promise<HTMLElement> {
 }
 
 async function openMatch(user: ReturnType<typeof userEvent.setup>, scope: HTMLElement) {
-  const toggle = await within(scope).findByRole("button", { name: "Cocokkan OU akun Julius ke departemen" });
+  const toggle = await within(scope).findByRole("button", { name: "Cocokkan OU ini ke departemen (akun Julius)" });
   expect(toggle).toHaveTextContent("Cocokkan OU ini ke departemen...");
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   await user.click(toggle);
@@ -177,7 +177,7 @@ describe("Cocokkan OU ke departemen dari kartu permintaan", () => {
     );
     expect(done).toHaveFocus();
     await waitFor(() =>
-      expect(within(julius).queryByRole("button", { name: /Cocokkan OU akun Julius/ })).not.toBeInTheDocument(),
+      expect(within(julius).queryByRole("button", { name: /Cocokkan OU ini ke departemen \(akun Julius\)/ })).not.toBeInTheDocument(),
     );
   });
 
@@ -419,11 +419,11 @@ describe("Bahasa Inggris", () => {
     const julius_ = await card("Julius");
     const hint = within(julius_).getByTestId("join-previously-removed");
     expect(hint).toHaveTextContent(
-      "This Windows account was used by Sinta, who has been suspended since 3 November 2026. Consider reinstating that person instead of approving a new laptop.",
+      "This Windows account was used by Sinta, who has been deactivated since 3 November 2026. Consider reactivating that person instead of approving a new laptop.",
     );
     expect(hint).toHaveTextContent("This is a hint, not proof");
 
-    const toggle = await within(julius_).findByRole("button", { name: "Match Julius's OU to a department" });
+    const toggle = await within(julius_).findByRole("button", { name: "Match this OU to a department (Julius's account)" });
     expect(toggle).toHaveTextContent("Match this OU to a department...");
     await user.click(toggle);
     const group = await within(julius_).findByRole("group", { name: "OU to match" });

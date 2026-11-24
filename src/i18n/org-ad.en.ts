@@ -87,9 +87,9 @@ const en: Dict<typeof id> = {
   domainOffer: {
     title: (domain: string) => `Use ${domain} as this office's AD domain?`,
     body: (domain: string) =>
-      `New laptops signed in with a ${domain} account will fill in their name and department from their Windows account. An admin still approves every request.`,
+      `New laptops signed in with a ${domain} account will fill in their name from their Windows account, and their department once it's matched. An admin still approves every request.`,
     use: (domain: string) => `Use ${domain}`,
-    later: "Not now",
+    later: "Hide",
     saving: "Saving...",
     saved: (domain: string) => `This office's AD domain is now ${domain}.`,
     hidden: "Offer hidden. You can set the AD domain any time in the Departments tab, Active Directory section.",
@@ -98,7 +98,7 @@ const en: Dict<typeof id> = {
   },
   match: {
     open: "Match this OU to a department...",
-    openAria: (name: string) => `Match ${name}'s OU to a department`,
+    openAria: (name: string) => `Match this OU to a department (${name}'s account)`,
     loading: "Loading AD settings...",
     loadFailTitle: "Couldn't read the AD settings",
     retry: "Try again",

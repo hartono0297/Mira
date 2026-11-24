@@ -68,7 +68,7 @@ describe("layar status dalam bahasa Inggris", () => {
     expect(
       screen.getByRole("heading", { name: `Your account at ${state.organization?.name} is deactivated` }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Contact IT or a superadmin at your office. They can turn your account back on.")).toBeInTheDocument();
+    expect(screen.getByText("Contact IT, your department admin, or a superadmin at your office. They can reactivate your account.")).toBeInTheDocument();
     expect(screen.getByText(state.identity.fingerprint)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
     expect(screen.queryByText(/dinonaktifkan|Periksa lagi|Hubungi/)).not.toBeInTheDocument();

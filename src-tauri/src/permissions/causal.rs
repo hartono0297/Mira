@@ -138,7 +138,7 @@ impl OrgState {
             Body::MemberSuspend { member } => {
                 let team = self
                     .suspend_admin_team(author, member)
-                    .or_else(|| self.reinstate_admin_team(author, member));
+                    .or_else(|| self.snapshot_admin_team(author, member));
                 one_of(author, sa, team.is_some(), team.as_deref().unwrap_or(""))
             }
             // A reinstatement made concurrently with another suspension or

@@ -92,10 +92,10 @@ describe("App", () => {
     renderApp();
 
     expect(
-      await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari organisasi Kantor Contoh" }),
+      await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari Kantor Contoh" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/tetap tersimpan di sini/)).toBeInTheDocument();
-    expect(screen.getByText(/belum bisa bergabung lagi/)).toBeInTheDocument();
+    expect(screen.getByText(/Untuk bergabung lagi, reset laptop ini dulu/)).toBeInTheDocument();
     expect(screen.getByText("A1B2 C3D4 E5F6 0718")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Menu utama" })).not.toBeInTheDocument();
     // 0.5.1: keluar permanen tidak bisa dicek ulang; jalan keluarnya reset.
@@ -123,6 +123,6 @@ describe("App", () => {
       return null;
     });
     renderApp();
-    expect(await screen.findByRole("heading", { name: /sudah dikeluarkan dari organisasi/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /sudah dikeluarkan dari Kantor/ })).toBeInTheDocument();
   });
 });

@@ -20,6 +20,10 @@ export type OrgOverview = {
   pendingJoinCount: number;
   // Superadmin: departemen, pindah orang, label, daftar pengguna.
   manageOrg: boolean;
+  // 0.5.1: tab Pengguna terlihat. Superadmin melihat semua orang; admin
+  // departemen hanya orang di departemennya (termasuk yang dinonaktifkan dari
+  // departemen itu) untuk menonaktifkan dan mengaktifkan lagi.
+  listUsers: boolean;
 };
 
 export type DepartmentView = {

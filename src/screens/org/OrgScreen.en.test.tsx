@@ -64,7 +64,7 @@ describe("Organisasi dalam bahasa Inggris", () => {
     expect(await screen.findByRole("columnheader", { name: "Laptop and last IP" })).toBeInTheDocument();
     expect(screen.getByText("3 people")).toBeInTheDocument();
     expect(screen.getByText("Guest, 2 projects")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Active and deactivated" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Everyone except removed" })).toBeInTheDocument();
     expect(screen.queryByText("Pengguna")).not.toBeInTheDocument();
     expect(screen.queryByText(/Belum ada departemen|Laptop ini|Bergabung/)).not.toBeInTheDocument();
 
@@ -85,7 +85,7 @@ describe("Organisasi dalam bahasa Inggris", () => {
   });
 
   it("anggota biasa melihat daftar Anggota dalam bahasa Inggris, lalu kembali ke bahasa Indonesia", async () => {
-    answer({ org_overview: memberOverview() });
+    answer({ org_overview: memberOverview({ listUsers: false }) });
     renderInLang(() => <OrgScreen state={state} onRefresh={vi.fn()} />, "en");
 
     expect(await screen.findByRole("heading", { name: "Organization members" })).toBeInTheDocument();

@@ -1,7 +1,7 @@
 // Layar nonaktif dan dikeluarkan dalam bahasa Inggris: tidak ada kata tampilan
 // bahasa Indonesia yang tersisa, termasuk hasil Periksa lagi, error, dan dialog
 // reset. Daftar kata sama dengan src/i18n/noIndonesian.test.tsx.
-import { act, screen } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MembershipCheck } from "../api";
@@ -74,8 +74,8 @@ describe("layar keanggotaan dalam bahasa Inggris", () => {
     ));
     expect(screen.getByRole("heading", { name: "Your account at Test Office is deactivated" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Check again" }));
-    expect(await screen.findByText("Checked at 14:20: still deactivated.")).toBeInTheDocument();
-    expect(screen.getByText(/No office laptop reached yet/)).toBeInTheDocument();
+    expect(await within(screen.getByTestId("status-recheck-result")).findByText("Checked at 14:20: still deactivated.")).toBeInTheDocument();
+    expect(within(screen.getByTestId("status-recheck-result")).getByText(/Not connected to any office laptop yet/)).toBeInTheDocument();
     expect(indonesianLeft()).toEqual([]);
   });
 
@@ -88,7 +88,7 @@ describe("layar keanggotaan dalam bahasa Inggris", () => {
       </ThemeProvider>
     ));
     await user.click(screen.getByRole("button", { name: "Check again" }));
-    expect(await screen.findByText(/^Couldn't check\./)).toBeInTheDocument();
+    expect(await within(screen.getByTestId("status-recheck-result")).findByText(/^Couldn't check\./)).toBeInTheDocument();
     expect(indonesianLeft()).toEqual([]);
   });
 

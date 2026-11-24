@@ -30,7 +30,7 @@ use super::format::{format_time, is_lower_hex, parse_time};
 use super::join::{
     JOIN_NOTE_MAX_CHARS, JOIN_REQUEST_VALIDITY, JOIN_REQUEST_VERSION, JoinAdClaim, JoinExtras,
     JoinRequestPayload, SignedJoinRequest, VerifiedJoinRequest, ad_blockers, fit_ad_claim,
-    is_below_ad_threshold, is_valid_ad_dn, is_valid_ad_text, is_valid_ad_user,
+    is_below_ad_threshold, is_below_suspend_threshold, is_valid_ad_dn, is_valid_ad_text, is_valid_ad_user,
     is_valid_join_account, is_valid_join_note, join_ad_allowed, join_extras_allowed,
     org_fingerprint, org_fingerprint_short, request_code, request_id, sign_join_request,
     strip_join_text, verify_join_request,
@@ -1199,8 +1199,9 @@ pub struct JoinRequestView {
     /// AD onboarding: the claim from the signed request (reported by the
     /// requester's laptop), with what this office makes of it.
     pub ad: Option<JoinAdView>,
-    /// The office has AD settings and the requester's Mira is older than
-    /// `JOIN_AD_SINCE`: approving is refused until it updates.
+    /// Approving is refused until the requester updates Mira: the office
+    /// has AD settings and it is older than `JOIN_AD_SINCE`, or the log
+    /// holds a `member_suspend` and it is older than `SUSPEND_SINCE`.
     pub requester_outdated: bool,
     /// 0.5.1: the request's AD account or laptop name is that of someone
     /// suspended or removed. A hint, not proof.
@@ -1430,7 +1431,8 @@ pub fn pending_join_requests(
             continue;
         };
         let p = req.payload;
-        let requester_outdated = state.ad.set && is_below_ad_threshold(&p.app_version);
+        let requester_outdated = (state.ad.set && is_below_ad_threshold(&p.app_version))
+            || (state.suspend_used && is_below_suspend_threshold(&p.app_version));
         let previously_removed = previously_removed(
             state,
             &p.member,

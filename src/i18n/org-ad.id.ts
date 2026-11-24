@@ -97,9 +97,9 @@ const id = {
   domainOffer: {
     title: (domain: string) => `Pakai ${domain} sebagai domain AD kantor ini?`,
     body: (domain: string) =>
-      `Laptop baru yang login dengan akun domain ${domain} akan mengisi nama dan departemen dari akun Windows-nya. Admin tetap menyetujui setiap permintaan.`,
+      `Laptop baru yang login dengan akun domain ${domain} akan mengisi nama dari akun Windows-nya, dan departemen kalau sudah dicocokkan. Admin tetap menyetujui setiap permintaan.`,
     use: (domain: string) => `Pakai ${domain}`,
-    later: "Nanti",
+    later: "Sembunyikan",
     saving: "Menyimpan...",
     saved: (domain: string) => `Domain AD kantor ini sekarang ${domain}.`,
     hidden: "Tawaran disembunyikan. Domain AD bisa diatur kapan saja di tab Departemen, bagian Active Directory.",
@@ -109,7 +109,7 @@ const id = {
   // "Cocokkan OU ini ke departemen..." di blok AD kartu permintaan (superadmin, 0.5.1).
   match: {
     open: "Cocokkan OU ini ke departemen...",
-    openAria: (name: string) => `Cocokkan OU akun ${name} ke departemen`,
+    openAria: (name: string) => `Cocokkan OU ini ke departemen (akun ${name})`,
     loading: "Memuat pengaturan AD...",
     loadFailTitle: "Pengaturan AD belum terbaca",
     retry: "Coba lagi",

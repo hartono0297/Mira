@@ -104,7 +104,7 @@ describe("App dan layar status keanggotaan", () => {
     renderApp();
 
     expect(
-      await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari organisasi Kantor Contoh" }),
+      await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari Kantor Contoh" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Periksa lagi" })).not.toBeInTheDocument();
 

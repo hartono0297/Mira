@@ -130,6 +130,10 @@ pub struct FoundOffice {
     pub ad_domain: Option<String>,
     /// Every member that answered for this office takes the AD claim.
     pub accepts_ad: bool,
+    /// 0.5.1: the most active members on a Mira too old for the AD claim
+    /// that any answering member reported; `None` when no answer said
+    /// (members before 0.5.1).
+    pub ad_outdated: Option<u32>,
     /// From the verified genesis record (RFC 3339).
     pub created_at: String,
 }
@@ -186,6 +190,8 @@ struct Member {
     extras: u32,
     ad_domain: Option<String>,
     ad_ou_map: Vec<OuMapping>,
+    /// `JoinInfoWire.ad_outdated` (0.5.1).
+    ad_outdated: Option<u32>,
 }
 
 impl Member {
@@ -221,6 +227,12 @@ impl Office {
             .map_or((None, &[][..]), |(_, m)| {
                 (m.ad_domain.as_deref(), m.ad_ou_map.as_slice())
             })
+    }
+
+    /// Largest `ad_outdated` among the answers; `None` when no member
+    /// reported it.
+    fn ad_outdated(&self) -> Option<u32> {
+        self.members.values().filter_map(|m| m.ad_outdated).max()
     }
 
     fn department_pairs(&self) -> Vec<(String, String)> {
@@ -321,6 +333,7 @@ impl ClientState {
             extras,
             ad_domain,
             ad_ou_map,
+            ad_outdated,
         } = info;
         self.prune(now);
         let key = office_key(&org);
@@ -351,6 +364,7 @@ impl ClientState {
                 extras,
                 ad_domain,
                 ad_ou_map,
+                ad_outdated,
             },
         );
         self.asked.insert(pk.to_owned(), now);
@@ -394,6 +408,7 @@ impl ClientState {
             accepts_note: office.accepts_extras(),
             ad_domain: office.ad().0.map(str::to_owned),
             accepts_ad: office.accepts(JOIN_INFO_EXTRAS_AD),
+            ad_outdated: office.ad_outdated(),
             created_at: office.org.created_at.clone(),
         }
     }
@@ -531,6 +546,8 @@ struct VerifiedInfo {
     /// Normalized; `None` when absent or not a valid domain.
     ad_domain: Option<String>,
     ad_ou_map: Vec<OuMapping>,
+    /// `JoinInfoWire.ad_outdated` (0.5.1); `None` from older members.
+    ad_outdated: Option<u32>,
 }
 
 /// OU rows of an answer that could be real (1 to 64 printable
@@ -553,6 +570,7 @@ fn clean_ou_map(rows: Vec<crate::network::OuMapWire>) -> Vec<OuMapping> {
 /// and (for mDNS hints) its id is the one announced.
 fn verify_info(info: JoinInfoWire, expected_org: Option<&str>) -> Option<VerifiedInfo> {
     let extras = info.extras;
+    let ad_outdated = info.ad_outdated;
     let ad_domain = info
         .ad_domain
         .as_deref()
@@ -582,6 +600,7 @@ fn verify_info(info: JoinInfoWire, expected_org: Option<&str>) -> Option<Verifie
         extras,
         ad_domain,
         ad_ou_map,
+        ad_outdated,
     })
 }
 
@@ -1685,6 +1704,7 @@ impl JoinClient {
             extras,
             ad_domain: ad_domain.map(str::to_owned),
             ad_ou_map: Vec::new(),
+            ad_outdated: None,
         };
         let addr: SocketAddr = "192.168.1.9:47800".parse().expect("address");
         self.lock().record(&pk, addr, info, Instant::now())
@@ -1732,6 +1752,7 @@ mod tests {
             accepts_note: true,
             ad_domain: Some("macf.co.id".into()),
             accepts_ad: false,
+            ad_outdated: Some(1),
             created_at: "2026-11-23T08:00:00Z".into(),
         };
         let v = serde_json::to_value(&office).unwrap();
@@ -1744,6 +1765,7 @@ mod tests {
                 "acceptsAd",
                 "acceptsNote",
                 "adDomain",
+                "adOutdated",
                 "conflict",
                 "createdAt",
                 "departments",
@@ -1758,13 +1780,16 @@ mod tests {
         assert_eq!(v["acceptsNote"], true);
         assert_eq!(v["adDomain"], "macf.co.id");
         assert_eq!(v["acceptsAd"], false);
+        assert_eq!(v["adOutdated"], 1);
         assert_eq!(v["createdAt"], "2026-11-23T08:00:00Z");
         let v = serde_json::to_value(FoundOffice {
             ad_domain: None,
+            ad_outdated: None,
             ..office
         })
         .unwrap();
         assert_eq!(v["adDomain"], serde_json::Value::Null);
+        assert_eq!(v["adOutdated"], serde_json::Value::Null);
         let s = serde_json::to_value(JoinSearch {
             offices: vec![],
             legacy_offices: vec![
@@ -2137,6 +2162,7 @@ mod tests {
             extras,
             ad_domain: domain.map(str::to_owned),
             ad_ou_map: Vec::new(),
+            ad_outdated: None,
         }
     }
 
@@ -2369,6 +2395,7 @@ mod tests {
             extras: JOIN_INFO_EXTRAS_AD,
             ad_domain: domain.map(str::to_owned),
             ad_ou_map: map.into_iter().map(Into::into).collect(),
+            ad_outdated: None,
         };
         let info = verify_info(wire(Some("MACF.co.id."), Vec::new()), None).unwrap();
         let key = st.record(&"01".repeat(32), a1, info, at(1));

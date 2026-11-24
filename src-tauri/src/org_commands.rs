@@ -69,7 +69,8 @@ pub async fn org_people(state: State<'_, MiraState>) -> AppResult<Vec<PersonView
     })
 }
 
-/// Superadmin only (`forbidden` otherwise).
+/// Superadmin: everyone; department admin: their department's people
+/// (`forbidden` for anyone else).
 #[tauri::command]
 pub async fn org_users(
     state: State<'_, MiraState>,

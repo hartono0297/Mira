@@ -198,7 +198,7 @@ const id = {
         outdatedCount: (n: number) =>
           `Ada ${n} laptop di kantor ini yang belum diperbarui ke Mira 0.5, jadi data akun Windows Anda belum bisa dipakai. Pilih departemen sendiri.`,
         noDomain:
-          "Domain kantor ini belum diatur, jadi data akun Windows Anda belum dipakai. Pilih departemen sendiri; admin bisa mengatur domainnya nanti.",
+          "Domain kantor ini belum diatur, jadi data akun Windows Anda belum dipakai. Pilih departemen sendiri. Admin bisa mengatur domainnya nanti.",
         otherDomain: (office: string, mine: string) =>
           `Domain kantor (${office}) berbeda dengan domain akun Anda (${mine}), jadi data akun Windows Anda tidak dipakai. Pilih departemen sendiri.`,
         noUser: "Nama akun Windows Anda belum terbaca, jadi datanya belum dipakai. Pilih departemen sendiri.",

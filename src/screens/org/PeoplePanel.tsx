@@ -6,18 +6,10 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { getLang } from "../../i18n/core";
-import { ORG_TEXT, USERS_TEXT } from "../../i18n/org";
+import { ORG_TEXT } from "../../i18n/org";
 import type { OrgPage } from "./context";
-import { ReinstateDialog, SuspendedStatus, TakeOutDialog, type StatusTarget } from "./UsersPanelStatus";
 import { useOrgLive } from "./useOrgLive";
 import "./users.css";
-
-// 0.5.1: admin departemen menonaktifkan dan mengaktifkan lagi anggota biasa
-// departemennya dari tab ini. Field status dan tanda aksi dibaca kalau inti
-// Rust mengirimnya di org_people; tanpa itu daftar tetap hanya baca.
-type PersonRow = PersonView & StatusTarget;
-
-type Open = { kind: "suspend" | "reinstate"; person: PersonRow } | null;
 
 // Peran yang ditulis di daftar: gabungan superadmin organisasi dan peran di departemen.
 export function roleText(p: Pick<PersonView, "isGuest" | "isSuperadmin" | "departmentRole">): string {
@@ -50,11 +42,9 @@ export function matches(query: string, texts: (string | null | undefined)[]): bo
 
 // Daftar orang untuk yang bukan superadmin: hanya baca, tanpa laptop atau IP.
 export function PeoplePanel({ page }: { page: OrgPage }) {
-  const live = useOrgLive<PersonRow[]>(() => orgApi.people(), { version: page.version });
+  const live = useOrgLive(() => orgApi.people(), { version: page.version });
   const [query, setQuery] = useState("");
-  const [open, setOpen] = useState<Open>(null);
   const searchId = useId();
-  const T = USERS_TEXT;
 
   const people = useMemo(() => [...(live.data ?? [])].sort(byName), [live.data]);
   const shown = people.filter((p) =>
@@ -138,9 +128,6 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
             <ul className="row-list people-list">
               {shown.map((p) => {
                 const self = page.isMe(p.publicKey);
-                const suspended = p.status === "suspended";
-                const canSuspend = !self && !suspended && p.canSuspend === true;
-                const canReinstate = !self && suspended && p.canReinstate === true;
                 return (
                   <li key={p.publicKey} className="row">
                     <span className="users-av" aria-hidden="true">
@@ -157,52 +144,13 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
                         {p.isGuest ? ORG_TEXT.people.guest : (p.departmentName ?? ORG_TEXT.people.noDepartment)}
                         {!p.isGuest && <>, {roleText(p).toLocaleLowerCase("id")}</>}
                       </span>
-                      {suspended && <SuspendedStatus u={p} />}
                     </div>
-                    {canSuspend && (
-                      <span className="people-act">
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          aria-label={T.people.suspendAria(p.displayName)}
-                          onClick={() => setOpen({ kind: "suspend", person: p })}
-                        >
-                          {T.menu.suspend}
-                        </button>
-                      </span>
-                    )}
-                    {canReinstate && (
-                      <span className="people-act">
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          aria-label={T.people.reinstateAria(p.displayName)}
-                          onClick={() => setOpen({ kind: "reinstate", person: p })}
-                        >
-                          {T.menu.reinstate}
-                        </button>
-                      </span>
-                    )}
                   </li>
                 );
               })}
             </ul>
           )}
         </>
-      )}
-
-      {open?.kind === "suspend" && (
-        <TakeOutDialog
-          user={open.person}
-          allowSuspend
-          allowRemove={false}
-          onClose={() => setOpen(null)}
-          onDone={() => setOpen(null)}
-          page={page}
-        />
-      )}
-      {open?.kind === "reinstate" && (
-        <ReinstateDialog user={open.person} onClose={() => setOpen(null)} onDone={() => setOpen(null)} page={page} />
       )}
     </section>
   );

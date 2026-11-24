@@ -44,6 +44,9 @@ pub struct OrgOverview {
     pub pending_join_count: usize,
     /// Superadmin only: departments, moving people, labels, user list.
     pub manage_org: bool,
+    /// The Pengguna list (`org_users`): everyone for a superadmin, their
+    /// own department's people for a department admin.
+    pub list_users: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -214,6 +217,7 @@ pub fn org_overview(
         decide_join_team_ids,
         pending_join_count: pending.len(),
         manage_org: is_superadmin,
+        list_users: may_list_users(state, me),
     })
 }
 
@@ -334,8 +338,49 @@ fn ip_of(address: &str) -> String {
         .unwrap_or_else(|_| address.to_owned())
 }
 
-/// Superadmin only: everyone who ever joined, with laptop details, last IP
-/// and last seen. `online` maps the keys connected now to their address.
+/// `person_view`, but a suspended person shows the department (and role)
+/// of their snapshot while it exists, instead of none.
+fn user_person(
+    state: &OrgState,
+    m: &MemberState,
+    my_name: Option<(&str, Option<&str>)>,
+) -> PersonView {
+    let mut person = person_view(state, m, my_name);
+    if m.status == MemberStatus::Suspended
+        && let Some((team, role)) = m.snapshot.as_ref().and_then(|s| s.department.as_ref())
+        && let Some(t) = state.live_team(team)
+    {
+        person.department_id = Some(t.id.clone());
+        person.department_name = Some(t.name.clone());
+        person.department_role = Some(*role);
+    }
+    person
+}
+
+/// Departments `pk` is an admin of (live ones).
+fn admin_teams(state: &OrgState, pk: &str) -> Vec<String> {
+    if !state.is_active_non_guest(pk) {
+        return Vec::new();
+    }
+    state
+        .teams_of(pk)
+        .into_iter()
+        .filter(|(_, role)| *role == TeamRole::Admin)
+        .map(|(t, _)| t.id.clone())
+        .collect()
+}
+
+/// Whether `pk` may open the Pengguna list: a superadmin, or an active
+/// department admin.
+pub fn may_list_users(state: &OrgState, pk: &str) -> bool {
+    state.is_superadmin(pk) || !admin_teams(state, pk).is_empty()
+}
+
+/// Superadmin: everyone who ever joined, with laptop details, last IP and
+/// last seen. Department admin: themselves, the people now in a department
+/// they admin, and the suspended people whose snapshot department is one
+/// of those (no removed people, no other departments). `online` maps the
+/// keys connected now to their address.
 pub fn users(
     conn: &Connection,
     state: &OrgState,
@@ -343,11 +388,28 @@ pub fn users(
     my_name: Option<&str>,
     online: &HashMap<String, LivePeer>,
 ) -> AppResult<Vec<UserView>> {
-    if !state.is_superadmin(me) {
+    let everyone = state.is_superadmin(me);
+    let teams = admin_teams(state, me);
+    if !everyone && teams.is_empty() {
         return Err(AppError::Forbidden(
-            "Daftar pengguna hanya untuk superadmin.".into(),
+            "Daftar pengguna hanya untuk superadmin dan admin departemen.".into(),
         ));
     }
+    let listed = |m: &MemberState| {
+        everyone
+            || m.public_key == me
+            || match m.status {
+                MemberStatus::Active => state
+                    .department_of(&m.public_key)
+                    .is_some_and(|(t, _)| teams.contains(&t.id)),
+                MemberStatus::Suspended => m
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.department.as_ref())
+                    .is_some_and(|(t, _)| teams.contains(t)),
+                MemberStatus::Removed => false,
+            }
+    };
     let mut last_ip = conn.prepare(
         "SELECT address FROM peer_addresses
          WHERE public_key = ?1 AND last_success_at IS NOT NULL
@@ -356,11 +418,12 @@ pub fn users(
     let mut last_seen = conn.prepare("SELECT last_seen_at FROM peer_seen WHERE public_key = ?1")?;
     let mine = Some((me, my_name));
     let mut out = Vec::with_capacity(state.members.len());
-    for m in state.members.values() {
+    for m in state.members.values().filter(|m| listed(m)) {
         let pk = m.public_key.as_str();
         let is_me = pk == me;
         let live = online.get(pk);
-        let ip = if is_me {
+        // The IP is for superadmins only.
+        let ip = if is_me || !everyone {
             None
         } else if let Some(addr) = live.and_then(|l| l.address.as_deref()) {
             Some(ip_of(addr))
@@ -391,7 +454,7 @@ pub fn users(
         };
         let acts = |ok: bool| ok && !is_me && state.is_active(me);
         out.push(UserView {
-            person: person_view(state, m, mine),
+            person: user_person(state, m, mine),
             status: m.status,
             joined_at: m.joined_at.clone(),
             removed_at: m.removed_at.clone(),

@@ -56,6 +56,10 @@ export function RemovedScreen({ state, onReset }: Props) {
         <p className="status-cause">{T.cause}</p>
         <p>{T.kept}</p>
         <p>{T.rejoin}</p>
+        <div className="status-contact">
+          <p>{T.contact}</p>
+          <Fingerprint value={state.identity.fingerprint} />
+        </div>
         <div className="removed-actions">
           <button
             type="button"
@@ -68,10 +72,6 @@ export function RemovedScreen({ state, onReset }: Props) {
             <IconRestore size={18} aria-hidden="true" />
             {T.reset}
           </button>
-        </div>
-        <div className="status-contact">
-          <p>{T.contact}</p>
-          <Fingerprint value={state.identity.fingerprint} />
         </div>
       </main>
       <ConfirmDialog
@@ -97,6 +97,7 @@ export function RemovedScreen({ state, onReset }: Props) {
           <li>{D.start}</li>
           <li>{D.admin}</li>
         </ul>
+        <p className="removed-undo">{D.undo}</p>
       </ConfirmDialog>
     </div>
   );

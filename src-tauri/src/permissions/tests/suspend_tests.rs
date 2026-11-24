@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::join_tests::{Node, Office, all_on, now, office};
+use super::join_tests::{Node, Office, all_on, device, ip, now, office, target};
 use super::sim::*;
 use crate::error::AppError;
 use crate::permissions::fold::{JoinDecision, Reason as R};
@@ -323,8 +323,46 @@ fn who_may_suspend_reinstate_and_remove() {
     assert_eq!(sim.push(&sa2, reinstate(&admin_d2)), Ok(()));
     assert_eq!(sim.push(&f, suspend(&sa2)), Ok(()));
     assert_eq!(sim.push(&admin_g, reinstate(&sa2)), Err(R::NotAuthorized));
+    // Nor a member a superadmin suspended; their own suspension, yes.
     assert_eq!(sim.push(&f, suspend(&member_g)), Ok(()));
+    assert_eq!(sim.push(&admin_g, reinstate(&member_g)), Err(R::NotAuthorized));
+    assert_eq!(sim.push(&f, reinstate(&member_g)), Ok(()));
+    assert_eq!(sim.push(&admin_g, suspend(&member_g)), Ok(()));
     assert_eq!(sim.push(&admin_g, reinstate(&member_g)), Ok(()));
+    assert_order_free(&sim);
+}
+
+#[test]
+fn an_admin_never_lifts_a_superadmin_suspension() {
+    let World {
+        mut sim,
+        f,
+        admin_d,
+        member_d,
+        ..
+    } = world();
+    assert_eq!(sim.push(&f, suspend(&member_d)), Ok(()));
+    let s = sim.state();
+    assert!(s.member(&member_d.pk).unwrap().suspended_by_superadmin);
+    assert_eq!(s.may_reinstate(&admin_d.pk, &member_d.pk), Err(R::NotAuthorized));
+    assert_eq!(sim.push(&admin_d, reinstate(&member_d)), Err(R::NotAuthorized));
+    // Adding a suspension on top is allowed (it lifts nothing), and does
+    // not give the admin the right to reinstate.
+    assert_eq!(sim.push(&admin_d, suspend(&member_d)), Ok(()));
+    assert_eq!(sim.push(&admin_d, reinstate(&member_d)), Err(R::NotAuthorized));
+    assert_eq!(sim.push(&f, reinstate(&member_d)), Ok(()));
+    assert!(!sim.state().member(&member_d.pk).unwrap().suspended_by_superadmin);
+
+    // The admin's own suspension: theirs to lift until a superadmin adds
+    // one on top.
+    assert_eq!(sim.push(&admin_d, suspend(&member_d)), Ok(()));
+    assert!(!sim.state().member(&member_d.pk).unwrap().suspended_by_superadmin);
+    assert_eq!(sim.state().may_reinstate(&admin_d.pk, &member_d.pk), Ok(()));
+    assert_eq!(sim.push(&f, suspend(&member_d)), Ok(()));
+    assert!(sim.state().member(&member_d.pk).unwrap().suspended_by_superadmin);
+    assert_eq!(sim.push(&admin_d, reinstate(&member_d)), Err(R::NotAuthorized));
+    assert_eq!(sim.push(&f, reinstate(&member_d)), Ok(()));
+    assert_eq!(status(&sim, &member_d), MemberStatus::Active);
     assert_order_free(&sim);
 }
 
@@ -380,7 +418,13 @@ fn snapshot_is_restored_only_where_still_valid() {
     let x = sim.join(&arsip, InviteRole::Member, "Xena");
     let (proj, body) = project(&x, &arsip);
     assert_eq!(sim.push(&x, body), Ok(()));
+    let archived_label = label_for(&mut sim, &x);
     assert_eq!(sim.push(&f, suspend(&x)), Ok(()));
+    let archive_label = Body::LabelArchive {
+        label: archived_label.clone(),
+        archived: true,
+    };
+    assert_eq!(sim.push(&f, archive_label), Ok(()));
     let archive = Body::TeamArchive {
         team: arsip.clone(),
         archived: true,
@@ -391,6 +435,8 @@ fn snapshot_is_restored_only_where_still_valid() {
     assert!(s.is_active(&x.pk));
     assert!(s.department_of(&x.pk).is_none());
     assert!(s.is_project_member(&proj, &x.pk));
+    // `label_assign` refuses archived labels; so does the restore.
+    assert!(!s.labels[&archived_label].members.contains(&x.pk));
 
     // Deleted department.
     let hapus = sim.team("Hapus");
@@ -911,4 +957,166 @@ fn a_request_matching_someone_suspended_or_removed_gets_a_hint() {
     assert!(p::previously_removed(&s, &new, Some(("lain.co.id", "sari.l")), "PC-LAIN").is_none());
     assert!(p::previously_removed(&s, &new, None, "").is_none());
     assert!(p::previously_removed(&s, &member_d.pk, None, "LAPTOP-DESAIN-03").is_none());
+}
+
+#[test]
+fn department_admins_list_their_own_department_only() {
+    let mut o = open_office();
+    let (andi, rina, dimas) = (o.andi.pk(), o.rina.pk(), o.dimas.pk());
+    o.andi.sync_to(&mut o.rina);
+    o.andi.sync_to(&mut o.dimas);
+    let overview = |n: &Node| p::org_overview(&n.conn, &n.state(), &n.pk(), now()).unwrap();
+    assert!(overview(&o.andi).list_users);
+    assert!(overview(&o.rina).list_users);
+    assert!(!overview(&o.dimas).list_users);
+    assert_eq!(
+        serde_json::to_value(overview(&o.rina)).unwrap()["listUsers"],
+        true
+    );
+    let list = |n: &Node| p::users(&n.conn, &n.state(), &n.pk(), None, &HashMap::new());
+    let keys = |n: &Node| -> Vec<String> {
+        let mut k: Vec<String> = list(n)
+            .unwrap()
+            .into_iter()
+            .map(|u| u.person.public_key)
+            .collect();
+        k.sort();
+        k
+    };
+    let mut desain = vec![rina.clone(), dimas.clone()];
+    desain.sort();
+    // Rina (admin of Desain) sees herself and Dimas, not Andi (Administrasi).
+    assert_eq!(keys(&o.rina), desain);
+    assert_eq!(list(&o.andi).unwrap().len(), 3);
+    let err = list(&o.dimas).unwrap_err();
+    assert!(matches!(err, AppError::Forbidden(_)), "{err:?}");
+    let d = list(&o.rina)
+        .unwrap()
+        .into_iter()
+        .find(|u| u.person.public_key == dimas)
+        .unwrap();
+    assert!(d.can_suspend && !d.can_reinstate && !d.can_remove);
+
+    // Suspended from Desain: still in Rina's list, with reinstate allowed.
+    p::suspend_member(&mut o.rina.conn, &o.rina.id, &dimas, now()).unwrap();
+    assert_eq!(keys(&o.rina), desain);
+    let d = list(&o.rina)
+        .unwrap()
+        .into_iter()
+        .find(|u| u.person.public_key == dimas)
+        .unwrap();
+    assert_eq!(d.status, MemberStatus::Suspended);
+    assert!(!d.can_suspend && d.can_reinstate && !d.can_remove);
+    let me = list(&o.rina)
+        .unwrap()
+        .into_iter()
+        .find(|u| u.person.public_key == rina)
+        .unwrap();
+    assert!(!me.can_suspend && !me.can_reinstate && !me.can_remove);
+
+    // Removed for good: gone from Rina's list, still in Andi's.
+    o.rina.sync_to(&mut o.andi);
+    p::remove_member(&mut o.andi.conn, &o.andi.id, &dimas, now()).unwrap();
+    o.andi.sync_to(&mut o.rina);
+    assert_eq!(keys(&o.rina), vec![rina.clone()]);
+    assert!(keys(&o.andi).contains(&dimas));
+    assert!(!keys(&o.rina).contains(&andi));
+}
+
+#[test]
+fn admin_view_hides_ips_and_shows_the_department_of_suspended_people() {
+    let mut o = open_office();
+    let dimas = o.dimas.pk();
+    o.andi.sync_to(&mut o.rina);
+    let online = HashMap::from([(
+        dimas.clone(),
+        p::LivePeer {
+            address: Some("192.168.1.9:47800".into()),
+        },
+    )]);
+    let row = |n: &Node| {
+        p::users(&n.conn, &n.state(), &n.pk(), None, &online)
+            .unwrap()
+            .into_iter()
+            .find(|u| u.person.public_key == dimas)
+            .unwrap()
+    };
+    assert_eq!(row(&o.andi).last_ip.as_deref(), Some("192.168.1.9"));
+    let r = row(&o.rina);
+    assert_eq!(r.last_ip, None);
+    assert!(r.online);
+
+    p::suspend_member(&mut o.rina.conn, &o.rina.id, &dimas, now()).unwrap();
+    let r = row(&o.rina);
+    assert_eq!(r.status, MemberStatus::Suspended);
+    assert_eq!(r.person.department_id.as_deref(), Some(o.desain.as_str()));
+    assert_eq!(r.person.department_name.as_deref(), Some("Desain"));
+    assert_eq!(r.person.department_role, Some(TeamRole::Member));
+    // Only the user list does that: the fold has no department for him.
+    assert!(o.rina.state().department_of(&dimas).is_none());
+}
+
+/// A join request from a laptop reporting Mira `version`, received by Andi.
+fn old_request(o: &mut Office, name: &str, version: &str) -> (Node, String) {
+    let mut who = Node::new(name);
+    let profile = p::DeviceProfile {
+        app_version: version.into(),
+        ..device()
+    };
+    let mine = p::create_join_request(
+        &mut who.conn,
+        &who.id,
+        &target(&o.andi, &o.desain),
+        &profile,
+        None,
+        now(),
+    )
+    .unwrap();
+    p::receive_join_request(
+        &mut o.andi.conn,
+        &o.andi.id,
+        &mine.request,
+        &who.pk(),
+        ip("192.168.1.40"),
+        now(),
+    )
+    .unwrap();
+    (who, mine.request_id)
+}
+
+#[test]
+fn outdated_requesters_are_refused_once_someone_was_suspended() {
+    let mut o = open_office();
+    let old = below(p::suspend_threshold());
+    let (tono, tono_req) = old_request(&mut o, "Tono", &old);
+    let (tini, tini_req) = old_request(&mut o, "Tini", &old);
+    let (_, new_req) = old_request(&mut o, "Nina", crate::device::APP_VERSION);
+    // Nobody suspended yet: an older laptop may still join (it only closes
+    // the suspend gate).
+    let cards = |o: &Office| {
+        p::pending_join_requests(&o.andi.conn, &o.andi.state(), &o.andi.pk(), now()).unwrap()
+    };
+    assert!(cards(&o).iter().all(|c| !c.requester_outdated));
+    p::approve_join(&mut o.andi.conn, &o.andi.id, &tono_req, now()).unwrap();
+    assert!(!p::suspend_allowed(&o.andi.state()));
+    p::remove_member(&mut o.andi.conn, &o.andi.id, &tono.pk(), now()).unwrap();
+
+    let dimas = o.dimas.pk();
+    p::suspend_member(&mut o.andi.conn, &o.andi.id, &dimas, now()).unwrap();
+    assert!(o.andi.state().suspend_used);
+    let c = cards(&o);
+    let card = |id: &str| c.iter().find(|c| c.id == id).unwrap();
+    assert!(card(&tini_req).requester_outdated);
+    assert!(!card(&new_req).requester_outdated);
+    let err = p::approve_join(&mut o.andi.conn, &o.andi.id, &tini_req, now()).unwrap_err();
+    assert!(
+        matches!(&err, AppError::InvalidInput(m) if m == p::REQUESTER_OUTDATED_SUSPEND),
+        "{err:?}"
+    );
+    assert!(!o.andi.state().is_active(&tini.pk()));
+    p::reject_join(&mut o.andi.conn, &o.andi.id, &tini_req, now()).unwrap();
+    p::approve_join(&mut o.andi.conn, &o.andi.id, &new_req, now()).unwrap();
+    // Reinstating does not clear the mark: the log still holds the op.
+    p::reinstate_member(&mut o.andi.conn, &o.andi.id, &dimas, now()).unwrap();
+    assert!(o.andi.state().suspend_used);
 }

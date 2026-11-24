@@ -166,7 +166,9 @@ export function OrgScreen({ state, onRefresh }: Props) {
     if (!overview) return [];
     const list: { id: Part; label: string; count?: number }[] = [];
     const tabs = ORG_TEXT.screen.tabs;
-    if (overview.manageOrg) list.push({ id: "users", label: tabs.users });
+    // 0.5.1: admin departemen juga melihat Pengguna, terbatas pada departemennya,
+    // untuk menonaktifkan dan mengaktifkan lagi anggota biasa.
+    if (overview.manageOrg || overview.listUsers) list.push({ id: "users", label: tabs.users });
     else list.push({ id: "people", label: tabs.people });
     if (overview.manageOrg) list.push({ id: "departments", label: tabs.departments });
     if (overview.isSuperadmin || overview.decideJoinTeamIds.length > 0) {

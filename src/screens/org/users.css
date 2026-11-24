@@ -263,12 +263,6 @@
   color: var(--text);
 }
 
-/* Tab Anggota: tombol Nonaktifkan atau Aktifkan lagi di ujung baris. */
-.people-act {
-  flex: none;
-  align-self: center;
-}
-
 /* Tombol titik tiga per baris. Menunya komponen bersama ContextMenu. */
 .users-menu-btn {
   width: 36px;

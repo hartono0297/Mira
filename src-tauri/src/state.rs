@@ -136,6 +136,12 @@ impl MiraState {
                 ));
             }
         }
+        if let Err(e) = trash.commit() {
+            return Err(undo(
+                trash,
+                format!("Folder data Mira tidak bisa diubah untuk reset. Detail: {e}"),
+            ));
+        }
         if let Err(e) = self
             .keystore
             .delete(&identity::keystore_account(&old_public_key))

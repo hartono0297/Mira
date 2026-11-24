@@ -133,6 +133,11 @@ pub struct JoinInfoWire {
     /// AD onboarding: OU to department rows whose department is open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ad_ou_map: Vec<OuMapWire>,
+    /// 0.5.1: number of active members whose Mira is too old for the AD
+    /// claim, so a requester can say why its AD data is not used. Absent
+    /// from older members (which ignore it, like `extras`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ad_outdated: Option<u32>,
 }
 
 /// One OU mapping row in a `join_info` answer. Unlike `ad::OuMapping` (the

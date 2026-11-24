@@ -76,7 +76,8 @@ pub use join_store::{
 };
 pub(crate) use org_actions::{register_own_project_in, register_project_for_in};
 pub use org_actions::{
-    AD_CLAIM_GATE_CLOSED, AD_SETTINGS_GATE_CLOSED, REQUESTER_OUTDATED, add_project_member,
+    AD_CLAIM_GATE_CLOSED, AD_SETTINGS_GATE_CLOSED, REQUESTER_OUTDATED, REQUESTER_OUTDATED_SUSPEND,
+    add_project_member,
     approve_join, assign_label, create_label, ensure_device_op, move_member, recompute, reject_join, remove_project_member,
     rename_department, rename_label, require_state, set_ad_settings, set_department_archived,
     set_label_archived,

@@ -24,7 +24,7 @@ const id = {
     peer_unreachable: "Laptop rekan tidak bisa menanggapi permintaan ini.",
     already_in_org: "Laptop ini sudah tergabung dalam sebuah organisasi.",
     removed: "Laptop ini sudah dikeluarkan dari organisasi.",
-    suspended: "Akun Anda di organisasi ini sedang dinonaktifkan. Hubungi IT atau superadmin kantor.",
+    suspended: "Akun Anda di organisasi ini sedang dinonaktifkan. Hubungi IT, admin departemen Anda, atau superadmin kantor.",
     last_superadmin: "Organisasi harus punya minimal satu superadmin.",
     invalid_address: "Alamat laptop rekan tidak valid.",
     network: "Jaringan bermasalah. Periksa sambungan ke jaringan kantor, lalu coba lagi.",

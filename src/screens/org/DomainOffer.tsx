@@ -10,7 +10,7 @@ import { useOrgLive } from "./useOrgLive";
 const T = AD_TEXT.domainOffer;
 const S = AD_TEXT.settings;
 
-// "Nanti" diingat per organisasi di laptop ini. localStorage bisa tidak tersedia
+// "Sembunyikan" diingat per organisasi di laptop ini. localStorage bisa tidak tersedia
 // (mode privat, penyimpanan diblokir): tawaran tetap jalan, hanya tidak diingat.
 export function offerKey(orgId: string): string {
   return `mira.adDomainOffer.hidden.${orgId}`;

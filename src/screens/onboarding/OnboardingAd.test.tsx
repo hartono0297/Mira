@@ -465,7 +465,7 @@ describe("Onboarding AD: alasan data akun Windows tidak dipakai", () => {
     const heading = await searchUntil(u, "Kantor ditemukan: MCF");
     const line = await screen.findByTestId("onb-ad-skipped");
     expect(line).toHaveTextContent(
-      "Domain kantor ini belum diatur, jadi data akun Windows Anda belum dipakai. Pilih departemen sendiri; admin bisa mengatur domainnya nanti.",
+      "Domain kantor ini belum diatur, jadi data akun Windows Anda belum dipakai. Pilih departemen sendiri. Admin bisa mengatur domainnya nanti.",
     );
     // Di dalam isian departemen dan dibacakan bersama pilihannya; fokus tetap di judul.
     const select = screen.getByLabelText("Departemen");

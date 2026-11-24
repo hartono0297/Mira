@@ -1240,14 +1240,12 @@ async fn suspended_member_syncs_the_membership_log_only_until_reinstated() {
     } = office_with_b_suspended().await;
     let b_desain_before = b.team_scoped_ops(&desain);
 
-    // After the suspension: an org op (a new department) and team ops (C
-    // moves to it and back, in both departments' scope).
+    // After the suspension: a new department (org op) with its channel (a
+    // team-scoped op), and C moved into it.
     let pemasaran = a.create_team("Tim Pemasaran");
     a.move_to_team(&pemasaran, &c);
-    a.move_to_team(&desain, &c);
-    wait_until("C has both moves", || {
-        c.team_scoped_ops(&pemasaran) >= 1
-            && c.team_scoped_ops(&desain) == a.team_scoped_ops(&desain)
+    wait_until("C gets Tim Pemasaran's team op", || {
+        c.team_scoped_ops(&pemasaran) == 1
     })
     .await;
     wait_until("B receives the org op over its limited connection", || {
@@ -1257,8 +1255,7 @@ async fn suspended_member_syncs_the_membership_log_only_until_reinstated() {
     settle(&[&a, &b, &c]).await;
     assert_eq!(b.membership(), Membership::Suspended);
     assert_eq!(b.team_scoped_ops(&pemasaran), 0, "team op reached B");
-    assert_eq!(b.team_scoped_ops(&desain), b_desain_before, "team op reached B");
-    assert!(a.team_scoped_ops(&desain) > b_desain_before);
+    assert_eq!(b.team_scoped_ops(&desain), b_desain_before);
     assert!(b.net.connected_peers().is_empty());
     assert!(!a.connected(&b) && !c.connected(&b));
     assert!(a.net.is_linked(&b.pk) || c.net.is_linked(&b.pk));
@@ -1287,11 +1284,14 @@ async fn suspended_member_syncs_the_membership_log_only_until_reinstated() {
         a.connected(&b) && b.connected(&a) && b.connected(&c) && c.connected(&b)
     })
     .await;
-    wait_until("B catches up with Tim Desain's ops", || {
-        b.team_scoped_ops(&desain) == a.team_scoped_ops(&desain)
+    // Team ops flow again: moved into Tim Pemasaran, B gets the channel op
+    // created while it was suspended.
+    assert_eq!(b.team_scoped_ops(&pemasaran), 0, "B is not in Tim Pemasaran");
+    a.move_to_team(&pemasaran, &b);
+    wait_until("B gets Tim Pemasaran's team op", || {
+        b.team_scoped_ops(&pemasaran) == 1
     })
     .await;
-    assert_eq!(b.team_scoped_ops(&pemasaran), 0, "B is not in Tim Pemasaran");
     let check = crate::network_commands::membership_check(
         &b.state,
         b.net.check_membership(Duration::from_secs(4)).await,

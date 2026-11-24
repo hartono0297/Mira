@@ -188,8 +188,9 @@ type RowActions = {
 
 // Tamu tidak punya departemen dan peran. Nonaktifkan, Aktifkan lagi, dan
 // Keluarkan permanen mengikuti tanda dari inti Rust; diri sendiri tidak pernah.
-// Orang yang sudah dikeluarkan tidak punya aksi.
-function rowMenu(u: UserView, busy: boolean, act: RowActions): MenuEntry[] {
+// Orang yang sudah dikeluarkan tidak punya aksi. Ubah departemen dan Ubah peran
+// hanya untuk superadmin (manage); admin departemen hanya punya aksi status.
+function rowMenu(u: UserView, manage: boolean, busy: boolean, act: RowActions): MenuEntry[] {
   const disabled = busy ? MENU_TEXT.busy : undefined;
   if (u.status === "suspended") {
     if (u.isMe) return [];
@@ -216,14 +217,14 @@ function rowMenu(u: UserView, busy: boolean, act: RowActions): MenuEntry[] {
   const suspend = !u.isMe && u.canSuspend;
   const remove = !u.isMe && u.canRemove;
   return menuItems(
-    !u.isGuest && {
+    manage && !u.isGuest && {
       id: "move",
       label: MENU_TEXT.move,
       icon: <IconBuildingCommunity size={16} aria-hidden="true" />,
       disabled,
       onSelect: () => act.onMove(u),
     },
-    !u.isGuest && {
+    manage && !u.isGuest && {
       id: "role",
       label: MENU_TEXT.role,
       icon: <IconShieldCheck size={16} aria-hidden="true" />,
@@ -242,8 +243,8 @@ function rowMenu(u: UserView, busy: boolean, act: RowActions): MenuEntry[] {
   );
 }
 
-function hasActions(u: UserView): boolean {
-  return rowMenu(u, false, NO_ACTIONS).length > 0;
+function hasActions(u: UserView, manage: boolean): boolean {
+  return rowMenu(u, manage, false, NO_ACTIONS).length > 0;
 }
 
 const NO_ACTIONS: RowActions = {
@@ -513,8 +514,12 @@ function RoleDialog({
 
 type Open = { kind: "move" | "role" | "takeout" | "reinstate" | "removeForGood"; user: UserView } | null;
 
-// Daftar pengguna khusus superadmin: laptop, IP, sistem, status, dan aksi per orang.
+// Daftar pengguna: laptop, IP, sistem, status, dan aksi per orang. Superadmin
+// melihat semua orang. Admin departemen (0.5.1) hanya melihat departemennya,
+// tanpa saringan departemen, tanpa Dikeluarkan, dan hanya aksi status sesuai tanda.
 export function UsersPanel({ page }: { page: OrgPage }) {
+  const manage = page.overview.manageOrg;
+  const statusOptions = manage ? STATUS_OPTIONS : STATUS_OPTIONS.filter((s) => s !== "removed");
   const live = useOrgLive(() => orgApi.users(), { version: page.version, network: true });
   const depts = useOrgLive(() => orgApi.departments(false), { version: page.version });
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
@@ -564,7 +569,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
     if (passes({ ...u, status }, filters)) return;
     const i = shown.findIndex((x) => x.publicKey === u.publicKey);
     const others = [...shown.slice(i + 1), ...shown.slice(0, Math.max(i, 0)).reverse()];
-    const next = others.find((x) => hasActions(x)) ?? null;
+    const next = others.find((x) => hasActions(x, manage)) ?? null;
     setRefocus({ gone: u.publicKey, next: next?.publicKey ?? null });
   }
 
@@ -589,7 +594,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
           <h2 id="users-title" className="set-title" ref={headingRef} tabIndex={-1}>
             {T.title}
           </h2>
-          <p className="hint">{T.hint}</p>
+          <p className="hint">{manage ? T.hint : T.hintDept}</p>
         </div>
       </div>
 
@@ -618,7 +623,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
 
           {onlyMe && (
             <div className="org-empty">
-              <p>{T.alone}</p>
+              <p>{manage ? T.alone : T.aloneDept}</p>
             </div>
           )}
 
@@ -637,23 +642,25 @@ export function UsersPanel({ page }: { page: OrgPage }) {
                 />
               </span>
             </div>
-            <div className="field users-select">
-              <label htmlFor={deptId}>{T.department}</label>
-              <select id={deptId} value={filters.dept} onChange={(e) => set({ dept: e.target.value })}>
-                <option value="all">{T.all}</option>
-                {deptOptions.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-                <option value="none">{T.noDepartment}</option>
-                <option value="guest">{T.guests}</option>
-              </select>
-            </div>
+            {manage && (
+              <div className="field users-select">
+                <label htmlFor={deptId}>{T.department}</label>
+                <select id={deptId} value={filters.dept} onChange={(e) => set({ dept: e.target.value })}>
+                  <option value="all">{T.all}</option>
+                  {deptOptions.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                  <option value="none">{T.noDepartment}</option>
+                  <option value="guest">{T.guests}</option>
+                </select>
+              </div>
+            )}
             <div className="field users-select">
               <label htmlFor={statusId}>{T.statusLabel}</label>
               <select id={statusId} value={filters.status} onChange={(e) => set({ status: e.target.value as StatusFilter })}>
-                {STATUS_OPTIONS.map((s) => (
+                {statusOptions.map((s) => (
                   <option key={s} value={s}>
                     {T.status[s]}
                   </option>
@@ -694,7 +701,7 @@ export function UsersPanel({ page }: { page: OrgPage }) {
               </thead>
               <tbody role="rowgroup">
                 {shown.map((u) => (
-                  <UserRow key={u.publicKey} u={u} deptName={deptName} busy={busy} actions={actions} />
+                  <UserRow key={u.publicKey} u={u} deptName={deptName} manage={manage} busy={busy} actions={actions} />
                 ))}
               </tbody>
             </table>
@@ -741,15 +748,17 @@ export function UsersPanel({ page }: { page: OrgPage }) {
 function UserRow({
   u,
   deptName,
+  manage,
   busy,
   actions,
 }: {
   u: UserView;
   deptName: (id: string) => string;
+  manage: boolean;
   busy: boolean;
   actions: RowActions;
 }) {
-  const menu = useContextMenu({ label: MENU_TEXT.label(u.displayName), items: rowMenu(u, busy, actions) });
+  const menu = useContextMenu({ label: MENU_TEXT.label(u.displayName), items: rowMenu(u, manage, busy, actions) });
   return (
     <tr
       role="row"

@@ -5,7 +5,7 @@ import type { AppState, OrgInfo } from "../../api";
 import { formatDate } from "../../api/format";
 import type { UserView } from "../../api/org";
 import { appState, directory, router, rustError } from "../../test/fixtures";
-import { department, label, LABEL_1, ME, overview, PK_B, PK_C, PK_D, TEAM_1, TEAM_2, TEAM_3, user } from "../../test/orgFixtures";
+import { adminOverview, department, label, LABEL_1, ME, overview, PK_B, PK_C, PK_D, TEAM_1, TEAM_2, TEAM_3, user } from "../../test/orgFixtures";
 import { OrgScreen } from "./OrgScreen";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -658,10 +658,12 @@ describe("Pengguna: nonaktifkan atau keluarkan", () => {
     const suspend = within(dialog).getByRole("radio", { name: /^Nonaktifkan/ });
     await waitFor(() => expect(suspend).toBeDisabled());
     const note =
-      "Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: Wulan (Mira 0.5.0) dan Yusuf (versi belum dilaporkan).";
+      "Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: Wulan (Mira 0.5.0) dan Yusuf (versi belum dilaporkan). Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.";
     expect(within(dialog).getByText(note)).toBeInTheDocument();
     expect(suspend).toHaveAccessibleDescription(note);
     expect(suspend).not.toBeChecked();
+    // Selama Nonaktifkan tertutup, fokus awal di Batal, bukan di Keluarkan permanen.
+    expect(within(dialog).getByRole("button", { name: "Batal" })).toHaveFocus();
 
     // Keluar permanen tetap bisa, tapi harus dipilih sendiri.
     const submit = within(dialog).getByRole("button", { name: "Pilih salah satu dulu" });
@@ -807,5 +809,115 @@ describe("Pengguna: orang yang nonaktif", () => {
     await ue.click(within(dialog).getByRole("button", { name: "Aktifkan Sari" }));
     expect(await within(dialog).findByText("Orang itu tidak sedang dinonaktifkan.")).toBeInTheDocument();
     expect(within(dialog).getByText("Sari belum diaktifkan")).toBeInTheDocument();
+  });
+});
+
+// 0.5.1: admin departemen melihat Pengguna untuk departemennya sendiri. Daftar
+// dari inti Rust sudah terbatas; layar menyembunyikan saringan dan aksi superadmin.
+function deptUsers(): UserView[] {
+  return [
+    user(ME, "Penguji", { departmentRole: "admin", lastIp: null }),
+    user(PK_B, "Sari", { canSuspend: true }),
+    user(PK_C, "Wulan", { departmentRole: "admin" }),
+    user(PK_D, "Dimas", {
+      status: "suspended",
+      departmentId: null,
+      departmentName: null,
+      departmentRole: null,
+      online: false,
+      suspendedAt: SUSPENDED_AT,
+      suspendedByName: "Penguji",
+      canReinstate: true,
+    }),
+  ];
+}
+
+function renderDeptAdmin(table: Record<string, unknown> = {}) {
+  return renderUsers({ org_overview: adminOverview({ listUsers: true }), org_users: deptUsers(), ...table });
+}
+
+describe("Pengguna: admin departemen", () => {
+  it("tanpa saringan departemen dan Dikeluarkan, dengan petunjuk untuk departemennya", async () => {
+    renderDeptAdmin();
+    expect(await screen.findByText("Sari")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByText(/Orang di departemen Anda, termasuk yang dinonaktifkan dari departemen ini/)).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Departemen" })).not.toBeInTheDocument();
+    const status = screen.getByRole("combobox", { name: "Status" });
+    expect(within(status).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Semua kecuali yang dikeluarkan",
+      "Online",
+      "Offline",
+      "Nonaktif",
+    ]);
+    expect(within(rowOf("Dimas")).getByText(`Dinonaktifkan ${formatDate(SUSPENDED_AT)} oleh Penguji`)).toBeInTheDocument();
+  });
+
+  it("menu hanya aksi status sesuai tanda: tanpa Ubah departemen dan Ubah peran", async () => {
+    const ue = renderDeptAdmin();
+    await screen.findByText("Sari");
+    await ue.click(screen.getByRole("button", { name: "Aksi untuk Sari" }));
+    expect(menuIds()).toEqual(["takeout"]);
+    expect(screen.getByRole("menuitem", { name: "Nonaktifkan" })).toBeInTheDocument();
+    await ue.keyboard("{Escape}");
+
+    await ue.click(screen.getByRole("button", { name: "Aksi untuk Dimas" }));
+    expect(menuIds()).toEqual(["reinstate"]);
+    await ue.keyboard("{Escape}");
+
+    // Admin lain dan diri sendiri: tidak ada tanda, tidak ada menu.
+    expect(within(rowOf("Wulan")).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(rowOf("Penguji")).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("Nonaktifkan tanpa pilihan Keluarkan permanen, lalu daftar dimuat ulang", async () => {
+    let done = false;
+    const ue = renderDeptAdmin({
+      org_users: () =>
+        done
+          ? deptUsers().map((u) =>
+              u.publicKey === PK_B
+                ? { ...u, status: "suspended" as const, suspendedAt: SUSPENDED_AT, suspendedByName: "Penguji", canSuspend: false, canReinstate: true }
+                : u,
+            )
+          : deptUsers(),
+      org_suspend_member: () => {
+        done = true;
+        return null;
+      },
+    });
+    await screen.findByText("Sari");
+    await openMenuItem(ue, "Sari", "Nonaktifkan");
+    const dialog = await screen.findByRole("dialog", { name: "Nonaktifkan Sari?" });
+    expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("Keluarkan permanen");
+    const submit = await within(dialog).findByRole("button", { name: "Nonaktifkan Sari" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    await ue.click(submit);
+    expect(invoke).toHaveBeenCalledWith("org_suspend_member", { publicKey: PK_B });
+    await waitFor(() => expect(within(rowOf("Sari")).getByText("Nonaktif")).toBeInTheDocument());
+  });
+
+  it("gerbang tertutup: tombol Nonaktifkan mati dan laptop yang menghalangi disebut", async () => {
+    const ue = renderDeptAdmin({ org_suspend_gate: { allowed: false, outdated: [{ name: "Wulan", appVersion: "0.5.0" }] } });
+    await screen.findByText("Sari");
+    await openMenuItem(ue, "Sari", "Nonaktifkan");
+    const dialog = await screen.findByRole("dialog", { name: "Nonaktifkan Sari?" });
+    expect(
+      await within(dialog).findByText(
+        "Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: Wulan (Mira 0.5.0). Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Nonaktifkan Sari" })).toBeDisabled();
+  });
+
+  it("Aktifkan lagi memanggil org_reinstate_member", async () => {
+    const ue = renderDeptAdmin({ org_reinstate_member: null });
+    await screen.findByText("Dimas");
+    await openMenuItem(ue, "Dimas", "Aktifkan lagi");
+    const dialog = await screen.findByRole("dialog", { name: "Aktifkan Dimas lagi?" });
+    await ue.click(within(dialog).getByRole("button", { name: "Aktifkan Dimas" }));
+    expect(invoke).toHaveBeenCalledWith("org_reinstate_member", { publicKey: PK_D });
+    expect(await screen.findByText("Dimas aktif lagi.")).toBeInTheDocument();
   });
 });

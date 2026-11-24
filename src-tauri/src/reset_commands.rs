@@ -27,7 +27,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::commands::{self, AppState};
 use crate::error::{AppError, AppResult};
 use crate::net_backend::{AppNet, EVENT_DIRECTORY, EVENT_NETWORK};
-use crate::permissions::{self, Membership};
+use crate::permissions::{self, MemberStatus};
 use crate::state::{Core, MiraState, ResetOutcome};
 use crate::{ui_lang, window_theme};
 
@@ -43,12 +43,17 @@ fn not_removed() -> AppError {
     AppError::Forbidden("Reset hanya bisa untuk laptop yang dikeluarkan permanen.".into())
 }
 
-/// Refuses unless this laptop was removed for good.
+/// Refuses unless this laptop's member was removed for good: its status in
+/// the fold is exactly `removed`. `Membership::Removed` alone is not enough,
+/// since it also covers a laptop that holds an organization it was never
+/// admitted to.
 pub fn check_removed(core: &Core) -> AppResult<()> {
-    match permissions::membership(&core.db, &core.identity)? {
-        Membership::Removed => Ok(()),
-        _ => Err(not_removed()),
-    }
+    let state = permissions::load_state(&core.db)?;
+    let removed = state
+        .as_ref()
+        .and_then(|s| s.member(core.identity.public_key_hex()))
+        .is_some_and(|m| m.status == MemberStatus::Removed);
+    if removed { Ok(()) } else { Err(not_removed()) }
 }
 
 /// The reset itself, without Tauri: see `MiraState::reset_with`.
@@ -104,7 +109,7 @@ mod tests {
 
     use super::*;
     use crate::identity::{self, Identity, KeyStore, MemoryKeyStore, SecretKey, keystore_account};
-    use crate::permissions::{self as p, InviteRole, PeerAuthState, Validity};
+    use crate::permissions::{self as p, InviteRole, Membership, PeerAuthState, Validity};
     use crate::{db, org, paths, settings};
 
     /// Forwards to a shared `MemoryKeyStore` so the test can look inside;
@@ -373,6 +378,41 @@ mod tests {
                 .join("berkas")
                 .exists()
         );
+    }
+
+    /// A laptop that holds an organization record it was never admitted to
+    /// reads as `Membership::Removed`, but the reset needs the fold status
+    /// `removed`.
+    #[test]
+    fn refused_for_a_laptop_never_admitted() {
+        let f = founder();
+        let laptop = Laptop::new(false);
+        let org = org::load_organization(&f.conn).unwrap().unwrap();
+        laptop
+            .state
+            .with_core(|c| {
+                c.db.execute(
+                    "INSERT INTO organizations (id, name, founder_public_key, created_at, genesis_signature)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        org.id,
+                        org.name,
+                        org.founder_public_key,
+                        org.created_at,
+                        org.genesis_signature
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(laptop.membership(), Membership::Removed);
+        let pk = laptop.pk();
+        write_files(laptop.dir());
+        let err = reset_laptop(&laptop.state).unwrap_err();
+        assert_eq!(err.code(), "forbidden");
+        assert!(laptop.has_key(&pk));
+        assert_eq!(laptop.pk(), pk);
+        assert!(laptop.dir().join("blobs").join("ab").join("berkas").exists());
     }
 
     /// Sends the founder every op the laptop has that the founder may get.

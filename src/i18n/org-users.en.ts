@@ -4,12 +4,9 @@ import type id from "./org-users.id";
 
 const people = (n: number) => `${n} ${plural(n, "person", "people")}`;
 const isAre = (n: number) => plural(n, "is", "are");
-const list = (items: string[]) =>
-  items.length <= 2 ? items.join(" and ") : `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
-
 const en: Dict<typeof id> = {
   status: {
-    current: "Active and deactivated",
+    current: "Everyone except removed",
     online: "Online",
     offline: "Offline",
     suspended: "Deactivated",
@@ -119,11 +116,15 @@ const en: Dict<typeof id> = {
   otherDept: "Other department",
   title: "Users",
   hint: "Each laptop reports its name, system, and Mira version when it connects. The IP address comes from the last connection.",
+  hintDept:
+    "People in your department, including anyone deactivated from it. You can deactivate and reactivate regular members.",
   loading: "Loading users...",
   loadErrorTitle: "Couldn't read the user list",
   loadErrorEmpty: "The Mira core didn't send the user list.",
   alone:
     "You're the only one in this organization so far. Create an invite code in the Invites tab and give it to a colleague so their laptop can join.",
+  aloneDept:
+    "You're the only one in this department so far. Create an invite code in the Invites tab and give it to a colleague so their laptop can join.",
   search: "Search",
   searchPlaceholder: "Search name, laptop, or IP",
   department: "Department",
@@ -147,15 +148,16 @@ const en: Dict<typeof id> = {
     legend: "What happens to this person",
     suspend: "Deactivate",
     suspendDesc: (name: string) =>
-      `You can reactivate them later. While deactivated, ${name} gets no new messages or changes. Once reactivated, ${name} uses the same laptop, keeps their data, and returns to the departments, projects, and labels that still exist.`,
+      `You can reactivate them later. While deactivated, ${name} gets no new messages or changes. Once reactivated, ${name} uses the same laptop, keeps their data, and returns to the departments, projects, and labels that still exist. While deactivated, Mira on ${name}'s laptop only shows a notice that the account is deactivated.`,
     remove: "Remove for good",
     gateLoading: "Checking the Mira version on other laptops...",
-    gateBlocked: (who: string) => `Not available yet. Update these laptops to Mira 0.5.1 first: ${who}.`,
-    gateBlockedUnknown: "Not available yet. A laptop in the office needs Mira 0.5.1 first.",
+    gateBlocked: (who: string) => `Not available yet. Update these laptops to Mira 0.5.1 first: ${who}. If this is only temporary, update those laptops first. Remove for good can't be undone.`,
+    gateBlockedUnknown:
+      "Not available yet. At least one laptop in the office needs Mira 0.5.1 first. If this is only temporary, update it first. Remove for good can't be undone.",
     gateError: "Couldn't read the Mira version on other laptops. Mira checks again when you press Deactivate.",
     version: (v: string) => `Mira ${v}`,
     versionUnknown: "version not reported",
-    list,
+    and: "and",
     choose: "Choose one first",
     submitSuspend: (name: string) => `Deactivate ${name}`,
     suspending: "Deactivating...",
@@ -182,10 +184,6 @@ const en: Dict<typeof id> = {
     busy: "Removing...",
     failTitle: (name: string) => `${name} wasn't removed`,
     done: (name: string) => `${name} was removed from the organization for good.`,
-  },
-  people: {
-    suspendAria: (name: string) => `Deactivate, ${name}`,
-    reinstateAria: (name: string) => `Reactivate, ${name}`,
   },
 };
 

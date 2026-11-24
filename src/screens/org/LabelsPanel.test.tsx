@@ -113,7 +113,8 @@ describe("Label: keadaan", () => {
   it("bukan superadmin tidak melihat tab Label", async () => {
     invoke.mockImplementation(table({ org_overview: adminOverview() }));
     render(<OrgScreen state={state} onRefresh={vi.fn()} />);
-    expect(await screen.findByRole("button", { name: "Anggota" })).toBeInTheDocument();
+    // 0.5.1: admin departemen melihat tab Pengguna (departemennya sendiri).
+    expect(await screen.findByRole("button", { name: "Pengguna" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Label" })).not.toBeInTheDocument();
     expect(calls("org_labels")).toHaveLength(0);
   });

@@ -413,6 +413,7 @@ impl SyncBackend for MiraBackend {
                 extras: self.join_extras.unwrap_or(extras),
                 ad_domain: info.ad_domain,
                 ad_ou_map: info.ad_ou_map.into_iter().map(Into::into).collect(),
+                ad_outdated: info.ad_outdated,
             };
             fit_join_info(&mut wire);
             wire

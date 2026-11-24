@@ -33,13 +33,21 @@ describe("RemovedScreen", () => {
   it("menjelaskan keluar permanen, tanpa Periksa lagi, dengan sidik jari untuk superadmin", () => {
     render(<RemovedScreen state={state} onReset={vi.fn()} />);
     expect(
-      screen.getByRole("heading", { name: "Laptop ini sudah dikeluarkan dari organisasi Kantor Uji" }),
+      screen.getByRole("heading", { name: "Laptop ini sudah dikeluarkan dari Kantor Uji" }),
     ).toHaveFocus();
     expect(screen.getByText(/secara permanen/)).toBeInTheDocument();
     expect(screen.getByText(/data lama tetap tersimpan di sini/)).toBeInTheDocument();
     expect(screen.getByText("AAAA AAAA AAAA AAAA")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Periksa lagi" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reset dan mulai dari awal" })).toBeInTheDocument();
+    const reset = screen.getByRole("button", { name: "Reset dan mulai dari awal" });
+    // Kontak superadmin dan sidik jari dibaca sebelum tombol Reset.
+    const contact = screen.getByText(/Kalau ini keliru, hubungi superadmin kantor/);
+    expect(contact.compareDocumentPosition(reset) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Untuk bergabung lagi, reset laptop ini dulu. Setelah itu Anda bisa meminta bergabung sebagai laptop baru.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("Reset membuka dialog yang menjelaskan akibatnya; Batal tidak melakukan apa pun", async () => {
@@ -50,10 +58,12 @@ describe("RemovedScreen", () => {
     await user.click(opener);
 
     const dialog = screen.getByRole("dialog", { name: "Reset laptop ini?" });
-    expect(within(dialog).getByText(/Data organisasi lama di laptop ini dihapus/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Pesan, file obrolan, dokumen, dan dokumen bertanda tangan dari kantor ini dihapus dari laptop ini/)).toBeInTheDocument();
     expect(within(dialog).getByText(/mendapat kunci baru/)).toBeInTheDocument();
     expect(within(dialog).getByText(/kembali ke layar awal/)).toBeInTheDocument();
     expect(within(dialog).getByText("Admin akan melihatnya sebagai laptop baru.")).toBeInTheDocument();
+    expect(within(dialog).getByText(/PDF bertanda tangan yang sudah Anda ekspor tidak ikut dihapus/)).toBeInTheDocument();
+    expect(within(dialog).getByText("Langkah ini tidak bisa dibatalkan.")).toBeInTheDocument();
     // Fokus awal di Batal supaya Enter tidak langsung menghapus.
     expect(within(dialog).getByRole("button", { name: "Batal" })).toHaveFocus();
 

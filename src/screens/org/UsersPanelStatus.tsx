@@ -1,9 +1,9 @@
 // 0.5.1: status nonaktif dan dialog Nonaktifkan, Aktifkan lagi, Keluarkan permanen.
-// Dipakai tab Pengguna (superadmin) dan tab Anggota (admin departemen). Boleh
-// tidaknya setiap aksi dihitung inti Rust per laptop yang melihat (canSuspend,
-// canReinstate, canRemove); layar hanya mengikuti tanda itu.
+// Dipakai tab Pengguna (superadmin dan admin departemen). Boleh tidaknya setiap
+// aksi dihitung inti Rust per laptop yang melihat (canSuspend, canReinstate,
+// canRemove); layar hanya mengikuti tanda itu.
 import { IconUserPause } from "@tabler/icons-react";
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { toAppError, type AppError } from "../../api";
 import { formatDate } from "../../api/format";
 import { actionErrorTitle } from "../../api/messages";
@@ -15,8 +15,7 @@ import { ORG_TEXT, USERS_TEXT as T } from "../../i18n/org";
 import type { OrgPage } from "./context";
 import { orgMessage } from "./PeoplePanel";
 
-// Yang dibutuhkan dialog dan penanda status. Field 0.5.1 opsional supaya tab
-// Anggota (PersonView) bisa memakainya begitu inti Rust mengirimnya.
+// Yang dibutuhkan dialog dan penanda status.
 export type StatusTarget = Pick<UserView, "publicKey" | "displayName"> &
   Partial<Pick<UserView, "status" | "suspendedAt" | "suspendedByName" | "canSuspend" | "canReinstate" | "canRemove">>;
 
@@ -79,7 +78,13 @@ function blockedText(gate: SuspendGate): string {
   const who = gate.outdated.map(
     (o) => `${o.name} (${o.appVersion ? T.takeOut.version(o.appVersion) : T.takeOut.versionUnknown})`,
   );
-  return T.takeOut.gateBlocked(T.takeOut.list(who));
+  return T.takeOut.gateBlocked(joinList(who, T.takeOut.and));
+}
+
+// "A", "A dan B", "A, B, dan C" (atau "and" dalam bahasa Inggris).
+function joinList(items: string[], and: string): string {
+  if (items.length <= 2) return items.join(` ${and} `);
+  return `${items.slice(0, -1).join(", ")}, ${and} ${items[items.length - 1]}`;
 }
 
 export type StatusDone = "suspended" | "reinstated" | "removed";
@@ -123,6 +128,10 @@ export function TakeOutDialog({
         : gate.gate.allowed
           ? null
           : blockedText(gate.gate);
+  // Selama Nonaktifkan belum bisa dipilih (gerbang dimuat atau terhalang), fokus
+  // awal di Batal, bukan di pilihan Keluarkan permanen yang tidak bisa dibatalkan.
+  const suspendWaiting = allowSuspend && (gate.kind === "loading" || (gate.kind === "ready" && !gate.gate.allowed));
+  const cancelRef = useRef<HTMLButtonElement>(null);
   // Bawaan: pilihan yang bisa dibatalkan. Keluar permanen harus dipilih sendiri.
   const fallback: Choice | null = suspendOpen ? "suspend" : !allowSuspend && allowRemove ? "remove" : null;
   const choice: Choice | null = picked === "suspend" && !suspendOpen ? fallback : (picked ?? fallback);
@@ -162,6 +171,11 @@ export function TakeOutDialog({
         if (!open && !busy) onClose();
       }}
       title={title}
+      onOpenAutoFocus={(e) => {
+        if (!suspendWaiting) return;
+        e.preventDefault();
+        cancelRef.current?.focus();
+      }}
     >
       <form className="dlg-form" onSubmit={(e) => void submit(e)}>
         {both ? (
@@ -220,7 +234,7 @@ export function TakeOutDialog({
         />
         <div className="dlg-actions">
           <DialogClose asChild>
-            <button type="button" className="btn btn-ghost" disabled={busy}>
+            <button type="button" className="btn btn-ghost" disabled={busy} ref={cancelRef}>
               {T.cancel}
             </button>
           </DialogClose>

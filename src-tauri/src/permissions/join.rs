@@ -459,6 +459,12 @@ pub fn suspend_allowed(state: &super::fold::OrgState) -> bool {
     join_extras_allowed_since(state, suspend_threshold())
 }
 
+/// Whether a requester reporting `app_version` is older than
+/// [`suspend_threshold`] (an unparseable version counts as older).
+pub fn is_below_suspend_threshold(app_version: &str) -> bool {
+    parse_app_version(app_version).is_none_or(|v| v < suspend_threshold())
+}
+
 /// Active members (guests included) below [`suspend_threshold`], by name.
 pub fn suspend_blockers(state: &super::fold::OrgState) -> Vec<AdBlocker> {
     ad_blockers_since(state, suspend_threshold())

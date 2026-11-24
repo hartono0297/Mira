@@ -94,6 +94,11 @@
   margin-top: 6px;
 }
 
+.removed-undo {
+  margin: 12px 0 0;
+  font-weight: 700;
+}
+
 /* Sidik jari laptop ini: hanya dibaca, jadi teks biasa tanpa bingkai
    (aturan bingkai v0.5.0: yang bisa diubah berbingkai). */
 .status-fp {
@@ -136,11 +141,12 @@
   min-width: 11em;
 }
 
-/* "Memeriksa..." tampil tiap 20 detik dan harus terbaca. Opasitas 0,75 bawaan
-   tombol nonaktif membuatnya 3,42:1 (terang) dan 4,27:1 (gelap); tanpa itu
-   5,42:1 dan 6,51:1. Tanda sibuknya teks tombol yang berganti, bukan warna. */
+/* "Memeriksa..." harus terbaca, jadi tanpa opasitas redup: 5,42:1 (terang) dan
+   6,51:1 (gelap). Tanda sibuknya teks tombol yang berganti, bukan warna. Tombol
+   memakai aria-disabled (bukan disabled) supaya fokus tidak lepas. */
 .status-check-btn[aria-busy="true"] {
   opacity: 1;
+  cursor: progress;
 }
 
 .status-result {

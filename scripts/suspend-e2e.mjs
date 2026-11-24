@@ -64,9 +64,9 @@ const LBL = {
     tabUsers: /^Pengguna/,
     // F1 SuspendedScreen. TODO(label)
     suspendedHeading: /sedang dinonaktifkan/,
-    suspendedContact: /Hubungi IT atau superadmin kantor/,
+    suspendedContact: /Hubungi IT, admin departemen Anda, atau superadmin kantor/,
     recheck: "Periksa lagi",
-    recheckResult: /Dicek \d{1,2}[.:]\d{2}: masih nonaktif/, // draf F1: "Dicek 14.20: masih nonaktif."
+    recheckResult: /Diperiksa pukul \d{1,2}[.:]\d{2}: masih nonaktif/, // "Diperiksa pukul 14.20: masih nonaktif."
     // F1 RemovedScreen dan dialog reset. TODO(label)
     removedHeading: /sudah dikeluarkan/,
     resetButton: "Reset dan mulai dari awal",
@@ -75,7 +75,7 @@ const LBL = {
     actionsFor: (name) => `Aksi untuk ${name}`,
     statusFilter: "Status", // <label> saringan status
     // Nilai <option> saringan status (draf F2: current, online, offline, suspended, removed).
-    // Bawaan "current" (Aktif dan nonaktif) sudah memuat orang nonaktif.
+    // Bawaan "current" (Semua kecuali yang dikeluarkan) sudah memuat orang nonaktif.
     statusFilterValues: ["current", "suspended", "removed"], // dicoba berurutan kalau baris tidak terlihat
     rowSuspended: /Nonaktif/,
     rowRemoved: /Dikeluarkan/,
@@ -581,8 +581,8 @@ async function main() {
   // Periksa lagi.
   await pg("B").getByRole("button", { name: LBL.id.recheck }).click({ timeout: 10000 });
   const resultShown = await waitText("B", LBL.id.recheckResult, 15000);
-  check("1.10 \"Periksa lagi\" menampilkan hasil \"Dicek HH.MM: masih nonaktif\"", resultShown,
-    (await bodyText("B")).split("\n").find((l) => /Dicek/.test(l)) ?? "");
+  check("1.10 \"Periksa lagi\" menampilkan hasil \"Diperiksa pukul HH.MM: masih nonaktif\"", resultShown,
+    (await bodyText("B")).split("\n").find((l) => /Diperiksa pukul/.test(l)) ?? "");
   await snap("B", 4, "nonaktif-periksa-lagi-id-terang");
   const cm = await call("B", "check_membership");
   check("1.11 check_membership B: suspended, ada laptop kantor yang dihubungi",

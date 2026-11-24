@@ -25,36 +25,37 @@ const id = {
   },
   suspended: {
     heading: (org: string) => `Akun Anda di ${org} sedang dinonaktifkan`,
-    contact: "Hubungi IT atau superadmin kantor. Mereka bisa mengaktifkan Anda lagi.",
-    kept: "Selama akun Anda nonaktif, data di laptop ini tetap tersimpan dan tidak ada yang dihapus.",
-    fingerprintHint: "Bacakan ke IT supaya mereka yakin orangnya benar.",
+    contact: "Hubungi IT, admin departemen Anda, atau superadmin kantor. Mereka bisa mengaktifkan akun Anda lagi.",
+    kept: "Data di laptop ini tidak dihapus. Begitu akun Anda aktif lagi, Mira terbuka sendiri dengan data yang sama.",
+    fingerprintHint: "Kalau IT menanyakannya, bacakan ini supaya mereka tahu laptop mana yang dimaksud.",
     check: "Periksa lagi",
     checking: "Memeriksa...",
     auto: "Mira juga memeriksa sendiri setiap 20 detik.",
     // Waktu ditulis jam dan menit, misalnya 14.20.
-    stillSuspended: (time: string) => `Dicek ${time}: masih nonaktif.`,
-    active: (time: string) => `Dicek ${time}: akun Anda aktif lagi. Membuka Mira...`,
-    removed: (time: string) => `Dicek ${time}: laptop ini sudah dikeluarkan dari kantor.`,
+    stillSuspended: (time: string) => `Diperiksa pukul ${time}: masih nonaktif.`,
+    active: (time: string) => `Diperiksa pukul ${time}: akun Anda aktif lagi. Membuka Mira...`,
+    removed: (time: string) => `Diperiksa pukul ${time}: laptop ini sudah dikeluarkan dari kantor.`,
     notConnected: "Belum tersambung ke laptop kantor. Pastikan laptop ini ada di jaringan kantor.",
     // Diikuti pesan error dari inti Rust.
     failed: (message: string) => `Belum bisa memeriksa. ${message}`,
   },
   removed: {
-    heading: (org: string) => `Laptop ini sudah dikeluarkan dari organisasi ${org}`,
+    heading: (org: string) => `Laptop ini sudah dikeluarkan dari ${org}`,
     cause:
       "Superadmin kantor mengeluarkan laptop ini secara permanen. Pesan dan perubahan baru dari kantor tidak lagi sampai ke sini.",
     kept: "Sampai Anda me-reset, data lama tetap tersimpan di sini.",
-    rejoin:
-      "Laptop ini belum bisa bergabung lagi sebelum di-reset. Setelah reset, Anda bisa meminta bergabung lagi sebagai laptop baru.",
+    rejoin: "Untuk bergabung lagi, reset laptop ini dulu. Setelah itu Anda bisa meminta bergabung sebagai laptop baru.",
     // Diikuti sidik jari laptop ini.
     contact: "Kalau ini keliru, hubungi superadmin kantor dan sebutkan sidik jari laptop ini.",
     reset: "Reset dan mulai dari awal",
     dialog: {
       title: "Reset laptop ini?",
-      data: "Data organisasi lama di laptop ini dihapus. Pilihan bahasa dan tema tetap.",
+      data: "Pesan, file obrolan, dokumen, dan dokumen bertanda tangan dari kantor ini dihapus dari laptop ini. PDF bertanda tangan yang sudah Anda ekspor tidak ikut dihapus. Pilihan bahasa dan tema tetap.",
       key: "Laptop ini mendapat kunci baru, jadi sidik jarinya berubah.",
       start: "Mira kembali ke layar awal. Dari sana Anda bisa meminta bergabung lagi.",
       admin: "Admin akan melihatnya sebagai laptop baru.",
+      // Baris terakhir dialog, ditebalkan.
+      undo: "Langkah ini tidak bisa dibatalkan.",
       confirm: "Hapus data dan reset",
       busy: "Mereset...",
       // Diikuti pesan error dari inti Rust.

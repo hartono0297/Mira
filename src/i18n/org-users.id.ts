@@ -1,15 +1,9 @@
-// Teks tab Pengguna (khusus superadmin): saringan, tabel, menu aksi, dan dialog
-// ubah departemen, ubah peran, nonaktifkan, aktifkan lagi, dan keluarkan permanen.
-// Bagian suspended, takeOut, reinstate, removeForGood, dan people juga dipakai
-// tab Anggota (admin departemen menonaktifkan anggota departemennya).
-
-// "A", "A dan B", "A, B, dan C".
-const list = (items: string[]) =>
-  items.length <= 2 ? items.join(" dan ") : `${items.slice(0, -1).join(", ")}, dan ${items[items.length - 1]}`;
-
+// Teks tab Pengguna (superadmin, dan sejak 0.5.1 admin departemen untuk
+// departemennya): saringan, tabel, menu aksi, dan dialog ubah departemen, ubah
+// peran, nonaktifkan, aktifkan lagi, dan keluarkan permanen.
 const id = {
   status: {
-    current: "Aktif dan nonaktif",
+    current: "Semua kecuali yang dikeluarkan",
     online: "Online",
     offline: "Offline",
     suspended: "Nonaktif",
@@ -123,11 +117,15 @@ const id = {
   otherDept: "Departemen lain",
   title: "Pengguna",
   hint: "Setiap laptop melaporkan nama laptop, sistem, dan versi Mira saat tersambung. Alamat IP dilihat dari sambungan terakhir.",
+  hintDept:
+    "Orang di departemen Anda, termasuk yang dinonaktifkan dari departemen ini. Anda bisa menonaktifkan dan mengaktifkan lagi anggota biasa.",
   loading: "Memuat daftar pengguna...",
   loadErrorTitle: "Daftar pengguna belum terbaca",
   loadErrorEmpty: "Inti Mira tidak mengirim daftar pengguna.",
   alone:
     "Baru Anda di organisasi ini. Buat kode undangan di tab Undangan, lalu berikan ke rekan supaya laptopnya bisa bergabung.",
+  aloneDept:
+    "Baru Anda di departemen ini. Buat kode undangan di tab Undangan, lalu berikan ke rekan supaya laptopnya bisa bergabung.",
   search: "Cari",
   searchPlaceholder: "Cari nama, laptop, atau IP",
   department: "Departemen",
@@ -151,15 +149,17 @@ const id = {
     legend: "Yang terjadi pada orang ini",
     suspend: "Nonaktifkan",
     suspendDesc: (name: string) =>
-      `Bisa diaktifkan lagi nanti. Selama nonaktif, ${name} tidak menerima pesan dan perubahan baru. Saat diaktifkan lagi, ${name} memakai laptop yang sama, datanya tetap ada, dan kembali ke departemen, proyek, dan label yang masih ada.`,
+      `Bisa diaktifkan lagi nanti. Selama nonaktif, ${name} tidak menerima pesan dan perubahan baru. Saat diaktifkan lagi, ${name} memakai laptop yang sama, datanya tetap ada, dan kembali ke departemen, proyek, dan label yang masih ada. Selama nonaktif, Mira di laptop ${name} hanya menampilkan pemberitahuan bahwa akunnya dinonaktifkan.`,
     remove: "Keluarkan permanen",
     gateLoading: "Memeriksa versi Mira di laptop lain...",
-    gateBlocked: (who: string) => `Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: ${who}.`,
-    gateBlockedUnknown: "Belum bisa dipilih. Ada laptop yang perlu diperbarui ke Mira 0.5.1 dulu.",
+    gateBlocked: (who: string) => `Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: ${who}. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.`,
+    gateBlockedUnknown:
+      "Belum bisa dipilih. Ada laptop yang perlu diperbarui ke Mira 0.5.1 dulu. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.",
     gateError: "Versi Mira di laptop lain belum terbaca. Mira memeriksanya lagi saat Anda menekan Nonaktifkan.",
     version: (v: string) => `Mira ${v}`,
     versionUnknown: "versi belum dilaporkan",
-    list,
+    // Penyambung daftar laptop: "A dan B", "A, B, dan C".
+    and: "dan",
     choose: "Pilih salah satu dulu",
     submitSuspend: (name: string) => `Nonaktifkan ${name}`,
     suspending: "Menonaktifkan...",
@@ -186,11 +186,6 @@ const id = {
     busy: "Mengeluarkan...",
     failTitle: (name: string) => `${name} belum dikeluarkan`,
     done: (name: string) => `${name} sudah dikeluarkan permanen dari organisasi.`,
-  },
-  // Tombol per baris di tab Anggota (admin departemen).
-  people: {
-    suspendAria: (name: string) => `Nonaktifkan, ${name}`,
-    reinstateAria: (name: string) => `Aktifkan lagi, ${name}`,
   },
 };
 

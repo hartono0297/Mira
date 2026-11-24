@@ -174,7 +174,7 @@ const en: Dict<typeof id> = {
             ? "1 laptop in this office hasn't been updated to Mira 0.5 yet, so your Windows account details can't be used. Choose a department yourself."
             : `${n} laptops in this office haven't been updated to Mira 0.5 yet, so your Windows account details can't be used. Choose a department yourself.`,
         noDomain:
-          "This office's domain hasn't been set up yet, so your Windows account details aren't used. Choose a department yourself; the admin can set up the domain later.",
+          "This office's domain hasn't been set up yet, so your Windows account details aren't used. Choose a department yourself. The admin can set up the domain later.",
         otherDomain: (office: string, mine: string) =>
           `The office domain (${office}) is different from your account's domain (${mine}), so your Windows account details aren't used. Choose a department yourself.`,
         noUser: "Your Windows account name couldn't be read, so your account details aren't used. Choose a department yourself.",
