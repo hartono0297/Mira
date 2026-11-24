@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api";
@@ -6,7 +6,7 @@ import { boardApi, subscribeBoard } from "../../api/board";
 import { calendarApi, type CalTask } from "../../api/calendar";
 import { renderInLang } from "../../test/i18n";
 import { CalendarScreen } from "./CalendarScreen";
-import { ME, PROJECTS, T_DONE, T_LATE, T_LATE_DONE, T_LOCKED, T_MINE } from "./calendarTestKit";
+import { fakeOptions, ME, PROJECTS, T_DONE, T_LATE, T_LATE_DONE, T_LOCKED, T_MINE } from "./calendarTestKit";
 
 vi.mock("../../api/calendar", () => ({ calendarApi: { tasks: vi.fn() } }));
 vi.mock("../../api/board", async (importOriginal) => {
@@ -54,6 +54,7 @@ function inRange(list: CalTask[], from: string | null, to: string | null) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 10, 24, 10, 0, 0));
+  fakeOptions.more = false;
   data = [T_MINE, T_LOCKED, T_DONE];
   overdueData = [T_LATE, T_LATE_DONE];
   boardHandlers = [];
@@ -181,6 +182,7 @@ describe("CalendarScreen: rentang dan navigasi", () => {
     expect(screen.getByRole("heading", { level: 1, name: "November 2026" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next month" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Show completed" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Tasks" })).toBeInTheDocument();
   });
 });
 
@@ -482,5 +484,139 @@ describe("CalendarScreen: memuat dan error", () => {
     expect(screen.getByText("Memuat task...")).toBeInTheDocument();
     await act(async () => release([T_MINE]));
     await waitFor(() => expect(screen.queryByText("Memuat task...")).not.toBeInTheDocument());
+  });
+});
+
+describe("CalendarScreen: fokus, periode, dan pesan (tinjauan aksesibilitas)", () => {
+  function item(name: string): HTMLElement {
+    const menu = document.querySelector<HTMLElement>("[role=menu]");
+    if (!menu) throw new Error("menu tidak terbuka");
+    return within(menu).getByRole("menuitem", { name });
+  }
+
+  it("Alt+Panah ke luar minggu pindah ke minggu itu dan fokus tetap di chip", async () => {
+    getSetting.mockImplementation(async (key) => (key === "calendar.view" ? "week" : null));
+    render(<CalendarScreen me={ME} />);
+    await screen.findByText(/TES-3/);
+    chip("TES-3").focus();
+    fireEvent.keyDown(chip("TES-3"), { key: "ArrowDown", altKey: true });
+    expect(updateMock).toHaveBeenCalledWith("p1", "t3", { due: "2026-12-01" });
+    expect(screen.getByRole("heading", { level: 1, name: "30 November sampai 6 Desember 2026" })).toBeInTheDocument();
+    await waitFor(() => expect(dayOf("TES-3")).toBe("2026-12-01"));
+    await waitFor(() => expect(chip("TES-3")).toHaveFocus());
+  });
+
+  it("Alt+Panah ke luar grid bulan pindah ke bulan itu dan fokus tetap di chip", async () => {
+    await renderScreen();
+    chip("TES-3").focus();
+    fireEvent.keyDown(chip("TES-3"), { key: "ArrowDown", altKey: true });
+    await waitFor(() => expect(dayOf("TES-3")).toBe("2026-12-01"));
+    expect(screen.getByRole("heading", { level: 1, name: "November 2026" })).toBeInTheDocument();
+    fireEvent.keyDown(chip("TES-3"), { key: "ArrowDown", altKey: true });
+    expect(screen.getByRole("heading", { level: 1, name: "Desember 2026" })).toBeInTheDocument();
+    await waitFor(() => expect(dayOf("TES-3")).toBe("2026-12-08"));
+    await waitFor(() => expect(chip("TES-3")).toHaveFocus());
+  });
+
+  it("Hapus tenggat memfokus chip berikutnya di hari yang sama", async () => {
+    const user = userEvent.setup();
+    data = [T_MINE, { ...T_MINE, task: { ...T_MINE.task, id: "t5", code: "TES-5", title: "Kirim faktur" } }, T_LOCKED];
+    await renderScreen();
+    chip("TES-3").focus();
+    fireEvent.keyDown(chip("TES-3"), { key: "F10", shiftKey: true });
+    await user.click(item("Hapus tenggat"));
+    await waitFor(() => expect(document.querySelector('[data-cal-task="p1/t3"]')).toBeNull());
+    await waitFor(() => expect(chip("TES-5")).toHaveFocus());
+  });
+
+  it("Hapus tenggat pada chip terakhir di harinya memfokus judul periode", async () => {
+    const user = userEvent.setup();
+    await renderScreen();
+    chip("TES-3").focus();
+    fireEvent.keyDown(chip("TES-3"), { key: "F10", shiftKey: true });
+    await user.click(item("Hapus tenggat"));
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "November 2026" })).toHaveFocus());
+  });
+
+  it("muat ulang cepat dari sinkron tidak membacakan Memuat lagi", async () => {
+    await renderScreen();
+    await act(async () => boardHandlers.forEach((h) => h()));
+    expect(screen.queryByText("Memuat task...")).not.toBeInTheDocument();
+  });
+
+  it("detail yang dibuka dari daftar tambahan mengembalikan fokus ke chip di daftar itu", async () => {
+    const user = userEvent.setup();
+    fakeOptions.more = true;
+    render(<CalendarScreen me={ME} />);
+    await screen.findByTestId("more");
+    await waitFor(() => expect(within(screen.getByTestId("more")).getByText(/TES-3/)).toBeInTheDocument());
+    const more = screen.getByTestId("more");
+    const inMore = within(more).getByRole("button", { name: /TES-3/ });
+    await user.click(inMore);
+    await user.click(screen.getByRole("button", { name: "Tutup detail" }));
+    await waitFor(() => expect(inMore).toHaveFocus());
+    expect(chip("TES-3")).not.toHaveFocus();
+  });
+
+  it("langkah awal yang gagal belakangan tidak mengembalikan langkah berikutnya", async () => {
+    let failFirst: (e: unknown) => void = () => {};
+    updateMock.mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)));
+    await renderScreen();
+    fireEvent.keyDown(chip("TES-3"), { key: "ArrowRight", altKey: true });
+    fireEvent.keyDown(chip("TES-3"), { key: "ArrowRight", altKey: true });
+    expect(updateMock).toHaveBeenLastCalledWith("p1", "t3", { due: "2026-11-26" });
+    await waitFor(() => expect(status()).toHaveTextContent("Tenggat TES-3 dipindah ke Kamis, 26 November 2026."));
+    await act(async () => failFirst({ code: "io", message: "Terlambat." }));
+    expect(dayOf("TES-3")).toBe("2026-11-26");
+    expect(screen.queryByText("Tenggat TES-3 belum berubah")).not.toBeInTheDocument();
+  });
+
+  it("wilayah layar bernama Kalender dan periode", async () => {
+    await renderScreen();
+    expect(screen.getByRole("region", { name: "Kalender, November 2026" })).toBeInTheDocument();
+  });
+
+  it("pesan gagal bisa ditutup dan hilang saat periode berganti", async () => {
+    const user = userEvent.setup();
+    updateMock.mockRejectedValueOnce({ code: "forbidden", message: "Ditolak inti." });
+    updateMock.mockRejectedValueOnce({ code: "forbidden", message: "Ditolak lagi." });
+    await renderScreen();
+    fireEvent.keyDown(chip("TES-3"), { key: "ArrowRight", altKey: true });
+    expect(await screen.findByText("Ditolak inti.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Tutup pesan" }));
+    expect(screen.queryByText("Ditolak inti.")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    await waitFor(() => expect(dayOf("TES-3")).toBe("2026-11-24"));
+    fireEvent.keyDown(chip("TES-3"), { key: "ArrowRight", altKey: true });
+    expect(await screen.findByText("Ditolak lagi.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Bulan berikutnya" }));
+    expect(screen.queryByText("Ditolak lagi.")).not.toBeInTheDocument();
+  });
+
+  it("petunjuk seret hanya tampil kalau ada task yang boleh dipindah", async () => {
+    await renderScreen();
+    expect(
+      screen.getByText("Seret task ke tanggal lain, atau pilih task lalu tekan Alt+Panah. Shift+F10 membuka pilihan tenggat."),
+    ).toBeInTheDocument();
+    cleanup();
+    data = [T_LOCKED];
+    render(<CalendarScreen me={ME} />);
+    await screen.findByText(/TES-4/);
+    expect(screen.queryByText(/Seret task ke tanggal lain/)).not.toBeInTheDocument();
+  });
+
+  it("lewat tengah malam hari ini berganti dan data dimuat ulang", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(new Date(2026, 10, 30, 23, 59, 58));
+    render(<CalendarScreen me={ME} />);
+    for (let i = 0; i < 5; i++) await act(async () => {});
+    expect(screen.getByTestId("view-month")).toHaveAttribute("data-today", "2026-11-30");
+    const before = tasksMock.mock.calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    for (let i = 0; i < 5; i++) await act(async () => {});
+    expect(screen.getByTestId("view-month")).toHaveAttribute("data-today", "2026-12-01");
+    expect(tasksMock.mock.calls.length).toBeGreaterThan(before);
   });
 });

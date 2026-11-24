@@ -100,12 +100,20 @@ const stopFrame = (id: number) => {
   window.clearTimeout(id);
 };
 
-export function useDueDrag(rootRef: RefObject<HTMLElement | null>, onDrop: (t: CalTask, day: DayKey) => void) {
+// `resolve` memberi task terbaru menurut kuncinya saat dilepas: tenggatnya bisa
+// sudah berubah (sinkron rekan, Alt+Panah) sejak tombol ditekan.
+export function useDueDrag(
+  rootRef: RefObject<HTMLElement | null>,
+  onDrop: (t: CalTask, day: DayKey) => void,
+  resolve?: (key: string) => CalTask | undefined,
+) {
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dropDay, setDropDay] = useState<DayKey | null>(null);
   const session = useRef<Session | null>(null);
   const onDropRef = useRef(onDrop);
   onDropRef.current = onDrop;
+  const resolveRef = useRef(resolve);
+  resolveRef.current = resolve;
 
   function finish(commit: boolean) {
     const s = session.current;
@@ -131,8 +139,10 @@ export function useDueDrag(rootRef: RefObject<HTMLElement | null>, onDrop: (t: C
       window.addEventListener("click", swallow, true);
       window.setTimeout(() => window.removeEventListener("click", swallow, true), 0);
     }
+    if (!commit || !s.started || !s.drop) return;
+    const now = resolveRef.current?.(s.key) ?? s.task;
     // Lepas di hari yang sama tidak mengubah apa pun.
-    if (commit && s.started && s.drop && s.drop !== s.task.task.due) onDropRef.current(s.task, s.drop);
+    if (s.drop !== now.task.due) onDropRef.current(now, s.drop);
   }
 
   // Satu-satunya tempat posisi bayangan dan hari tujuan dihitung ulang.

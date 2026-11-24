@@ -94,11 +94,67 @@ describe("useCalendarData", () => {
       pending[0].resolve([T_MINE, T_LOCKED]);
       pending[1].resolve([T_LATE]);
     });
-    act(() => result.current.patchDue("p2/o2", "2026-11-28"));
+    act(() => void result.current.patchDue(T_LATE, "2026-11-28"));
     expect(result.current.overdue).toEqual([]);
     expect(result.current.tasks.find((t) => t.task.id === "o2")?.task.due).toBe("2026-11-28");
-    act(() => result.current.patchDue("p1/t3", null));
+    act(() => void result.current.patchDue(T_MINE, null));
     expect(result.current.tasks.some((t) => t.task.id === "t3")).toBe(false);
+  });
+
+  it("tenggat optimistis bertahan saat muat ulang membawa data lama, lalu dilepas setelah tersimpan", async () => {
+    const { result } = renderHook(() => useCalendarData("week", "2026-11-24"));
+    await act(async () => pending[0].resolve([T_MINE]));
+    let n = 0;
+    act(() => {
+      n = result.current.patchDue(T_MINE, "2026-11-26");
+    });
+    // Muat ulang dari sinkron rekan sebelum inti menyimpan: tenggat lama dari inti.
+    await act(async () => handlers.forEach((h) => h()));
+    await act(async () => pending[1].resolve([T_MINE]));
+    expect(result.current.tasks[0].task.due).toBe("2026-11-26");
+    let settled = { latest: false, due: null as string | null };
+    act(() => {
+      settled = result.current.settleDue("p1/t3", n, true);
+    });
+    expect(settled).toEqual({ latest: true, due: "2026-11-26" });
+    const saved = { ...T_MINE, task: { ...T_MINE.task, due: "2026-11-26" } };
+    await act(async () => pending[pending.length - 1].resolve([saved]));
+    expect(result.current.tasks).toEqual([saved]);
+  });
+
+  it("langkah lama yang gagal tidak membatalkan langkah baru", async () => {
+    const { result } = renderHook(() => useCalendarData("week", "2026-11-24"));
+    await act(async () => pending[0].resolve([T_MINE]));
+    let first = 0;
+    let second = 0;
+    act(() => {
+      first = result.current.patchDue(T_MINE, "2026-11-25");
+    });
+    act(() => {
+      second = result.current.patchDue(result.current.tasks[0], "2026-11-26");
+    });
+    let settled = { latest: true, due: null as string | null };
+    act(() => {
+      settled = result.current.settleDue("p1/t3", first, false);
+    });
+    expect(settled.latest).toBe(false);
+    expect(result.current.tasks[0].task.due).toBe("2026-11-26");
+    act(() => {
+      settled = result.current.settleDue("p1/t3", second, false);
+    });
+    expect(settled).toEqual({ latest: true, due: "2026-11-24" });
+    expect(result.current.tasks[0].task.due).toBe("2026-11-24");
+  });
+
+  it("current hanya benar kalau data milik rentang yang diminta", async () => {
+    const { result, rerender } = renderHook(({ anchor }) => useCalendarData("week", anchor), {
+      initialProps: { anchor: "2026-11-24" },
+    });
+    expect(result.current.current).toBe(false);
+    await act(async () => pending[0].resolve([T_MINE]));
+    expect(result.current.current).toBe(true);
+    rerender({ anchor: "2026-12-01" });
+    expect(result.current.current).toBe(false);
   });
 
   it("error disimpan, data lama tetap", async () => {

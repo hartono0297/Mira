@@ -23,6 +23,7 @@ import {
   groupByDay,
   monthTitle,
   projectColors,
+  rangeFor,
   taskKey,
   todayKey,
   weekTitle,
@@ -96,6 +97,39 @@ type OpenTask = { projectId: string; taskId: string; key: string };
 type Failure = { title: string; message: string };
 
 const ARROWS: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+// Teks Memuat baru dibacakan kalau muat ulang lebih lama dari ini; muat ulang
+// cepat (misalnya setiap sinkron rekan) cukup ditandai aria-busy.
+const SLOW_MS = 500;
+
+// Milidetik sampai lewat tengah malam berikutnya (waktu lokal).
+function msToMidnight(now = new Date()): number {
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+  return Math.max(1000, next.getTime() - now.getTime());
+}
+
+function chipsFor(key: string): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-cal-task]")).filter(
+    (el) => el.getAttribute("data-cal-task") === key,
+  );
+}
+
+// Pengganti fokus untuk chip yang akan hilang (tenggat dihapus): chip
+// berikutnya di hari atau daftar yang sama, kalau tidak ada chip sebelumnya,
+// lalu hari itu sendiri sebagai cadangan.
+function neighbourOf(key: string): { key: string | null; day: DayKey | null } {
+  const active = document.activeElement;
+  const el =
+    active instanceof HTMLElement && active.getAttribute("data-cal-task") === key ? active : (chipsFor(key)[0] ?? null);
+  if (!el) return { key: null, day: null };
+  const cell = el.closest<HTMLElement>("[data-cal-day]");
+  const box = cell ?? el.closest<HTMLElement>("ul, ol, [role=dialog]") ?? el.parentElement;
+  const others = box
+    ? Array.from(box.querySelectorAll<HTMLElement>("[data-cal-task]")).filter((c) => c.getAttribute("data-cal-task") !== key)
+    : [];
+  const next =
+    others.find((c) => el.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING) ?? others[others.length - 1] ?? null;
+  return { key: next?.getAttribute("data-cal-task") ?? null, day: cell?.getAttribute("data-cal-day") ?? null };
+}
 
 export function CalendarScreen({ me }: { me: string }) {
   useLang();
@@ -108,18 +142,29 @@ export function CalendarScreen({ me }: { me: string }) {
   const [view, setView] = useState<CalView>("month");
   const [filter, setFilter] = useState<CalFilter>(DEFAULT_FILTER);
   const [anchor, setAnchor] = useState<DayKey>(() => todayKey());
+  const [today, setToday] = useState<DayKey>(() => todayKey());
   const [openTask, setOpenTask] = useState<OpenTask | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  // Fokus cadangan setelah render: tombol "+N lagi" di sel hari, atau judul periode.
+  const [fallback, setFallback] = useState<{ day: DayKey | null; n: number } | null>(null);
   const [menuTask, setMenuTask] = useState<CalTask | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
+  const [slow, setSlow] = useState(false);
   // Pengumuman pembaca layar; `n` naik supaya kalimat yang sama tetap dibacakan.
   const [say, setSay] = useState({ text: "", n: 0 });
 
-  const today = todayKey();
-  const data = useCalendarData(view, anchor, ready);
+  const data = useCalendarData(view, anchor, ready, today);
   const { reload, patchDue } = data;
+  const settleRef = useRef(data.settleDue);
+  settleRef.current = data.settleDue;
+  // Tampilan dan tanggal acuan terbaru, dibaca setelah inti menjawab.
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const anchorRef = useRef(anchor);
+  anchorRef.current = anchor;
 
   const announce = useCallback((text: string) => setSay((prev) => ({ text, n: prev.n + 1 })), []);
+  const focusFallback = useCallback((day: DayKey | null) => setFallback((f) => ({ day, n: (f?.n ?? 0) + 1 })), []);
 
   // Pilihan tampilan dan saringan tersimpan dibaca dulu, supaya rentang yang
   // salah tidak sempat dimuat. Gagal baca berarti bawaan.
@@ -136,18 +181,27 @@ export function CalendarScreen({ me }: { me: string }) {
     };
   }, []);
 
+  // Lewat tengah malam: tanda hari ini, lewat tenggat, dan pilihan menu ikut berganti.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setToday(todayKey()), msToMidnight());
+    return () => window.clearTimeout(timer);
+  }, [today]);
+
+  useEffect(() => {
+    if (!data.loading) {
+      setSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlow(true), SLOW_MS);
+    return () => window.clearTimeout(timer);
+  }, [data.loading]);
+
   // Proyek tersimpan yang sudah tidak terlihat (dikeluarkan, dihapus) kembali ke Semua proyek.
   const scope = filter.scope;
   useEffect(() => {
     if (typeof scope === "string" || !data.projects) return;
     if (!data.projects.some((p) => p.id === scope.project)) setFilter((f) => ({ ...f, scope: "all" }));
   }, [scope, data.projects]);
-
-  // Fokus chip sudah dipasang tampilan pada render ini; kunci dilepas supaya
-  // pemindahan berikutnya pada chip yang sama memfokusnya lagi.
-  useEffect(() => {
-    if (focusKey) setFocusKey(null);
-  }, [focusKey]);
 
   const sorted = useMemo(
     () => [...(data.projects ?? [])].sort((a, b) => a.code.localeCompare(b.code)),
@@ -156,12 +210,61 @@ export function CalendarScreen({ me }: { me: string }) {
   const colors = useMemo(() => projectColors(data.projects ?? []), [data.projects]);
   const byDay = useMemo(() => groupByDay(applyFilter(data.tasks, filter, me)), [data.tasks, filter, me]);
   const overdue = useMemo(() => applyFilter(data.overdue, filter, me), [data.overdue, filter, me]);
+  const visible = useMemo(() => {
+    const list = [...overdue];
+    for (const day of byDay.values()) list.push(...day);
+    return list;
+  }, [byDay, overdue]);
+  const anyMovable = visible.some(canMoveDue);
+
+  // Task terbaru menurut kuncinya (dengan tenggat optimistis), untuk seret dan
+  // menu yang dibuka sebelum data berubah.
+  const byKey = useMemo(() => {
+    const map = new Map<string, CalTask>();
+    for (const t of [...data.tasks, ...data.overdue]) map.set(taskKey(t), t);
+    return map;
+  }, [data.tasks, data.overdue]);
+  const currentRef = useRef(byKey);
+  currentRef.current = byKey;
+
+  // Chip yang harus difokus. Tampilan memfokusnya pada render saat chip itu
+  // terlihat; kuncinya lalu dilepas supaya pemindahan berikutnya memfokusnya
+  // lagi. Selama rentang baru dimuat (tenggat dipindah ke luar periode) kunci
+  // ditahan; kalau data rentang itu sudah datang dan chip tetap tidak ada,
+  // fokus pindah ke judul periode.
+  const current = data.current;
+  useEffect(() => {
+    if (!focusKey) return;
+    if (visible.some((t) => taskKey(t) === focusKey)) {
+      setFocusKey(null);
+      return;
+    }
+    if (current) {
+      setFocusKey(null);
+      focusFallback(null);
+    }
+  }, [focusKey, visible, current, focusFallback]);
+
+  useEffect(() => {
+    if (!fallback) return;
+    const root = rootRef.current;
+    const active = document.activeElement;
+    if (!root || (active && active !== document.body && active.isConnected)) return;
+    const cell = fallback.day
+      ? Array.from(root.querySelectorAll<HTMLElement>("[data-cal-day]")).find(
+          (el) => el.getAttribute("data-cal-day") === fallback.day,
+        )
+      : undefined;
+    const more = cell?.querySelector<HTMLElement>("button:not([data-cal-task])") ?? null;
+    (more ?? headingRef.current)?.focus();
+  }, [fallback]);
 
   const title = view === "week" ? weekTitle(anchor) : monthTitle(anchor);
 
   function changeView(next: CalView) {
     if (next === view) return;
     setView(next);
+    setFailure(null);
     saveSetting(VIEW_SETTING_KEY, next);
   }
 
@@ -172,6 +275,7 @@ export function CalendarScreen({ me }: { me: string }) {
 
   function go(next: DayKey) {
     setAnchor(next);
+    setFailure(null);
     announce(T.periode(view === "week" ? weekTitle(next) : monthTitle(next)));
   }
 
@@ -179,44 +283,73 @@ export function CalendarScreen({ me }: { me: string }) {
     go(view === "week" ? addDays(anchor, 7 * dir) : addMonths(anchor, dir));
   }
 
+  // Tenggat baru di luar periode yang tampil: periode ikut pindah ke tanggal
+  // itu, supaya chip (dan fokusnya) tetap terlihat.
+  const reveal = useCallback((day: DayKey) => {
+    const { from, to } = rangeFor(viewRef.current, anchorRef.current);
+    if (day >= from && day <= to) return;
+    anchorRef.current = day;
+    setAnchor(day);
+  }, []);
+
+  // Pembuka detail (chip di grid atau di daftar "+N lagi"), untuk fokus kembali ke sana.
+  const openerRef = useRef<HTMLElement | null>(null);
+
   const openChip = useCallback((t: CalTask) => {
-    setOpenTask({ projectId: t.projectId, taskId: t.task.id, key: taskKey(t) });
+    const key = taskKey(t);
+    const active = document.activeElement;
+    openerRef.current = active instanceof HTMLElement && active.getAttribute("data-cal-task") === key ? active : null;
+    setOpenTask({ projectId: t.projectId, taskId: t.task.id, key });
   }, []);
 
   const setDue = useCallback(
-    async (t: CalTask, due: DayKey | null) => {
+    async (given: CalTask, due: DayKey | null) => {
+      const key = taskKey(given);
+      const t = currentRef.current.get(key) ?? given;
       const code = t.task.code;
       if (!canMoveDue(t)) {
         announce(T.tanpaHakTenggat);
         return;
       }
       if (due === t.task.due) return;
-      const key = taskKey(t);
-      const before = t.task.due;
-      patchDue(key, due);
-      if (due) setFocusKey(key);
+      const removal = due ? null : neighbourOf(key);
+      const n = patchDue(t, due);
+      if (due) {
+        reveal(due);
+        setFocusKey(key);
+      } else if (removal?.key) {
+        setFocusKey(removal.key);
+      } else {
+        focusFallback(removal?.day ?? null);
+      }
       try {
         await boardApi.updateTask(t.projectId, t.task.id, { due });
+        // Langkah lain pada task yang sama sudah menyusul: yang terakhir yang melapor.
+        if (!settleRef.current(key, n, true).latest) return;
         setFailure(null);
         announce(due ? T.dipindah(code, dayLong(due)) : T.dihapus(code));
       } catch (err) {
-        patchDue(key, before);
-        setFocusKey(key);
+        const settled = settleRef.current(key, n, false);
+        if (!settled.latest) return;
+        if (settled.due) {
+          reveal(settled.due);
+          setFocusKey(key);
+        }
         setFailure({ title: T.gagalUbah(code), message: toAppError(err).message });
       }
-      reload();
     },
-    [T, announce, patchDue, reload],
+    [T, announce, patchDue, reveal, focusFallback],
   );
 
-  const drag = useDueDrag(rootRef, (t, day) => void setDue(t, day));
+  const drag = useDueDrag(rootRef, (t, day) => void setDue(t, day), (key) => currentRef.current.get(key));
 
+  const menuFor = menuTask ? (byKey.get(taskKey(menuTask)) ?? menuTask) : null;
   const menu = useContextMenu({
-    label: menuTask ? T.menu.label(menuTask.task.code) : T.judul,
+    label: menuFor ? T.menu.label(menuFor.task.code) : T.judul,
     // Menu dibuka pada render yang sama dengan setMenuTask; daftar sementara
     // hanya menjaga menu tetap dianggap berisi sebelum itu.
-    items: menuTask
-      ? dueMenuEntries(menuTask, today, { setDue: (t, due) => void setDue(t, due), open: openChip })
+    items: menuFor
+      ? dueMenuEntries(menuFor, today, { setDue: (t, due) => void setDue(t, due), open: openChip })
       : [{ id: "open", label: T.menu.buka, onSelect: () => {} }],
   });
 
@@ -236,8 +369,9 @@ export function CalendarScreen({ me }: { me: string }) {
       // Alt+Panah kiri di WebView berarti Kembali; di chip artinya pindah tenggat.
       e.preventDefault();
       e.stopPropagation();
-      if (!t.task.due) return;
-      void setDue(t, addDays(t.task.due, shift));
+      const now = currentRef.current.get(taskKey(t)) ?? t;
+      if (!now.task.due) return;
+      void setDue(now, addDays(now.task.due, shift));
       return;
     }
     if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
@@ -246,10 +380,10 @@ export function CalendarScreen({ me }: { me: string }) {
     }
   }
 
-  // Setelah detail ditutup fokus kembali ke chip task itu. Kalau chip sudah
-  // hilang (task dihapus, tenggat dikosongkan di detail), fokus ke judul
-  // periode, tidak jatuh ke body. Dicek sesudah dialog selesai mengembalikan
-  // fokusnya sendiri.
+  // Setelah detail ditutup fokus kembali ke pembukanya (chip di grid atau di
+  // daftar "+N lagi"). Kalau pembuka sudah hilang, ke chip task itu; kalau chip
+  // juga hilang (task dihapus, tenggat dikosongkan di detail), ke judul
+  // periode. Dicek sesudah dialog selesai mengembalikan fokusnya sendiri.
   const closedKey = useRef<string | null>(null);
   const [closedAt, setClosedAt] = useState(0);
 
@@ -257,7 +391,7 @@ export function CalendarScreen({ me }: { me: string }) {
     const key = openTask?.key ?? null;
     closedKey.current = key;
     setOpenTask(null);
-    setFocusKey(key);
+    if (!openerRef.current?.isConnected) setFocusKey(key);
     setClosedAt((n) => n + 1);
     reload();
   }
@@ -265,16 +399,25 @@ export function CalendarScreen({ me }: { me: string }) {
   useEffect(() => {
     if (closedAt === 0) return;
     const timer = window.setTimeout(() => {
+      const opener = openerRef.current;
+      openerRef.current = null;
+      if (opener?.isConnected) {
+        if (document.activeElement !== opener) opener.focus();
+        return;
+      }
       const root = rootRef.current;
       const active = document.activeElement;
       if (!root || (active && active !== document.body && root.contains(active))) return;
-      const chip = Array.from(root.querySelectorAll<HTMLElement>("[data-cal-task]")).find(
-        (el) => el.getAttribute("data-cal-task") === closedKey.current,
-      );
+      const chip = closedKey.current ? chipsFor(closedKey.current).find((el) => root.contains(el)) : undefined;
       (chip ?? headingRef.current)?.focus();
     }, 0);
     return () => window.clearTimeout(timer);
   }, [closedAt]);
+
+  function dismissFailure() {
+    setFailure(null);
+    headingRef.current?.focus();
+  }
 
   const viewProps: ViewProps = {
     anchor,
@@ -294,9 +437,10 @@ export function CalendarScreen({ me }: { me: string }) {
   // tidak muncul sebelum data datang atau saat data belum terbaca.
   const showView = view !== "agenda" || data.loaded;
   const busy = !ready || (data.loading && !data.error);
+  const sayLoading = busy && (!data.loaded || slow);
 
   return (
-    <section className="cal" aria-labelledby={`${ids}-title`} ref={rootRef}>
+    <section className="cal" aria-label={T.wilayah(title)} ref={rootRef}>
       <header className="cal-head">
         <div className="cal-period">
           <div className="cal-nav">
@@ -363,9 +507,9 @@ export function CalendarScreen({ me }: { me: string }) {
 
       <div className="cal-statusbar">
         <p className="cal-loading" role="status">
-          {busy ? T.memuat : ""}
+          {sayLoading ? T.memuat : ""}
         </p>
-        <p className="cal-hint">{T.petunjuk}</p>
+        {anyMovable && <p className="cal-hint">{T.petunjuk}</p>}
       </div>
       <div className="sr-only" role="status" aria-live="polite" data-testid="cal-say">
         <span key={say.n}>{say.text}</span>
@@ -375,6 +519,9 @@ export function CalendarScreen({ me }: { me: string }) {
         {failure && (
           <ErrorAlert title={failure.title}>
             <p>{failure.message}</p>
+            <button type="button" className="btn btn-ghost btn-sm cal-retry" onClick={dismissFailure}>
+              {T.tutupPesan}
+            </button>
           </ErrorAlert>
         )}
       </div>
@@ -399,12 +546,7 @@ export function CalendarScreen({ me }: { me: string }) {
       {menu.element}
 
       {openTask && (
-        <TaskDetail
-          projectId={openTask.projectId}
-          taskId={openTask.taskId}
-          onClose={closeTask}
-          onChanged={reload}
-        />
+        <TaskDetail projectId={openTask.projectId} taskId={openTask.taskId} onClose={closeTask} onChanged={reload} />
       )}
     </section>
   );

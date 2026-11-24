@@ -37,12 +37,15 @@ export function AgendaView({ anchor, today, byDay, colors, draggingKey, dropDay,
   useFocusKey(root, focusKey, all);
   const days = [...byDay.keys()].filter((d) => (byDay.get(d)?.length ?? 0) > 0).sort();
   const list = { today, colors, draggingKey, ...handlers };
+  const title = monthTitle(anchor);
+  // Grup periode: juga tujuan fokus pengganti kalau task yang baru dipindah tidak tampil lagi.
+  const group = { ref: root, role: "group", "aria-label": title, tabIndex: -1 } as const;
 
   if (days.length === 0 && overdue.length === 0) {
     return (
-      <div ref={root} className="cv cv-agenda">
+      <div {...group} className="cv cv-agenda">
         <div className="cv-empty">
-          <p className="cv-empty-title">{txt.kosongJudul(monthTitle(anchor))}</p>
+          <p className="cv-empty-title">{txt.kosongJudul(title)}</p>
           <p>{txt.kosongSaran}</p>
         </div>
       </div>
@@ -50,7 +53,7 @@ export function AgendaView({ anchor, today, byDay, colors, draggingKey, dropDay,
   }
 
   return (
-    <div ref={root} className="cv cv-agenda">
+    <div {...group} className="cv cv-agenda">
       {overdue.length > 0 && (
         <section className="cv-aday cv-alate" aria-labelledby={lateId}>
           <h3 id={lateId} className="cv-ahead cv-ahead-late">

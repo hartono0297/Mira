@@ -8,7 +8,7 @@ import { setLang } from "../../i18n/core";
 import { AgendaView } from "./AgendaView";
 import { groupByDay } from "./calendarModel";
 import { CalChip } from "./CalChip";
-import { MonthView } from "./MonthView";
+import { chipLimit, MonthView } from "./MonthView";
 import type { ViewProps } from "./viewTypes";
 import { WeekView } from "./WeekView";
 
@@ -138,7 +138,11 @@ describe("MonthView", () => {
     const { container } = render(<MonthView {...props([])} />);
     const table = screen.getByRole("table");
     const heads = within(table).getAllByRole("columnheader");
-    expect(heads.map((h) => h.textContent)).toEqual(["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]);
+    expect(heads.map((h) => h.querySelector("[aria-hidden]")?.textContent)).toEqual(["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]);
+    expect(heads[0]).toHaveAccessibleName("Senin");
+    expect(heads[6]).toHaveAccessibleName("Minggu");
+    // Angka hari bukan heading: tabel sudah punya kepala kolom.
+    expect(within(table).queryAllByRole("heading")).toHaveLength(0);
     expect(within(table).getAllByRole("row")).toHaveLength(7); // kepala + 6 minggu
     const cells = container.querySelectorAll("td[data-cal-day]");
     expect(cells).toHaveLength(42);
@@ -166,7 +170,8 @@ describe("MonthView", () => {
     const { container } = render(<MonthView {...props(tasks)} />);
     const cell = container.querySelector('td[data-cal-day="2026-11-12"]') as HTMLElement;
     expect(cell.querySelectorAll(".cv-chips [data-cal-task]")).toHaveLength(3);
-    const more = within(cell).getByRole("button", { name: "+2 lagi, Kamis, 12 November 2026" });
+    const more = within(cell).getByRole("button", { name: "2 task lagi, Kamis, 12 November 2026" });
+    expect(more).toHaveTextContent("+2 lagi");
     expect(more).toHaveAttribute("aria-expanded", "false");
     await user.click(more);
     const dlg = screen.getByRole("dialog", { name: "Kamis, 12 November 2026" });
@@ -180,7 +185,7 @@ describe("MonthView", () => {
     const user = userEvent.setup();
     const tasks = [1, 2, 3, 4].map((n) => cal({ title: `Esc ${n}`, due: "2026-11-12" }));
     render(<MonthView {...props(tasks)} />);
-    const more = screen.getByRole("button", { name: /^\+1 lagi/ });
+    const more = screen.getByRole("button", { name: /^1 task lagi/ });
     await user.click(more);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await user.keyboard("{Escape}");
@@ -192,7 +197,7 @@ describe("MonthView", () => {
     const user = userEvent.setup();
     const tasks = [1, 2, 3, 4].map((n) => cal({ title: `Luar ${n}`, due: "2026-11-12" }));
     render(<MonthView {...props(tasks)} />);
-    const more = screen.getByRole("button", { name: /^\+1 lagi/ });
+    const more = screen.getByRole("button", { name: /^1 task lagi/ });
     await user.click(more);
     await user.click(screen.getByRole("button", { name: "Tutup daftar" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -209,7 +214,7 @@ describe("MonthView", () => {
     const tasks = [1, 2, 3, 4].map((n) => cal({ title: `Dalam ${n}`, due: "2026-11-12" }));
     const p = props(tasks);
     render(<MonthView {...p} />);
-    await user.click(screen.getByRole("button", { name: /^\+1 lagi/ }));
+    await user.click(screen.getByRole("button", { name: /^1 task lagi/ }));
     const dlg = screen.getByRole("dialog");
     const last = within(dlg).getByRole("button", { name: /Dalam 4/ });
     await user.click(last);
@@ -244,7 +249,73 @@ describe("MonthView", () => {
     rerender(<MonthView {...p} focusKey={`p1/${shown[1].task.id}`} />);
     expect(screen.getByRole("button", { name: new RegExp(shown[1].task.title) })).toHaveFocus();
     rerender(<MonthView {...p} focusKey={`p1/${shown[3].task.id}`} />);
-    expect(screen.getByRole("button", { name: /^\+1 lagi/ })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /^1 task lagi/ })).toHaveFocus();
+  });
+
+  it("batas chip mengikuti tinggi baris", () => {
+    expect(chipLimit(40)).toBe(1);
+    expect(chipLimit(95)).toBe(2);
+    expect(chipLimit(141)).toBe(3);
+    expect(chipLimit(1000)).toBe(6);
+    expect(chipLimit(Number.NaN)).toBe(3);
+  });
+
+  it("tanpa task di rentang: kalimat kosong di bawah grid", () => {
+    const { rerender } = render(<MonthView {...props([])} />);
+    expect(screen.getByText("Tidak ada task bertenggat di November 2026.")).toBeInTheDocument();
+    rerender(<MonthView {...props([cal({ title: "Ada" })])} />);
+    expect(screen.queryByText("Tidak ada task bertenggat di November 2026.")).not.toBeInTheDocument();
+  });
+
+  it("focusKey untuk task yang hilang dari tampilan memfokus grup periode", () => {
+    const p = props([]);
+    const { rerender } = render(<MonthView {...p} />);
+    rerender(<MonthView {...p} focusKey="p1/hilang" />);
+    expect(screen.getByRole("group", { name: "November 2026" })).toHaveFocus();
+  });
+
+  it("daftar tetap berpegang pada hari itu saat tombol +N hilang, lalu Esc ke tombol yang tersisa", async () => {
+    const user = userEvent.setup();
+    const tasks = [1, 2, 3, 4].map((n) => cal({ title: `Sisa ${n}`, due: "2026-11-12" }));
+    const p = props(tasks);
+    const { container, rerender } = render(<MonthView {...p} />);
+    await user.click(screen.getByRole("button", { name: /^1 task lagi/ }));
+    rerender(<MonthView {...p} byDay={groupByDay(tasks.slice(0, 3))} />);
+    expect(screen.queryByRole("button", { name: /task lagi/ })).not.toBeInTheDocument();
+    const dlg = screen.getByRole("dialog", { name: "Kamis, 12 November 2026" });
+    expect(within(dlg).getAllByRole("button", { name: /Sisa/ })).toHaveLength(3);
+    within(dlg).getAllByRole("button", { name: /Sisa/ })[0].focus();
+    await user.keyboard("{Escape}");
+    const cell = container.querySelector('td[data-cal-day="2026-11-12"]') as HTMLElement;
+    expect(cell.contains(document.activeElement)).toBe(true);
+  });
+
+  it("daftar tutup saat hari itu tidak punya task lagi", async () => {
+    const user = userEvent.setup();
+    const tasks = [1, 2, 3, 4].map((n) => cal({ title: `Habis ${n}`, due: "2026-11-12" }));
+    const p = props(tasks);
+    const { rerender } = render(<MonthView {...p} />);
+    await user.click(screen.getByRole("button", { name: /^1 task lagi/ }));
+    rerender(<MonthView {...p} byDay={new Map()} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    rerender(<MonthView {...p} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("chip yang dipindah dari daftar menutup daftar dan fokus ikut chip", async () => {
+    const user = userEvent.setup();
+    const tasks = [1, 2, 3, 4].map((n) => cal({ title: `Pindah ${n}`, due: "2026-11-12" }));
+    const p = props(tasks);
+    const { rerender } = render(<MonthView {...p} />);
+    await user.click(screen.getByRole("button", { name: /^1 task lagi/ }));
+    const moved = tasks[3];
+    within(screen.getByRole("dialog")).getByRole("button", { name: /Pindah 4/ }).focus();
+    const next = tasks.map((t) => (t === moved ? { ...t, task: { ...t.task, due: "2026-11-13" } } : t));
+    rerender(<MonthView {...p} byDay={groupByDay(next)} focusKey={`p1/${moved.task.id}`} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const chip = screen.getByRole("button", { name: /Pindah 4/ });
+    expect(chip.closest("[data-cal-day]")).toHaveAttribute("data-cal-day", "2026-11-13");
+    expect(chip).toHaveFocus();
   });
 
   it("bahasa Inggris: Senin dulu dan +N more", () => {
@@ -253,7 +324,8 @@ describe("MonthView", () => {
     render(<MonthView {...props(tasks)} />);
     const heads = within(screen.getByRole("table")).getAllByRole("columnheader");
     expect(heads[0]).toHaveTextContent("Mon");
-    expect(screen.getByRole("button", { name: "+1 more, Thursday, 12 November 2026" })).toBeInTheDocument();
+    expect(heads[0]).toHaveAccessibleName("Monday");
+    expect(screen.getByRole("button", { name: "1 more task, Thursday, 12 November 2026" })).toHaveTextContent("+1 more");
     expect(screen.getByRole("button", { name: "4 tasks, Thursday, 12 November 2026, some overdue" })).toBeInTheDocument();
   });
 });
@@ -270,6 +342,25 @@ describe("WeekView", () => {
     expect(within(cols[0] as HTMLElement).getByText("Tidak ada tenggat")).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 3 })[0]).toHaveAccessibleName("Senin, 23 November 2026");
     expect(screen.getByRole("heading", { name: "Selasa, 24 November 2026" })).toBeInTheDocument();
+  });
+
+  it("kolom-kolom ada di dalam pembungkus container, bukan container itu sendiri", () => {
+    const { container } = render(<WeekView {...props([])} />);
+    const grid = container.querySelector(".cv-week") as HTMLElement;
+    expect(grid).not.toHaveClass("cv");
+    expect(grid.closest(".cv")).not.toBeNull();
+  });
+
+  it("tanpa task di minggu ini: kalimat kosong", () => {
+    render(<WeekView {...props([])} />);
+    expect(screen.getByText("Tidak ada task bertenggat di minggu 23 sampai 29 November 2026.")).toBeInTheDocument();
+  });
+
+  it("focusKey untuk task yang keluar dari minggu ini memfokus grup periode", () => {
+    const p = props([]);
+    const { rerender } = render(<WeekView {...p} />);
+    rerender(<WeekView {...p} focusKey="p1/pergi" />);
+    expect(screen.getByRole("group", { name: "23 sampai 29 November 2026" })).toHaveFocus();
   });
 
   it("semua chip tampil, tanpa batas 3", () => {
@@ -335,6 +426,13 @@ describe("AgendaView", () => {
     setLang("en");
     agenda([]);
     expect(screen.getByText("No tasks are due in November 2026.")).toBeInTheDocument();
+  });
+
+  it("focusKey untuk task yang hilang memfokus grup periode", () => {
+    const p = props([cal({ title: "Tetap", due: "2026-11-26" })]);
+    const { rerender } = render(<AgendaView {...p} overdue={[]} />);
+    rerender(<AgendaView {...p} overdue={[]} focusKey="p1/hilang" />);
+    expect(screen.getByRole("group", { name: "November 2026" })).toHaveFocus();
   });
 
   it("focusKey memfokus chip setelah render", async () => {

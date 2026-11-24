@@ -91,8 +91,10 @@ export function CalChip({ item, colorIndex, today, dragging, variant = "compact"
 // berganti atau task itu pindah hari (Alt+Panah berturut-turut memasang ulang
 // chip di sel lain), bukan setiap kali data dimuat ulang, supaya fokus yang
 // sudah dipindah pengguna tidak ditarik kembali.
-// `fallback(day)` memberi elemen pengganti kalau chip tidak bisa difokus
-// (tersembunyi di balik "+N lagi" atau di tampilan sempit).
+// Urutan pengganti kalau chip tidak bisa difokus: `fallback(day)` (misalnya
+// tombol "+N lagi" atau tombol jumlah di tampilan sempit), lalu `root` sendiri
+// (grup periode dengan tabIndex -1), misalnya saat task keluar dari rentang
+// atau tenggatnya dihapus. Fokus tidak pernah jatuh ke body.
 export function useFocusKey(
   root: RefObject<HTMLElement | null>,
   focusKey: string | null,
@@ -118,7 +120,7 @@ export function useFocusKey(
     const el = root.current;
     if (!el) return;
     const chips = [...el.querySelectorAll<HTMLElement>("[data-cal-task]")].filter((c) => c.dataset.calTask === focusKey);
-    const candidates = [...chips, ...(day && fallback ? fallback(day) : [])];
+    const candidates = [...chips, ...(day && fallback ? fallback(day) : []), el];
     for (const c of candidates) {
       c.focus();
       if (document.activeElement === c) return;

@@ -17,6 +17,8 @@ const id = {
   bulan: {
     // Tombol di bawah 3 chip pertama. Nama aksesibelnya ditambah tanggal.
     lagi: (n: number) => `+${n} lagi`,
+    // Nama aksesibel tombol itu: "2 task lagi, Senin, 24 November 2026" (bukan "plus 2 lagi").
+    lagiSr: (n: number) => `${n} task lagi`,
     hariSr: (day: string) => `, ${day}`,
     // Tampilan sempit: satu tombol jumlah per hari, misalnya "4".
     jumlahSr: (_n: number) => " task",
@@ -27,6 +29,7 @@ const id = {
   },
   minggu: {
     kosong: "Tidak ada tenggat",
+    kosongJudul: (week: string) => `Tidak ada task bertenggat di minggu ${week}.`,
   },
   agenda: {
     lewat: "Lewat tenggat",

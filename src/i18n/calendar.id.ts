@@ -4,6 +4,7 @@
 
 const id = {
   judul: "Kalender",
+  wilayah: (title: string) => `Kalender, ${title}`,
   sebelumnya: {
     month: "Bulan sebelumnya",
     week: "Minggu sebelumnya",
@@ -26,12 +27,13 @@ const id = {
   semuaProyek: "Semua proyek",
   opsiProyek: (code: string, name: string) => `${code} · ${name}`,
   tampilkanSelesai: "Tampilkan yang selesai",
-  petunjuk: "Seret task ke tanggal lain, atau tekan Alt+Panah pada task yang terpilih.",
+  petunjuk: "Seret task ke tanggal lain, atau pilih task lalu tekan Alt+Panah. Shift+F10 membuka pilihan tenggat.",
   memuat: "Memuat task...",
   belumTerbaca: "Task kalender belum terbaca",
   intiTanpaData: "Inti Mira tidak mengirim daftar task.",
   dataLama: "Yang tampil adalah data terakhir yang terbaca.",
   cobaLagi: "Coba lagi",
+  tutupPesan: "Tutup pesan",
   periode: (title: string) => `Menampilkan ${title}.`,
   dipindah: (code: string, day: string) => `Tenggat ${code} dipindah ke ${day}.`,
   dihapus: (code: string) => `Tenggat ${code} dihapus.`,

@@ -36,12 +36,45 @@
   --cal-p7: #e89a7a;
 }
 
-/* Lebar yang diukur adalah lebar kalender sendiri, bukan jendela, karena lebar
-   sidebar berubah (ringkas 64 px atau lebar). 700 px kira-kira jendela 760 px
-   dengan sidebar ringkas. */
+/* Akar setiap tampilan (.cv) adalah container query: yang diukur lebar kalender
+   sendiri, bukan jendela, karena lebar sidebar berubah (ringkas 64 px atau
+   lebar). 700 px kira-kira jendela 760 px dengan sidebar ringkas. Aturan
+   @container di bawah hanya mengenai turunan .cv, tidak pernah .cv sendiri.
+   .cv juga grup periode (tabIndex -1): tujuan fokus pengganti kalau chip yang
+   baru dipindah tidak tampil lagi. */
 .cv {
   container-type: inline-size;
   min-width: 0;
+}
+
+.cv:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Bulan dan Minggu mengisi tinggi induknya (calendar.css: .cal-body kolom flex
+   dengan tinggi terbatas) dan bergulir sendiri kalau tinggi minimum baris lebih
+   besar dari yang tersedia. */
+.cv-month,
+.cv-weekwrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Kalimat kosong di bawah grid Bulan dan Minggu. */
+.cv-empty-line {
+  flex: none;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.cv-empty-line strong {
+  color: var(--text);
 }
 
 /* ---------------------------------------------------------------- Chip */
@@ -65,6 +98,8 @@
   font-size: 12px;
   line-height: 1.35;
   text-align: left;
+  /* Kode atau judul panjang tidak boleh keluar ke sel sebelah. */
+  overflow: hidden;
   cursor: pointer;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
@@ -109,15 +144,22 @@
   gap: 4px;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 .cc-icon {
   flex: none;
 }
 
+/* Kode boleh menyusut dengan elipsis, tetapi judul menyusut lebih dulu
+   (flex-shrink jauh lebih besar), jadi kode tetap terbaca selama mungkin. */
 .cc-code,
 .cc-proj {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -127,6 +169,7 @@
 }
 
 .cc-title {
+  flex: 0 1000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -214,7 +257,11 @@
 
 /* ---------------------------------------------------------------- Bulan */
 
+/* Tabel tumbuh mengisi tinggi .cv-month; baris membagi sisa tinggi sama rata.
+   MonthView mengukur tinggi baris dan menyesuaikan jumlah chip (chipLimit), jadi
+   isi sel tidak membuat satu baris lebih tinggi dari yang lain. */
 .cv-table {
+  flex: 1 0 auto;
   width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
@@ -228,8 +275,9 @@
   text-align: left;
 }
 
+/* Tinggi minimum: kepala sel 24 + satu chip 28 + padding. */
 .cv-day {
-  height: 116px;
+  height: 68px;
   padding: 4px;
   vertical-align: top;
   border: 1px solid var(--border);
@@ -242,13 +290,24 @@
   background: var(--col);
 }
 
+/* Kepala sel: angka hari di kiri, "+N lagi" di kanan, supaya tombol itu tidak
+   memakan satu baris sendiri di bawah chip. */
+.cv-dhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  height: 24px;
+  margin-bottom: 3px;
+}
+
 .cv-num {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 24px;
   height: 24px;
-  margin: 0 0 2px;
+  margin: 0;
   padding: 0 4px;
   border-radius: 12px;
   font-size: 12px;
@@ -287,14 +346,14 @@
   gap: 3px;
 }
 
-/* "+N lagi": --accent-text 6,14:1 di atas --bg, 5,68:1 di atas --col, 5,06:1 di atas --hover;
+/* "+N lagi" (nama aksesibel "2 task lagi, tanggal"): --accent-text 6,14:1 di atas --bg, 5,68:1 di atas --col, 5,06:1 di atas --hover;
    gelap 10,38 / 9,69 / 8,50. */
 .cv-more-btn {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  margin-top: 2px;
-  padding: 2px 6px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -325,6 +384,7 @@
   gap: 2px;
   width: 100%;
   min-height: 44px;
+  margin-top: 2px;
   padding: 0;
   border: 1px solid var(--text-sec);
   border-radius: 8px;
@@ -360,9 +420,14 @@
   }
 
   .cv-day {
-    height: 84px;
+    height: 76px;
     padding: 2px;
     text-align: center;
+  }
+
+  .cv-dhead {
+    justify-content: center;
+    margin-bottom: 0;
   }
 
   .cv-th {
@@ -410,13 +475,14 @@
 }
 
 /* Garis --border-strong di atas --bg: 3,19:1 terang, 4,18:1 gelap. */
+/* 36 px: tidak terlalu kecil di samping chip pertama. */
 .cv-more-close {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -433,10 +499,10 @@
 /* ---------------------------------------------------------------- Minggu */
 
 .cv-week {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
-  height: 100%;
   min-height: 320px;
 }
 
@@ -494,8 +560,8 @@
 /* Sempit: kolom menumpuk jadi daftar per hari, tanpa gulir di dalam kolom. */
 @container (max-width: 700px) {
   .cv-week {
+    flex: none;
     grid-template-columns: minmax(0, 1fr);
-    height: auto;
     min-height: 0;
   }
 

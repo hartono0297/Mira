@@ -116,6 +116,10 @@ function Chip({ t, props }: { t: CalTask; props: ViewProps }) {
   );
 }
 
+// Pilihan tiruan per tes. more: tampilan bulan juga menggambar daftar tambahan
+// berisi chip hari ini di luar sel hari, seperti daftar "+N lagi" (DayMore).
+export const fakeOptions = { more: false };
+
 function FakeView({ kind, props, overdue }: { kind: "month" | "week" | "agenda"; props: ViewProps; overdue?: CalTask[] }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -123,7 +127,13 @@ function FakeView({ kind, props, overdue }: { kind: "month" | "week" | "agenda";
     ref.current?.querySelector<HTMLElement>(`[data-cal-task="${props.focusKey}"]`)?.focus();
   }, [props.focusKey, props.byDay]);
   return (
-    <div ref={ref} data-testid={`view-${kind}`} data-anchor={props.anchor} data-drop-day={props.dropDay ?? ""}>
+    <div
+      ref={ref}
+      data-testid={`view-${kind}`}
+      data-anchor={props.anchor}
+      data-today={props.today}
+      data-drop-day={props.dropDay ?? ""}
+    >
       {overdue && (
         <section data-testid="overdue">
           {overdue.map((t) => (
@@ -138,6 +148,15 @@ function FakeView({ kind, props, overdue }: { kind: "month" | "week" | "agenda";
           ))}
         </div>
       ))}
+      {kind === "month" && fakeOptions.more && (
+        <ul data-testid="more">
+          {(props.byDay.get(props.today) ?? []).map((t) => (
+            <li key={taskKey(t)}>
+              <Chip t={t} props={props} />
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

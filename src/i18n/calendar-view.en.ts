@@ -15,6 +15,7 @@ const en: Dict<typeof id> = {
   },
   bulan: {
     lagi: (n: number) => `+${n} more`,
+    lagiSr: (n: number) => `${n} more ${plural(n, "task", "tasks")}`,
     hariSr: (day: string) => `, ${day}`,
     jumlahSr: (n: number) => ` ${plural(n, "task", "tasks")}`,
     adaLewatSr: ", some overdue",
@@ -24,6 +25,7 @@ const en: Dict<typeof id> = {
   },
   minggu: {
     kosong: "Nothing due",
+    kosongJudul: (week: string) => `No tasks are due in the week of ${week}.`,
   },
   agenda: {
     lewat: "Overdue",

@@ -3,6 +3,7 @@ import type id from "./calendar.id";
 
 const en: Dict<typeof id> = {
   judul: "Calendar",
+  wilayah: (title: string) => `Calendar, ${title}`,
   sebelumnya: {
     month: "Previous month",
     week: "Previous week",
@@ -20,17 +21,18 @@ const en: Dict<typeof id> = {
     week: "Week",
     agenda: "Agenda",
   },
-  lihat: "Show",
+  lihat: "Tasks",
   taskSaya: "My tasks",
   semuaProyek: "All projects",
   opsiProyek: (code: string, name: string) => `${code} · ${name}`,
   tampilkanSelesai: "Show completed",
-  petunjuk: "Drag a task to another date, or press Alt+Arrow on the selected task.",
+  petunjuk: "Drag a task to another date, or select a task and press Alt+Arrow. Shift+F10 opens the due date options.",
   memuat: "Loading tasks...",
   belumTerbaca: "Calendar tasks could not be read",
   intiTanpaData: "The Mira core did not send the task list.",
   dataLama: "You are seeing the last data that was read.",
   cobaLagi: "Try again",
+  tutupPesan: "Dismiss",
   periode: (title: string) => `Showing ${title}.`,
   dipindah: (code: string, day: string) => `Due date of ${code} moved to ${day}.`,
   dihapus: (code: string) => `Due date of ${code} removed.`,
