@@ -13,7 +13,10 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 ### Chat
 
 - Sidebar dibagi lima: Umum (channel dibuat superadmin, semua boleh menulis, bisa dikunci hanya-baca), Departemen (otomatis), Proyek (hanya anggota proyek), Grup (siapa saja bisa membuat), dan Pesan pribadi.
-- Grup: pembuatnya jadi pemilik, anggota bisa menambah orang dan mengganti nama, hanya pemilik yang mengeluarkan orang, siapa saja bisa keluar.
+- Grup: pembuatnya jadi pemilik, anggota bisa menambah orang dan mengganti nama, hanya pemilik yang mengeluarkan orang, siapa saja bisa keluar. Grup boleh dibuat dengan pembuatnya saja, lalu diisi belakangan.
+- Setiap proyek otomatis punya chat grup berisi anggota proyek, di bagian Proyek. Chat ini tidak bisa diarsipkan atau dihapus.
+- Bagian sidebar bisa dilipat, dan lipatannya tersimpan per laptop.
+- Menu klik kanan untuk pesan (balas, salin, hapus, simpan lampiran), percakapan di sidebar, kepala percakapan, dan nama orang.
 - Label keahlian tampil di samping nama.
 - Balas, mention, lampiran, hapus pesan (menyisakan "Pesan dihapus"), arsip dan hapus channel.
 - Status pesan: Menunggu, Dititipkan, Diterima laptopnya, Dibaca.
@@ -25,7 +28,10 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 - Satu board per proyek dengan kolom To do, Dikerjakan, Selesai, dan kode task seperti PA-12.
 - Task berisi judul, deskripsi, penanggung jawab, tenggat, prioritas, label, komentar, dan riwayat aktivitas.
-- Task dipindah dengan seret mouse (pointer event, jalan di Windows dan macOS), menu Pindahkan, atau Alt+Panah.
+- Subtask berupa daftar centang di dalam task, dengan penanggung jawab dan urutan yang bisa diubah. Kartu menampilkan progres seperti 2/5.
+- Pelacakan waktu: lama task di setiap kolom, cycle time dari dibuat sampai selesai, timer Mulai dan Hentikan per orang, dan catatan waktu manual. Kartu menampilkan total waktu.
+- Detail task satu kolom: judul diedit langsung, properti sebagai baris label dan nilai, lalu Subtask, Deskripsi, Waktu, dan tab Komentar/Aktivitas.
+- Task dipindah dengan seret mouse (pointer event, jalan di Windows dan macOS), menu Pindahkan, Alt+Panah, atau menu klik kanan. Menu klik kanan juga ada di kolom, subtask, daftar proyek, dan Task saya.
 - Halaman "Task saya" dan pengingat tenggat lewat notifikasi Windows.
 - Proyek punya anggota sendiri dari departemen mana pun, dipilih saat membuat proyek. Proyek dibuat oleh superadmin atau admin departemen.
 - Perubahan dari beberapa laptop digabung dengan Automerge. Data proyek hanya dikirim ke anggota proyek dan Tamu yang diundang ke proyek itu. Superadmin baru melihat isi proyek setelah menambahkan dirinya, dan langkah itu tercatat.
@@ -50,8 +56,9 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 ### Organisasi dan jaringan
 
 - Satu organisasi untuk seluruh kantor, dibagi per departemen, dengan peran Superadmin, Admin departemen, Anggota, dan Tamu. Satu orang masuk satu departemen; hanya superadmin yang bisa memindah.
-- Bergabung: Mira mencari kantor di jaringan, orang baru mengisi nama dan memilih departemen, lalu superadmin atau admin departemen menyetujui. Kode cocok tampil di kedua layar. Pilihan membuat organisasi baru hanya muncul kalau belum ada kantor di jaringan. Kode undangan tetap bisa dipakai, misalnya dari VPN.
-- Halaman Organisasi: Pengguna (khusus superadmin: nama laptop, IP terakhir, sistem, versi, status), Departemen, Label, Permintaan bergabung, dan Undangan.
+- Bergabung: orang baru mengisi nama, lalu Mira mencari kantor di jaringan. Orang itu memilih kantor, memilih departemen dari kantor itu, dan boleh menulis keterangan untuk admin. Superadmin atau admin departemen melihat keterangan, nama akun login laptop peminta, laptop, IP, dan kode cocok sebelum menyetujui. Kode cocok tampil di kedua layar. Membuat kantor baru tersembunyi di bagian "Untuk admin IT" pada layar "Kantor belum ditemukan". Kode undangan tetap bisa dipakai, misalnya dari VPN.
+- Satu aplikasi untuk semua peran. Menu admin hanya tampil untuk peran yang berhak.
+- Halaman Organisasi: Pengguna (khusus superadmin: nama laptop, IP terakhir, sistem, versi, status), Departemen, Label, Permintaan bergabung, dan Undangan. Baris di Pengguna, Departemen, dan Label punya menu klik kanan, begitu juga baris di Dokumen dan Tanda tangan.
 - Angka di menu untuk pesan belum dibaca, task jatuh tempo, tanda tangan yang menunggu, dan permintaan bergabung.
 - Cek pembaruan dan pemasangan versi baru dari dalam aplikasi (Pengaturan > Tentang dan pembaruan), plus dialog Yang baru.
 - Rekan ditemukan lewat mDNS, alamat manual, QR, atau alamat terakhir yang diingat.
@@ -98,6 +105,8 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 ## Rilis
 
 `v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini publik dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
+
+`v0.4.0` menambah bahasa Inggris, subtask dan pelacakan waktu di board, detail task yang baru, menu klik kanan di seluruh aplikasi, alur bergabung dengan pilihan kantor dan keterangan untuk admin, grup yang bisa dibuat sendirian, dan chat grup otomatis untuk setiap proyek. Laptop yang masih 0.3 menolak subtask dan catatan waktu, jadi perbarui semua laptop bersamaan lewat Pengaturan > Tentang dan pembaruan. Laporan: [v04-chat.md](docs/progress/v04-chat.md), [v04-onboarding.md](docs/progress/v04-onboarding.md), [v04-board.md](docs/progress/v04-board.md), [v04-contextmenu.md](docs/progress/v04-contextmenu.md), [v04-ctx-chat.md](docs/progress/v04-ctx-chat.md), [v04-ctx-board.md](docs/progress/v04-ctx-board.md), [v04-english.md](docs/progress/v04-english.md).
 
 `v0.3.0` berisi departemen, bergabung dengan persetujuan, anggota proyek, chat lima bagian dengan grup, label keahlian, angka notifikasi, daftar pengguna untuk superadmin, cek pembaruan dari dalam aplikasi, dan perbaikan seret board serta tanda tangan PDF. Mulai versi ini pembaruan bisa dipasang dari dalam Mira. Laptop yang masih 0.1.0 atau 0.2.0 perlu menjalankan perintah pasang sekali lagi. Laporan penggabungan: [v03-a.md](docs/progress/v03-a.md), [v03-b.md](docs/progress/v03-b.md), [v03-c.md](docs/progress/v03-c.md), [v03-d.md](docs/progress/v03-d.md).
 
@@ -210,7 +219,9 @@ Skrip menjalankan `mira.exe` sungguhan dan mengendalikannya lewat DevTools Proto
 | `npm run test:e2e-chat` | debug | Chat di satu laptop |
 | `npm run test:e2e-english` | debug | Ganti ke bahasa Inggris di onboarding dan Pengaturan, cek layar utama tanpa teks Indonesia, pilihan tetap setelah restart |
 
-Dua skrip board belum punya perintah npm: `node scripts/board-e2e.mjs <mira.exe> <folder screenshot>` dan `node scripts/board-sync-e2e.mjs <mira.exe> <folder screenshot>`.
+| `npm run test:e2e-board-v04` | debug | Dua instance: subtask, timer, dan durasi status tersinkron, termasuk konflik saat offline |
+
+Skrip berikut belum punya perintah npm dan dijalankan dengan `node scripts/<skrip> <mira.exe> <folder screenshot>`: `board-e2e.mjs` dan `board-sync-e2e.mjs` (board), `org-e2e.mjs` (halaman Organisasi), dan `join-e2e.mjs` (bergabung dengan persetujuan). `contextmenu-e2e.mjs` (menu klik kanan) butuh argumen ketiga, yaitu folder kerja.
 
 ### Beberapa "laptop" di satu PC
 

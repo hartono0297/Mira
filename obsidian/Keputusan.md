@@ -89,6 +89,15 @@ Rinciannya di [[macOS]].
 
 Rinciannya di `docs/progress/v04-english.md`.
 
+## v0.4: bergabung, chat, board, menu (24 November 2026)
+
+- Satu aplikasi untuk semua peran, tanpa aplikasi superadmin terpisah. Menu dan tab admin hanya tampil untuk peran yang berhak. Membuat kantor baru disembunyikan di bagian "Untuk admin IT".
+- Orang baru menulis keterangan untuk admin, dan admin melihat nama akun login laptopnya, supaya bisa memastikan orangnya sebelum menyetujui.
+- Chat proyek tampil sebagai grup berisi anggota proyek dan tidak bisa diarsipkan atau dihapus. Id percakapannya sama dengan v0.3, jadi laptop v0.3 tetap bertukar pesan.
+- Grup boleh berisi pembuatnya saja.
+- Subtask dan catatan waktu disimpan di dokumen Automerge task. Laptop v0.3 menolak perubahan itu; setelah diperbarui, catatan penolakan dikosongkan sekali supaya laptop itu menyusul.
+- Menu klik kanan memakai komponen sendiri, bukan pustaka. Menu bawaan WebView dimatikan di seluruh aplikasi. Sidebar menu utama tidak punya menu klik kanan.
+
 ## Yang masih terbuka
 
 | Keputusan | Keadaan sekarang |
