@@ -2,6 +2,7 @@ import { IconAlertTriangle, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useRef } from "react";
 import type { AppError } from "../api";
 import { Logo } from "../components/Logo";
+import { STATUS_TEXT as T } from "../i18n/status";
 import { isMac } from "../platform";
 import "./status.css";
 
@@ -12,27 +13,24 @@ export function LoadingScreen() {
         <Logo size={40} />
         <span>Mira</span>
       </div>
-      <p className="status-text">Membuka data Mira di laptop ini...</p>
+      <p className="status-text">{T.loading}</p>
     </div>
   );
 }
 
 function nextStep(error: AppError): string {
+  const next = T.error.next;
   switch (error.code) {
     case "no_tauri":
-      return isMac()
-        ? "Tutup halaman ini, lalu buka Mira dari folder Aplikasi atau Launchpad."
-        : "Tutup halaman ini, lalu buka Mira lewat ikon aplikasinya di menu Start atau di desktop.";
+      return isMac() ? next.noTauriMac : next.noTauriWindows;
     case "keystore":
-      return isMac()
-        ? "Mira menyimpan kunci laptop di Keychain macOS. Coba lagi. Kalau macOS menanyakan izin Keychain untuk Mira, pilih Izinkan. Kalau tetap gagal, mulai ulang laptop lalu buka Mira lagi."
-        : "Mira menyimpan kunci laptop di Windows Credential Manager. Coba lagi. Kalau tetap gagal, mulai ulang laptop lalu buka Mira lagi.";
+      return isMac() ? next.keystoreMac : next.keystoreWindows;
     case "key_mismatch":
-      return "Jangan hapus folder data Mira. Hubungi admin organisasi Anda dan sebutkan kode error di bawah.";
+      return next.keyMismatch;
     case "database":
-      return "Tutup jendela Mira lain yang mungkin masih terbuka, lalu coba lagi.";
+      return next.database;
     default:
-      return "Coba lagi. Kalau masih gagal, tutup Mira lalu buka kembali.";
+      return next.other;
   }
 }
 
@@ -51,18 +49,18 @@ export function ErrorScreen({ error, onRetry }: ErrorProps) {
           <IconAlertTriangle size={24} aria-hidden="true" />
         </div>
         <h1 ref={headingRef} tabIndex={-1}>
-          Mira belum bisa dibuka
+          {T.error.heading}
         </h1>
         <p className="status-cause">{error.message}</p>
         <p className="status-next">
-          <span className="status-label">Langkah berikutnya: </span>
+          <span className="status-label">{T.nextLabel}</span>
           {nextStep(error)}
         </p>
-        <p className="status-code">Kode error: {error.code}</p>
+        <p className="status-code">{T.error.code(error.code)}</p>
         <div>
           <button type="button" className="btn" onClick={onRetry}>
             <IconRefresh size={18} aria-hidden="true" />
-            Coba lagi
+            {T.error.retry}
           </button>
         </div>
       </div>

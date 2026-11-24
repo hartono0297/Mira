@@ -1,48 +1,49 @@
 import { ROLE_LABELS, type AppState, type OrgInfo } from "../../api";
+import { locale } from "../../i18n/core";
+import { SETTINGS_TEXT } from "../../i18n/settings";
 import { keyStoreName } from "../../platform";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" });
+  return d.toLocaleString(locale(), { dateStyle: "long", timeStyle: "short" });
 }
 
 export function DeviceSection({ state }: { state: AppState & { organization: OrgInfo } }) {
   const { identity, organization, dataDir } = state;
+  const T = SETTINGS_TEXT.device;
   return (
     <section className="set-section" aria-labelledby="device-title">
       <h2 id="device-title" className="set-title">
-        Laptop ini
+        {SETTINGS_TEXT.parts.device}
       </h2>
-      <p className="hint">Data di bawah hanya untuk dilihat di versi ini.</p>
+      <p className="hint">{T.viewOnly}</p>
       <dl className="facts">
         <div>
-          <dt>Nama tampilan</dt>
+          <dt>{T.displayName}</dt>
           <dd>{identity.displayName}</dd>
         </div>
         <div>
-          <dt>Sidik jari kunci</dt>
+          <dt>{T.fingerprint}</dt>
           <dd>
             <span className="mono selectable">{identity.fingerprint}</span>
-            <span className="fact-note">
-              Penanda kunci unik laptop ini. Kunci rahasianya tersimpan di {keyStoreName()}.
-            </span>
+            <span className="fact-note">{T.fingerprintNote(keyStoreName())}</span>
           </dd>
         </div>
         <div>
-          <dt>Kunci dibuat</dt>
+          <dt>{T.keyCreated}</dt>
           <dd>{formatDate(identity.createdAt)}</dd>
         </div>
         <div>
-          <dt>Folder data</dt>
+          <dt>{T.dataFolder}</dt>
           <dd className="mono selectable path">{dataDir}</dd>
         </div>
         <div>
-          <dt>Organisasi</dt>
+          <dt>{T.organization}</dt>
           <dd>{organization.name}</dd>
         </div>
         <div>
-          <dt>Peran Anda</dt>
+          <dt>{T.yourRole}</dt>
           <dd>{ROLE_LABELS[organization.role]}</dd>
         </div>
       </dl>

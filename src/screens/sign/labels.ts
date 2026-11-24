@@ -1,4 +1,6 @@
-// Label Indonesia untuk tanda tangan PDF. Dipakai layar daftar dan layar dokumen.
+// Label tanda tangan PDF untuk layar daftar dan layar dokumen. Teksnya ada di
+// kamus src/i18n/sign.*.ts dan dibaca saat fungsi dipanggil, jadi mengikuti
+// bahasa tampilan aktif.
 
 import type { AppError } from "../../api";
 import {
@@ -13,30 +15,16 @@ import {
   type SignMode,
   type SignerKind,
 } from "../../api/signing";
-import { formatSignedAt } from "./stamp";
+import { getLang, locale } from "../../i18n/core";
+import { SIGN_TEXT as T } from "../../i18n/sign";
+import { formatSignedAt, signedAtParts } from "./stamp";
 
 export function myStateLabel(state: MyState): string {
-  switch (state) {
-    case "your_turn":
-      return "Giliran Anda";
-    case "waiting_others":
-      return "Menunggu orang lain";
-    case "signed":
-      return "Sudah Anda tanda tangani";
-    case "not_involved":
-      return "Anda bukan penanda tangan";
-  }
+  return T.myState[state];
 }
 
 export function statusLabel(status: RequestStatus): string {
-  switch (status) {
-    case "in_progress":
-      return "Berjalan";
-    case "completed":
-      return "Selesai, terkunci";
-    case "cancelled":
-      return "Dibatalkan";
-  }
+  return T.status[status];
 }
 
 type StateInput = Pick<RequestSummary, "status" | "myState" | "integrity"> &
@@ -61,10 +49,10 @@ export function isActionable(r: StateInput): boolean {
 // giliran saya atas file yang bermasalah bukan lagi "Giliran Anda".
 export function requestStateLabel(r: StateInput): string {
   if (r.status !== "in_progress") return statusLabel(r.status);
-  if (r.myState === "your_turn" && r.fileAvailable === false) return "Menunggu file";
-  if (r.myState === "your_turn" && r.pending === true) return "Menunggu tanda tangan rekan";
-  if (r.myState === "your_turn" && r.integrity !== "intact") return "Tidak bisa ditandatangani";
-  if (r.myState === "not_involved") return "Menunggu penanda tangan";
+  if (r.myState === "your_turn" && r.fileAvailable === false) return T.requestState.waitingFile;
+  if (r.myState === "your_turn" && r.pending === true) return T.requestState.waitingPeer;
+  if (r.myState === "your_turn" && r.integrity !== "intact") return T.requestState.cannotSign;
+  if (r.myState === "not_involved") return T.requestState.waitingSigners;
   return myStateLabel(r.myState);
 }
 
@@ -72,37 +60,27 @@ export function requestStateLabel(r: StateInput): string {
 export function headerStatusLabel(
   r: Pick<RequestSummary, "status" | "signedCount" | "signerCount"> & { sealValid: boolean | null },
 ): string {
-  if (r.status === "in_progress") return `${statusLabel(r.status)}, ${r.signedCount} dari ${r.signerCount} sudah tanda tangan`;
-  if (r.status === "completed" && r.sealValid !== true) return "Selesai, kunci tidak sah";
+  if (r.status === "in_progress") return T.headerProgress(statusLabel(r.status), r.signedCount, r.signerCount);
+  if (r.status === "completed" && r.sealValid !== true) return T.sealInvalid;
   return statusLabel(r.status);
 }
 
 export function modeLabel(mode: SignMode): string {
-  return mode === "sequential" ? "Berurutan" : "Bebas";
+  return mode === "sequential" ? T.mode.sequential : T.mode.parallel;
 }
 
 export function modeHint(mode: SignMode): string {
-  return mode === "sequential"
-    ? "Satu per satu sesuai urutan. Orang berikutnya baru bisa menandatangani setelah giliran sebelumnya selesai."
-    : "Siapa saja boleh lebih dulu. Dokumen selesai setelah semua menandatangani.";
+  return mode === "sequential" ? T.modeHint.sequential : T.modeHint.parallel;
 }
 
 export function kindLabel(kind: SignerKind): string {
-  return kind === "guest" ? "Tamu" : "Anggota";
+  return kind === "guest" ? T.kind.guest : T.kind.member;
 }
 
-const EVENT_LABELS: Record<EventKind, string> = {
-  created: "Permintaan dibuat",
-  signed: "Menandatangani",
-  completed: "Semua selesai, dokumen dikunci",
-  cancelled: "Permintaan dibatalkan",
-  exported: "Salinan PDF disimpan ke luar Mira",
-  signature_saved: "Membuat tanda tangan baru",
-  signature_deleted: "Menghapus tanda tangan",
-};
-
+// Label tampilan saja; jenis catatan (kind) dan isinya tetap seperti tercatat.
 export function eventLabel(kind: string): string {
-  return EVENT_LABELS[kind as EventKind] ?? `Catatan lain (${kind})`;
+  const labels: Record<EventKind, string> = T.events;
+  return Object.prototype.hasOwnProperty.call(labels, kind) ? labels[kind as EventKind] : T.eventOther(kind);
 }
 
 // Tanda tangan tersimpan yang dibuat ulang atau dihapus saat permintaan
@@ -130,31 +108,15 @@ export function happenedDuringRequest(
 }
 
 export function integrityLabel(integrity: Integrity): string {
-  switch (integrity) {
-    case "intact":
-      return "Isi file utuh";
-    case "changed":
-      return "Isi file tidak cocok dengan catatan Mira";
-    case "missing":
-      return "File hilang dari penyimpanan Mira";
-  }
+  return T.integrity[integrity];
 }
 
 export function exportStateLabel(state: Integrity): string {
-  switch (state) {
-    case "intact":
-      return "Utuh";
-    case "changed":
-      return "Berubah";
-    case "missing":
-      return "Tidak ditemukan";
-  }
+  return T.exportState[state];
 }
 
 export function exportWarningLabel(count: number): string {
-  return count > 1
-    ? `${count} salinan PDF yang disimpan di luar Mira berubah`
-    : "Salinan PDF yang disimpan di luar Mira berubah";
+  return count > 1 ? T.exportWarningMany(count) : T.exportWarningOne;
 }
 
 // File dari laptop rekan yang belum ada di laptop ini, untuk daftar dan layar dokumen:
@@ -187,51 +149,25 @@ export function fileNeed(r: NeedInput): FileNeed | null {
 }
 
 export function fileNeedText(need: FileNeed): string {
-  if (need.downloading) {
-    return need.newer ? "Tanda tangan terbaru dari rekan sedang disalin ke laptop ini" : "File sedang disalin dari laptop rekan";
-  }
-  if (need.state === "auto") {
-    return need.newer
-      ? "Tanda tangan terbaru dari rekan disalin otomatis saat laptop rekan yang menyimpannya tersambung."
-      : "File disalin otomatis saat laptop rekan yang menyimpannya tersambung.";
-  }
-  const why =
-    need.size === null
-      ? "Ukurannya belum diketahui, jadi tidak disalin otomatis."
-      : "File di atas 20 MB tidak disalin otomatis.";
-  if (need.newer) return `Versi bertanda tangan terbaru belum diunduh. ${why}`;
-  return need.size === null ? `File ini belum diunduh. ${why}` : `File ${formatSize(need.size)} belum diunduh. ${why}`;
+  const t = T.fileNeed;
+  if (need.downloading) return need.newer ? t.downloadingNewer : t.downloading;
+  if (need.state === "auto") return need.newer ? t.autoNewer : t.auto;
+  const why = need.size === null ? t.whyUnknown : t.whyLarge;
+  if (need.newer) return t.newer(why);
+  return need.size === null ? t.unknownSize(why) : t.sized(formatSize(need.size), why);
 }
 
 // Teks tombol unduh: ukuran hanya kalau diketahui.
 export function downloadLabel(need: FileNeed): string {
-  return need.size ? `Unduh file (${formatSize(need.size)})` : "Unduh file";
+  return need.size ? T.downloadSized(formatSize(need.size)) : T.download;
 }
 
 // Konfirmasi pembatalan, sama di layar dokumen dan di menu baris daftar.
-export const CANCEL_CONFIRM = {
-  title: "Batalkan permintaan ini?",
-  confirmLabel: "Batalkan permintaan",
-  busyLabel: "Membatalkan...",
-  body: "Penanda tangan yang belum menandatangani tidak bisa menandatangani lagi. Tanda tangan yang sudah ada tetap tercatat di jejak audit. Pembatalan tidak bisa diurungkan.",
-};
+// Objek kamus hidup: setiap properti dibaca dalam bahasa aktif.
+export const CANCEL_CONFIRM = T.cancelConfirm;
 
 // Menu baris di daftar tanda tangan (klik kanan atau tombol "...").
-export const ROW_MENU = {
-  open: "Buka",
-  sign: "Tandatangani",
-  export: "Simpan salinan PDF",
-  verify: "Periksa keaslian file",
-  cancel: "Batalkan permintaan",
-  notYourTurn: "Belum giliran Anda",
-  fileAbsent: "File belum ada di laptop ini",
-  fileChanged: "Isi file tidak cocok dengan catatan Mira",
-  fileMissing: "File dokumen tidak ditemukan",
-  waitingPeer: "Menunggu tanda tangan terbaru dari rekan",
-  exporting: "Sedang menyimpan salinan",
-  downloading: "Sedang mengunduh",
-  otherDownload: "Tunggu unduhan lain selesai",
-};
+export const ROW_MENU = T.rowMenu;
 
 // Item menu baris: hidden kalau aksinya tidak pernah berlaku untuk permintaan
 // ini, atau alasan singkat kalau hanya sementara tidak bisa (null: bisa).
@@ -259,15 +195,16 @@ export function rowExportOff(r: Pick<RequestSummary, "integrity"> & Partial<Pick
 }
 
 // Pesan yang mudah dipahami untuk kode error tanda tangan yang baru. Kode lain
-// memakai pesan Indonesia dari inti Rust apa adanya.
+// memakai pesan dari inti Rust apa adanya (call() di src/api memetakannya ke
+// bahasa Inggris saat bahasa Inggris aktif).
 export function signErrorMessage(error: AppError): string {
   switch (error.code as SignErrorCode | string) {
     case "version_not_prefix":
-      return "Mira menolak hasil tanda tangan ini karena isi versi sebelumnya tidak utuh di dalamnya. Tanda tangan hanya boleh ditambahkan di belakang isi lama. Coba lagi. Kalau tetap ditolak, minta pengirim membuat permintaan baru.";
+      return T.signError.version_not_prefix;
     case "version_changes_content":
-      return "Mira menolak hasil tanda tangan ini karena mengubah isi dokumen selain stempel tanda tangan. Coba lagi. Kalau tetap ditolak, minta pengirim membuat permintaan baru.";
+      return T.signError.version_changes_content;
     case "not_available":
-      return "Belum ada laptop rekan yang tersambung dan menyimpan file ini. Coba lagi saat laptop rekan yang menyimpannya menyala dan tersambung ke Mira.";
+      return T.signError.not_available;
     default:
       return error.message;
   }
@@ -275,36 +212,19 @@ export function signErrorMessage(error: AppError): string {
 
 type RejectText = (name: string, other: string | null) => string;
 
-const REJECT_TEXT: Record<string, RejectText> = {
-  version_changes_content: (n) => `Versi dari ${n} ditolak karena mengubah isi dokumen, bukan hanya menambah tanda tangan.`,
-  version_not_prefix: (n) =>
-    `Versi dari ${n} ditolak karena isi dokumen sebelumnya tidak utuh di dalamnya. Tanda tangan hanya boleh ditambahkan di belakang isi lama.`,
-  pdf_invalid: (n) => `Versi dari ${n} ditolak karena Mira tidak bisa membaca atau memeriksa file PDF-nya.`,
-  tag_missing: (n) => `Versi dari ${n} ditolak karena file itu bukan untuk dokumen ini.`,
-  skipped_concurrent: (n, other) =>
-    `Versi dari ${n} tidak dipakai karena ${other ?? "penanda tangan lain"} menandatangani versi yang sama lebih dulu. ${n} perlu menandatangani versi terbaru.`,
-  on_rejected: (n) => `Versi dari ${n} ditolak karena ditandatangani di atas versi lain yang sudah ditolak.`,
-  outdated_version: (n) => `Versi dari ${n} tidak dipakai karena ditandatangani di atas versi lama dokumen.`,
-  not_allowed: (n) => `Versi dari ${n} ditolak karena ${n} bukan penanda tangan dokumen ini.`,
-  not_your_turn: (n) => `Versi dari ${n} ditolak karena dibuat sebelum giliran ${n}.`,
-  already_signed: (n) => `Versi dari ${n} tidak dipakai karena ${n} sudah menandatangani versi lain dokumen ini.`,
-  request_closed: (n) => `Versi dari ${n} tidak dipakai karena dokumen sudah selesai ditandatangani.`,
-  invalid_record: (n) => `Versi dari ${n} ditolak karena catatan tanda tangannya tidak lengkap.`,
-};
-
 // Kalimat untuk satu versi yang ditolak, dipilih dari kodenya. Teks dari inti
 // Rust (reason) tidak pernah ditampilkan: isinya istilah teknis dan bisa
 // menyebut orang yang salah.
 export function rejectedText(x: Pick<RejectedVersion, "signerName" | "code"> & { otherName?: string | null }): string {
-  const name = x.signerName.trim() || "rekan";
-  const text = Object.prototype.hasOwnProperty.call(REJECT_TEXT, x.code) ? REJECT_TEXT[x.code] : undefined;
-  return text ? text(name, x.otherName?.trim() || null) : `Versi dari ${name} tidak dipakai Mira.`;
+  const name = x.signerName.trim() || T.colleague;
+  const texts: Record<string, RejectText> = T.reject;
+  const text = Object.prototype.hasOwnProperty.call(texts, x.code) ? texts[x.code] : undefined;
+  return text ? text(name, x.otherName?.trim() || null) : T.rejectFallback(name);
 }
 
 // Pemberitahuan di atas layar dokumen.
 export function exportNoticeText(count: number): string {
-  const head = count > 1 ? `${count} salinan` : "Satu salinan";
-  return `${head} yang disimpan di luar Mira berubah. Rinciannya ada di bagian Salinan PDF.`;
+  return T.exportNotice(count);
 }
 
 // Masa tunggu setelah tanda tangan dihapus tanpa PIN. null kalau sudah lewat.
@@ -312,7 +232,7 @@ export function coolingText(usableAfter: string | null | undefined, now = Date.n
   if (!usableAfter) return null;
   const until = Date.parse(usableAfter);
   if (!Number.isFinite(until) || until <= now) return null;
-  return `Tanda tangan baru Anda bisa dipakai mulai ${formatWhen(usableAfter)}, karena tanda tangan sebelumnya dihapus tanpa PIN.`;
+  return T.cooling(formatWhen(usableAfter));
 }
 
 // Sidik file (hash BLAKE3) di layar: selalu 16 karakter awal. Hash lengkap
@@ -327,19 +247,27 @@ export function fingerprint(publicKey: string): string {
   return (head.match(/.{1,4}/g) ?? []).join(" ");
 }
 
-// Waktu untuk layar, format sama dengan catatan di PDF. Nilai rusak ditampilkan apa adanya.
+// Waktu untuk layar. Bahasa Indonesia: format sama dengan catatan di PDF
+// (22 November 2026, 15.04 WIB). Bahasa Inggris: nama bulan Inggris dan jam
+// bertitik dua (22 November 2026, 15:04 WIB); zona tetap WIB/WITA/WIT. Teks
+// di PDF sendiri selalu Indonesia. Nilai rusak ditampilkan apa adanya.
 export function formatWhen(at: string): string {
   try {
-    return formatSignedAt(at);
+    if (getLang() !== "en") return formatSignedAt(at);
+    const p = signedAtParts(at);
+    const month = new Intl.DateTimeFormat(locale(), { month: "long", timeZone: "UTC" }).format(
+      new Date(Date.UTC(2000, p.month - 1, 1)),
+    );
+    return `${p.day} ${month} ${p.year}, ${p.hh}:${p.mm} ${p.zone}`;
   } catch {
     return at;
   }
 }
 
 export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} byte`;
+  if (bytes < 1024) return T.size.bytes(bytes);
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toLocaleString("id-ID", { maximumFractionDigits: 1 })} MB`;
+  return `${(bytes / (1024 * 1024)).toLocaleString(locale(), { maximumFractionDigits: 1 })} MB`;
 }
 
 export const MAX_PDF_BYTES = 50 * 1024 * 1024;
@@ -347,9 +275,9 @@ export const MAX_PDF_BYTES = 50 * 1024 * 1024;
 // Pemeriksaan ringan sebelum membaca file; isi PDF tetap diperiksa inti Mira.
 export function checkPdfFile(file: File): string | null {
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  if (!isPdf) return "File ini bukan PDF. Pilih file berakhiran .pdf.";
-  if (file.size === 0) return "File ini kosong.";
-  if (file.size > MAX_PDF_BYTES) return "File lebih dari 50 MB. Mira menerima PDF sampai 50 MB.";
+  if (!isPdf) return T.checkPdf.notPdf;
+  if (file.size === 0) return T.checkPdf.empty;
+  if (file.size > MAX_PDF_BYTES) return T.checkPdf.tooLarge;
   return null;
 }
 

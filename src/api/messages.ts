@@ -1,85 +1,52 @@
+import { API_TEXT } from "../i18n/api";
+import { subscribeLang } from "../i18n/core";
 import type { AppError, NetState } from "./types";
 
-// Teks status koneksi (docs/plans/tahap-1.md 2.6).
-export const NET_STATE_TEXT: Record<NetState, string> = {
-  starting: "Mencari laptop rekan...",
-  no_org: "Belum tergabung di organisasi",
-  alone: "Belum ada rekan di organisasi",
-  lan: "Tersambung lewat LAN kantor",
-  vpn: "Tersambung lewat VPN",
-  offline: "Tidak tersambung ke jaringan kantor",
-  removed: "Laptop ini sudah dikeluarkan dari organisasi",
-};
+// Teks status koneksi (docs/plans/tahap-1.md 2.6), mengikuti bahasa aktif.
+export const NET_STATE_TEXT: Record<NetState, string> = API_TEXT.netState;
 
-export const OFFLINE_HINT = "Kalau sedang di luar kantor, nyalakan VPN kantor.";
+// String biasa tidak bisa membaca bahasa saat dipakai, jadi nilainya diganti
+// setiap bahasa berganti. Impor ES memakai ikatan hidup, jadi pemakai ikut.
+export let OFFLINE_HINT: string = API_TEXT.offlineHint;
+subscribeLang(() => {
+  OFFLINE_HINT = API_TEXT.offlineHint;
+});
 
 export type ErrorText = { title: string; body: string; steps?: string[] };
 
 // Penjelasan untuk error saat memakai kode undangan, dipakai saat bergabung
 // (onboarding) dan saat anggota memakai kode untuk tim lain.
 export function inviteErrorText(error: AppError): ErrorText {
+  const t = API_TEXT.inviteError;
   switch (error.code) {
     case "invite_invalid":
-      return { title: "Kode undangan tidak valid", body: error.message };
+      return { title: t.invalidTitle, body: error.message };
     case "invite_not_found":
-      return {
-        title: "Kode tidak dikenali",
-        body: "Laptop rekan yang ditemukan tidak mengenal kode ini. Periksa lagi kodenya huruf demi huruf, atau minta kode baru ke admin departemen.",
-      };
+      return { title: t.notFoundTitle, body: t.notFoundBody };
     case "invite_expired":
-      return {
-        title: "Kode sudah kedaluwarsa",
-        body: "Masa berlaku kode ini sudah habis. Minta kode baru ke admin departemen yang mengundang Anda.",
-      };
+      return { title: t.expiredTitle, body: t.expiredBody };
     case "invite_used":
-      return {
-        title: "Kode sudah dipakai",
-        body: "Kode sekali pakai ini sudah dipakai untuk bergabung. Minta kode baru ke admin departemen.",
-      };
+      return { title: t.usedTitle, body: t.usedBody };
     case "invite_revoked":
-      return {
-        title: "Kode sudah dicabut",
-        body: "Admin sudah membatalkan kode ini. Minta kode baru ke admin departemen.",
-      };
+      return { title: t.revokedTitle, body: t.revokedBody };
     case "no_peer_found":
-      return {
-        title: "Belum ada laptop rekan yang ditemukan",
-        body: "Kode hanya bisa diperiksa oleh laptop anggota organisasi yang sedang membuka Mira. Coba langkah berikut, lalu tekan Gabung lagi:",
-        steps: [
-          "Sambungkan laptop ini ke Wi-Fi atau kabel LAN kantor yang sama dengan rekan. Wi-Fi tamu biasanya memisahkan laptop satu sama lain.",
-          "Kalau sedang di luar kantor, nyalakan VPN kantor.",
-          "Pastikan firewall di laptop ini dan di laptop rekan mengizinkan Mira (Windows Firewall di Windows, Firewall macOS di MacBook).",
-          "Minta rekan membuka Pengaturan > Jaringan di Mira, lalu isi alamat laptopnya di kolom Alamat laptop rekan.",
-        ],
-      };
+      return { title: t.noPeerTitle, body: t.noPeerBody, steps: [...t.noPeerSteps] };
     // Rust memakai kode ini saat laptop rekan menolak dengan alasan yang tidak
     // dikenal; pesannya membawa keterangan dari laptop rekan.
     case "peer_unreachable":
-      return {
-        title: "Laptop rekan tidak bisa memeriksa kode",
-        body: `${error.message} Coba lagi sebentar lagi. Kalau tetap gagal, minta kode baru ke admin departemen.`,
-      };
+      return { title: t.peerUnreachableTitle, body: t.peerUnreachableBody(error.message) };
     case "name_required":
-      return {
-        title: "Nama tampilan belum tersimpan",
-        body: "Laptop ini belum punya nama tampilan. Muat ulang data laptop ini, lalu isi nama sebelum bergabung.",
-      };
+      return { title: t.nameRequiredTitle, body: t.nameRequiredBody };
     case "already_in_org":
-      return {
-        title: "Laptop ini sudah tergabung di organisasi",
-        body: "Muat ulang data laptop ini untuk membuka organisasinya.",
-      };
+      return { title: t.alreadyInOrgTitle, body: t.alreadyInOrgBody };
     case "removed":
-      return {
-        title: "Laptop ini sudah dikeluarkan dari organisasi",
-        body: "Laptop yang sudah dikeluarkan tidak bisa bergabung lagi, juga dengan kode undangan baru. Kalau ini keliru, hubungi superadmin organisasi.",
-      };
+      return { title: t.removedTitle, body: t.removedBody };
     case "forbidden":
-      return { title: "Anda tidak punya izin untuk ini", body: error.message };
+      return { title: API_TEXT.forbiddenTitle, body: error.message };
     case "network":
-      return { title: "Jaringan bermasalah", body: error.message };
+      return { title: t.networkTitle, body: error.message };
     default:
-      return { title: "Kode belum bisa dipakai", body: error.message };
+      return { title: t.defaultTitle, body: error.message };
   }
 }
 
@@ -87,11 +54,11 @@ export function inviteErrorText(error: AppError): ErrorText {
 export function actionErrorTitle(error: AppError, fallback: string): string {
   switch (error.code) {
     case "forbidden":
-      return "Anda tidak punya izin untuk ini";
+      return API_TEXT.forbiddenTitle;
     case "last_superadmin":
-      return "Organisasi butuh minimal satu superadmin";
+      return API_TEXT.lastSuperadminTitle;
     case "not_found":
-      return "Data sudah berubah";
+      return API_TEXT.notFoundTitle;
     default:
       return fallback;
   }

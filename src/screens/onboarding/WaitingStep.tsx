@@ -4,7 +4,7 @@ import { formatDateTime } from "../../api/format";
 import { joinApi, type JoinDevice, type OutgoingJoinRequest } from "../../api/join";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { StepHeading } from "./StepHeading";
-import { WAITING } from "./texts";
+import { ONB, WAITING } from "./texts";
 
 export const POLL_MS = 5_000;
 
@@ -94,18 +94,15 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
 
   return (
     <div className="onb-form">
-      <StepHeading>Menunggu persetujuan</StepHeading>
-      <p className="onb-lead">
-        Permintaan Anda sudah dikirim ke admin kantor dan admin departemen {request.teamName}. Layar ini berganti sendiri
-        begitu disetujui.
-      </p>
+      <StepHeading>{WAITING.heading}</StepHeading>
+      <p className="onb-lead">{WAITING.lead(request.teamName)}</p>
 
       <div className="onb-box">
         <p className="onb-label">{WAITING.adminSees}</p>
         <dl className="onb-kv">
-          <dt>Nama</dt>
+          <dt>{WAITING.name}</dt>
           <dd>{request.displayName}</dd>
-          <dt>Departemen</dt>
+          <dt>{WAITING.team}</dt>
           <dd>{request.teamName}</dd>
           {request.note && (
             <>
@@ -113,19 +110,19 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
               <dd>{request.note}</dd>
             </>
           )}
-          <dt>Laptop</dt>
-          <dd className="mono">{device?.laptop ?? "belum terbaca"}</dd>
+          <dt>{WAITING.laptop}</dt>
+          <dd className="mono">{device?.laptop ?? WAITING.laptopUnknown}</dd>
           {accountSent && (
             <>
               <dt>{WAITING.account}</dt>
               <dd className="mono">{device?.account}</dd>
             </>
           )}
-          <dt>Kode cocok</dt>
+          <dt>{WAITING.code}</dt>
           <dd>
             <span className="mono onb-match">{request.code}</span>
           </dd>
-          <dt>Sidik organisasi</dt>
+          <dt>{WAITING.fingerprint}</dt>
           <dd className="mono">{request.orgFingerprint}</dd>
         </dl>
       </div>
@@ -135,40 +132,37 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
           <dd className="mono">{device.account}</dd>
         </dl>
       )}
-      <p className="hint">
-        Kalau admin bertanya, sebutkan kode cocok ini. Kode yang sama muncul di layarnya, jadi ia tahu yang disetujui
-        memang laptop Anda.
-      </p>
+      <p className="hint">{WAITING.codeHint}</p>
 
       <div aria-live="polite">
         {undelivered && (
           <div className="onb-note">
-            <strong>Belum ada laptop rekan yang menerima permintaan ini</strong>
+            <strong>{WAITING.undeliveredTitle}</strong>
             <p>{request.lastError}</p>
-            <p>Mira terus mencoba selama layar ini terbuka, dan mengirim ulang saat Mira dibuka lagi.</p>
+            <p>{WAITING.undeliveredHint}</p>
           </div>
         )}
         {pollError && (
           <div className="onb-note">
-            <strong>Status persetujuan belum bisa diperiksa</strong>
+            <strong>{WAITING.pollTitle}</strong>
             <p>{pollError.message}</p>
-            <p>Mira mencoba lagi tiap 5 detik.</p>
+            <p>{WAITING.pollHint}</p>
           </div>
         )}
       </div>
 
       <div>
-        <p className="onb-label">Kalau lama</p>
+        <p className="onb-label">{WAITING.slowTitle}</p>
         <ul className="onb-list">
-          <li>Mira boleh ditutup. Permintaan tersimpan dan dikirim ulang saat Mira dibuka lagi.</li>
-          <li>Laptop penyetuju harus menyala dan tersambung ke jaringan yang sama.</li>
-          <li>Hubungi admin kantor langsung dan sebutkan nama laptop Anda.</li>
+          {WAITING.slow.map((tip) => (
+            <li key={tip}>{tip}</li>
+          ))}
         </ul>
       </div>
 
       <div aria-live="polite">
         {cancelError && (
-          <ErrorAlert title="Permintaan belum dibatalkan">
+          <ErrorAlert title={WAITING.cancelFailed}>
             <p>{cancelError.message}</p>
           </ErrorAlert>
         )}
@@ -182,7 +176,7 @@ export function WaitingStep({ request: initial, device, onApproved, onRejected, 
           disabled={cancelling}
           aria-busy={cancelling || undefined}
         >
-          {cancelling ? "Membatalkan..." : "Batalkan permintaan"}
+          {cancelling ? WAITING.cancelling : WAITING.cancel}
         </button>
       </div>
     </div>
@@ -198,7 +192,9 @@ type RejectedProps = {
 // Permintaan ditolak: siapa dan kapan, lalu kirim lagi atau cari kantor lain.
 export function RejectedStep({ request, onResent, onSearch }: RejectedProps) {
   const [busy, setBusy] = useState<"resend" | "search" | null>(null);
-  const [error, setError] = useState<{ title: string; error: AppError } | null>(null);
+  // Judul error disimpan sebagai jenisnya, supaya ikut bahasa aktif.
+  const [error, setError] = useState<{ kind: "send" | "delete"; error: AppError } | null>(null);
+  const T = ONB.rejected;
 
   async function resend() {
     if (busy) return;
@@ -209,7 +205,7 @@ export function RejectedStep({ request, onResent, onSearch }: RejectedProps) {
       onResent(next);
     } catch (err) {
       setBusy(null);
-      setError({ title: "Permintaan belum terkirim", error: toAppError(err) });
+      setError({ kind: "send", error: toAppError(err) });
     }
   }
 
@@ -222,28 +218,22 @@ export function RejectedStep({ request, onResent, onSearch }: RejectedProps) {
       onSearch();
     } catch (err) {
       setBusy(null);
-      setError({ title: "Permintaan lama belum terhapus", error: toAppError(err) });
+      setError({ kind: "delete", error: toAppError(err) });
     }
   }
 
-  const who = request.decidedByName ?? "Admin kantor";
-  const when = request.decidedAt ? ` pada ${formatDateTime(request.decidedAt)}` : "";
+  const who = request.decidedByName ?? T.someone;
+  const when = request.decidedAt ? formatDateTime(request.decidedAt) : null;
 
   return (
     <div className="onb-form">
-      <StepHeading>Permintaan ditolak</StepHeading>
-      <p className="onb-lead">
-        {who} menolak permintaan Anda untuk bergabung ke {request.orgName}, departemen {request.teamName}
-        {when}.
-      </p>
-      <p className="onb-lead">
-        Tanyakan alasannya langsung ke {request.decidedByName ?? "admin kantor"}. Kalau ternyata keliru, kirim permintaan
-        lagi. Permintaan baru mendapat kode cocok baru, jadi cocokkan lagi kodenya dengan penyetuju.
-      </p>
+      <StepHeading>{T.heading}</StepHeading>
+      <p className="onb-lead">{T.lead(who, request.orgName, request.teamName, when)}</p>
+      <p className="onb-lead">{T.askWhy(request.decidedByName ?? T.askWhyFallback)}</p>
 
       <div aria-live="polite">
         {error && (
-          <ErrorAlert title={error.title}>
+          <ErrorAlert title={error.kind === "send" ? T.sendFailed : T.deleteFailed}>
             <p>{error.error.message}</p>
           </ErrorAlert>
         )}
@@ -257,7 +247,7 @@ export function RejectedStep({ request, onResent, onSearch }: RejectedProps) {
           disabled={busy !== null}
           aria-busy={busy === "search" || undefined}
         >
-          {busy === "search" ? "Menghapus permintaan..." : "Cari kantor lain"}
+          {busy === "search" ? T.deleting : T.searchOther}
         </button>
         <button
           type="button"
@@ -266,7 +256,7 @@ export function RejectedStep({ request, onResent, onSearch }: RejectedProps) {
           disabled={busy !== null}
           aria-busy={busy === "resend" || undefined}
         >
-          {busy === "resend" ? "Mengirim..." : "Kirim permintaan lagi"}
+          {busy === "resend" ? T.sending : T.resend}
         </button>
       </div>
     </div>

@@ -2,6 +2,10 @@
 // perkecil, dan ubah ke PNG. Fungsi murni di atas, yang butuh canvas di bawah.
 
 import type { AppError } from "../../../api";
+import { SIGN_PAD_TEXT } from "../../../i18n/sign-pad";
+
+// Pesan dibaca saat error dibuat, supaya mengikuti bahasa aktif.
+const T = SIGN_PAD_TEXT.image;
 
 export type SignatureImage = { png: Uint8Array; width: number; height: number };
 export type Bounds = { x: number; y: number; width: number; height: number };
@@ -128,7 +132,7 @@ function canvasToPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (!blob) {
-        reject(imageError("Gambar tanda tangan gagal diubah ke PNG. Coba lagi."));
+        reject(imageError(T.toPngFailed));
         return;
       }
       blob.arrayBuffer().then((buf) => resolve(new Uint8Array(buf)), reject);
@@ -158,7 +162,7 @@ export async function trimToPng(source: HTMLCanvasElement, margin: number): Prom
     if (png.byteLength <= MAX_PNG_BYTES) return { png, width: size.width, height: size.height };
     size = fitWithin(size.width, size.height, Math.round(size.width * 0.75), Math.round(size.height * 0.75));
   }
-  throw imageError("Gambar terlalu rumit untuk disimpan. Pakai foto dengan latar yang lebih bersih.");
+  throw imageError(T.tooComplex);
 }
 
 function isAcceptedFile(file: File): boolean {
@@ -169,10 +173,10 @@ function isAcceptedFile(file: File): boolean {
 // Memeriksa jenis dan ukuran file sebelum dibuka. Melempar AppError.
 export function checkImportFile(file: File): void {
   if (!isAcceptedFile(file)) {
-    throw imageError("File ini bukan gambar PNG atau JPG. Pilih foto atau hasil pindai tanda tangan.");
+    throw imageError(T.wrongType);
   }
   if (file.size > MAX_IMPORT_BYTES) {
-    throw imageError("Ukuran gambar lebih dari 5 MB. Perkecil gambarnya atau pilih file lain.");
+    throw imageError(T.tooLarge);
   }
 }
 
@@ -195,7 +199,7 @@ async function decode(file: File): Promise<Drawable> {
 }
 
 // Memuat PNG atau JPG, membuang latar putih, memangkas, dan memperkecil.
-// Error berupa AppError dengan pesan bahasa Indonesia.
+// Error berupa AppError dengan pesan dalam bahasa aktif.
 export async function importSignatureImage(file: File): Promise<SignatureImage> {
   checkImportFile(file);
 
@@ -203,15 +207,15 @@ export async function importSignatureImage(file: File): Promise<SignatureImage> 
   try {
     img = await decode(file);
   } catch {
-    throw imageError("Gambar tidak bisa dibuka. Mungkin file rusak. Pilih file PNG atau JPG lain.");
+    throw imageError(T.cannotOpen);
   }
 
   try {
-    if (img.width === 0 || img.height === 0) throw imageError("Gambar ini kosong. Pilih file lain.");
+    if (img.width === 0 || img.height === 0) throw imageError(T.empty);
     const work = fitWithin(img.width, img.height, MAX_WORK_SIDE, MAX_WORK_SIDE);
     const canvas = makeCanvas(work.width, work.height);
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) throw imageError("Gambar tidak bisa diproses di laptop ini.");
+    if (!ctx) throw imageError(T.cannotProcess);
     ctx.drawImage(img.source, 0, 0, work.width, work.height);
 
     const pixels = ctx.getImageData(0, 0, work.width, work.height);
@@ -221,7 +225,7 @@ export async function importSignatureImage(file: File): Promise<SignatureImage> 
     const margin = Math.round(Math.max(work.width, work.height) * 0.02) + 4;
     const result = await trimToPng(canvas, margin);
     if (!result) {
-      throw imageError("Tidak ada tinta yang terlihat di gambar ini. Pilih foto tanda tangan dengan tinta yang jelas.");
+      throw imageError(T.noInk);
     }
     return result;
   } finally {

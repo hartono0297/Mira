@@ -18,6 +18,7 @@ use crate::clock;
 use crate::error::{AppError, AppResult};
 use crate::settings;
 use crate::state::MiraState;
+use crate::ui_lang::UiLang;
 
 /// Setting key for the day-before reminder (`off` disables it).
 pub const SETTING_DAY_BEFORE: &str = "board.reminder.day_before";
@@ -75,14 +76,19 @@ pub struct Reminder {
 
 impl Reminder {
     /// Notification title and body for this reminder alone.
-    pub fn message(&self, today: Date) -> (String, String) {
+    pub fn message(&self, today: Date, lang: UiLang) -> (String, String) {
         let code = &self.task.code;
-        let title = match self.kind {
-            ReminderKind::DayBefore => format!("Tenggat besok: {code}"),
-            ReminderKind::DueDay if self.task.due < today => {
+        let title = match (self.kind, lang) {
+            (ReminderKind::DayBefore, UiLang::Id) => format!("Tenggat besok: {code}"),
+            (ReminderKind::DayBefore, UiLang::En) => format!("Due tomorrow: {code}"),
+            (ReminderKind::DueDay, UiLang::Id) if self.task.due < today => {
                 format!("Tenggat sudah lewat: {code}")
             }
-            ReminderKind::DueDay => format!("Tenggat hari ini: {code}"),
+            (ReminderKind::DueDay, UiLang::En) if self.task.due < today => {
+                format!("Overdue: {code}")
+            }
+            (ReminderKind::DueDay, UiLang::Id) => format!("Tenggat hari ini: {code}"),
+            (ReminderKind::DueDay, UiLang::En) => format!("Due today: {code}"),
         };
         let body = format!("{} · {}", self.task.title, self.task.project_name);
         (title, body)
@@ -90,7 +96,7 @@ impl Reminder {
 }
 
 /// One notification for many reminders at once.
-pub fn summary_message(reminders: &[Reminder]) -> (String, String) {
+pub fn summary_message(reminders: &[Reminder], lang: UiLang) -> (String, String) {
     let n = reminders.len();
     let codes: Vec<&str> = reminders
         .iter()
@@ -100,9 +106,16 @@ pub fn summary_message(reminders: &[Reminder]) -> (String, String) {
     let mut body = codes.join(", ");
     let rest = n.saturating_sub(codes.len());
     if rest > 0 {
-        body.push_str(&format!(" dan {rest} lainnya"));
+        body.push_str(&match lang {
+            UiLang::Id => format!(" dan {rest} lainnya"),
+            UiLang::En => format!(" and {rest} more"),
+        });
     }
-    (format!("{n} task perlu perhatian"), body)
+    let title = match lang {
+        UiLang::Id => format!("{n} task perlu perhatian"),
+        UiLang::En => format!("{n} tasks need attention"),
+    };
+    (title, body)
 }
 
 /// Per-laptop switches; both default to on.
@@ -351,8 +364,9 @@ pub fn run_once(
         return Ok(0);
     }
 
+    let lang = UiLang::load(conn);
     if reminders.len() > SUMMARY_THRESHOLD {
-        let (title, body) = summary_message(&reminders);
+        let (title, body) = summary_message(&reminders, lang);
         notifier.notify(&title, &body).map_err(notify_error)?;
         for r in &reminders {
             mark_sent(conn, &r.task, r.kind)?;
@@ -363,7 +377,7 @@ pub fn run_once(
     let mut delivered = 0;
     let mut first_error = None;
     for r in &reminders {
-        let (title, body) = r.message(today);
+        let (title, body) = r.message(today, lang);
         match notifier.notify(&title, &body) {
             Ok(()) => {
                 mark_sent(conn, &r.task, r.kind)?;
@@ -668,7 +682,7 @@ mod tests {
                 task: task(7, due),
                 kind,
             }
-            .message(TODAY)
+            .message(TODAY, UiLang::Id)
         };
         assert_eq!(
             msg(days(1), ReminderKind::DayBefore),
@@ -689,9 +703,42 @@ mod tests {
                 kind: ReminderKind::DueDay,
             })
             .collect();
-        let (title, body) = summary_message(&reminders);
+        let (title, body) = summary_message(&reminders, UiLang::Id);
         assert_eq!(title, "5 task perlu perhatian");
         assert_eq!(body, "PA-1, PA-2, PA-3 dan 2 lainnya");
+        let (title, body) = summary_message(&reminders, UiLang::En);
+        assert_eq!(title, "5 tasks need attention");
+        assert_eq!(body, "PA-1, PA-2, PA-3 and 2 more");
+    }
+
+    #[test]
+    fn messages_in_english() {
+        let msg = |due, kind| {
+            Reminder {
+                task: task(7, due),
+                kind,
+            }
+            .message(TODAY, UiLang::En)
+        };
+        assert_eq!(
+            msg(days(1), ReminderKind::DayBefore),
+            ("Due tomorrow: PA-7".into(), "Task 7 · Proyek A".into())
+        );
+        assert_eq!(msg(TODAY, ReminderKind::DueDay).0, "Due today: PA-7");
+        assert_eq!(msg(days(-2), ReminderKind::DueDay).0, "Overdue: PA-7");
+    }
+
+    #[test]
+    fn run_once_follows_the_language_setting() {
+        let d = db();
+        insert_task(&d.conn, 1, "todo", ME, Some("2026-11-23"), false);
+        settings::set(&d.conn, crate::ui_lang::SETTING_LANGUAGE, "en").unwrap();
+        let n = FakeNotifier::default();
+        assert_eq!(run(&d.conn, &n).unwrap(), 1);
+        assert_eq!(
+            n.calls(),
+            vec![("Due tomorrow: PA-1".into(), "Task 1 · Proyek A".into())]
+        );
     }
 
     #[test]

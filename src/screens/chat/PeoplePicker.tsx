@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { Person } from "../../api/chat";
 import { orgApi } from "../../api/org";
 import { initials } from "../../components/initials";
+import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import { PersonName } from "./PersonName";
 
 // Departemen per kunci publik, dari orgApi.people(). Peta kosong selama memuat atau kalau
@@ -49,6 +50,7 @@ const ALL = "";
 export function PeoplePicker({ people, departments, selected, onChange, disabled, hint, emptyText }: Props) {
   const [query, setQuery] = useState("");
   const [dept, setDept] = useState(ALL);
+  const T = CHAT_DIALOGS.picker;
   const ids = useId();
   const searchRef = useRef<HTMLInputElement>(null);
   const chipsRef = useRef<HTMLUListElement>(null);
@@ -87,13 +89,13 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
 
   let emptyFilter: string | null = null;
   if (shown.length === 0) {
-    emptyFilter = q ? `Tidak ada rekan bernama "${query.trim()}".` : "Tidak ada rekan di departemen ini.";
+    emptyFilter = q ? T.noMatch(query.trim()) : T.noneInDept;
   }
 
   return (
     <div className="pick">
       <div className="field">
-        <label htmlFor={`${ids}-search`}>Pilih orang</label>
+        <label htmlFor={`${ids}-search`}>{T.label}</label>
         <div className="pick-search">
           <IconSearch size={16} aria-hidden="true" />
           <input
@@ -101,7 +103,7 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
             id={`${ids}-search`}
             type="search"
             autoComplete="off"
-            placeholder="Cari nama"
+            placeholder={T.placeholder}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -113,12 +115,12 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
           />
         </div>
         <p id={`${ids}-count`} className="sr-only" aria-live="polite">
-          {shown.length} rekan ditampilkan
+          {T.shown(shown.length)}
         </p>
       </div>
 
       {deptNames.length > 0 && (
-        <div className="pick-depts" role="group" aria-label="Saring menurut departemen">
+        <div className="pick-depts" role="group" aria-label={T.deptFilter}>
           {[ALL, ...deptNames].map((name) => (
             <button
               key={name || "semua"}
@@ -131,7 +133,7 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
               }}
               disabled={disabled}
             >
-              {name || "Semua"}
+              {name || T.allDepts}
             </button>
           ))}
         </div>
@@ -140,7 +142,7 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
       {emptyFilter ? (
         <p className="pick-note">{emptyFilter}</p>
       ) : (
-        <ul className="pick-list" aria-label="Rekan">
+        <ul className="pick-list" aria-label={T.listLabel}>
           {shown.map((p) => {
             const department = departments.get(p.publicKey);
             const checked = selected.includes(p.publicKey);
@@ -170,14 +172,14 @@ export function PeoplePicker({ people, departments, selected, onChange, disabled
       )}
 
       {chosen.length > 0 && (
-        <ul ref={chipsRef} className="pick-chips" aria-label="Orang yang dipilih">
+        <ul ref={chipsRef} className="pick-chips" aria-label={T.chosenLabel}>
           {chosen.map((p, i) => (
             <li key={p.publicKey} className="pick-chip">
               <PersonName person={p} plain />
               <button
                 type="button"
                 className="pick-chip-x"
-                aria-label={`Hapus ${p.name} dari pilihan`}
+                aria-label={T.removeChip(p.name)}
                 onClick={() => removeChip(p.publicKey, i)}
                 disabled={disabled}
               >

@@ -103,18 +103,20 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
     onOrganization(org);
   }
 
+  const T = NEW_OFFICE;
+
   if (partial) {
     return (
       <div className="onb-form">
-        <StepHeading>{`Organisasi ${partial.org.name} sudah dibuat`}</StepHeading>
+        <StepHeading>{T.created(partial.org.name)}</StepHeading>
         <div className="onb-note">
-          <strong>Departemen {partial.dept} belum selesai disiapkan</strong>
+          <strong>{T.deptPendingTitle(partial.dept)}</strong>
           <p>{partial.error.message}</p>
-          <p>Buat departemen dan masukkan diri Anda ke sana dari menu Organisasi setelah Mira terbuka.</p>
+          <p>{T.deptPendingHint}</p>
         </div>
         <div className="onb-actions">
           <button type="button" className="btn" onClick={() => onOrganization(partial.org)}>
-            Buka Mira
+            {T.open}
           </button>
         </div>
       </div>
@@ -126,30 +128,24 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
 
   return (
     <form className="onb-form" onSubmit={submit} noValidate aria-busy={saving || undefined}>
-      <StepHeading>Siapkan Mira untuk kantor baru</StepHeading>
+      <StepHeading>{T.heading}</StepHeading>
       <div className="notice">
         <IconAlertTriangle size={18} aria-hidden="true" />
         <div>
-          <strong>Hanya untuk orang pertama di kantor</strong>
-          <p>
-            Kalau rekan Anda sudah memakai Mira, kembali dan minta alamat laptopnya atau kode undangan. Membuat kantor
-            kedua memisahkan Anda dari rekan.
-          </p>
-          <p>
-            Kantor yang tidak ditemukan belum tentu belum ada. Kalau Anda memakai VPN atau Wi-Fi yang terpisah, kantor
-            Anda bisa tidak terlihat dari laptop ini.
-          </p>
+          <strong>{T.firstOnlyTitle}</strong>
+          <p>{T.firstOnlyColleagues}</p>
+          <p>{T.firstOnlyHidden}</p>
         </div>
       </div>
 
       <div className="field">
-        <label htmlFor={ids.org}>Nama organisasi</label>
+        <label htmlFor={ids.org}>{T.orgLabel}</label>
         <input
           ref={refs.org}
           id={ids.org}
           name="orgName"
           autoComplete="organization"
-          placeholder="contoh: nama kantor Anda"
+          placeholder={T.orgPlaceholder}
           value={orgName}
           onChange={(e) => setOrgName(e.target.value)}
           aria-invalid={errors.org ? true : undefined}
@@ -157,7 +153,7 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
           disabled={saving}
         />
         <p id={ids.orgHint} className="hint">
-          2 sampai 80 karakter, biasanya nama kantor atau perusahaan.
+          {T.orgHint}
         </p>
         <div id={ids.orgErr} aria-live="polite">
           {errors.org && <FieldError text={errors.org} />}
@@ -165,13 +161,13 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
       </div>
 
       <div className="field">
-        <label htmlFor={ids.name}>Nama Anda</label>
+        <label htmlFor={ids.name}>{T.nameLabel}</label>
         <input
           ref={refs.name}
           id={ids.name}
           name="displayName"
           autoComplete="name"
-          placeholder="Nama yang dikenal rekan kantor"
+          placeholder={T.namePlaceholder}
           value={name}
           onChange={(e) => setName(e.target.value)}
           aria-invalid={errors.name ? true : undefined}
@@ -179,7 +175,7 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
           disabled={saving}
         />
         <p id={ids.nameHint} className="hint">
-          Nama tampilan yang dilihat rekan kerja, 1 sampai 50 karakter.
+          {T.nameHint}
         </p>
         <div id={ids.nameErr} aria-live="polite">
           {errors.name && <FieldError text={errors.name} />}
@@ -187,13 +183,13 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
       </div>
 
       <div className="field">
-        <label htmlFor={ids.dept}>Departemen Anda</label>
+        <label htmlFor={ids.dept}>{T.deptLabel}</label>
         <input
           ref={refs.dept}
           id={ids.dept}
           name="department"
           autoComplete="off"
-          placeholder="contoh: Manajemen"
+          placeholder={T.deptPlaceholder}
           value={dept}
           onChange={(e) => setDept(e.target.value)}
           aria-invalid={errors.dept ? true : undefined}
@@ -201,7 +197,7 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
           disabled={saving}
         />
         <p id={ids.deptHint} className="hint">
-          Departemen lain dibuat nanti di menu Organisasi.
+          {T.deptHint}
         </p>
         <div id={ids.deptErr} aria-live="polite">
           {errors.dept && <FieldError text={errors.dept} />}
@@ -209,7 +205,7 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
       </div>
 
       <div className="field">
-        <label htmlFor={ids.confirm}>{NEW_OFFICE.confirmLabel}</label>
+        <label htmlFor={ids.confirm}>{T.confirmLabel}</label>
         <input
           ref={refs.confirm}
           id={ids.confirm}
@@ -222,22 +218,22 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
           disabled={saving}
         />
         <p id={ids.confirmHint} className="hint">
-          {NEW_OFFICE.confirmHint}
+          {T.confirmHint}
         </p>
         <div id={ids.confirmErr} aria-live="polite">
           {errors.confirm && <FieldError text={errors.confirm} />}
         </div>
       </div>
 
-      <p className="hint">Anda menjadi superadmin. Angkat satu superadmin lagi sebagai cadangan.</p>
+      <p className="hint">{T.superadmin}</p>
 
       <div aria-live="polite">
         {serverError && (
-          <ErrorAlert title="Organisasi belum dibuat">
+          <ErrorAlert title={T.failed}>
             <p>{serverError.message}</p>
             {needsReload && (
               <button type="button" className="btn btn-ghost onb-inline-btn" onClick={onReload}>
-                Muat ulang data laptop ini
+                {T.reload}
               </button>
             )}
           </ErrorAlert>
@@ -247,10 +243,10 @@ export function NewOfficeStep({ identity, onIdentity, onOrganization, onBack, on
       <div className="onb-actions">
         <button type="button" className="btn btn-ghost" onClick={onBack} disabled={saving}>
           <IconArrowLeft size={18} aria-hidden="true" />
-          Kembali
+          {T.back}
         </button>
         <button type="submit" className="btn" disabled={saving} aria-busy={saving || undefined}>
-          {saving ? "Menyiapkan kantor..." : "Buat organisasi"}
+          {saving ? T.saving : T.submit}
         </button>
       </div>
     </form>

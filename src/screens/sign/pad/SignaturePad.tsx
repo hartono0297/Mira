@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type Ref,
 } from "react";
+import { SIGN_PAD_TEXT } from "../../../i18n/sign-pad";
 import { trimToPng, type SignatureImage } from "./image";
 import "./pad.css";
 
@@ -245,7 +246,8 @@ export function SignaturePad({ ref, onChange, describedBy }: Props) {
     commit(strokes.current.length);
   }
 
-  const label = count === 0 ? "Kotak menggambar tanda tangan, masih kosong" : `Kotak menggambar tanda tangan, berisi ${count} goresan`;
+  const T = SIGN_PAD_TEXT.pad;
+  const label = count === 0 ? T.emptyLabel : T.filledLabel(count);
 
   return (
     <div className="sig-pad">
@@ -266,16 +268,16 @@ export function SignaturePad({ ref, onChange, describedBy }: Props) {
       </div>
       <div className="sig-pad-bar">
         <p id={hintId} className="hint">
-          Tanda tangani di atas garis dengan mouse, pena, atau jari. Pena yang ditekan lebih kuat membuat garis lebih tebal.
+          {T.hint}
         </p>
         <div className="sig-pad-tools">
           <button type="button" className="btn btn-ghost btn-sm" onClick={undo} disabled={count === 0}>
             <IconArrowBackUp size={16} aria-hidden="true" />
-            Batalkan goresan
+            {T.undo}
           </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={clear} disabled={count === 0}>
             <IconEraser size={16} aria-hidden="true" />
-            Kosongkan
+            {T.clear}
           </button>
         </div>
       </div>

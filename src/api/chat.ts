@@ -2,6 +2,8 @@
 // Sumber kebenaran bentuk data: Rust `chat/view.rs` mengikuti file ini.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { API_TEXT } from "../i18n/api";
+import { localizeError } from "../i18n/errors";
 import { isTauri, NO_TAURI_ERROR, toAppError } from ".";
 
 export type Person = { publicKey: string; name: string };
@@ -179,7 +181,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 
@@ -249,9 +251,4 @@ export function subscribeChat(handler: () => void): () => void {
   };
 }
 
-export const DELIVERY_LABELS: Record<DeliveryState, string> = {
-  pending: "Menunggu",
-  deposited: "Dititipkan",
-  delivered: "Diterima laptopnya",
-  read: "Dibaca",
-};
+export const DELIVERY_LABELS: Record<DeliveryState, string> = API_TEXT.delivery;

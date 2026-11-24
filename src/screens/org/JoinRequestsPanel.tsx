@@ -7,29 +7,14 @@ import { orgApi, type JoinRequestView } from "../../api/org";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { REQUEST_TEXT } from "../../i18n/org-requests";
 import type { OrgPage } from "./context";
 import { useOrgLive } from "./useOrgLive";
 import "./requests.css";
 
-const NOT_RECORDED = "Tidak tercatat";
-
-// Teks kartu permintaan, dikumpulkan di satu tempat untuk terjemahan nanti.
-export const CARD_TEXT = {
-  department: "Departemen",
-  // Keterangan dan akun login ditulis oleh laptop peminta sendiri. Labelnya
-  // mengatakan itu, supaya admin tidak menganggapnya sudah diperiksa.
-  note: "Keterangan dari peminta (belum diperiksa)",
-  laptop: "Laptop",
-  account: "Akun login (dilaporkan laptop peminta)",
-  // Alasannya tidak ditebak dari versi Mira, karena versi itu juga laporan peminta.
-  accountNotSent: "Tidak dikirim",
-  ip: "Alamat IP",
-  os: "Sistem",
-  appVersion: "Versi Mira",
-  codeLabel: "Kode cocok",
-  verifyHint:
-    "Pastikan orangnya benar: telepon dia di nomor yang sudah Anda kenal, bukan nomor dari keterangan, atau datangi mejanya. Minta ia membacakan kode di layarnya, dan setujui hanya kalau kodenya sama.",
-} as const;
+// Teks kartu permintaan. Isinya ada di src/i18n/org-requests.id.ts dan mengikuti
+// bahasa aktif setiap kali dibaca.
+export const CARD_TEXT = REQUEST_TEXT.card;
 
 // Isi bebas dari peminta: kosong atau hanya spasi dianggap tidak ada.
 function filled(s: string | null | undefined): string | null {
@@ -160,8 +145,8 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
     const ok = await page.act(
       `approve:${r.id}`,
       () => orgApi.approveJoin(r.id),
-      `${r.displayName} disetujui dan masuk departemen ${r.teamName}.`,
-      "Permintaan belum disetujui",
+      REQUEST_TEXT.approved(r.displayName, r.teamName),
+      REQUEST_TEXT.approveFailed,
     );
     if (ok && alive.current) planFocus(r.id, [r.id]);
   }
@@ -176,12 +161,12 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
       if (!alive.current) return;
       planFocus(r.id, [r.id]);
       setRejecting(null);
-      page.notify(`Permintaan ${r.displayName} ditolak. Kalau keliru, ${r.displayName} bisa mengirim permintaan baru.`);
+      page.notify(REQUEST_TEXT.rejected(r.displayName));
       page.refresh();
     } catch (err) {
       if (!alive.current) return;
       const error = toAppError(err);
-      setRejectError({ title: actionErrorTitle(error, "Permintaan belum ditolak"), error });
+      setRejectError({ title: actionErrorTitle(error, REQUEST_TEXT.rejectFailed), error });
       if (error.code === "not_found" || error.code === "forbidden") page.refresh();
     } finally {
       if (alive.current) setRejectBusy(false);
@@ -205,15 +190,15 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
           continue;
         }
         if (!alive.current) return;
-        const parts = [`Sebelum berhenti, ${done} dari ${items.length} permintaan sudah ditolak.`];
-        if (skipped > 0) parts.push(`${skipped} sudah diputuskan orang lain lebih dulu.`);
-        parts.push("Yang tersisa di bawah ini bisa ditolak lagi.");
+        const parts = [REQUEST_TEXT.bulkStopped(done, items.length)];
+        if (skipped > 0) parts.push(REQUEST_TEXT.bulkSkipped(skipped));
+        parts.push(REQUEST_TEXT.bulkRetry);
         setBulk({
           group,
           openerId,
           items: items.slice(i),
           current: null,
-          error: { title: `Gagal menolak permintaan ${items[i].displayName}`, error, note: parts.join(" ") },
+          error: { title: REQUEST_TEXT.bulkFailedTitle(items[i].displayName), error, note: parts.join(" ") },
         });
         page.refresh();
         return;
@@ -226,22 +211,20 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
     );
     setBulk(null);
     page.refresh();
-    const skippedText = skipped > 0 ? ` ${skipped} lainnya sudah diputuskan orang lain lebih dulu.` : "";
+    const skippedText = skipped > 0 ? REQUEST_TEXT.bulkSkippedTail(skipped) : "";
     page.notify(
-      done > 0
-        ? `${done} permintaan dari ${group} ditolak.${skippedText}`
-        : `Semua permintaan dari ${group} sudah diputuskan orang lain lebih dulu.`,
+      done > 0 ? REQUEST_TEXT.bulkDone(done, group, skippedText) : REQUEST_TEXT.bulkNoneLeft(group),
     );
   }
 
   const intro = (
     <div>
       <h2 id="requests-title" className="set-title" tabIndex={-1} ref={titleRef}>
-        Permintaan bergabung
+        {REQUEST_TEXT.title}
       </h2>
       <p className="hint">
-        Laptop baru di jaringan kantor yang memilih organisasi ini muncul di sini.
-        {scoped && " Anda hanya melihat permintaan ke departemen Anda."}
+        {REQUEST_TEXT.intro}
+        {scoped && REQUEST_TEXT.introScoped}
       </p>
     </div>
   );
@@ -252,14 +235,14 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
         {intro}
         {live.loading ? (
           <p className="hint" role="status">
-            Memuat permintaan bergabung...
+            {REQUEST_TEXT.loading}
           </p>
         ) : (
           <div role="alert">
-            <ErrorAlert title="Permintaan bergabung belum terbaca">
-              <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar permintaan."}</p>
+            <ErrorAlert title={REQUEST_TEXT.loadErrorTitle}>
+              <p>{live.error?.message ?? REQUEST_TEXT.loadErrorEmpty}</p>
               <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
-                Coba lagi
+                {REQUEST_TEXT.retry}
               </button>
             </ErrorAlert>
           </div>
@@ -272,19 +255,15 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
     <section className="set-section" aria-labelledby="requests-title">
       {intro}
       {live.error && (
-        <p className="hint">Daftar terbaru belum bisa dibaca ({live.error.message}). Yang tampil adalah data terakhir.</p>
+        <p className="hint">{REQUEST_TEXT.stale(live.error.message)}</p>
       )}
 
       {requests.length === 0 ? (
         <div className="org-empty">
           <p>
-            <strong>Tidak ada permintaan yang menunggu.</strong>
+            <strong>{REQUEST_TEXT.emptyTitle}</strong>
           </p>
-          <p className="req-empty-text">
-            Permintaan muncul di sini saat laptop baru di jaringan kantor memilih organisasi ini
-            {scoped ? " dan departemen Anda" : ""}. Orang yang tidak bisa menemukan kantor tetap bisa bergabung dengan
-            kode dari tab Undangan.
-          </p>
+          <p className="req-empty-text">{REQUEST_TEXT.emptyBody(scoped)}</p>
         </div>
       ) : (
         <ul className="req-list" ref={listRef}>
@@ -305,7 +284,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                     <div className="req-who-text">
                       <h3 className="req-name">{r.displayName}</h3>
                       <p className="hint">
-                        Minta bergabung{" "}
+                        {REQUEST_TEXT.requested}{" "}
                         <time dateTime={r.requestedAt} title={formatDateTime(r.requestedAt)}>
                           {relativeTime(r.requestedAt)}
                         </time>
@@ -317,26 +296,26 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                       type="button"
                       className="btn btn-ghost req-reject"
                       disabled={busy}
-                      aria-label={`Tolak permintaan ${r.displayName}`}
+                      aria-label={REQUEST_TEXT.rejectAria(r.displayName)}
                       onClick={() => {
                         setRejectError(null);
                         setRejecting(r);
                       }}
                     >
                       <IconX size={16} aria-hidden="true" />
-                      Tolak
+                      {REQUEST_TEXT.reject}
                     </button>
                     <button
                       type="button"
                       className="btn req-approve"
                       disabled={busy}
                       aria-busy={approving || undefined}
-                      aria-label={approving ? undefined : `Setujui permintaan ${r.displayName}`}
+                      aria-label={approving ? undefined : REQUEST_TEXT.approveAria(r.displayName)}
                       data-approve={r.id}
                       onClick={() => void approve(r)}
                     >
                       <IconCheck size={16} aria-hidden="true" />
-                      {approving ? "Menyetujui..." : "Setujui"}
+                      {approving ? REQUEST_TEXT.approving : REQUEST_TEXT.approve}
                     </button>
                   </div>
                 </div>
@@ -357,25 +336,25 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                   </div>
                   <div>
                     <dt>{CARD_TEXT.laptop}</dt>
-                    <dd className={laptop ? "mono" : undefined}>{laptop ?? NOT_RECORDED}</dd>
+                    <dd className={laptop ? "mono" : undefined}>{laptop ?? REQUEST_TEXT.notRecorded}</dd>
                   </div>
                   <div>
                     <dt>{CARD_TEXT.account}</dt>
                     <dd className={account ? "mono" : undefined}>
-                      {r.account == null ? CARD_TEXT.accountNotSent : (account ?? NOT_RECORDED)}
+                      {r.account == null ? CARD_TEXT.accountNotSent : (account ?? REQUEST_TEXT.notRecorded)}
                     </dd>
                   </div>
                   <div>
                     <dt>{CARD_TEXT.ip}</dt>
-                    <dd className={r.ip ? "mono" : undefined}>{r.ip ?? NOT_RECORDED}</dd>
+                    <dd className={r.ip ? "mono" : undefined}>{r.ip ?? REQUEST_TEXT.notRecorded}</dd>
                   </div>
                   <div>
                     <dt>{CARD_TEXT.os}</dt>
-                    <dd>{filled(r.os) ?? NOT_RECORDED}</dd>
+                    <dd>{filled(r.os) ?? REQUEST_TEXT.notRecorded}</dd>
                   </div>
                   <div>
                     <dt>{CARD_TEXT.appVersion}</dt>
-                    <dd>{filled(r.appVersion) ?? NOT_RECORDED}</dd>
+                    <dd>{filled(r.appVersion) ?? REQUEST_TEXT.notRecorded}</dd>
                   </div>
                 </dl>
 
@@ -389,7 +368,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
 
                 {(r.seenByName || sameGroup.length >= 2) && (
                   <div className="req-foot">
-                    {r.seenByName && <p className="hint">Diterima lewat laptop {r.seenByName}</p>}
+                    {r.seenByName && <p className="hint">{REQUEST_TEXT.seenBy(r.seenByName)}</p>}
                     {group && sameGroup.length >= 2 && (
                       <button
                         type="button"
@@ -397,7 +376,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                         disabled={busy}
                         onClick={() => setBulk({ group, openerId: r.id, items: sameGroup, current: null, error: null })}
                       >
-                        Tolak semua dari {group} ({sameGroup.length})
+                        {REQUEST_TEXT.rejectAllFrom(group, sameGroup.length)}
                       </button>
                     )}
                   </div>
@@ -413,9 +392,9 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
         onOpenChange={(open) => {
           if (!open) setRejecting(null);
         }}
-        title={rejecting ? `Tolak permintaan ${rejecting.displayName}?` : "Tolak permintaan"}
-        confirmLabel={rejecting ? `Tolak ${rejecting.displayName}` : "Tolak"}
-        busyLabel="Menolak..."
+        title={rejecting ? REQUEST_TEXT.rejectOneTitle(rejecting.displayName) : REQUEST_TEXT.rejectOneTitleFallback}
+        confirmLabel={rejecting ? REQUEST_TEXT.rejectOneConfirm(rejecting.displayName) : REQUEST_TEXT.reject}
+        busyLabel={REQUEST_TEXT.rejecting}
         busy={rejectBusy}
         onConfirm={() => {
           if (rejecting && !rejectBusy) void rejectOne(rejecting);
@@ -429,10 +408,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
         }
       >
         {rejecting && (
-          <p>
-            Permintaan yang ditolak tidak bisa disetujui lagi. Kalau ternyata keliru, {rejecting.displayName} bisa
-            mengirim permintaan baru dari laptopnya, dengan kode cocok yang baru.
-          </p>
+          <p>{REQUEST_TEXT.rejectOneBody(rejecting.displayName)}</p>
         )}
       </ConfirmDialog>
 
@@ -441,9 +417,9 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
         onOpenChange={(open) => {
           if (!open) setBulk(null);
         }}
-        title={bulk ? `Tolak ${bulk.items.length} permintaan dari ${bulk.group}?` : "Tolak semua permintaan"}
-        confirmLabel={bulk ? `Tolak ${bulk.items.length} permintaan` : "Tolak"}
-        busyLabel={bulk?.current != null ? `Menolak ${bulk.current + 1} dari ${bulk.items.length}...` : "Menolak..."}
+        title={bulk ? REQUEST_TEXT.bulkTitle(bulk.items.length, bulk.group) : REQUEST_TEXT.bulkTitleFallback}
+        confirmLabel={bulk ? REQUEST_TEXT.bulkConfirm(bulk.items.length) : REQUEST_TEXT.reject}
+        busyLabel={bulk?.current != null ? REQUEST_TEXT.bulkProgress(bulk.current + 1, bulk.items.length) : REQUEST_TEXT.rejecting}
         busy={running}
         onConfirm={() => {
           if (bulk && !running) void rejectAll(bulk);
@@ -460,9 +436,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
         {bulk && (
           <>
             <p>
-              {bulk.group.endsWith("/64")
-                ? "Permintaan berikut dikirim dari jaringan IPv6 yang sama (satu /64). Periksa namanya dulu: laptop rekan di jaringan kantor bisa berada di /64 yang sama."
-                : "Permintaan berikut dikirim dari alamat yang sama:"}
+              {bulk.group.endsWith("/64") ? REQUEST_TEXT.bulkIpv6 : REQUEST_TEXT.bulkSameIp}
             </p>
             <ul className="req-dlg-list">
               {bulk.items.map((r) => (
@@ -480,10 +454,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
                 </li>
               ))}
             </ul>
-            <p>
-              Pakai ini kalau ada yang membanjiri kantor dengan permintaan palsu. Permintaan yang ditolak tidak bisa
-              disetujui lagi; orang yang memang berhak bisa mengirim permintaan baru.
-            </p>
+            <p>{REQUEST_TEXT.bulkWhy}</p>
           </>
         )}
       </ConfirmDialog>

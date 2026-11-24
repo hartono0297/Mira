@@ -4,6 +4,9 @@ import { toAppError, type AppError } from "../../../api";
 import { Dialog, DialogClose } from "../../../components/Dialog";
 import { ErrorAlert } from "../../../components/ErrorAlert";
 import { FieldError } from "../../../components/FieldError";
+import { getLang } from "../../../i18n/core";
+import { SIGN_PAD_TEXT as T } from "../../../i18n/sign-pad";
+import { formatWhen as formatWhenText } from "../labels";
 import { formatSignedAt } from "../stamp";
 import { PIN_MAX, lockMinutesFromMessage, validatePin } from "./pin";
 import "./pad.css";
@@ -36,17 +39,20 @@ type Problem =
 
 // Jam:menit dengan zona (mis. "15.04 WIB"), dibulatkan ke atas supaya tombol
 // tidak dijanjikan aktif sebelum kunci habis. Zona sama dengan catatan di PDF.
+// Bahasa Inggris memakai titik dua ("15:04 WIB").
 function clockAt(ms: number): string {
   const d = new Date(Math.ceil(ms / 60_000) * 60_000);
+  const sep = getLang() === "en" ? ":" : ".";
   try {
-    return formatSignedAt(d).split(", ").pop() ?? "";
+    const clock = formatSignedAt(d).split(", ").pop() ?? "";
+    return sep === "." ? clock : clock.replace(/^(\d{2})\.(\d{2})/, "$1:$2");
   } catch {
-    return `${String(d.getHours()).padStart(2, "0")}.${String(d.getMinutes()).padStart(2, "0")}`;
+    return `${String(d.getHours()).padStart(2, "0")}${sep}${String(d.getMinutes()).padStart(2, "0")}`;
   }
 }
 
 function lockProblem(until: number): Problem {
-  return { kind: "locked", text: `Terlalu banyak PIN salah. Coba lagi pukul ${clockAt(until)}.`, until };
+  return { kind: "locked", text: T.pinDialog.locked(clockAt(until)), until };
 }
 
 function futureTime(iso: string | null | undefined): number | null {
@@ -55,12 +61,9 @@ function futureTime(iso: string | null | undefined): number | null {
   return Number.isFinite(t) && t > Date.now() ? t : null;
 }
 
+// Waktu dalam bahasa aktif, format sama dengan layar tanda tangan lain.
 function formatWhen(ms: number): string {
-  try {
-    return formatSignedAt(new Date(ms));
-  } catch {
-    return new Date(ms).toLocaleString("id-ID");
-  }
+  return formatWhenText(new Date(ms).toISOString());
 }
 
 function initialProblem(lockedUntil: string | null | undefined, usableAfter: string | null | undefined): Problem | null {
@@ -68,7 +71,7 @@ function initialProblem(lockedUntil: string | null | undefined, usableAfter: str
   if (usable !== null) {
     return {
       kind: "locked",
-      text: `Tanda tangan ini baru bisa dipakai mulai ${formatWhen(usable)}, 24 jam setelah tanda tangan sebelumnya dihapus tanpa PIN.`,
+      text: T.pinDialog.cooling(formatWhen(usable)),
       until: usable,
     };
   }
@@ -78,9 +81,9 @@ function initialProblem(lockedUntil: string | null | undefined, usableAfter: str
 
 // pin_wrong yang sekaligus memicu kunci ("PIN salah. Tanda tangan dikunci
 // sementara, ...") diperlakukan seperti pin_locked. "Sisa N kali lagi sebelum
-// dikunci" bukan kunci.
+// dikunci" bukan kunci. Pesan Inggris dari peta kode error di api dicocokkan juga.
 export function isLockMessage(message: string): boolean {
-  return /dikunci/i.test(message) && !/sebelum dikunci/i.test(message);
+  return /dikunci|\blocked\b/i.test(message) && !/sebelum dikunci|before (?:it(?:'s| is) |being )?locked/i.test(message);
 }
 
 // Dialog memasukkan PIN untuk memakai tanda tangan tersimpan. Enter mengirim.
@@ -88,9 +91,9 @@ export function isLockMessage(message: string): boolean {
 export function PinDialog({
   open,
   onOpenChange,
-  title = "Masukkan PIN",
-  description = "PIN tanda tangan Anda diperlukan setiap kali menandatangani.",
-  submitLabel = "Tanda tangani",
+  title = T.pinDialog.title,
+  description = T.pinDialog.description,
+  submitLabel = T.pinDialog.submit,
   danger = false,
   lockedUntil,
   usableAfter,
@@ -178,7 +181,7 @@ export function PinDialog({
     >
       <form className="pin-form" onSubmit={submit} noValidate>
         <div className="field">
-          <label htmlFor={inputId}>PIN tanda tangan</label>
+          <label htmlFor={inputId}>{T.pinDialog.label}</label>
           <input
             ref={inputRef}
             id={inputId}
@@ -208,7 +211,7 @@ export function PinDialog({
 
         <div aria-live="polite">
           {problem?.kind === "other" && (
-            <ErrorAlert title="Belum bisa dilanjutkan">
+            <ErrorAlert title={T.pinDialog.errorTitle}>
               <p>{problem.error.message}</p>
             </ErrorAlert>
           )}
@@ -218,7 +221,7 @@ export function PinDialog({
           {extraAction && <div className="pin-extra">{extraAction}</div>}
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {T.pinDialog.cancel}
             </button>
           </DialogClose>
           <button
@@ -227,7 +230,7 @@ export function PinDialog({
             disabled={busy || locked}
             aria-busy={busy || undefined}
           >
-            {busy ? "Memeriksa PIN..." : submitLabel}
+            {busy ? T.pinDialog.checking : submitLabel}
           </button>
         </div>
       </form>

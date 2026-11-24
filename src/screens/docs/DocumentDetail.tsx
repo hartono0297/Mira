@@ -9,6 +9,7 @@ import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
 import {
   appName,
+  DOCS,
   downloadLabel,
   editable,
   fetchState,
@@ -16,6 +17,7 @@ import {
   formatSize,
   originText,
   person,
+  personInline,
   versionList,
 } from "./text";
 
@@ -109,24 +111,18 @@ function ConflictBox({
   const heads = doc.conflictVersions;
   const app = appName(doc.kind);
   const canMerge = editable(doc.kind) && doc.can.edit;
-  const count = heads.length === 2 ? "Dua" : String(heads.length);
   return (
     <div className="conflict" role="group" aria-labelledby={`conflict-title-${doc.id}`}>
       <h3 id={`conflict-title-${doc.id}`} className="conflict-title" tabIndex={-1} ref={titleRef}>
         <IconAlertTriangle size={18} aria-hidden="true" />
-        {count} versi tersimpan berdampingan
+        {DOCS.detail.conflictTitle(heads.length)}
       </h3>
-      <p>
-        {capitalize(versionList(heads))} dibuat terpisah, misalnya saat salah satu laptop tidak tersambung, jadi
-        Mira menyimpan semuanya. Pilih versi yang dipakai{canMerge ? ", atau gabungkan isinya sendiri" : ""}.
-      </p>
+      <p>{DOCS.detail.conflictBody(capitalize(versionList(heads)), canMerge)}</p>
       <ul className="conflict-heads">
         {heads.map((v) => (
           <li key={v.id} className="head-card">
             {/* Nama pembuat di judul kartu: bentrok dengan rekan langsung terbaca siapa membuat apa. */}
-            <p className="head-num">
-              Versi {v.number} dari {person(v.author)}
-            </p>
+            <p className="head-num">{DOCS.detail.headTitle(v.number, personInline(v.author))}</p>
             <p className="head-meta">
               {originText(v, doc.kind)} · {relativeTime(v.createdAt, now)}
             </p>
@@ -135,20 +131,17 @@ function ConflictBox({
             ) : (
               <div className="head-actions">
                 <FetchStatus doc={doc} v={v} actions={actions} />
-                {doc.can.resolve && <p className="head-meta">Versi ini bisa dipilih setelah isinya ada di laptop ini.</p>}
+                {doc.can.resolve && <p className="head-meta">{DOCS.detail.headPickLater}</p>}
               </div>
             )}
           </li>
         ))}
       </ul>
       {canMerge && doc.can.resolve && (
-        <p className="conflict-note">
-          Gabung manual membuka versi itu di {app}. Salin bagian yang perlu dari versi lain, lalu simpan. Begitu
-          Anda menyimpan, bentrok selesai.
-        </p>
+        <p className="conflict-note">{DOCS.detail.mergeNote(app)}</p>
       )}
       {!doc.can.resolve && (
-        <p className="conflict-note">Anda tidak punya izin memilih versi. Minta rekan yang bisa mengedit file ini untuk memilihnya.</p>
+        <p className="conflict-note">{DOCS.detail.noResolve}</p>
       )}
     </div>
   );
@@ -174,8 +167,8 @@ function FetchStatus({ doc, v, actions }: { doc: DocumentSummary; v: DocumentVer
             pendingKey={keys.download(doc.id, v.id)}
             actions={actions}
             label={downloadLabel(v)}
-            ariaLabel={`Unduh versi ${v.number} dari rekan, ${formatSize(v.size)}`}
-            busyLabel="Mengunduh..."
+            ariaLabel={DOCS.detail.downloadAria(v.number, formatSize(v.size))}
+            busyLabel={DOCS.detail.downloading}
             onClick={() => actions.download(doc, v)}
           />
         </div>
@@ -201,9 +194,9 @@ function HeadActions({
         <ActionButton
           pendingKey={keys.resolve(doc.id, v.id)}
           actions={actions}
-          label="Pakai versi ini"
-          ariaLabel={`Pakai versi ini (versi ${v.number})`}
-          busyLabel="Menyimpan pilihan..."
+          label={DOCS.detail.useThis}
+          ariaLabel={DOCS.detail.useThisAria(v.number)}
+          busyLabel={DOCS.detail.savingChoice}
           primary
           onClick={() => actions.resolve(doc, v)}
         />
@@ -212,18 +205,18 @@ function HeadActions({
         <ActionButton
           pendingKey={keys.edit(doc.id, v.id)}
           actions={actions}
-          label="Gabung manual"
-          ariaLabel={`Gabung manual dari versi ${v.number}`}
-          busyLabel="Membuka..."
+          label={DOCS.detail.mergeManual}
+          ariaLabel={DOCS.detail.mergeAria(v.number)}
+          busyLabel={DOCS.detail.opening}
           onClick={() => actions.edit(doc, v)}
         />
       )}
       <ActionButton
         pendingKey={keys.open(doc.id, v.id)}
         actions={actions}
-        label="Buka"
-        ariaLabel={`Buka versi ${v.number}`}
-        busyLabel="Membuka..."
+        label={DOCS.detail.open}
+        ariaLabel={DOCS.detail.openAria(v.number)}
+        busyLabel={DOCS.detail.opening}
         onClick={() => actions.open(doc, v)}
       />
     </div>
@@ -249,8 +242,8 @@ function VersionRow({
       <Avatar name={v.author.displayName} />
       <div className="ver-main">
         <p className="ver-num">
-          Versi {v.number}
-          {isCurrent && <span className="chip chip-on">Sekarang</span>}
+          {DOCS.detail.version(v.number)}
+          {isCurrent && <span className="chip chip-on">{DOCS.detail.current}</span>}
         </p>
         <p className="ver-origin">{originText(v, doc.kind)}</p>
         <p className="ver-meta">
@@ -261,18 +254,18 @@ function VersionRow({
             <ActionButton
               pendingKey={keys.open(doc.id, v.id)}
               actions={actions}
-              label="Buka"
-              ariaLabel={`Buka versi ${v.number}`}
-              busyLabel="Membuka..."
+              label={DOCS.detail.open}
+              ariaLabel={DOCS.detail.openAria(v.number)}
+              busyLabel={DOCS.detail.opening}
               onClick={() => actions.open(doc, v)}
             />
             {doc.can.export && (
               <ActionButton
                 pendingKey={keys.export(doc.id, v.id)}
                 actions={actions}
-                label="Simpan salinan"
-                ariaLabel={`Simpan salinan versi ${v.number}`}
-                busyLabel="Menyimpan..."
+                label={DOCS.exportCopy}
+                ariaLabel={DOCS.detail.exportAria(v.number)}
+                busyLabel={DOCS.detail.saving}
                 onClick={() => actions.exportCopy(doc, v)}
               />
             )}
@@ -281,11 +274,11 @@ function VersionRow({
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
-                aria-label={`Pulihkan versi ${v.number}`}
+                aria-label={DOCS.restore.confirmOf(v.number)}
                 aria-disabled={actions.pending !== null || undefined}
                 onClick={() => actions.askRestore(doc, v)}
               >
-                Pulihkan
+                {DOCS.restore.confirm}
               </button>
             )}
           </div>
@@ -330,7 +323,7 @@ export function DocumentDetail({
             {doc.name}
           </h2>
           <p className="detail-sub">
-            {doc.versionCount} versi · {formatSize(doc.current.size)}
+            {DOCS.detail.sub(doc.versionCount, formatSize(doc.current.size))}
           </p>
         </div>
       </header>
@@ -340,31 +333,31 @@ export function DocumentDetail({
       )}
 
       <h3 className="detail-label" tabIndex={-1} ref={historyRef}>
-        Riwayat versi
+        {DOCS.detail.history}
       </h3>
       {editingHere && doc.can.restore && (
-        <p className="hint">Versi lama bisa dipulihkan setelah Anda menekan Selesai mengedit.</p>
+        <p className="hint">{DOCS.detail.restoreAfterFinish}</p>
       )}
       {versions === null && loading && (
         <p className="hint" role="status">
-          Memuat riwayat versi...
+          {DOCS.detail.loadingHistory}
         </p>
       )}
       {versions === null && !loading && error && (
         <div role="alert">
-          <ErrorAlert title="Riwayat versi belum terbaca">
+          <ErrorAlert title={DOCS.detail.historyErrorTitle}>
             <p>{error.message}</p>
             <button type="button" className="btn btn-ghost btn-sm docs-retry" onClick={onRetry}>
-              Coba baca lagi
+              {DOCS.screen.retryRead}
             </button>
           </ErrorAlert>
         </div>
       )}
       {versions !== null && error && (
-        <p className="hint">Riwayat terbaru belum bisa dibaca ({error.message}). Yang tampil adalah data terakhir.</p>
+        <p className="hint">{DOCS.detail.staleHistory(error.message)}</p>
       )}
       {versions !== null && (
-        <ol className="ver-list" aria-label={`Riwayat versi ${doc.name}`}>
+        <ol className="ver-list" aria-label={DOCS.detail.historyLabel(doc.name)}>
           {versions.map((v) => (
             <VersionRow key={v.id} doc={doc} v={v} actions={actions} canRestore={canRestore} now={now} />
           ))}

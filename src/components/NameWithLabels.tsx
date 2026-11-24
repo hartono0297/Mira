@@ -1,4 +1,5 @@
 import type { LabelRef } from "../api/org";
+import { COMPONENTS_TEXT as T } from "../i18n/components";
 import "./name-with-labels.css";
 
 // Batas label di samping nama (keputusan usulan v0.3 bagian 6, opsi A).
@@ -27,7 +28,7 @@ export function NameWithLabels({ name, labels, max = MAX_LABELS_SHOWN, suffix, c
         {name}
         {suffix && <span className="nwl-suffix">{suffix}</span>}
         {/* Di dalam span nama, supaya nama aksesibel jadi "Rina, label ..." tanpa spasi sebelum koma. */}
-        {shown.length > 0 && <span className="sr-only">, label </span>}
+        {shown.length > 0 && <span className="sr-only">{T.labels.prefix(shown.length + rest.length)}</span>}
       </span>
       {shown.length > 0 && (
         <span className="nwl-labels">
@@ -40,7 +41,7 @@ export function NameWithLabels({ name, labels, max = MAX_LABELS_SHOWN, suffix, c
           {rest.length > 0 && (
             <span className="lab lab-more" title={rest.map((l) => l.name).join(", ")}>
               <span aria-hidden="true">+{rest.length}</span>
-              <span className="sr-only">, dan {rest.length} label lain</span>
+              <span className="sr-only">{T.labels.more(rest.length)}</span>
             </span>
           )}
         </span>

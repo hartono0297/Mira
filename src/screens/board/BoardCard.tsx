@@ -120,15 +120,15 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
         {task.assignee ? (
           <span className="avatar tc-av" title={task.assignee.name}>
             <span aria-hidden="true">{initials(task.assignee.name)}</span>
-            <span className="sr-only">, untuk {task.assignee.name}</span>
+            <span className="sr-only">{TEKS.kartu.untukSr(task.assignee.name)}</span>
           </span>
         ) : (
-          <span className="sr-only">, belum ada penanggung jawab</span>
+          <span className="sr-only">{TEKS.kartu.tanpaPenanggungJawabSr}</span>
         )}
         {task.due && (
           <span className={`tc-due${late ? " tc-late" : ""}`}>
             <IconCalendarDue size={14} aria-hidden="true" />
-            <span className="sr-only">, tenggat </span>
+            <span className="sr-only">{TEKS.kartu.tenggatSr}</span>
             {done ? formatDue(task.due) : dueLabel(task.due)}
           </span>
         )}
@@ -156,7 +156,7 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
         )}
         {task.priority !== "none" && (
           <span className={`chip tc-pri${task.priority === "high" ? " tc-pri-high" : ""}`}>
-            <span className="sr-only">, prioritas </span>
+            <span className="sr-only">{TEKS.kartu.prioritasSr}</span>
             {PRIORITY_LABELS[task.priority]}
           </span>
         )}
@@ -165,12 +165,12 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
             <IconMessage size={14} aria-hidden="true" />
             <span className="sr-only">, </span>
             {task.commentCount}
-            <span className="sr-only"> komentar</span>
+            <span className="sr-only">{TEKS.kartu.komentarSr(task.commentCount)}</span>
           </span>
         )}
       </div>
       {task.labels.length > 0 && (
-        <ul className="tc-labels" aria-label="Label">
+        <ul className="tc-labels" aria-label={TEKS.kartu.label}>
           {task.labels.map((l) => (
             <li key={l} className="tc-label">
               {l}
@@ -181,7 +181,7 @@ export function BoardCard({ task, done, canMove, dragging, moveOptions, menu: me
       {task.merged && (
         <p className="tc-merged">
           <IconGitMerge size={14} aria-hidden="true" />
-          Diubah saat offline, sudah digabung
+          {TEKS.kartu.digabung}
         </p>
       )}
       {menu.element}

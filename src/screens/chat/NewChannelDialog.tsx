@@ -4,6 +4,7 @@ import { chatApi, type ConversationSummary } from "../../api/chat";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import { MAX_CHANNEL_NAME, normalizeChannelName } from "./ListFormat";
 
 type Props = {
@@ -13,13 +14,14 @@ type Props = {
 };
 
 function serverTitle(error: AppError): string {
-  if (error.code === "forbidden") return "Hanya superadmin yang bisa membuat channel umum";
-  return "Channel belum dibuat";
+  if (error.code === "forbidden") return CHAT_DIALOGS.newChannel.forbidden;
+  return CHAT_DIALOGS.newChannel.failed;
 }
 
 // Channel umum baru (v0.3: hanya superadmin, hanya bagian Umum). Channel departemen dan proyek
 // dibuat otomatis oleh Mira. Nama dirapikan dengan aturan yang sama dengan inti Rust.
 export function NewChannelDialog({ open, onOpenChange, onCreated }: Props) {
+  const T = CHAT_DIALOGS.newChannel;
   const [name, setName] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
   const [server, setServer] = useState<AppError | null>(null);
@@ -44,9 +46,7 @@ export function NewChannelDialog({ open, onOpenChange, onCreated }: Props) {
     setServer(null);
     if (!normalized) {
       setNameError(
-        name.trim()
-          ? "Nama ini tidak menyisakan huruf atau angka. Pakai huruf a sampai z atau angka."
-          : "Tulis nama channel dulu.",
+        name.trim() ? T.nameNoChars : T.nameEmpty,
       );
       nameRef.current?.focus();
       return;
@@ -59,7 +59,7 @@ export function NewChannelDialog({ open, onOpenChange, onCreated }: Props) {
       onCreated(summary);
     } catch (err) {
       const error = toAppError(err);
-      if (error.code === "invalid_input" && /nama/i.test(error.message)) {
+      if (error.code === "invalid_input" && /nama|name/i.test(error.message)) {
         setNameError(error.message);
         nameRef.current?.focus();
       } else {
@@ -78,12 +78,12 @@ export function NewChannelDialog({ open, onOpenChange, onCreated }: Props) {
         if (!next) reset();
         onOpenChange(next);
       }}
-      title="Channel umum baru"
-      description="Semua anggota kantor bisa membaca dan menulis di channel umum, kecuali Tamu."
+      title={T.title}
+      description={T.description}
     >
       <form className="chat-form" onSubmit={submit} noValidate>
         <div className="field">
-          <label htmlFor={nameId}>Nama channel</label>
+          <label htmlFor={nameId}>{T.nameLabel}</label>
           <input
             ref={nameRef}
             id={nameId}
@@ -98,10 +98,11 @@ export function NewChannelDialog({ open, onOpenChange, onCreated }: Props) {
           <p id={previewId} className="hint">
             {normalized ? (
               <>
-                Tampil sebagai <strong className="chat-preview">#{normalized}</strong>
+                {T.previewAs}
+                <strong className="chat-preview">#{normalized}</strong>
               </>
             ) : (
-              `Huruf kecil, angka, dan tanda hubung. Spasi jadi tanda hubung. Paling banyak ${MAX_CHANNEL_NAME} karakter.`
+              T.rules(MAX_CHANNEL_NAME)
             )}
           </p>
           <div id={errId} aria-live="polite">
@@ -109,8 +110,7 @@ export function NewChannelDialog({ open, onOpenChange, onCreated }: Props) {
           </div>
         </div>
         <p id={lockId} className="hint">
-          Channel untuk pengumuman bisa Anda jadikan hanya-baca lewat menu channel setelah dibuat. Setelah itu hanya
-          superadmin yang bisa menulis di sana.
+          {T.lockHint}
         </p>
         <div aria-live="polite">
           {server && (
@@ -122,11 +122,11 @@ export function NewChannelDialog({ open, onOpenChange, onCreated }: Props) {
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {CHAT_DIALOGS.common.cancel}
             </button>
           </DialogClose>
           <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
-            {busy ? "Membuat channel..." : "Buat channel"}
+            {busy ? T.creating : T.create}
           </button>
         </div>
       </form>

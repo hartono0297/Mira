@@ -3,6 +3,8 @@
 // untuk pembaca layar, jadi nama tombolnya menjadi misalnya "Chat, 3 belum dibaca".
 // Di atas 99 ditulis "99+". Nol atau kurang: tidak tampil apa pun.
 
+import { COMPONENTS_TEXT as T } from "../i18n/components";
+
 export const COUNT_CAP = 99;
 
 export function formatCount(count: number): string {
@@ -11,7 +13,7 @@ export function formatCount(count: number): string {
 
 // Teks untuk pembaca layar, misalnya "3 belum dibaca" atau "lebih dari 99 belum dibaca".
 export function countText(count: number, meaning: string): string {
-  return count > COUNT_CAP ? `lebih dari ${COUNT_CAP} ${meaning}` : `${count} ${meaning}`;
+  return count > COUNT_CAP ? T.count.more(COUNT_CAP, meaning) : `${count} ${meaning}`;
 }
 
 type Props = {

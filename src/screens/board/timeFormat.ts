@@ -1,6 +1,7 @@
 // Format dan hitungan waktu tercatat board v0.4. Semua fungsi murni: "sekarang"
 // selalu dioper oleh pemanggil (lihat useNow), supaya mudah dites.
 import type { ColumnId, StatusTime, TaskCard } from "../../api/board";
+import { getLang } from "../../i18n/core";
 import { TEKS } from "./teks";
 
 const MENIT = 60;
@@ -21,29 +22,37 @@ function bagian(secs: number): Bagian {
   return { hari: 0, jam: Math.floor(s / JAM), menit: Math.floor((s % JAM) / MENIT) };
 }
 
-function susun(b: Bagian, satuan: { hari: string; jam: string; menit: string }, pisah: string): string {
+type Satuan = (n: number) => string;
+
+function susun(b: Bagian, satuan: { hari: Satuan; jam: Satuan; menit: Satuan }): string {
   const out: string[] = [];
-  if (b.hari) out.push(`${b.hari}${pisah}${satuan.hari}`);
-  if (b.jam) out.push(`${b.jam}${pisah}${satuan.jam}`);
-  if (b.menit) out.push(`${b.menit}${pisah}${satuan.menit}`);
+  if (b.hari) out.push(satuan.hari(b.hari));
+  if (b.jam) out.push(satuan.jam(b.jam));
+  if (b.menit) out.push(satuan.menit(b.menit));
   return out.join(" ");
 }
 
+function pendek(): { hari: Satuan; jam: Satuan; menit: Satuan } {
+  const p = TEKS.waktu.pendek;
+  return { hari: (n) => `${n}${p.hari}`, jam: (n) => `${n}${p.jam}`, menit: (n) => `${n}${p.menit}` };
+}
+
 // Ringkas untuk kartu dan total: "0m", "<1m", "45m", "3j 20m", "3j", "2hr 5j".
-// hr = hari, j = jam, m = menit.
+// hr = hari, j = jam, m = menit. Bahasa Inggris: "3h 20m", "2d 5h".
 export function formatDuration(secs: number): string {
   const s = clean(secs);
   if (s === 0) return `0${TEKS.waktu.pendek.menit}`;
   if (s < MENIT) return TEKS.waktu.kurangDariSemenit;
-  return susun(bagian(s), TEKS.waktu.pendek, "");
+  return susun(bagian(s), pendek());
 }
 
-// Versi pembaca layar dengan ketelitian yang sama: "3 jam 20 menit", "2 hari 5 jam".
+// Versi pembaca layar dengan ketelitian yang sama: "3 jam 20 menit", "2 hari 5 jam"
+// (Inggris "3 hours 20 minutes").
 export function formatDurationLong(secs: number): string {
   const s = clean(secs);
-  if (s === 0) return `0 ${TEKS.waktu.panjang.menit}`;
+  if (s === 0) return TEKS.waktu.panjang.menit(0);
   if (s < MENIT) return TEKS.waktu.kurangDariSemenitPanjang;
-  return susun(bagian(s), TEKS.waktu.panjang, " ");
+  return susun(bagian(s), TEKS.waktu.panjang);
 }
 
 const dua = (n: number) => String(n).padStart(2, "0");
@@ -88,6 +97,11 @@ export const MAX_LOG_MINUTES = 1440;
 export type ParsedMinutes = { minutes: number; reason: null } | { minutes: null; reason: string };
 
 const JAM_MENIT = /^(?:(\d+(?:[.,]\d+)?)\s*(?:j|jam))?\s*(?:(\d+)\s*(?:m|mnt|menit))?$/;
+// Bahasa Inggris menerima satuan Indonesia juga (isian lama tetap jalan) ditambah
+// h, hr, hrs, hour, hours, min, mins, minute, minutes. Di bahasa Indonesia "h"
+// tetap ditolak, karena di sana "hr" berarti hari.
+const JAM_MENIT_EN =
+  /^(?:(\d+(?:[.,]\d+)?)\s*(?:j|jam|h|hrs?|hours?))?\s*(?:(\d+)\s*(?:m|mnt|menit|mins?|minutes?))?$/;
 const JAM_TITIK_DUA = /^(\d{1,2}):([0-5]\d)$/;
 
 function gagal(reason: string): ParsedMinutes {
@@ -96,6 +110,7 @@ function gagal(reason: string): ParsedMinutes {
 
 // Isian durasi bebas jadi menit bulat, 1 sampai 1440.
 // Diterima: "90" (menit), "45m", "45 menit", "2j", "1j 30m", "1 jam 30 menit", "1:30", "1,5j", "1.5 jam".
+// Saat bahasa Inggris aktif juga "1h 30m", "2 hours", "45 min", "1.5h".
 export function parseMinutes(input: string): ParsedMinutes {
   const text = input.trim().toLowerCase().replace(/\s+/g, " ");
   if (!text) return gagal(TEKS.waktu.isian.kosong);
@@ -107,7 +122,7 @@ export function parseMinutes(input: string): ParsedMinutes {
   } else if (titikDua) {
     minutes = Number(titikDua[1]) * 60 + Number(titikDua[2]);
   } else {
-    const m = JAM_MENIT.exec(text);
+    const m = (getLang() === "en" ? JAM_MENIT_EN : JAM_MENIT).exec(text);
     if (!m || (m[1] === undefined && m[2] === undefined)) return gagal(TEKS.waktu.isian.tidakDikenali);
     const jam = m[1] === undefined ? 0 : Number(m[1].replace(",", "."));
     const menit = m[2] === undefined ? 0 : Number(m[2]);

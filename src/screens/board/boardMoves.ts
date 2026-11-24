@@ -2,6 +2,7 @@
 // tombol Pindahkan dan pintasan Alt + panah).
 import type { BoardView, ColumnId, TaskCard } from "../../api/board";
 import { COLUMN_ORDER } from "./format";
+import { TEKS } from "./teks";
 
 export type Place = { columnId: ColumnId; index: number };
 
@@ -48,12 +49,12 @@ export function neighbourPlace(view: BoardView, taskId: string, dir: Direction):
 export function blockedText(code: string, dir: Direction): string {
   switch (dir) {
     case "left":
-      return `${code} sudah di kolom pertama.`;
+      return TEKS.pindah.kiri(code);
     case "right":
-      return `${code} sudah di kolom terakhir.`;
+      return TEKS.pindah.kanan(code);
     case "up":
-      return `${code} sudah paling atas.`;
+      return TEKS.pindah.atas(code);
     case "down":
-      return `${code} sudah paling bawah.`;
+      return TEKS.pindah.bawah(code);
   }
 }

@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri, NO_TAURI_ERROR, toAppError } from ".";
+import { localizeError } from "../i18n/errors";
 
 export type ColumnId = "todo" | "doing" | "done";
 export type Priority = "none" | "low" | "medium" | "high";
@@ -196,7 +197,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 

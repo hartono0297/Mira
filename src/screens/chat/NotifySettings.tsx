@@ -3,6 +3,7 @@ import { toAppError, type AppError } from "../../api";
 import { chatApi, type NotifyMode } from "../../api/chat";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import { systemName } from "../../platform";
 
 type Props = {
@@ -12,20 +13,31 @@ type Props = {
   onSaved: (mode: NotifyMode) => void;
 };
 
+// Label dan keterangan dibaca saat dipakai (getter), jadi ikut bahasa aktif.
+function option(mode: NotifyMode): { mode: NotifyMode; label: string; desc: string } {
+  return {
+    mode,
+    get label() {
+      return CHAT_DIALOGS.notify[mode].label;
+    },
+    get desc() {
+      return CHAT_DIALOGS.notify[mode].desc;
+    },
+  };
+}
+
 export const NOTIFY_OPTIONS: { mode: NotifyMode; label: string; desc: string }[] = [
-  { mode: "all", label: "Semua pesan baru", desc: "Setiap pesan dari rekan, kecuali di percakapan yang Anda bisukan." },
-  {
-    mode: "mentions",
-    label: "Hanya chat pribadi dan yang menyebut saya",
-    desc: "Pesan di channel muncul hanya kalau nama Anda disebut dengan @.",
-  },
-  { mode: "off", label: "Mati", desc: "Tidak ada notifikasi. Pesan baru tetap terlihat di daftar chat." },
+  option("all"),
+  option("mentions"),
+  option("off"),
 ];
 
 // Pengaturan notifikasi chat untuk laptop ini. Tersimpan begitu pilihan diganti.
 export function NotifySettings({ open, onOpenChange, mode, onSaved }: Props) {
+  const T = CHAT_DIALOGS.notify;
   const [value, setValue] = useState<NotifyMode>(mode);
-  const [saved, setSaved] = useState("");
+  // Pilihan yang baru tersimpan; teks "Tersimpan" dibuat saat render supaya ikut bahasa aktif.
+  const [saved, setSaved] = useState<NotifyMode | null>(null);
   const [error, setError] = useState<AppError | null>(null);
   const seq = useRef(0);
   const lastSaved = useRef<NotifyMode>(mode);
@@ -39,20 +51,20 @@ export function NotifySettings({ open, onOpenChange, mode, onSaved }: Props) {
     if (!open) return;
     setValue(modeRef.current);
     lastSaved.current = modeRef.current;
-    setSaved("");
+    setSaved(null);
     setError(null);
   }, [open]);
 
   async function choose(next: NotifyMode) {
     const mine = ++seq.current;
     setValue(next);
-    setSaved("");
+    setSaved(null);
     setError(null);
     try {
       await chatApi.setNotify(next);
       if (mine !== seq.current) return;
       lastSaved.current = next;
-      setSaved(`Tersimpan: ${NOTIFY_OPTIONS.find((o) => o.mode === next)?.label}.`);
+      setSaved(next);
       onSaved(next);
     } catch (err) {
       if (mine !== seq.current) return;
@@ -65,11 +77,11 @@ export function NotifySettings({ open, onOpenChange, mode, onSaved }: Props) {
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Notifikasi chat"
-      description={`Notifikasi muncul di ${systemName()} saat jendela Mira tidak sedang di depan. Pengaturan ini hanya untuk laptop ini.`}
+      title={T.title}
+      description={T.description(systemName())}
     >
       <fieldset className="chat-opts">
-        <legend className="sr-only">Kirim notifikasi untuk</legend>
+        <legend className="sr-only">{T.legend}</legend>
         {NOTIFY_OPTIONS.map((o) => (
           <label key={o.mode} className="chat-opt">
             <input
@@ -87,18 +99,18 @@ export function NotifySettings({ open, onOpenChange, mode, onSaved }: Props) {
         ))}
       </fieldset>
       <div aria-live="polite">
-        {saved && <p className="chat-saved">{saved}</p>}
+        {saved && <p className="chat-saved">{T.saved(T[saved].label)}</p>}
         {error && (
-          <ErrorAlert title="Pengaturan notifikasi belum tersimpan">
+          <ErrorAlert title={T.failed}>
             <p>{error.message}</p>
-            <p>Pilihan dikembalikan seperti semula. Coba pilih lagi.</p>
+            <p>{T.reverted}</p>
           </ErrorAlert>
         )}
       </div>
       <div className="dlg-actions">
         <DialogClose asChild>
           <button type="button" className="btn btn-ghost">
-            Tutup
+            {CHAT_DIALOGS.common.close}
           </button>
         </DialogClose>
       </div>

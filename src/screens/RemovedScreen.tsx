@@ -2,6 +2,7 @@ import { IconRefresh, IconUserOff } from "@tabler/icons-react";
 import { useEffect, useRef } from "react";
 import type { AppState, OrgInfo } from "../api";
 import { Logo } from "../components/Logo";
+import { STATUS_TEXT } from "../i18n/status";
 import "./status.css";
 
 type Props = {
@@ -12,6 +13,7 @@ type Props = {
 // Layar penuh saat laptop ini dikeluarkan dari organisasi (F-ROLE-05, PRD bagian 12).
 export function RemovedScreen({ state, onRecheck }: Props) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const T = STATUS_TEXT.removed;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -28,23 +30,18 @@ export function RemovedScreen({ state, onRecheck }: Props) {
           <IconUserOff size={24} aria-hidden="true" />
         </div>
         <h1 id="removed-title" ref={headingRef} tabIndex={-1}>
-          Laptop ini sudah dikeluarkan dari organisasi {state.organization.name}
+          {T.heading(state.organization.name)}
         </h1>
-        <p className="status-cause">
-          Pesan dan perubahan baru dari organisasi ini tidak lagi dikirim ke laptop ini, dan laptop rekan tidak menerima
-          sambungan dari laptop ini.
-        </p>
-        <p>Data yang sudah ada di laptop ini tetap tersimpan di sini. Mira tidak menghapusnya.</p>
+        <p className="status-cause">{T.cause}</p>
+        <p>{T.kept}</p>
         <p className="status-next">
-          <span className="status-label">Langkah berikutnya: </span>
-          Kalau ini keliru, hubungi superadmin organisasi. Laptop yang sudah dikeluarkan belum bisa bergabung lagi
-          dengan kode undangan di versi ini. Sebutkan sidik jari laptop ini supaya superadmin yakin orangnya benar:{" "}
-          <span className="mono">{state.identity.fingerprint}</span>
+          <span className="status-label">{STATUS_TEXT.nextLabel}</span>
+          {T.next} <span className="mono">{state.identity.fingerprint}</span>
         </p>
         <div className="removed-actions">
           <button type="button" className="btn btn-ghost" onClick={onRecheck}>
             <IconRefresh size={18} aria-hidden="true" />
-            Periksa lagi
+            {T.recheck}
           </button>
         </div>
       </main>

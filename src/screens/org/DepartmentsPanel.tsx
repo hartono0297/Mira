@@ -9,6 +9,8 @@ import { menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMe
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { getLang } from "../../i18n/core";
+import { DEPT_TEXT as T } from "../../i18n/org-departments";
 import type { OrgPage } from "./context";
 import { useOrgLive } from "./useOrgLive";
 import "./departments.css";
@@ -16,15 +18,7 @@ import "./departments.css";
 type Data = { departments: DepartmentView[]; people: PersonView[] };
 
 // Teks menu klik kanan baris departemen. Label item sama dengan tombol di baris.
-const MENU = {
-  label: (name: string) => `Aksi untuk departemen ${name}`,
-  rename: "Ganti nama",
-  admins: "Atur admin",
-  archive: "Arsipkan",
-  restore: "Pulihkan",
-  busy: "Tunggu perubahan yang sedang disimpan.",
-  notEmpty: (n: number) => `Masih ada ${n} orang. Pindahkan dulu lewat tab Pengguna.`,
-};
+const MENU = T.menu;
 
 // Sama dengan channel_name_for di src-tauri/src/permissions/format.rs:
 // nama departemen (sudah dirapikan) huruf kecil, setiap spasi menjadi "-".
@@ -34,7 +28,9 @@ export function channelNameFor(name: string): string {
 
 // Pesan lama yang masih menyebut "tim" (misalnya dari laptop rekan yang belum diperbarui);
 // di halaman ini istilahnya departemen.
+// Bahasa Inggris tidak memakai kata "tim", jadi pesan dibiarkan.
 function deptWording(message: string): string {
+  if (getLang() === "en") return message;
   return message.replace(/\bTim\b/g, "Departemen").replace(/\btim\b/g, "departemen");
 }
 
@@ -110,8 +106,8 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
     const ok = await page.act(
       `restore:${d.id}`,
       () => orgApi.setDepartmentArchived(d.id, false),
-      `Departemen ${d.name} dipulihkan.`,
-      "Departemen belum dipulihkan",
+      T.restored(d.name),
+      T.restoreFail,
     );
     // Tombol Pulihkan hilang bersama barisnya: fokus pindah ke baris yang dipulihkan.
     if (ok) setReturnTo(d.id);
@@ -124,7 +120,7 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
     setArchiveError(null);
     try {
       await orgApi.setDepartmentArchived(dept.id, true);
-      page.notify(`Departemen ${dept.name} diarsipkan.`);
+      page.notify(T.archived(dept.name));
       page.refresh();
       setFocusArchived(dept.id);
       setArchiveId(null);
@@ -147,15 +143,15 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
       <div className="org-head">
         <div>
           <h2 id="dept-title" className="set-title">
-            Departemen
+            {T.title}
           </h2>
-          {active.length > 0 && <p className="hint">{active.length} departemen aktif</p>}
+          {active.length > 0 && <p className="hint">{T.activeCount(active.length)}</p>}
         </div>
         {manage && live.data && (
           <div className="org-head-actions">
             <button type="button" className="btn" disabled={busy} onClick={() => setCreating(true)}>
               <IconPlus size={16} aria-hidden="true" />
-              Departemen baru
+              {T.newDept}
             </button>
           </div>
         )}
@@ -163,64 +159,51 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
 
       {live.loading && !live.data && (
         <p className="hint" role="status">
-          Memuat daftar departemen...
+          {T.loading}
         </p>
       )}
 
       {!live.loading && !live.data && (
         <div role="alert">
-          <ErrorAlert title="Daftar departemen belum terbaca">
-            <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar departemen."}</p>
+          <ErrorAlert title={T.loadErrorTitle}>
+            <p>{live.error?.message ?? T.loadErrorEmpty}</p>
             <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
-              Coba lagi
+              {T.retry}
             </button>
           </ErrorAlert>
         </div>
       )}
 
-      {live.data && live.error && (
-        <p className="hint">
-          Data terbaru belum bisa dibaca ({live.error.message}). Yang tampil adalah data terakhir.
-        </p>
-      )}
+      {live.data && live.error && <p className="hint">{T.stale(live.error.message)}</p>}
 
       {live.data &&
         (active.length === 0 ? (
           <div className="org-empty">
-            <p>
-              {manage
-                ? "Belum ada departemen. Buat departemen pertama, lalu pindahkan orang ke sana lewat tab Pengguna."
-                : "Belum ada departemen. Superadmin yang membuat departemen."}
-            </p>
+            <p>{manage ? T.emptyManage : T.emptyView}</p>
           </div>
         ) : (
           <>
-            {manage && someNotEmpty && (
-              <p className="hint">
-                Hanya departemen yang kosong yang bisa diarsipkan. Untuk mengosongkan departemen, pindahkan orangnya
-                dulu lewat tab Pengguna.
-              </p>
-            )}
+            {manage && someNotEmpty && <p className="hint">{T.archiveRule}</p>}
             {/* Role eksplisit: tata letak bertumpuk (display: grid) menghapus semantik tabel di WebKit. */}
             <table className="dept-table" role="table">
-              <caption className="sr-only">Departemen aktif</caption>
+              <caption className="sr-only">{T.caption}</caption>
               <thead role="rowgroup">
                 <tr role="row">
                   <th role="columnheader" scope="col">
-                    Departemen
+                    {T.colDept}
                   </th>
                   <th role="columnheader" scope="col">
-                    Orang
+                    {T.colPeople}
                   </th>
                   <th role="columnheader" scope="col">
-                    Admin departemen
+                    {T.colAdmins}
                   </th>
                   <th role="columnheader" scope="col">
-                    Channel
+                    {T.colChannel}
                   </th>
                   {manage && (
                     <th role="columnheader" scope="col">
-                      <span className="sr-only">Aksi</span>
+                      <span className="sr-only">{T.colActions}</span>
                     </th>
                   )}
                 </tr>
@@ -262,7 +245,7 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
         <details className="org-fold">
           <summary ref={archivedSummary}>
             <IconChevronRight size={16} className="org-fold-chev" aria-hidden="true" />
-            Diarsipkan ({archived.length})
+            {T.archivedFold(archived.length)}
           </summary>
           <ul className="row-list">
             {archived.map((d) => (
@@ -280,28 +263,25 @@ export function DepartmentsPanel({ page }: { page: OrgPage }) {
           onOpenChange={(open) => {
             if (!open) setArchiveId(null);
           }}
-          title={`Arsipkan ${archiveDept.name}?`}
-          confirmLabel={`Arsipkan ${archiveDept.name}`}
-          busyLabel="Mengarsipkan..."
+          title={T.archiveTitle(archiveDept.name)}
+          confirmLabel={T.archiveConfirm(archiveDept.name)}
+          busyLabel={T.archiving}
           busy={archiving}
           danger={false}
           onConfirm={() => void archive(archiveDept)}
           error={
             archiveError && (
-              <ErrorAlert title="Departemen belum diarsipkan">
+              <ErrorAlert title={T.archiveFail}>
                 <p>{archiveError.message}</p>
               </ErrorAlert>
             )
           }
         >
           <p>
-            {archiveDept.channelName ? `Channel # ${archiveDept.channelName}` : "Channel departemen ini"} menjadi
-            hanya-baca: isinya tetap bisa dibaca, tetapi tidak bisa diisi pesan baru.
+            {archiveDept.channelName ? T.archiveChannel(archiveDept.channelName) : T.archiveChannelFallback}{" "}
+            {T.archiveReadOnly}
           </p>
-          <p>
-            Departemen ini tidak bisa dipilih lagi saat orang bergabung atau diundang. Anda bisa memulihkannya kapan saja
-            dari bagian Diarsipkan.
-          </p>
+          <p>{T.archiveBody}</p>
         </ConfirmDialog>
       )}
 
@@ -323,30 +303,30 @@ function DeptCells({ dept, page }: { dept: DepartmentView; page: OrgPage }) {
       <td role="cell" className="dept-name-cell">
         <span className="dept-name">
           <span className="row-name">{dept.name}</span>
-          {page.overview.departmentId === dept.id && <span className="chip chip-on">Departemen Anda</span>}
+          {page.overview.departmentId === dept.id && <span className="chip chip-on">{T.yourDept}</span>}
         </span>
       </td>
       <td role="cell" className="dept-count">
         <span className="dept-k" aria-hidden="true">
-          Orang
+          {T.colPeople}
         </span>
         <span className="dept-num">{dept.memberCount}</span>
       </td>
       <td role="cell" className="dept-admins">
         <span className="dept-k" aria-hidden="true">
-          Admin departemen
+          {T.colAdmins}
         </span>
         {dept.admins.length > 0 ? (
           <span>{dept.admins.map((a) => a.displayName).join(", ")}</span>
         ) : (
-          <span className="dept-muted">Belum ada</span>
+          <span className="dept-muted">{T.none}</span>
         )}
       </td>
       <td role="cell" className="dept-channel">
         <span className="dept-k" aria-hidden="true">
-          Channel
+          {T.colChannel}
         </span>
-        <span className="dept-muted">{dept.channelName ? `# ${dept.channelName}` : "Belum ada"}</span>
+        <span className="dept-muted">{dept.channelName ? T.channelName(dept.channelName) : T.none}</span>
       </td>
     </>
   );
@@ -397,30 +377,30 @@ function ManagedDeptRow({
             type="button"
             className="btn btn-ghost btn-sm"
             disabled={busy}
-            aria-label={`Ganti nama ${dept.name}`}
+            aria-label={T.renameAria(dept.name)}
             ref={renameRef}
             onClick={onRename}
           >
-            Ganti nama
+            {MENU.rename}
           </button>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             disabled={busy}
-            aria-label={`Atur admin ${dept.name}`}
+            aria-label={T.adminsAria(dept.name)}
             onClick={onAdmins}
           >
-            Atur admin
+            {MENU.admins}
           </button>
           {dept.memberCount === 0 && (
             <button
               type="button"
               className="btn btn-ghost btn-sm"
               disabled={busy}
-              aria-label={`Arsipkan ${dept.name}`}
+              aria-label={T.archiveAria(dept.name)}
               onClick={onArchive}
             >
-              Arsipkan
+              {MENU.archive}
             </button>
           )}
         </div>
@@ -452,8 +432,8 @@ function ArchivedDeptRow({
       <div className="row-main">
         <span className="row-name">{dept.name}</span>
         <span className="row-sub">
-          {dept.archivedAt ? `Diarsipkan ${formatDate(dept.archivedAt)}` : "Diarsipkan"}
-          {dept.channelName ? `. Channel # ${dept.channelName}, hanya-baca.` : "."}
+          {dept.archivedAt ? T.archivedOn(formatDate(dept.archivedAt)) : T.archivedPlain}
+          {dept.channelName ? T.archivedChannel(dept.channelName) : "."}
         </span>
       </div>
       <div className="row-actions">
@@ -462,10 +442,10 @@ function ArchivedDeptRow({
           className="btn btn-ghost btn-sm"
           disabled={busy}
           aria-busy={working || undefined}
-          aria-label={`Pulihkan ${dept.name}`}
+          aria-label={T.restoreAria(dept.name)}
           onClick={onRestore}
         >
-          {working ? "Memulihkan..." : "Pulihkan"}
+          {working ? T.restoring : MENU.restore}
         </button>
       </div>
       {menu.element}
@@ -491,8 +471,8 @@ function RenameForm({ dept, page, onDone }: { dept: DepartmentView; page: OrgPag
   const next = channelNameFor(name);
   const hint =
     dept.channelName && validateDepartmentName(name) === null && next !== dept.channelName
-      ? `Channel # ${dept.channelName} ikut menjadi # ${next}.`
-      : "Channel departemen ikut berganti nama. Isi chat tidak berubah.";
+      ? T.renameHintChange(dept.channelName, next)
+      : T.renameHint;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -513,7 +493,7 @@ function RenameForm({ dept, page, onDone }: { dept: DepartmentView; page: OrgPag
     setFieldError(null);
     try {
       await orgApi.renameDepartment(dept.id, trimmed);
-      page.notify(`Departemen ${dept.name} sekarang bernama ${trimmed}. Channelnya menjadi # ${channelNameFor(trimmed)}.`);
+      page.notify(T.renamed(dept.name, trimmed, channelNameFor(trimmed)));
       page.refresh();
       onDone();
     } catch (err) {
@@ -541,7 +521,7 @@ function RenameForm({ dept, page, onDone }: { dept: DepartmentView; page: OrgPag
   return (
     <form className="dept-edit" onSubmit={(e) => void submit(e)} onKeyDown={onKeyDown} noValidate>
       <label htmlFor={`${id}-name`} className="sr-only">
-        Nama baru untuk departemen {dept.name}
+        {T.renameLabel(dept.name)}
       </label>
       <div className="dept-edit-row">
         <input
@@ -558,10 +538,10 @@ function RenameForm({ dept, page, onDone }: { dept: DepartmentView; page: OrgPag
           }}
         />
         <button type="submit" className="btn btn-sm" disabled={saving} aria-busy={saving || undefined}>
-          {saving ? "Menyimpan..." : "Simpan nama"}
+          {saving ? T.saving : T.saveName}
         </button>
         <button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={onDone}>
-          Batal
+          {T.cancel}
         </button>
       </div>
       {fieldError && (
@@ -574,7 +554,7 @@ function RenameForm({ dept, page, onDone }: { dept: DepartmentView; page: OrgPag
       </p>
       <div aria-live="polite">
         {error && (
-          <ErrorAlert title="Nama departemen belum diganti">
+          <ErrorAlert title={T.renameFail}>
             <p>{error.message}</p>
           </ErrorAlert>
         )}
@@ -618,7 +598,7 @@ function CreateDialog({ open, onOpenChange, page }: { open: boolean; onOpenChang
       const dept = await orgApi.createDepartment(trimmed);
       const deptName = dept?.name ?? trimmed;
       const channel = dept?.channelName ?? channelNameFor(trimmed);
-      page.notify(`Departemen ${deptName} dibuat, dengan channel # ${channel}.`);
+      page.notify(T.created(deptName, channel));
       page.refresh();
       onOpenChange(false);
     } catch (err) {
@@ -640,12 +620,12 @@ function CreateDialog({ open, onOpenChange, page }: { open: boolean; onOpenChang
       onOpenChange={(next) => {
         if (!saving) onOpenChange(next);
       }}
-      title="Departemen baru"
-      description="Departemen baru langsung mendapat channel chat sendiri. Setelah dibuat, pindahkan orang ke sana lewat tab Pengguna."
+      title={T.newDept}
+      description={T.createDesc}
     >
       <form className="dlg-form" onSubmit={(e) => void submit(e)} noValidate>
         <div className="field">
-          <label htmlFor={`${id}-name`}>Nama departemen</label>
+          <label htmlFor={`${id}-name`}>{T.nameLabel}</label>
           <input
             ref={input}
             id={`${id}-name`}
@@ -664,12 +644,12 @@ function CreateDialog({ open, onOpenChange, page }: { open: boolean; onOpenChang
             </div>
           )}
           <p id={`${id}-hint`} className="hint">
-            {preview ? `Nama channel: # ${preview}` : "2 sampai 60 karakter. Nama channel dibuat dari nama ini."}
+            {preview ? T.channelPreview(preview) : T.nameHint}
           </p>
         </div>
         <div aria-live="polite">
           {error && (
-            <ErrorAlert title="Departemen belum dibuat">
+            <ErrorAlert title={T.createFail}>
               <p>{error.message}</p>
             </ErrorAlert>
           )}
@@ -677,11 +657,11 @@ function CreateDialog({ open, onOpenChange, page }: { open: boolean; onOpenChang
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={saving}>
-              Batal
+              {T.cancel}
             </button>
           </DialogClose>
           <button type="submit" className="btn" disabled={saving} aria-busy={saving || undefined}>
-            {saving ? "Membuat..." : "Buat departemen"}
+            {saving ? T.creating : T.create}
           </button>
         </div>
       </form>
@@ -710,9 +690,7 @@ function AdminDialog({
     try {
       await orgApi.setDepartmentAdmin(dept.id, p.publicKey, admin);
       page.notify(
-        admin
-          ? `${p.displayName} sekarang admin departemen ${dept.name}.`
-          : `${p.displayName} bukan admin departemen ${dept.name} lagi.`,
+        admin ? T.madeAdmin(p.displayName, dept.name) : T.unmadeAdmin(p.displayName, dept.name),
       );
       page.refresh();
     } catch (err) {
@@ -730,14 +708,11 @@ function AdminDialog({
       onOpenChange={(open) => {
         if (!open && working === null) onClose();
       }}
-      title={`Admin departemen ${dept.name}`}
-      description="Menyetujui permintaan bergabung ke departemen ini, membuat kode undangan dan proyek departemen, dan mengatur anggota proyeknya. Satu departemen boleh punya lebih dari satu admin."
+      title={T.adminTitle(dept.name)}
+      description={T.adminDesc}
     >
       {members.length === 0 ? (
-        <p className="org-empty">
-          {dept.name} belum punya anggota. Pindahkan orang ke departemen ini dulu lewat tab Pengguna, lalu angkat admin di
-          sini.
-        </p>
+        <p className="org-empty">{T.adminEmpty(dept.name)}</p>
       ) : (
         <ul className="row-list dept-admin-list">
           {members.map((p) => {
@@ -747,19 +722,19 @@ function AdminDialog({
                 <div className="row-main">
                   <span className="row-name">
                     {p.displayName}
-                    {page.isMe(p.publicKey) && <span className="row-you"> (Anda)</span>}
+                    {page.isMe(p.publicKey) && <span className="row-you">{T.you}</span>}
                   </span>
-                  <span className="row-sub">{isAdmin ? "Admin departemen" : "Anggota"}</span>
+                  <span className="row-sub">{isAdmin ? T.roleAdmin : T.roleMember}</span>
                 </div>
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
                   disabled={working !== null || page.pending !== null}
                   aria-busy={working === p.publicKey || undefined}
-                  aria-label={isAdmin ? `Lepas admin, ${p.displayName}` : `Jadikan admin, ${p.displayName}`}
+                  aria-label={isAdmin ? T.removeAdminAria(p.displayName) : T.makeAdminAria(p.displayName)}
                   onClick={() => void toggle(p, !isAdmin)}
                 >
-                  {working === p.publicKey ? "Menyimpan..." : isAdmin ? "Lepas admin" : "Jadikan admin"}
+                  {working === p.publicKey ? T.saving : isAdmin ? T.removeAdmin : T.makeAdmin}
                 </button>
               </li>
             );
@@ -768,7 +743,7 @@ function AdminDialog({
       )}
       <div aria-live="polite">
         {error && (
-          <ErrorAlert title="Admin departemen belum diubah">
+          <ErrorAlert title={T.adminFail}>
             <p>{error.message}</p>
           </ErrorAlert>
         )}
@@ -776,7 +751,7 @@ function AdminDialog({
       <div className="dlg-actions">
         <DialogClose asChild>
           <button type="button" className="btn btn-ghost" disabled={working !== null}>
-            Tutup
+            {T.close}
           </button>
         </DialogClose>
       </div>

@@ -11,6 +11,8 @@ import {
 } from "../../api/chat";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { CHAT } from "../../i18n/chat";
+import { useLang } from "../../i18n/core";
 import { ConversationActionsContext, type ConversationActions, type ConvRequest } from "./ChatActions";
 import { Composer, type MentionRequest } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
@@ -135,7 +137,9 @@ function ConversationPanel({
 
   const messages = useMemo(() => (view ? mergeMessages(older, view.messages) : []), [older, view]);
   const events = useMemo(() => (view ? mergeEvents(olderEvents, view.events ?? []) : []), [olderEvents, view]);
-  const items = useMemo(() => buildTimeline(messages, events), [messages, events]);
+  // Label pemisah hari ("Hari ini", "Kemarin") ikut bahasa aktif.
+  const lang = useLang();
+  const items = useMemo(() => buildTimeline(messages, events), [messages, events, lang]);
   const loadedIds = useMemo(() => new Set(messages.map((m) => m.id)), [messages]);
   const hasMore = olderHasMore ?? view?.hasMore ?? false;
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -154,7 +158,7 @@ function ConversationPanel({
     if (id === announcedFor.current) return;
     announcedFor.current = id;
     if (lastMessage && !lastMessage.mine && !lastMessage.deleted) {
-      setAnnounce(`Pesan baru dari ${lastMessage.author.name}: ${messagePreview(lastMessage, 160)}`);
+      setAnnounce(CHAT.conv.newMessage(lastMessage.author.name, messagePreview(lastMessage, 160)));
     }
   }, [view, lastMessage]);
 
@@ -314,13 +318,13 @@ function ConversationPanel({
     body = (
       <p className="conv-state" role="status">
         <IconLoader2 size={18} className="conv-spin" aria-hidden="true" />
-        Memuat pesan...
+        {CHAT.conv.loading}
       </p>
     );
   } else if (!view) {
     body = (
       <div className="conv-state-error">
-        <ErrorAlert title="Pesan belum bisa dimuat">
+        <ErrorAlert title={CHAT.conv.loadError}>
           <p>{live.error?.message}</p>
           <button
             type="button"
@@ -329,7 +333,7 @@ function ConversationPanel({
             disabled={retrying}
             aria-busy={retrying || undefined}
           >
-            {retrying ? "Memuat ulang..." : "Coba lagi"}
+            {retrying ? CHAT.reloading : CHAT.retry}
           </button>
         </ErrorAlert>
       </div>
@@ -338,8 +342,8 @@ function ConversationPanel({
     body = (
       <p className="conv-state">
         {summary.canPost
-          ? `Belum ada pesan di ${conversationTarget(summary)}. Tulis pesan pertama di kolom bawah.`
-          : `Belum ada pesan di ${conversationTarget(summary)}.`}
+          ? CHAT.conv.emptyCanPost(conversationTarget(summary))
+          : CHAT.conv.empty(conversationTarget(summary))}
       </p>
     );
   } else {
@@ -354,11 +358,11 @@ function ConversationPanel({
               disabled={loadingOlder}
               aria-busy={loadingOlder || undefined}
             >
-              {loadingOlder ? "Memuat..." : "Muat pesan sebelumnya"}
+              {loadingOlder ? CHAT.conv.loadingOlder : CHAT.conv.loadOlder}
             </button>
             <div aria-live="polite">
               {olderError && (
-                <ErrorAlert title="Pesan sebelumnya belum bisa dimuat">
+                <ErrorAlert title={CHAT.conv.olderError}>
                   <p>{olderError.message}</p>
                 </ErrorAlert>
               )}
@@ -380,7 +384,7 @@ function ConversationPanel({
         />
         {messages.length === 0 && (
           <p className="conv-state conv-state-after">
-            {summary.canPost ? "Belum ada pesan. Tulis pesan pertama di kolom bawah." : "Belum ada pesan."}
+            {summary.canPost ? CHAT.conv.emptyAfterCanPost : CHAT.conv.emptyAfter}
           </p>
         )}
       </>
@@ -423,10 +427,10 @@ function ConversationPanel({
       />
       <div aria-live="polite" className="conv-live">
         {view && live.error && (
-          <ErrorAlert title="Pesan terbaru belum bisa dimuat">
+          <ErrorAlert title={CHAT.conv.latestError}>
             <p>{live.error.message}</p>
             <button type="button" className="link-btn" onClick={() => void retry()} disabled={retrying}>
-              {retrying ? "Memuat ulang..." : "Coba lagi"}
+              {retrying ? CHAT.reloading : CHAT.retry}
             </button>
           </ErrorAlert>
         )}
@@ -434,13 +438,13 @@ function ConversationPanel({
           <div className="conv-copy-error">
             <ErrorAlert title={copyError}>
               <button type="button" className="link-btn" onClick={() => setCopyError(null)}>
-                Tutup
+                {CHAT.close}
               </button>
             </ErrorAlert>
           </div>
         )}
       </div>
-      <div className="conv-scroll" ref={scrollRef} onScroll={onScroll} role="region" aria-label={`Pesan di ${title}`}>
+      <div className="conv-scroll" ref={scrollRef} onScroll={onScroll} role="region" aria-label={CHAT.conv.region(title)}>
         {body}
       </div>
       <p className="sr-only" aria-live="polite">
@@ -464,23 +468,20 @@ function ConversationPanel({
         onOpenChange={(next) => {
           if (!next) setToDelete(null);
         }}
-        title="Hapus pesan ini?"
-        confirmLabel="Hapus pesan"
-        busyLabel="Menghapus..."
+        title={CHAT.conv.deleteTitle}
+        confirmLabel={CHAT.conv.deleteConfirm}
+        busyLabel={CHAT.conv.deleteBusy}
         busy={deleting}
         onConfirm={() => void confirmDelete()}
         error={
           deleteError && (
-            <ErrorAlert title="Pesan belum terhapus">
+            <ErrorAlert title={CHAT.conv.deleteError}>
               <p>{deleteError.message}</p>
             </ErrorAlert>
           )
         }
       >
-        <p>
-          Pesan ini dihapus untuk semua orang di {title} dan tidak bisa dikembalikan. Di percakapan hanya tersisa tanda
-          "Pesan dihapus".
-        </p>
+        <p>{CHAT.conv.deleteBody(title)}</p>
       </ConfirmDialog>
     </section>
     </ConversationActionsContext.Provider>

@@ -1,18 +1,16 @@
 import type { AppState, OrgInfo } from "../../api";
+import { SETTINGS_TEXT as T } from "../../i18n/settings";
 import { AboutSection } from "./AboutSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { DeviceSection } from "./DeviceSection";
+import { LanguageSection } from "./LanguageSection";
 import { NetworkSection } from "./NetworkSection";
 import "./settings.css";
 
-export type SettingsPart = "appearance" | "network" | "device" | "about";
+export type SettingsPart = "appearance" | "language" | "network" | "device" | "about";
 
-const PARTS: { id: SettingsPart; label: string }[] = [
-  { id: "appearance", label: "Tampilan" },
-  { id: "network", label: "Jaringan" },
-  { id: "device", label: "Laptop ini" },
-  { id: "about", label: "Tentang dan pembaruan" },
-];
+// Urutan menu. Labelnya dibaca dari T.parts saat render, supaya ikut bahasa aktif.
+const PARTS: readonly SettingsPart[] = ["appearance", "language", "network", "device", "about"];
 
 type Props = {
   state: AppState & { organization: OrgInfo };
@@ -21,38 +19,39 @@ type Props = {
 };
 
 export function SettingsScreen({ state, part, onPart }: Props) {
-  const current = PARTS.find((p) => p.id === part) ?? PARTS[0];
+  const current = PARTS.includes(part) ? part : PARTS[0];
 
   return (
     <main className="settings" aria-labelledby="page-title">
       <header className="page-head">
         <h1 id="page-title" className="page-title">
-          Pengaturan
+          {T.title}
         </h1>
-        <span className="page-sub">{current.label}</span>
+        <span className="page-sub">{T.parts[current]}</span>
       </header>
       <div className="settings-layout">
-        <nav aria-label="Bagian pengaturan">
+        <nav aria-label={T.partsNav}>
           <ul className="settings-nav">
-            {PARTS.map((p) => (
-              <li key={p.id}>
+            {PARTS.map((id) => (
+              <li key={id}>
                 <button
                   type="button"
                   className="settings-link"
-                  aria-current={part === p.id ? "true" : undefined}
-                  onClick={() => onPart(p.id)}
+                  aria-current={part === id ? "true" : undefined}
+                  onClick={() => onPart(id)}
                 >
-                  {p.label}
+                  {T.parts[id]}
                 </button>
               </li>
             ))}
           </ul>
         </nav>
         <div className="settings-body">
-          {current.id === "appearance" && <AppearanceSection />}
-          {current.id === "network" && <NetworkSection />}
-          {current.id === "device" && <DeviceSection state={state} />}
-          {current.id === "about" && <AboutSection />}
+          {current === "appearance" && <AppearanceSection />}
+          {current === "language" && <LanguageSection />}
+          {current === "network" && <NetworkSection />}
+          {current === "device" && <DeviceSection state={state} />}
+          {current === "about" && <AboutSection />}
         </div>
       </div>
     </main>

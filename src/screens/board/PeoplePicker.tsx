@@ -3,6 +3,8 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "rea
 import type { PersonView } from "../../api/org";
 import { initials } from "../../components/initials";
 import { NameWithLabels } from "../../components/NameWithLabels";
+import { BOARD_DETAIL } from "../../i18n/board-detail";
+import { useLang } from "../../i18n/core";
 import "./people-picker.css";
 
 export type PeoplePickerProps = {
@@ -23,6 +25,9 @@ export type PeoplePickerProps = {
   summary?: (picked: PersonView[]) => ReactNode;
 };
 
+// Teks pemilih, dibaca setiap kali dipakai supaya mengikuti bahasa aktif.
+const T = () => BOARD_DETAIL.picker;
+
 const ALL = "all";
 const GUEST = "guest";
 const NONE = "none";
@@ -33,9 +38,9 @@ function groupKey(p: PersonView): string {
 }
 
 function groupName(p: PersonView): string {
-  if (p.isGuest) return "Tamu";
-  if (!p.departmentId) return "Belum ada departemen";
-  return p.departmentName ?? "Departemen";
+  if (p.isGuest) return T().guest;
+  if (!p.departmentId) return T().noDept;
+  return p.departmentName ?? T().deptFallback;
 }
 
 // Huruf kecil tanpa aksen, supaya "rene" menemukan "René".
@@ -45,8 +50,8 @@ function fold(text: string): string {
 
 function joinParts(parts: string[]): string {
   if (parts.length <= 1) return parts.join("");
-  if (parts.length === 2) return `${parts[0]} dan ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")}, dan ${parts[parts.length - 1]}`;
+  if (parts.length === 2) return T().joinTwo(parts[0], parts[1]);
+  return T().joinMany(parts.slice(0, -1).join(", "), parts[parts.length - 1]);
 }
 
 // "4 orang dari 3 departemen", "2 orang dari 2 departemen dan 1 Tamu". Kosong kalau tidak ada yang dipilih.
@@ -56,14 +61,14 @@ export function describePicked(picked: PersonView[]): string {
   const guests = picked.filter((p) => p.isGuest).length;
   const depts = new Set(inDept.map((p) => p.departmentId)).size;
   const parts: string[] = [];
-  if (inDept.length) parts.push(`${inDept.length} orang dari ${depts} departemen`);
-  if (noDept) parts.push(`${noDept} orang tanpa departemen`);
-  if (guests) parts.push(`${guests} Tamu`);
+  if (inDept.length) parts.push(T().inDept(inDept.length, depts));
+  if (noDept) parts.push(T().withoutDept(noDept));
+  if (guests) parts.push(T().guests(guests));
   return joinParts(parts);
 }
 
 function defaultSummary(picked: PersonView[]): string {
-  return picked.length ? `${describePicked(picked)} dipilih.` : "Belum ada yang dipilih.";
+  return picked.length ? T().picked(describePicked(picked)) : T().noneSelected;
 }
 
 // Kunci publik selalu 64 hex, jadi tidak bentrok dengan penanda ini.
@@ -81,10 +86,11 @@ export function PeoplePicker({
   exclude = NO_KEYS,
   fixedNote,
   disabled = false,
-  label = "Anggota",
-  emptyText = "Belum ada orang lain yang bisa dipilih.",
+  label = T().label,
+  emptyText = T().empty,
   summary = defaultSummary,
 }: PeoplePickerProps) {
+  const lang = useLang();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState(ALL);
   const base = useId();
@@ -111,12 +117,13 @@ export function PeoplePicker({
     }
     const list = [...depts].map(([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name, "id"));
     return [
-      { key: ALL, name: "Semua" },
+      { key: ALL, name: T().all },
       ...list,
-      ...(guests ? [{ key: GUEST, name: "Tamu" }] : []),
-      ...(none ? [{ key: NONE, name: "Belum ada departemen" }] : []),
+      ...(guests ? [{ key: GUEST, name: T().guest }] : []),
+      ...(none ? [{ key: NONE, name: T().noDept }] : []),
     ];
-  }, [offered]);
+    // lang: nama saringan ikut bahasa aktif.
+  }, [offered, lang]);
 
   // Saringan yang tidak ada lagi (orangnya pindah atau dikeluarkan) kembali ke Semua.
   const active = filters.find((f) => f.key === filter) ?? filters[0];
@@ -154,7 +161,9 @@ export function PeoplePicker({
   const tall = offered.length > TALL_AFTER ? " pp-tall" : "";
   const noMatch =
     offered.length > 0 && visible.length === 0
-      ? `Tidak ada nama yang cocok dengan "${query.trim()}"${active.key === ALL ? "" : ` di ${active.name}`}.`
+      ? active.key === ALL
+        ? T().noMatch(query.trim())
+        : T().noMatchIn(query.trim(), active.name)
       : null;
 
   return (
@@ -167,14 +176,14 @@ export function PeoplePicker({
           <div className="pp-search">
             <IconSearch size={16} aria-hidden="true" />
             <label className="sr-only" htmlFor={`${base}-q`}>
-              Cari nama atau departemen
+              {T().search}
             </label>
             <input
               ref={searchRef}
               id={`${base}-q`}
               type="search"
               autoComplete="off"
-              placeholder="Cari nama atau departemen"
+              placeholder={T().search}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               // Enter di kotak cari tidak boleh mengirim form di sekitarnya.
@@ -184,7 +193,7 @@ export function PeoplePicker({
               disabled={disabled}
             />
           </div>
-          <div className="pp-filters" role="group" aria-label="Saring menurut departemen">
+          <div className="pp-filters" role="group" aria-label={T().filterLabel}>
             {filters.map((f) => (
               <button
                 key={f.key}
@@ -209,7 +218,7 @@ export function PeoplePicker({
         </div>
       )}
       {visible.length > 0 && (
-        <ul className={`pp-list${tall}`} aria-label="Daftar orang">
+        <ul className={`pp-list${tall}`} aria-label={T().listLabel}>
           {visible.map((p) => {
             const id = `${base}-${p.publicKey}`;
             return (
@@ -243,7 +252,7 @@ export function PeoplePicker({
       <div aria-live="polite">{noMatch && <p className={`pp-nomatch${tall}`}>{noMatch}</p>}</div>
       <div className="pp-chosen">
         {picked.length > 0 && (
-          <ul className="pp-picked" aria-label="Orang yang dipilih">
+          <ul className="pp-picked" aria-label={T().pickedLabel}>
             {picked.map((p) => (
               <li key={p.publicKey}>
                 <button
@@ -253,7 +262,7 @@ export function PeoplePicker({
                   }}
                   type="button"
                   className="pp-chip"
-                  aria-label={`Hapus ${p.displayName} dari pilihan`}
+                  aria-label={T().unpick(p.displayName)}
                   onClick={() => unpick(p.publicKey)}
                   disabled={disabled}
                 >

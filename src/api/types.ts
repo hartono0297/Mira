@@ -1,4 +1,5 @@
 // Tipe kontrak dengan inti Rust (docs/plans/tahap-0.md dan docs/plans/tahap-1.md bagian 4).
+import { API_TEXT } from "../i18n/api";
 
 export type Role = "superadmin" | "team_admin" | "member" | "guest";
 
@@ -165,33 +166,13 @@ export type AppErrorCode =
 
 export type AppError = { code: AppErrorCode | (string & {}); message: string };
 
-export const ROLE_LABELS: Record<Role, string> = {
-  superadmin: "Superadmin",
-  team_admin: "Admin departemen",
-  member: "Anggota",
-  guest: "Tamu",
-};
+// Label tampilan, mengikuti bahasa aktif (kamus src/i18n/api.*.ts).
+export const ROLE_LABELS: Record<Role, string> = API_TEXT.roles;
 
-export const TEAM_ROLE_LABELS: Record<TeamRole, string> = {
-  admin: "Admin departemen",
-  member: "Anggota",
-};
+export const TEAM_ROLE_LABELS: Record<TeamRole, string> = API_TEXT.teamRoles;
 
-export const INVITE_ROLE_LABELS: Record<InviteRole, string> = {
-  team_admin: "Admin departemen",
-  member: "Anggota",
-  guest: "Tamu",
-};
+export const INVITE_ROLE_LABELS: Record<InviteRole, string> = API_TEXT.inviteRoles;
 
-export const VALIDITY_LABELS: Record<InviteValidity, string> = {
-  "24h": "24 jam",
-  "7d": "7 hari",
-  once: "Sekali pakai",
-};
+export const VALIDITY_LABELS: Record<InviteValidity, string> = API_TEXT.validity;
 
-export const INVITE_STATUS_LABELS: Record<InviteStatus, string> = {
-  active: "Aktif",
-  used: "Terpakai",
-  expired: "Kedaluwarsa",
-  revoked: "Dicabut",
-};
+export const INVITE_STATUS_LABELS: Record<InviteStatus, string> = API_TEXT.inviteStatus;

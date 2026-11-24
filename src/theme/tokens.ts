@@ -1,3 +1,5 @@
+import { THEME_TEXT } from "../i18n/theme";
+
 // Token warna per peran. Layar hanya memakai var(--peran), tidak pernah kode
 // warna langsung. Tema baru (Kertas, Panel) cukup ditambah sebagai objek baru.
 
@@ -41,10 +43,16 @@ export type ThemeDef = {
 
 // Nilai dari design/tema-c.html (.c-light dan .c-dark). Peran danger dan
 // hover tidak ada di tema-c; dipilih sendiri dan dicek kontrasnya (AA).
+// label dan description adalah getter: teksnya dibaca dari kamus saat dipakai,
+// jadi ikut bahasa aktif.
 const bata: ThemeDef = {
   id: "bata",
-  label: "Bata",
-  description: "hangat dan lapang",
+  get label() {
+    return THEME_TEXT.bata.label;
+  },
+  get description() {
+    return THEME_TEXT.bata.description;
+  },
   light: {
     bg: "#FFFFFF",
     side: "#FFF4EE",
@@ -106,8 +114,26 @@ export function parseThemeName(value: unknown): ThemeName {
 // Tema yang direncanakan (design/arah-tampilan.html arah A dan B). Belum
 // bisa dipilih; hanya contoh warna untuk daftar "Nanti" di Pengaturan.
 export const plannedThemes = [
-  { id: "kertas", label: "Kertas", description: "tenang, seperti dokumen", swatches: ["#1F6B52", "#F1EDE4", "#23211C"] },
-  { id: "panel", label: "Panel", description: "padat, untuk kerja cepat", swatches: ["#D9A23A", "#1C2321", "#FFFFFF"] },
+  {
+    id: "kertas",
+    get label() {
+      return THEME_TEXT.kertas.label;
+    },
+    get description() {
+      return THEME_TEXT.kertas.description;
+    },
+    swatches: ["#1F6B52", "#F1EDE4", "#23211C"],
+  },
+  {
+    id: "panel",
+    get label() {
+      return THEME_TEXT.panel.label;
+    },
+    get description() {
+      return THEME_TEXT.panel.description;
+    },
+    swatches: ["#D9A23A", "#1C2321", "#FFFFFF"],
+  },
 ] as const;
 
 function block(selector: string, tokens: TokenSet): string {

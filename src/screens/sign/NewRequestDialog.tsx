@@ -7,11 +7,13 @@ import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { formatSize, kindLabel, modeHint, modeLabel } from "./labels";
+import { SIGN_DIALOGS } from "../../i18n/sign-dialogs";
 
 export const TITLE_MAX = 200;
 // Sama dengan MAX_SIGNERS di inti Rust (signing/request.rs).
 export const SIGNERS_MAX = 20;
-const SIGNERS_MAX_MESSAGE = `Paling banyak ${SIGNERS_MAX} penanda tangan per permintaan. Hapus centang satu nama dulu untuk memilih yang lain.`;
+// Dibaca saat dipakai, supaya mengikuti bahasa aktif.
+const T = () => SIGN_DIALOGS.newRequest;
 
 type Props = {
   open: boolean;
@@ -48,17 +50,15 @@ function GuestChip() {
 // dilepas hanya Tamu (Tamu hanya menandatangani di proyek yang boleh ia buka).
 function droppedText(names: string[], withProject: boolean): string {
   const who = joinNames(names);
-  if (!withProject) {
-    return `Mira melepas ${who} dari penanda tangan karena Tamu hanya bisa menandatangani dokumen di proyek yang boleh ia buka.`;
-  }
-  const subject = names.length > 1 ? "mereka" : "ia";
-  return `Mira melepas ${who} dari penanda tangan karena ${subject} tidak bisa membuka proyek ini.`;
+  if (!withProject) return T().droppedGuest(who);
+  return T().droppedProject(who, names.length > 1);
 }
 
 function joinNames(names: string[]): string {
   if (names.length <= 1) return names.join("");
-  if (names.length === 2) return `${names[0]} dan ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")}, dan ${names[names.length - 1]}`;
+  const and = T().and;
+  if (names.length === 2) return `${names[0]} ${and} ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, ${and} ${names[names.length - 1]}`;
 }
 
 export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Props) {
@@ -119,7 +119,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
         setOrder(sorted.filter((c) => c.isMe).map((c) => c.publicKey));
       } else {
         const gone = prev.filter((k) => !keys.has(k));
-        setDropped(gone.map((k) => before.get(k)?.displayName ?? "Satu penanda tangan"));
+        setDropped(gone.map((k) => before.get(k)?.displayName ?? T().oneSigner));
         setOrder(prev.filter((k) => keys.has(k)));
       }
     } catch (err) {
@@ -190,7 +190,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
   function toggle(key: string, checked: boolean) {
     if (checked && !order.includes(key) && order.length >= SIGNERS_MAX) {
       // Centang ditolak; pesan dibacakan lewat wadah role="alert" di bawah daftar.
-      setSignersError(SIGNERS_MAX_MESSAGE);
+      setSignersError(T().signersMax(SIGNERS_MAX));
       return;
     }
     setSignersError(null);
@@ -213,12 +213,12 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
     e.preventDefault();
     if (saving || !imported) return;
     const clean = title.trim();
-    const tErr = clean.length === 0 ? "Isi judul dokumen." : clean.length > TITLE_MAX ? `Judul paling panjang ${TITLE_MAX} karakter.` : null;
+    const tErr = clean.length === 0 ? T().titleEmpty : clean.length > TITLE_MAX ? T().titleTooLong(TITLE_MAX) : null;
     const sErr =
       chosen.length === 0
-        ? "Pilih minimal satu penanda tangan."
+        ? T().signersEmpty
         : chosen.length > SIGNERS_MAX
-          ? SIGNERS_MAX_MESSAGE
+          ? T().signersMax(SIGNERS_MAX)
           : null;
     setTitleError(tErr);
     setSignersError(sErr);
@@ -255,7 +255,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
       onOpenChange={(next) => {
         if (!saving) onOpenChange(next);
       }}
-      title="Minta tanda tangan"
+      title={T().title}
       description={
         imported ? (
           <>
@@ -270,7 +270,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
     >
       <form className="sign-form" onSubmit={submit} noValidate>
         <div className="field">
-          <label htmlFor={ids.title}>Judul dokumen</label>
+          <label htmlFor={ids.title}>{T().titleLabel}</label>
           <input
             ref={titleRef}
             id={ids.title}
@@ -285,7 +285,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
             disabled={saving}
           />
           <p id={ids.titleHint} className="hint">
-            Tampil di daftar dan di halaman catatan PDF. Paling panjang {TITLE_MAX} karakter.
+            {T().titleHint(TITLE_MAX)}
           </p>
           {/* Wadah alert selalu ada, supaya pesan yang muncul belakangan tetap dibacakan. */}
           <div id={ids.titleError} role="alert">
@@ -294,7 +294,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
         </div>
 
         <div className="field">
-          <label htmlFor={ids.project}>Proyek</label>
+          <label htmlFor={ids.project}>{T().projectLabel}</label>
           <select
             id={ids.project}
             value={projectId}
@@ -302,7 +302,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
             aria-describedby={ids.projectHint}
             disabled={saving}
           >
-            <option value="">Tanpa proyek</option>
+            <option value="">{T().noProject}</option>
             {(projects ?? []).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.code} · {p.name}
@@ -310,18 +310,18 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
             ))}
           </select>
           <p id={ids.projectHint} className="hint">
-            Tamu hanya bisa dipilih untuk proyek yang boleh ia buka. Tanpa proyek, pilihannya anggota saja.
+            {T().projectHint}
           </p>
           {projects === null && !projectsError && (
             <p className="hint" role="status">
-              Memuat daftar proyek...
+              {T().projectsLoading}
             </p>
           )}
           {projectsError && (
             <p className="hint sign-project-error">
-              Daftar proyek belum terbaca ({projectsError.message}). Permintaan tetap bisa dibuat tanpa proyek.{" "}
+              {T().projectsError(projectsError.message)}{" "}
               <button type="button" className="link-btn" onClick={() => void loadProjects()}>
-                Baca daftar proyek lagi
+                {T().projectsRetry}
               </button>
             </p>
           )}
@@ -333,28 +333,28 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
           aria-describedby={signersError ? `${ids.signersHint} ${ids.signersError}` : ids.signersHint}
           disabled={saving}
         >
-          <legend className="sign-legend">Penanda tangan</legend>
+          <legend className="sign-legend">{T().signersLegend}</legend>
           <p id={ids.signersHint} className="hint">
-            Paling banyak {SIGNERS_MAX} orang. Dipilih {chosen.length}.
+            {T().signersHint(SIGNERS_MAX, chosen.length)}
           </p>
           {!candidates && !loadError && (
             <p className="hint" role="status">
-              Memuat daftar anggota...
+              {T().membersLoading}
             </p>
           )}
           {loadError && (
             <div role="alert">
-              <ErrorAlert title="Daftar anggota belum terbaca">
+              <ErrorAlert title={T().membersError}>
                 <p>{loadError.message}</p>
                 <button type="button" className="btn btn-ghost btn-sm sign-inline-btn" onClick={() => void loadCandidates(project)}>
-                  Coba lagi
+                  {T().retry}
                 </button>
               </ErrorAlert>
             </div>
           )}
           {candidates && candidates.length === 0 && (
             <p className="sign-empty-small">
-              {project ? "Belum ada anggota yang boleh membuka proyek ini." : "Belum ada anggota di direktori laptop ini."}
+              {project ? T().noMembersProject : T().noMembers}
             </p>
           )}
           {candidates && candidates.length > 0 && (
@@ -369,7 +369,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
                         checked={checked}
                         onChange={(e) => toggle(c.publicKey, e.target.checked)}
                       />
-                      <span className="sign-pick-name">{c.isMe ? `${c.displayName} (Anda)` : c.displayName}</span>
+                      <span className="sign-pick-name">{c.isMe ? T().me(c.displayName) : c.displayName}</span>
                       {c.kind === "guest" && <GuestChip />}
                     </label>
                   </li>
@@ -388,7 +388,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
         </fieldset>
 
         <fieldset className="sign-set" disabled={saving}>
-          <legend className="sign-legend">Cara menandatangani</legend>
+          <legend className="sign-legend">{T().modeLegend}</legend>
           <div className="sign-opts">
             {(["sequential", "parallel"] as const).map((m) => (
               <label key={m} className="sign-opt">
@@ -417,7 +417,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
         {mode === "sequential" && chosen.length > 1 && (
           <div className="sign-set">
             <h3 id={ids.order} className="sign-legend">
-              Urutan
+              {T().order}
             </h3>
             <ol className="sign-order" aria-labelledby={ids.order}>
               {chosen.map((c, i) => (
@@ -426,7 +426,7 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
                     {i + 1}
                   </span>
                   <span className="sign-order-name">
-                    {c.isMe ? `${c.displayName} (Anda)` : c.displayName}
+                    {c.isMe ? T().me(c.displayName) : c.displayName}
                     {c.kind === "guest" && <GuestChip />}
                   </span>
                   <span className="sign-order-btns">
@@ -438,10 +438,10 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
                       }}
                       onClick={() => move(c.publicKey, "up")}
                       disabled={saving || i === 0}
-                      aria-label={`Naikkan ${c.displayName}`}
+                      aria-label={T().moveUpAria(c.displayName)}
                     >
                       <IconArrowUp size={16} aria-hidden="true" />
-                      Naikkan
+                      {T().moveUp}
                     </button>
                     <button
                       type="button"
@@ -451,10 +451,10 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
                       }}
                       onClick={() => move(c.publicKey, "down")}
                       disabled={saving || i === chosen.length - 1}
-                      aria-label={`Turunkan ${c.displayName}`}
+                      aria-label={T().moveDownAria(c.displayName)}
                     >
                       <IconArrowDown size={16} aria-hidden="true" />
-                      Turunkan
+                      {T().moveDown}
                     </button>
                   </span>
                 </li>
@@ -466,16 +466,13 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
         {hasOthers && (
           <div className="sign-note">
             <IconInfoCircle size={18} aria-hidden="true" />
-            <p>
-              Dikirim ke penanda tangan saat laptop mereka tersambung. Sampai saat itu, permintaan tersimpan di laptop
-              ini.
-            </p>
+            <p>{T().sendNote}</p>
           </div>
         )}
 
         <div aria-live="polite">
           {saveError && (
-            <ErrorAlert title="Permintaan belum dibuat">
+            <ErrorAlert title={T().saveError}>
               <p>{saveError.message}</p>
             </ErrorAlert>
           )}
@@ -484,11 +481,11 @@ export function NewRequestDialog({ open, onOpenChange, imported, onCreated }: Pr
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={saving}>
-              Batal
+              {T().cancel}
             </button>
           </DialogClose>
           <button type="submit" className="btn" disabled={saving || !imported || !candidates} aria-busy={saving || undefined}>
-            {saving ? "Membuat permintaan..." : "Buat permintaan"}
+            {saving ? T().creating : T().create}
           </button>
         </div>
       </form>

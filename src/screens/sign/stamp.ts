@@ -32,6 +32,7 @@ import {
   rgb,
 } from "pdf-lib";
 import type { AppError } from "../../api";
+import { SIGN_TEXT } from "../../i18n/sign";
 
 export type PdfRect = {
   pageIndex: number;
@@ -110,15 +111,13 @@ function zoneLabel(offsetMinutes: number): string {
     : `UTC${sign}${hours}.${String(minutes).padStart(2, "0")}`;
 }
 
-/**
- * Contoh: `22 November 2026, 15.04 WIB`. Zona WIB/WITA/WIT dipilih dari selisih
- * terhadap UTC (+7/+8/+9); selisih lain ditulis `UTC+x`, selisih nol `UTC`.
- * `timeZone` (IANA) untuk tes; bawaan zona lokal laptop.
- */
-export function formatSignedAt(at: string | Date, timeZone?: string): string {
+/** Bagian waktu tanda tangan di zona laptop (atau `timeZone`), untuk PDF dan layar. */
+export type SignedAtParts = { day: number; month: number; year: number; hh: string; mm: string; zone: string };
+
+export function signedAtParts(at: string | Date, timeZone?: string): SignedAtParts {
   const date = at instanceof Date ? at : new Date(at);
   const ms = date.getTime();
-  if (Number.isNaN(ms)) throw new Error("Waktu tanda tangan tidak valid.");
+  if (Number.isNaN(ms)) throw new Error(SIGN_TEXT.stamp.invalidTime);
 
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -144,7 +143,21 @@ export function formatSignedAt(at: string | Date, timeZone?: string): string {
 
   const hh = String(hour).padStart(2, "0");
   const mm = String(minute).padStart(2, "0");
-  return `${day} ${MONTHS_ID[month - 1]} ${year}, ${hh}.${mm} ${zoneLabel(offsetMinutes)}`;
+  return { day, month, year, hh, mm, zone: zoneLabel(offsetMinutes) };
+}
+
+/**
+ * Contoh: `22 November 2026, 15.04 WIB`. Zona WIB/WITA/WIT dipilih dari selisih
+ * terhadap UTC (+7/+8/+9); selisih lain ditulis `UTC+x`, selisih nol `UTC`.
+ * `timeZone` (IANA) untuk tes; bawaan zona lokal laptop.
+ *
+ * Teks ini ditulis ke PDF (stempel dan halaman catatan), jadi selalu bahasa
+ * Indonesia apa pun bahasa tampilan. Layar berbahasa Inggris memakai
+ * signedAtParts lewat formatWhen di labels.ts.
+ */
+export function formatSignedAt(at: string | Date, timeZone?: string): string {
+  const { day, month, year, hh, mm, zone } = signedAtParts(at, timeZone);
+  return `${day} ${MONTHS_ID[month - 1]} ${year}, ${hh}.${mm} ${zone}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,11 +212,10 @@ function looksLikePdf(bytes: Uint8Array): boolean {
   return false;
 }
 
-const ENCRYPTED_MESSAGE =
-  "PDF ini dilindungi kata sandi pemilik, jadi Mira tidak bisa menambahkan tanda tangan. Simpan ulang tanpa perlindungan di aplikasi asalnya, lalu coba lagi.";
-const NOT_PDF_MESSAGE = "File ini bukan PDF atau rusak, jadi tidak bisa ditandatangani.";
-const BROKEN_MESSAGE =
-  "PDF ini rusak atau formatnya tidak didukung, jadi Mira tidak bisa menambahkan tanda tangan. Simpan ulang dari aplikasi asalnya, lalu coba lagi.";
+// Pesan error untuk layar, dibaca saat dilempar supaya mengikuti bahasa aktif.
+const encryptedMessage = () => SIGN_TEXT.stamp.encrypted;
+const notPdfMessage = () => SIGN_TEXT.stamp.notPdf;
+const brokenMessage = () => SIGN_TEXT.stamp.broken;
 
 function mentionsEncrypt(bytes: Uint8Array): boolean {
   // Kamus /Encrypt ada di trailer, dekat akhir file.
@@ -212,17 +224,17 @@ function mentionsEncrypt(bytes: Uint8Array): boolean {
 }
 
 async function loadPdf(bytes: Uint8Array): Promise<PDFDocument> {
-  if (!looksLikePdf(bytes)) throw new Error(NOT_PDF_MESSAGE);
+  if (!looksLikePdf(bytes)) throw new Error(notPdfMessage());
   let doc: PDFDocument;
   try {
     // ignoreEncryption hanya agar enkripsi bisa dideteksi sendiri lalu ditolak di bawah.
     doc = await PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true });
     doc.getPageCount(); // memastikan katalog dan pohon halaman terbaca
   } catch {
-    if (mentionsEncrypt(bytes)) throw new Error(ENCRYPTED_MESSAGE);
-    throw new Error(BROKEN_MESSAGE);
+    if (mentionsEncrypt(bytes)) throw new Error(encryptedMessage());
+    throw new Error(brokenMessage());
   }
-  if (doc.isEncrypted) throw new Error(ENCRYPTED_MESSAGE);
+  if (doc.isEncrypted) throw new Error(encryptedMessage());
   return doc;
 }
 
@@ -230,22 +242,22 @@ async function loadPdf(bytes: Uint8Array): Promise<PDFDocument> {
  * Pemeriksaan sebelum permintaan dibuat: PDF harus bisa dimuat pdf-lib dan
  * tidak terenkripsi, karena stempel nanti dikerjakan pdf-lib. Tanpa ini,
  * kegagalan baru ketahuan setelah PIN dimasukkan. Melempar AppError
- * `pdf_invalid` berpesan Indonesia.
+ * `pdf_invalid` berpesan dalam bahasa tampilan aktif.
  */
 export async function checkSignablePdf(bytes: Uint8Array): Promise<void> {
   try {
     await loadPdf(bytes);
     // Stempel ditulis sebagai incremental update, jadi ujung file harus terbaca.
-    if (!readXrefTail(bytes)) throw new Error(BROKEN_MESSAGE);
+    if (!readXrefTail(bytes)) throw new Error(brokenMessage());
   } catch (err) {
-    const message = err instanceof Error ? err.message : BROKEN_MESSAGE;
+    const message = err instanceof Error ? err.message : brokenMessage();
     throw { code: "pdf_invalid", message } satisfies AppError;
   }
 }
 
 function assertDocTag(docTag: string): void {
   if (!/^[\x21-\x7e]+$/.test(docTag) || /[()\\]/.test(docTag)) {
-    throw new Error("Kode dokumen tidak valid.");
+    throw new Error(SIGN_TEXT.stamp.invalidDocTag);
   }
 }
 
@@ -397,7 +409,7 @@ type Editable = {
 async function openForIncrement(bytes: Uint8Array): Promise<Editable> {
   const doc = await loadPdf(bytes);
   const tail = readXrefTail(bytes);
-  if (!tail) throw new Error(BROKEN_MESSAGE);
+  if (!tail) throw new Error(brokenMessage());
   // Nomor objek baru tidak boleh memakai ulang nomor lama mana pun.
   doc.context.largestObjectNumber = Math.max(doc.context.largestObjectNumber, tail.firstFree - 1);
   return { doc, original: bytes, tail, before: takeSnapshot(doc) };
@@ -569,12 +581,6 @@ export const SIGNATURE_MAX_MEAN_ALPHA = 0.5;
 const COVER_MIN_ALPHA = 128;
 const COVER_MIN_LUMA = 216;
 
-const IMAGE_NOT_TRANSPARENT_MESSAGE =
-  "Gambar tanda tangan ini tidak berlatar transparan, jadi bisa menutup tulisan di dokumen. Gambar ulang tanda tangan, atau impor foto tanda tangan di atas kertas putih.";
-const IMAGE_DENSE_MESSAGE =
-  "Lebih dari separuh gambar tanda tangan ini tertutup tinta, jadi bisa menutup tulisan di dokumen. Gambar ulang dengan goresan yang lebih tipis, atau impor foto tanda tangan di atas kertas putih.";
-const IMAGE_COVER_MESSAGE =
-  "Gambar tanda tangan ini punya bagian putih yang tidak transparan, jadi bisa menutup tulisan di dokumen. Gambar ulang tanda tangan, atau impor foto tanda tangan di atas kertas putih.";
 
 /** Ukuran huruf keterangan: seperenam belas lebar kotak, dibatasi 6 sampai 10 pt. */
 export function captionFontSize(boxWidth: number): number {
@@ -587,7 +593,7 @@ export function captionFontSize(boxWidth: number): number {
  */
 export function signatureImageProblem(rgb: Uint8Array, alpha: Uint8Array | null, pixels: number): string | null {
   if (!alpha || pixels <= 0 || alpha.length < pixels || rgb.length < pixels * 3) {
-    return IMAGE_NOT_TRANSPARENT_MESSAGE;
+    return SIGN_TEXT.stamp.imageNotTransparent;
   }
   let sum = 0;
   let cover = 0;
@@ -599,8 +605,8 @@ export function signatureImageProblem(rgb: Uint8Array, alpha: Uint8Array | null,
       if (luma >= COVER_MIN_LUMA) cover++;
     }
   }
-  if (sum / (pixels * 255) > SIGNATURE_MAX_MEAN_ALPHA + 1e-6) return IMAGE_DENSE_MESSAGE;
-  if (cover > 0) return IMAGE_COVER_MESSAGE;
+  if (sum / (pixels * 255) > SIGNATURE_MAX_MEAN_ALPHA + 1e-6) return SIGN_TEXT.stamp.imageDense;
+  if (cover > 0) return SIGN_TEXT.stamp.imageCover;
   return null;
 }
 
@@ -608,7 +614,7 @@ export function signatureImageProblem(rgb: Uint8Array, alpha: Uint8Array | null,
 async function checkSignatureImage(doc: PDFDocument, image: PDFImage): Promise<void> {
   await image.embed();
   const xobject = doc.context.lookup(image.ref);
-  if (!(xobject instanceof PDFRawStream)) throw new Error(IMAGE_NOT_TRANSPARENT_MESSAGE);
+  if (!(xobject instanceof PDFRawStream)) throw new Error(SIGN_TEXT.stamp.imageNotTransparent);
   const maskRef = xobject.dict.get(PDFName.of("SMask"));
   const mask = maskRef ? doc.context.lookup(maskRef) : undefined;
   const rgb = decodePDFRawStream(xobject).decode();
@@ -644,11 +650,11 @@ function drawnWidth(font: PDFFont, text: string, size: number): number {
 function assertPlacement(doc: PDFDocument, p: PdfRect): PDFPage {
   const count = doc.getPageCount();
   if (!Number.isInteger(p.pageIndex) || p.pageIndex < 0 || p.pageIndex >= count) {
-    throw new Error(`Halaman ${p.pageIndex + 1} tidak ada di PDF ini (jumlah halaman ${count}).`);
+    throw new Error(SIGN_TEXT.stamp.pageMissing(p.pageIndex + 1, count));
   }
   const nums = [p.x, p.y, p.width, p.height];
   if (nums.some((n) => !Number.isFinite(n)) || p.width <= 0 || p.height <= 0) {
-    throw new Error("Posisi tanda tangan tidak valid.");
+    throw new Error(SIGN_TEXT.stamp.invalidPlacement);
   }
   return doc.getPage(p.pageIndex);
 }
@@ -761,7 +767,7 @@ export async function stampSignature(pdf: Uint8Array, opts: StampOptions): Promi
   try {
     image = await doc.embedPng(opts.png);
   } catch {
-    throw new Error("Gambar tanda tangan tidak bisa dibaca.");
+    throw new Error(SIGN_TEXT.stamp.imageUnreadable);
   }
   await checkSignatureImage(doc, image);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -807,6 +813,10 @@ export async function stampSignature(pdf: Uint8Array, opts: StampOptions): Promi
 
 // ---------------------------------------------------------------------------
 // Halaman catatan
+//
+// Semua teks di halaman catatan dan stempel ditulis ke PDF dan menjadi bagian
+// dokumen bertanda tangan yang diperiksa laptop lain, jadi sengaja tidak ikut
+// pilihan bahasa tampilan (v0.4): selalu Indonesia, Helvetica/WinAnsi.
 
 function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
   const fits = (s: string) => font.widthOfTextAtSize(s, size) <= maxWidth;

@@ -1,12 +1,10 @@
 // Tenggat di dialog detail task: teks "Jumat, 27 Nov" dengan sisa hari,
 // pilihan cepat, dan isian hari/bulan/tahun (pengganti kolom tanggal bawaan
 // yang memakai format Amerika di sebagian laptop).
+// Nama hari dan bulan dari kamus board (TEKS.tanggal), dibaca saat dipanggil.
 import { daysUntil, todayIso } from "./format";
+import { TEKS } from "./teks";
 import { TEKS_DIALOG, teksDialog } from "./teksDialog";
-
-const DAYS = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-const DAYS_SHORT = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
 function parseIso(iso: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -20,18 +18,19 @@ function addDays(base: Date, n: number): Date {
 }
 
 function dayMonth(d: Date, now: Date): string {
-  const base = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const base = `${d.getDate()} ${TEKS.tanggal.bulan[d.getMonth()]}`;
   return d.getFullYear() === now.getFullYear() ? base : `${base} ${d.getFullYear()}`;
 }
 
 export type DueParts = { date: string; rel: string; late: boolean };
 
-// "Jumat, 27 Nov" dan "4 hari lagi". Tahun ditulis kalau beda dari tahun ini.
+// "Jumat, 27 Nov" dan "4 hari lagi" (Inggris "Friday, 27 Nov", "in 4 days").
+// Tahun ditulis kalau beda dari tahun ini.
 export function dueParts(iso: string, now: Date = new Date()): DueParts {
   const d = parseIso(iso);
   const n = daysUntil(iso, now);
   if (!d || n === null) return { date: iso, rel: "", late: false };
-  return { date: `${DAYS[d.getDay()]}, ${dayMonth(d, now)}`, rel: teksDialog.sisaHari(n), late: n < 0 };
+  return { date: `${TEKS.tanggal.hari[d.getDay()]}, ${dayMonth(d, now)}`, rel: teksDialog.sisaHari(n), late: n < 0 };
 }
 
 export type QuickDue = { key: string; label: string; iso: string; short: string };
@@ -60,7 +59,7 @@ export function quickDues(now: Date = new Date()): QuickDue[] {
     const iso = todayIso(d);
     if (seen.has(iso)) continue;
     seen.add(iso);
-    out.push({ key: item.key, label: item.label, iso, short: `${DAYS_SHORT[d.getDay()]}, ${dayMonth(d, now)}` });
+    out.push({ key: item.key, label: item.label, iso, short: `${TEKS.tanggal.hariPendek[d.getDay()]}, ${dayMonth(d, now)}` });
   }
   return out;
 }

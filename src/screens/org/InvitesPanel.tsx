@@ -11,6 +11,7 @@ import {
 } from "../../api";
 import { formatDateTime } from "../../api/format";
 import { orgApi } from "../../api/org";
+import { INVITE_TEXT } from "../../i18n/org-invites";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import type { OrgCtx } from "./context";
@@ -29,6 +30,7 @@ type Props = {
 
 export function InvitesPanel({ ctx, canRedeem }: Props) {
   const { dir, pending } = ctx;
+  const T = INVITE_TEXT.panel;
   const [inviting, setInviting] = useState(false);
   // Mencabut tidak bisa dibatalkan, jadi lewat konfirmasi. Error tampil di dialog.
   const [revoking, setRevoking] = useState<InviteView | null>(null);
@@ -65,13 +67,13 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
   const redeemOnly = canRedeem && !dir.me.isSuperadmin && dir.can.manageTeamIds.length === 0;
 
   function detail(inv: InviteView): string {
-    const by = `Dibuat oleh ${ctx.name(inv.createdBy)}, ${formatDateTime(inv.createdAt)}.`;
-    const used = inv.usedBy.length > 0 ? ` Dipakai oleh ${inv.usedBy.map((pk) => ctx.name(pk)).join(", ")}.` : "";
+    const by = T.createdBy(ctx.name(inv.createdBy), formatDateTime(inv.createdAt));
+    const used = inv.usedBy.length > 0 ? T.usedBy(inv.usedBy.map((pk) => ctx.name(pk)).join(", ")) : "";
     const until =
       inv.status === "active"
-        ? ` Berlaku sampai ${formatDateTime(inv.expiresAt)}.`
+        ? T.validUntil(formatDateTime(inv.expiresAt))
         : inv.status === "expired"
-          ? ` Berakhir ${formatDateTime(inv.expiresAt)}.`
+          ? T.endedAt(formatDateTime(inv.expiresAt))
           : "";
     return by + until + used;
   }
@@ -89,7 +91,7 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
       const name = revoking.teamName;
       focusAfterRevoke.current = revoking.id;
       setRevoking(null);
-      ctx.notify(`Kode undangan untuk ${name} dicabut. Kode itu tidak bisa dipakai lagi.`);
+      ctx.notify(INVITE_TEXT.panel.revoked(name));
       await ctx.reload();
     } catch (err) {
       setRevokeError(toAppError(err));
@@ -103,9 +105,9 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
       <section className="set-section" aria-labelledby="invites-title">
         <div>
           <h2 id="invites-title" className="set-title">
-            Pakai kode undangan
+            {T.redeemTitle}
           </h2>
-          <p className="hint">Anda belum masuk departemen mana pun. Admin yang mengundang Anda memberikan kodenya.</p>
+          <p className="hint">{T.redeemHint}</p>
         </div>
         <RedeemForm ctx={ctx} labelledBy="invites-title" />
       </section>
@@ -116,33 +118,24 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
     <section className="set-section" aria-labelledby="invites-title">
       <div className="org-head">
         <h2 id="invites-title" className="set-title" ref={titleRef} tabIndex={-1}>
-          Kode undangan
+          {T.title}
         </h2>
         {manageable.length > 0 && (
           <button type="button" className="btn" onClick={() => setInviting(true)}>
             <IconTicket size={16} aria-hidden="true" />
-            Buat kode undangan
+            {T.create}
           </button>
         )}
       </div>
-      <p className="hint">
-        Isi kode hanya ditampilkan sekali, saat kode dibuat. Di sini terlihat status dan masa berlakunya.
-      </p>
+      <p className="hint">{T.hint}</p>
       {noOpenDepartment && invites.length > 0 && (
-        <p className="hint">
-          Kode baru belum bisa dibuat karena belum ada departemen yang tidak diarsipkan. Buat atau pulihkan departemen di
-          tab Departemen.
-        </p>
+        <p className="hint">{T.noOpenDepartment}</p>
       )}
 
       {invites.length === 0 ? (
         <div className="org-empty">
           <p>
-            {manageable.length > 0
-              ? "Belum ada kode undangan. Buat kode untuk mengundang orang baru ke departemen."
-              : noOpenDepartment
-                ? "Belum ada kode undangan. Kode hanya bisa dibuat untuk departemen yang tidak diarsipkan, dan saat ini belum ada. Buat atau pulihkan departemen di tab Departemen."
-                : "Belum ada kode undangan yang bisa Anda kelola. Kode undangan dibuat oleh admin departemen dan superadmin."}
+            {manageable.length > 0 ? T.emptyManage : noOpenDepartment ? T.emptyNoOpen : T.emptyNone}
           </p>
         </div>
       ) : (
@@ -162,13 +155,13 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
                     type="button"
                     className="btn btn-ghost btn-sm"
                     disabled={busy}
-                    aria-label={`Cabut kode undangan ${label(inv)}`}
+                    aria-label={T.revokeAria(label(inv))}
                     onClick={() => {
                       setRevokeError(null);
                       setRevoking(inv);
                     }}
                   >
-                    Cabut
+                    {T.revoke}
                   </button>
                 </div>
               )}
@@ -184,23 +177,20 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
         onOpenChange={(next) => {
           if (!next) setRevoking(null);
         }}
-        title={revoking ? `Cabut kode undangan ${label(revoking)}?` : "Cabut kode undangan?"}
-        confirmLabel="Cabut kode"
-        busyLabel="Mencabut..."
+        title={revoking ? T.revokeTitle(label(revoking)) : T.revokeTitleFallback}
+        confirmLabel={T.revokeConfirm}
+        busyLabel={T.revoking}
         busy={revokeBusy}
         onConfirm={() => void revoke()}
         error={
           revokeError && (
-            <ErrorAlert title="Kode belum dicabut">
+            <ErrorAlert title={T.revokeFailed}>
               <p>{revokeError.message}</p>
             </ErrorAlert>
           )
         }
       >
-        <p>
-          Orang yang belum memakai kode ini tidak bisa bergabung dengannya lagi. Orang yang sudah bergabung lewat kode
-          ini tetap di organisasi. Pencabutan tidak bisa dibatalkan. Kalau masih perlu, buat kode baru.
-        </p>
+        <p>{T.revokeBody}</p>
       </ConfirmDialog>
 
       <InviteDialog open={inviting} onOpenChange={setInviting} ctx={ctx} teams={manageable} />

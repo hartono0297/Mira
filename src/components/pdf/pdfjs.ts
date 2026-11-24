@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 // Worker dibundel Vite sebagai aset lokal (tidak ada CDN; aplikasi offline penuh).
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { PDF_TEXT } from "../../i18n/components";
 import { isMac } from "../../platform";
 
 // Data pendukung pdf.js (cMaps, font standar, wasm, profil ICC) disalin ke
@@ -109,40 +110,21 @@ export type PdfErrorText = { title: string; detail: string };
 // Pesan untuk pengguna: penyebab dan langkah berikutnya.
 export function describePdfError(err: unknown): PdfErrorText {
   const kind = err instanceof PdfLoadError ? err.kind : "unknown";
+  const T = PDF_TEXT.errors;
   switch (kind) {
     case "empty":
-      return {
-        title: "File PDF kosong",
-        detail: "File ini berukuran 0 byte, jadi tidak ada isi yang bisa ditampilkan. Ambil lagi file aslinya, lalu buka ulang.",
-      };
+      return { title: T.empty.title, detail: T.empty.detail };
     case "invalid":
-      return {
-        title: "File ini bukan PDF atau rusak",
-        detail:
-          "Mira tidak menemukan struktur PDF yang bisa dibaca. Pastikan file berakhiran .pdf dan bisa dibuka di aplikasi lain. Kalau tidak bisa, minta pengirim mengirim ulang.",
-      };
+      return { title: T.invalid.title, detail: T.invalid.detail };
     case "password":
-      return {
-        title: "PDF dikunci kata sandi",
-        detail: "Mira belum bisa membuka PDF yang dikunci. Buka kuncinya di aplikasi PDF lain, simpan tanpa kata sandi, lalu buka lagi di sini.",
-      };
-    case "runtime":
-      return isMac()
-        ? {
-            title: "Komponen tampilan macOS perlu diperbarui",
-            detail:
-              "WebKit di Mac ini terlalu lama untuk menampilkan PDF. Perbarui macOS lewat Pengaturan Sistem > Umum > Pembaruan Perangkat Lunak, lalu coba lagi.",
-          }
-        : {
-            title: "Komponen tampilan Windows perlu diperbarui",
-            detail: "Microsoft Edge WebView2 di komputer ini terlalu lama untuk menampilkan PDF. Jalankan Windows Update atau pasang ulang Mira, lalu coba lagi.",
-          };
+      return { title: T.password.title, detail: T.password.detail };
+    case "runtime": {
+      const text = isMac() ? T.runtimeMac : T.runtimeWindows;
+      return { title: text.title, detail: text.detail };
+    }
     default: {
-      const message = err instanceof Error && err.message ? ` (${err.message})` : "";
-      return {
-        title: "PDF tidak bisa dibuka",
-        detail: `Terjadi kesalahan saat membaca file${message}. Tutup lalu buka lagi file ini. Kalau tetap gagal, file kemungkinan rusak.`,
-      };
+      const message = err instanceof Error && err.message ? err.message : "";
+      return { title: T.unknownTitle, detail: T.unknownDetail(message) };
     }
   }
 }

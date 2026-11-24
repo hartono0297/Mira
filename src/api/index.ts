@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { ERROR_TEXT, localizeError } from "../i18n/errors";
 import type {
   AppError,
   AppState,
@@ -27,15 +28,13 @@ export function isAppError(value: unknown): value is AppError {
   );
 }
 
-// Semua error yang sampai ke layar dibentuk jadi AppError dengan pesan Indonesia.
+// Semua error yang sampai ke layar dibentuk jadi AppError dengan pesan dalam bahasa aktif.
 export function toAppError(value: unknown): AppError {
   if (isAppError(value)) return value;
   const detail = value instanceof Error ? value.message : typeof value === "string" ? value : "";
   return {
     code: "unknown",
-    message: detail
-      ? `Terjadi kesalahan yang tidak dikenali: ${detail}`
-      : "Terjadi kesalahan yang tidak dikenali.",
+    message: detail ? ERROR_TEXT.unknownDetail(detail) : ERROR_TEXT.byCode.unknown,
   };
 }
 
@@ -43,17 +42,22 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+// Objek yang sama setiap kali (pemanggil boleh membandingkannya), pesannya
+// dibaca saat dipakai supaya mengikuti bahasa aktif.
 export const NO_TAURI_ERROR: AppError = {
   code: "no_tauri",
-  message: "Halaman ini dibuka di browser biasa, jadi tidak bisa membaca data Mira di laptop ini.",
+  get message() {
+    return ERROR_TEXT.byCode.no_tauri;
+  },
 };
 
+// Error dari inti Rust diterjemahkan di sini (lihat src/i18n/errors.ts).
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!isTauri()) throw NO_TAURI_ERROR;
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 

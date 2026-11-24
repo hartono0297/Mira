@@ -1,13 +1,18 @@
-// Kalimat riwayat aktivitas task dari kind, detail, dan pelakunya.
-import type { Activity, ColumnId, Person, Priority } from "../../api/board";
-import { COLUMN_NAMES, formatDue, PRIORITY_LABELS } from "./format";
+// Kalimat riwayat aktivitas task dari kind, detail, dan pelakunya. Kalimatnya
+// ada di kamus board (TEKS.aktivitas); detail adalah data tersimpan dan tidak
+// diterjemahkan, kecuali nama kolom bawaan dan prioritas yang punya nama tampilan.
+import type { Activity, Person, Priority } from "../../api/board";
+import { COLUMN_NAMES, columnFromDetail, formatDue, PRIORITY_LABELS } from "./format";
+import { TEKS } from "./teks";
 import { formatDurationLong } from "./timeFormat";
 
 const HEX_KEY = /^[0-9a-f]{64}$/i;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Detail moved/created berisi id kolom atau nama yang disimpan inti Rust ("Dikerjakan").
 function columnName(detail: string): string {
-  return COLUMN_NAMES[detail as ColumnId] ?? detail;
+  const id = columnFromDetail(detail);
+  return id ? COLUMN_NAMES[id] : detail;
 }
 
 // Detail time_logged = jumlah detik. "1 jam 30 menit", "45 menit", "kurang dari 1 menit".
@@ -18,54 +23,50 @@ function loggedText(detail: string): string | null {
 
 function personName(detail: string, people: Person[], me: string): string {
   if (!HEX_KEY.test(detail)) return detail;
-  if (detail === me) return "Anda";
-  return people.find((p) => p.publicKey === detail)?.name ?? "anggota lain";
+  if (detail === me) return TEKS.aktivitas.andaObjek;
+  return people.find((p) => p.publicKey === detail)?.name ?? TEKS.aktivitas.anggotaLain;
 }
 
 // "Sari memindahkan task ke Dikerjakan". Pelaku = "Anda" kalau itu laptop ini.
 export function activitySentence(a: Activity, me: string, people: Person[] = [], now: Date = new Date()): string {
-  const who = a.actor.publicKey === me ? "Anda" : a.actor.name;
+  const T = TEKS.aktivitas;
+  const who = a.actor.publicKey === me ? T.anda : a.actor.name;
   const d = a.detail.trim();
   switch (a.kind) {
     case "created":
-      return `${who} membuat task ini`;
+      return T.created(who);
     case "title":
-      return d ? `${who} mengubah judul menjadi "${d}"` : `${who} mengubah judul`;
+      return T.title(who, d);
     case "description":
-      return `${who} mengubah deskripsi`;
+      return T.description(who);
     case "moved":
-      return d ? `${who} memindahkan task ke ${columnName(d)}` : `${who} memindahkan task`;
+      return T.moved(who, d ? columnName(d) : "");
     case "assignee":
-      return d ? `${who} menugaskan task ke ${personName(d, people, me)}` : `${who} mengosongkan penanggung jawab`;
+      return T.assignee(who, d ? personName(d, people, me) : "");
     case "due":
-      if (!d) return `${who} menghapus tenggat`;
-      return `${who} mengubah tenggat menjadi ${ISO_DATE.test(d) ? formatDue(d, now) : d}`;
+      return T.due(who, d ? (ISO_DATE.test(d) ? formatDue(d, now) : d) : "");
     case "priority":
-      return `${who} mengubah prioritas menjadi ${PRIORITY_LABELS[d as Priority] ?? d}`;
+      return T.priority(who, PRIORITY_LABELS[d as Priority] ?? d);
     case "labels":
-      return d ? `${who} mengubah label menjadi ${d}` : `${who} menghapus semua label`;
+      return T.labels(who, d);
     case "deleted":
-      return `${who} menghapus task ini`;
+      return T.deleted(who);
     case "commented":
-      return `${who} menambahkan komentar`;
+      return T.commented(who);
     case "renumbered":
       // Dua laptop offline membuat nomor yang sama; satu task diberi nomor baru.
-      return d
-        ? `${who} mengganti nomor task ini dari ${d} karena nomornya sama dengan task lain`
-        : `${who} mengganti nomor task ini`;
+      return T.renumbered(who, d);
     case "subtask_added":
-      return d ? `${who} menambahkan subtask "${d}"` : `${who} menambahkan subtask`;
+      return T.subtaskAdded(who, d);
     case "subtask_done":
-      return d ? `${who} menyelesaikan subtask "${d}"` : `${who} menyelesaikan subtask`;
+      return T.subtaskDone(who, d);
     case "subtask_reopened":
-      return d ? `${who} membuka lagi subtask "${d}"` : `${who} membuka lagi subtask`;
+      return T.subtaskReopened(who, d);
     case "subtask_deleted":
-      return d ? `${who} menghapus subtask "${d}"` : `${who} menghapus subtask`;
-    case "time_logged": {
-      const text = loggedText(d);
-      return text ? `${who} mencatat ${text}` : `${who} mencatat waktu`;
-    }
+      return T.subtaskDeleted(who, d);
+    case "time_logged":
+      return T.timeLogged(who, loggedText(d) ?? "");
     default:
-      return d ? `${who} mengubah task: ${d}` : `${who} mengubah task`;
+      return T.other(who, d);
   }
 }

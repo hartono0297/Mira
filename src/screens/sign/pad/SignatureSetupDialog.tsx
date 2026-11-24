@@ -4,6 +4,7 @@ import { toAppError, type AppError } from "../../../api";
 import { Dialog, DialogClose } from "../../../components/Dialog";
 import { ErrorAlert } from "../../../components/ErrorAlert";
 import { FieldError } from "../../../components/FieldError";
+import { SIGN_PAD_TEXT } from "../../../i18n/sign-pad";
 import { importSignatureImage, type SignatureImage } from "./image";
 import { PIN_MAX, validatePin } from "./pin";
 import { SignaturePad, type SignaturePadHandle } from "./SignaturePad";
@@ -37,6 +38,7 @@ function usePngUrl(png: Uint8Array | null): string | null {
 // Dialog "Buat tanda tangan": langkah 1 gambar atau impor, langkah 2 PIN.
 // Isi dikosongkan setiap kali dialog ditutup. Setelah onSave berhasil, dialog ditutup.
 export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
+  const T = SIGN_PAD_TEXT.setup;
   const [step, setStep] = useState<"image" | "pin">("image");
   const [method, setMethod] = useState<Method>("draw");
   const [imported, setImported] = useState<{ image: SignatureImage; fileName: string } | null>(null);
@@ -148,13 +150,13 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
         setPreparing(false);
       }
       if (!result) {
-        setImageError("Kotak gambar masih kosong. Tanda tangani dulu di atas garis.");
+        setImageError(T.padEmpty);
         return;
       }
     } else {
       result = imported?.image ?? null;
       if (!result) {
-        setImageError("Belum ada gambar. Pilih file gambar tanda tangan dulu.");
+        setImageError(T.noImport);
         document.getElementById(ids.file)?.focus();
         return;
       }
@@ -175,8 +177,8 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
   async function save(e: FormEvent) {
     e.preventDefault();
     if (saving || !image) return;
-    const p1 = validatePin(pin, "Buat PIN dulu, 6 sampai 12 angka.");
-    const p2 = p1 ? null : pin2.length === 0 ? "Ketik PIN yang sama sekali lagi." : pin2 !== pin ? "PIN yang diulang tidak sama. Ketik ulang PIN yang sama." : null;
+    const p1 = validatePin(pin, T.newPinEmpty);
+    const p2 = p1 ? null : pin2.length === 0 ? T.repeatEmpty : pin2 !== pin ? T.repeatMismatch : null;
     setPinError(p1);
     setPin2Error(p2);
     setSaveError(null);
@@ -214,20 +216,20 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
       onOpenChange={(next) => {
         if (!busy) onOpenChange(next);
       }}
-      title="Buat tanda tangan"
-      description="Tanda tangan ini dibubuhkan ke PDF yang Anda tandatangani. Gambarnya disimpan terkunci dengan PIN di laptop ini."
+      title={T.title}
+      description={T.description}
     >
       <div className="sig-setup">
-        <p className="sig-step">{step === "image" ? "Langkah 1 dari 2: gambar tanda tangan" : "Langkah 2 dari 2: buat PIN"}</p>
+        <p className="sig-step">{step === "image" ? T.stepImage : T.stepPin}</p>
 
         <div className="sig-step-body" hidden={step !== "image"}>
           <fieldset className="sig-methods">
-            <legend className="sig-legend">Cara membuat</legend>
+            <legend className="sig-legend">{T.methodLegend}</legend>
             <div className="sig-seg">
               {(
                 [
-                  ["draw", "Gambar"],
-                  ["import", "Impor gambar"],
+                  ["draw", T.methodDraw],
+                  ["import", T.methodImport],
                 ] as const
               ).map(([value, text]) => (
                 <label key={value} className="sig-seg-opt">
@@ -247,8 +249,7 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
               ))}
             </div>
             <p id={ids.methodHint} className="hint">
-              Menggambar butuh mouse, pena, atau layar sentuh. Kalau Anda memakai keyboard, pilih Impor gambar dan pakai
-              foto atau hasil pindai tanda tangan.
+              {T.methodHint}
             </p>
           </fieldset>
 
@@ -265,12 +266,12 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
                 className="sr-only"
                 tabIndex={-1}
                 aria-hidden="true"
-                aria-label="File gambar tanda tangan"
+                aria-label={T.fileLabel}
                 onChange={onFile}
               />
               <div className={`sig-paper sig-preview${importedUrl ? "" : " sig-preview-empty"}`}>
                 {importedUrl ? (
-                  <img src={importedUrl} alt={`Pratinjau tanda tangan dari ${imported?.fileName ?? "file"}`} />
+                  <img src={importedUrl} alt={T.previewAlt(imported?.fileName ?? T.previewFallback)} />
                 ) : (
                   <IconPhotoUp size={28} aria-hidden="true" className="sig-preview-icon" />
                 )}
@@ -288,12 +289,12 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
                   aria-describedby={`${ids.importHint} ${ids.imageError}`}
                 >
                   <IconPhotoUp size={18} aria-hidden="true" />
-                  {importing ? "Memproses gambar..." : imported ? "Pilih file lain" : "Pilih file gambar"}
+                  {importing ? T.importing : imported ? T.pickOther : T.pickFile}
                 </button>
                 {imported && <span className="sig-file-name">{imported.fileName}</span>}
               </div>
               <p id={ids.importHint} className="hint">
-                PNG atau JPG, paling besar 5 MB. Foto tanda tangan di kertas putih; latar putihnya dibuang otomatis.
+                {T.importHint}
               </p>
             </div>
           )}
@@ -305,7 +306,7 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
           <div className="dlg-actions">
             <DialogClose asChild>
               <button type="button" className="btn btn-ghost">
-                Batal
+                {T.cancel}
               </button>
             </DialogClose>
             <button
@@ -314,7 +315,7 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
               onClick={goToPin}
               aria-busy={preparing || undefined}
             >
-              {preparing ? "Menyiapkan gambar..." : "Lanjut ke PIN"}
+              {preparing ? T.preparing : T.next}
             </button>
           </div>
         </div>
@@ -322,11 +323,11 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
         {step === "pin" && (
           <form className="sig-step-body" onSubmit={save} noValidate>
             <div className="sig-paper sig-thumb">
-              {finalUrl && <img src={finalUrl} alt="Tanda tangan yang akan disimpan" />}
+              {finalUrl && <img src={finalUrl} alt={T.finalAlt} />}
             </div>
 
             <div className="field">
-              <label htmlFor={ids.pin}>PIN baru</label>
+              <label htmlFor={ids.pin}>{T.newPin}</label>
               <input
                 ref={pinRef}
                 id={ids.pin}
@@ -341,7 +342,7 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
                 disabled={busy}
               />
               <p id={ids.pinHint} className="hint">
-                6 sampai 12 angka. PIN ini diminta setiap kali Anda menandatangani.
+                {T.pinHint}
               </p>
               <div id={ids.pinError} aria-live="polite">
                 {pinError && <FieldError text={pinError} />}
@@ -349,7 +350,7 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
             </div>
 
             <div className="field">
-              <label htmlFor={ids.pin2}>Ulangi PIN</label>
+              <label htmlFor={ids.pin2}>{T.repeatPin}</label>
               <input
                 ref={pin2Ref}
                 id={ids.pin2}
@@ -370,14 +371,12 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
 
             <p className="sig-warn">
               <IconLock size={16} aria-hidden="true" />
-              <span>
-                PIN tidak bisa dipulihkan, juga oleh admin. Kalau lupa, hapus tanda tangan ini lalu buat yang baru.
-              </span>
+              <span>{T.warn}</span>
             </p>
 
             <div aria-live="polite">
               {saveError && (
-                <ErrorAlert title="Tanda tangan belum tersimpan">
+                <ErrorAlert title={T.saveErrorTitle}>
                   <p>{saveError.message}</p>
                 </ErrorAlert>
               )}
@@ -386,10 +385,10 @@ export function SignatureSetupDialog({ open, onOpenChange, onSave }: Props) {
             <div className="dlg-actions">
               <button type="button" className="btn btn-ghost" onClick={backToImage} disabled={busy}>
                 <IconArrowLeft size={18} aria-hidden="true" />
-                Kembali
+                {T.back}
               </button>
               <button ref={saveRef} type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
-                {busy ? "Menyimpan..." : "Simpan tanda tangan"}
+                {busy ? T.saving : T.save}
               </button>
             </div>
           </form>

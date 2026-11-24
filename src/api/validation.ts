@@ -1,4 +1,5 @@
 // Validasi cepat di tampilan. Aturan yang sama dicek ulang di Rust.
+import { API_TEXT } from "../i18n/api";
 
 function length(value: string): number {
   return [...value].length;
@@ -6,24 +7,27 @@ function length(value: string): number {
 
 export function validateDisplayName(raw: string): string | null {
   const name = raw.trim();
-  if (length(name) === 0) return "Isi nama tampilan dulu.";
-  if (length(name) > 50) return "Nama tampilan paling banyak 50 karakter.";
+  const t = API_TEXT.validation;
+  if (length(name) === 0) return t.displayNameEmpty;
+  if (length(name) > 50) return t.displayNameMax(50);
   return null;
 }
 
 export function validateOrgName(raw: string): string | null {
   const name = raw.trim();
-  if (length(name) === 0) return "Isi nama organisasi dulu.";
-  if (length(name) < 2) return "Nama organisasi minimal 2 karakter.";
-  if (length(name) > 80) return "Nama organisasi paling banyak 80 karakter.";
+  const t = API_TEXT.validation;
+  if (length(name) === 0) return t.orgNameEmpty;
+  if (length(name) < 2) return t.orgNameMin(2);
+  if (length(name) > 80) return t.orgNameMax(80);
   return null;
 }
 
 export function validateTeamName(raw: string): string | null {
   const name = raw.trim();
-  if (length(name) === 0) return "Isi nama departemen dulu.";
-  if (length(name) < 2) return "Nama departemen minimal 2 karakter.";
-  if (length(name) > 60) return "Nama departemen paling banyak 60 karakter.";
+  const t = API_TEXT.validation;
+  if (length(name) === 0) return t.teamNameEmpty;
+  if (length(name) < 2) return t.teamNameMin(2);
+  if (length(name) > 60) return t.teamNameMax(60);
   return null;
 }
 
@@ -31,8 +35,9 @@ export function validateTeamName(raw: string): string | null {
 // karakter (validate_team_name); di sini paling banyak 50.
 export function validateDepartmentName(raw: string): string | null {
   const name = raw.trim();
-  if (length(name) === 0) return "Isi nama departemen dulu.";
-  if (length(name) < 2) return "Nama departemen minimal 2 karakter.";
-  if (length(name) > 50) return "Nama departemen paling banyak 50 karakter.";
+  const t = API_TEXT.validation;
+  if (length(name) === 0) return t.teamNameEmpty;
+  if (length(name) < 2) return t.teamNameMin(2);
+  if (length(name) > 50) return t.teamNameMax(50);
   return null;
 }

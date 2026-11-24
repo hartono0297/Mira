@@ -10,19 +10,28 @@ const EM_DASH = "\u2014";
 
 type Problem = string;
 
-function sampleArgs(fn: (...args: never[]) => unknown): unknown[] {
-  // Angka 2 cocok untuk jamak dan hitungan; string untuk nama dan judul.
-  return Array.from({ length: fn.length }, (_, i) => (i % 2 === 0 ? 2 : "Contoh"));
+// Tipe parameter tidak terlihat saat dijalankan, jadi beberapa kombinasi dicoba:
+// angka 2 untuk jamak dan hitungan, string untuk nama dan judul.
+function sampleArgSets(length: number): unknown[][] {
+  const pick = (f: (i: number) => unknown) => Array.from({ length }, (_, i) => f(i));
+  return [
+    pick(() => "Contoh"),
+    pick(() => 2),
+    pick((i) => (i % 2 === 0 ? 2 : "Contoh")),
+    pick((i) => (i % 2 === 0 ? "Contoh" : 2)),
+  ];
 }
 
 function render(value: unknown): string | null {
   if (typeof value === "string") return value;
   if (typeof value === "function") {
-    try {
-      const out = (value as (...a: unknown[]) => unknown)(...sampleArgs(value as never));
-      return typeof out === "string" ? out : null;
-    } catch {
-      return null;
+    for (const args of sampleArgSets(value.length)) {
+      try {
+        const out = (value as (...a: unknown[]) => unknown)(...args);
+        if (typeof out === "string") return out;
+      } catch {
+        // Coba kombinasi berikutnya.
+      }
     }
   }
   return null;

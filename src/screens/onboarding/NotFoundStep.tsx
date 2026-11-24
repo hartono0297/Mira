@@ -6,7 +6,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import type { SearchEnd } from "./SearchStep";
 import { StepHeading } from "./StepHeading";
-import { ADMIN_IT } from "./texts";
+import { ADMIN_IT, ONB } from "./texts";
 
 type Props = {
   end: SearchEnd;
@@ -18,9 +18,6 @@ type Props = {
   onSearchAgain: () => void;
   onNewOffice: () => void;
 };
-
-const NO_OFFICE_AT_ADDRESS =
-  "Tidak ada kantor yang menjawab dari alamat itu. Periksa alamatnya, dan pastikan Mira di laptop rekan sedang terbuka.";
 
 // (d) Kantor belum ditemukan: alamat laptop rekan, kode undangan, atau cari lagi.
 export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAgain, onNewOffice }: Props) {
@@ -35,13 +32,14 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
   const inputId = useId();
   const hintId = useId();
   const errId = useId();
+  const T = ONB.notFound;
 
   async function connect(e: FormEvent) {
     e.preventDefault();
     if (connecting) return;
     const value = address.trim();
     if (!value) {
-      setFieldError("Isi alamat laptop rekan dulu, misalnya 192.168.1.20.");
+      setFieldError(T.addressEmpty);
       setServerError(null);
       inputRef.current?.focus();
       return;
@@ -56,7 +54,7 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
         return;
       }
       setConnecting(false);
-      setFieldError(NO_OFFICE_AT_ADDRESS);
+      setFieldError(T.noOfficeAtAddress);
       inputRef.current?.focus();
     } catch (err) {
       const error = toAppError(err);
@@ -74,28 +72,23 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
 
   return (
     <div className="onb-form">
-      <StepHeading>{searched ? "Kantor belum ditemukan" : "Cari kantor dengan cara lain"}</StepHeading>
+      <StepHeading>{searched ? T.headingSearched : T.headingOther}</StepHeading>
       {searched ? (
-        <p className="onb-lead">
-          Tidak ada kantor Mira yang terlihat di jaringan ini. Ini biasa terjadi kalau Anda tersambung lewat VPN,
-          atau memakai Wi-Fi tamu yang terpisah dari jaringan kantor.
-        </p>
+        <p className="onb-lead">{T.leadSearched}</p>
       ) : (
-        <p className="onb-lead">
-          Kalau kantor Anda tidak muncul di pencarian, sambungkan langsung ke laptop rekan atau pakai kode undangan.
-        </p>
+        <p className="onb-lead">{T.leadOther}</p>
       )}
 
       {end.kind === "mdns" && (
         <div className="onb-note">
-          <strong>Pencarian otomatis tidak berjalan di laptop ini</strong>
+          <strong>{T.mdnsTitle}</strong>
           {end.error && <p>{end.error}</p>}
-          <p>Pakai alamat laptop rekan atau kode undangan di bawah.</p>
+          <p>{T.mdnsHint}</p>
         </div>
       )}
       {end.kind === "timeout" && !end.ok && end.error && (
         <div className="onb-note">
-          <strong>Pencarian tidak selesai</strong>
+          <strong>{T.incompleteTitle}</strong>
           <p>{end.error.message}</p>
         </div>
       )}
@@ -104,11 +97,10 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
         <IconDeviceLaptop size={22} aria-hidden="true" />
         <div className="onb-way-body">
           <label htmlFor={inputId} className="onb-way-title">
-            Masukkan alamat laptop rekan
+            {T.addressLabel}
           </label>
           <p id={hintId} className="hint">
-            Minta alamat IP dari rekan yang sudah memakai Mira. Alamatnya ada di Mira milik rekan, menu Pengaturan,
-            bagian Jaringan.
+            {T.addressHint}
           </p>
           <div className="onb-way-row">
             <input
@@ -117,7 +109,7 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
               name="peerAddress"
               autoComplete="off"
               spellCheck={false}
-              placeholder="contoh: 192.168.1.20"
+              placeholder={T.addressPlaceholder}
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               aria-invalid={fieldError ? true : undefined}
@@ -125,13 +117,13 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
               disabled={connecting}
             />
             <button type="submit" className="btn btn-sm" disabled={connecting} aria-busy={connecting || undefined}>
-              {connecting ? "Menghubungkan..." : "Hubungkan"}
+              {connecting ? T.connecting : T.connect}
             </button>
           </div>
           <div id={errId} aria-live="polite">
             {fieldError && <FieldError text={fieldError} />}
             {serverError && (
-              <ErrorAlert title="Laptop rekan belum tersambung">
+              <ErrorAlert title={T.connectFailed}>
                 <p>{serverError.message}</p>
               </ErrorAlert>
             )}
@@ -142,15 +134,15 @@ export function NotFoundStep({ end, officeSeen, onOffices, onInvite, onSearchAga
       <button type="button" className="onb-choice" onClick={onInvite} disabled={connecting}>
         <IconKey size={22} aria-hidden="true" />
         <span>
-          <span className="onb-choice-title">Pakai kode undangan</span>
-          <span className="onb-choice-desc">Kode dari admin kantor atau admin departemen.</span>
+          <span className="onb-choice-title">{T.inviteTitle}</span>
+          <span className="onb-choice-desc">{T.inviteDesc}</span>
         </span>
       </button>
 
       <div className="onb-actions">
         <button type="button" className="btn btn-ghost" onClick={onSearchAgain} disabled={connecting}>
           <IconRefresh size={18} aria-hidden="true" />
-          Cari lagi
+          {T.searchAgain}
         </button>
       </div>
 

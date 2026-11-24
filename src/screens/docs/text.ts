@@ -2,10 +2,17 @@
 import type { AppError } from "../../api";
 import { formatDate, relativeTime } from "../../api/format";
 import type { DocumentKind, DocumentSummary, DocumentVersion, PersonRef } from "../../api/documents";
+import { defineText, locale, subscribeLang } from "../../i18n/core";
+import en from "../../i18n/docs.en";
+import id from "../../i18n/docs.id";
+
+// Semua teks layar Dokumen, mengikuti bahasa aktif. Bacalah saat render atau
+// di dalam fungsi, bukan di tingkat modul.
+export const DOCS = defineText(id, en);
 
 // Lokasi dokumen: Pustaka Umum (projectId null) atau satu proyek. Label proyek
 // "<KODE> <nama>", sama dengan opsi di select Lokasi. null = Pustaka Umum.
-export const LIBRARY_LABEL = "Pustaka Umum";
+// Label proyek adalah data (kode dan nama proyek), jadi tidak diterjemahkan.
 
 export function projectLabel(p: { code: string; name: string }): string {
   return `${p.code} ${p.name}`;
@@ -13,25 +20,23 @@ export function projectLabel(p: { code: string; name: string }): string {
 
 // Lokasi di tengah kalimat: "Pustaka Umum" atau "proyek PA Gudang".
 export function placeText(label: string | null): string {
-  return label === null ? LIBRARY_LABEL : `proyek ${label}`;
+  return DOCS.place(label);
 }
 
 export function addedText(added: { name: string }[], label: string | null): string {
-  const what = added.length === 1 ? added[0].name : `${added.length} file`;
-  return `${what} ditambahkan ke ${placeText(label)}.`;
+  const what = added.length === 1 ? added[0].name : DOCS.addedCount(added.length);
+  return DOCS.added(what, placeText(label));
 }
 
 export function emptyTitle(label: string | null): string {
-  return label === null ? `${LIBRARY_LABEL} masih kosong` : `Belum ada file di proyek ${label}`;
+  return DOCS.emptyTitle(label);
 }
 
 // Sesuai documents::scope::may_view: Pustaka Umum untuk semua anggota aktif
 // bukan Tamu; file proyek hanya untuk anggota proyek itu (termasuk Tamu yang
 // diundang ke proyek itu, yang juga anggota proyek di board).
 export function visibilityHint(label: string | null): string {
-  return label === null
-    ? `File di ${LIBRARY_LABEL} terlihat oleh semua anggota organisasi, kecuali Tamu.`
-    : `File di proyek ${label} hanya terlihat oleh anggota proyek itu.`;
+  return DOCS.visibility(label);
 }
 
 // Proyek yang diingat tidak ada lagi di daftar proyek saya (dikeluarkan, atau
@@ -39,19 +44,18 @@ export function visibilityHint(label: string | null): string {
 // (label proyek, atau null untuk Pustaka Umum); undefined = tidak ada lokasi
 // lain (Tamu tanpa proyek).
 export function goneNote(label: string, next?: string | null): string {
-  const gone = `Proyek ${label} tidak tersedia lagi untuk Anda.`;
-  return next === undefined ? gone : `${gone} Menampilkan ${placeText(next)}.`;
+  const gone = DOCS.gone(label);
+  return next === undefined ? gone : `${gone} ${DOCS.showing(placeText(next))}`;
 }
 
-// Tamu tidak melihat Pustaka Umum dan tidak bisa menambah file (documents::access).
-export const GUEST_NO_PROJECT_TITLE = "Belum ada proyek yang bisa Anda buka";
-export const GUEST_NO_PROJECT_TEXT =
-  "Sebagai Tamu, Anda hanya melihat file di proyek tempat Anda diundang. Minta pengelola proyek menambahkan Anda.";
-export const GUEST_EMPTY_TEXT =
-  "File yang ditambahkan anggota proyek muncul di sini. Tamu bisa membuka file, tetapi tidak menambahkannya.";
-
+// Penulis versi di awal baris ("Anda", "You").
 export function person(p: PersonRef): string {
-  return p.isMe ? "Anda" : p.displayName;
+  return p.isMe ? DOCS.you : p.displayName;
+}
+
+// Penulis versi di tengah kalimat (bahasa Inggris: "you" huruf kecil).
+export function personInline(p: PersonRef): string {
+  return p.isMe ? DOCS.youInline : p.displayName;
 }
 
 export function editable(kind: DocumentKind): boolean {
@@ -73,20 +77,21 @@ function sameDay(a: Date, b: Date): boolean {
 export function clockTime(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+  const time = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
   if (sameDay(d, now)) return time;
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (sameDay(d, yesterday)) return `kemarin ${time}`;
-  return `${formatDate(iso)} ${time}`;
+  if (sameDay(d, yesterday)) return DOCS.yesterdayAt(time);
+  return DOCS.dateAt(formatDate(iso), time);
 }
 
 // "versi 4 dan 5", "versi 3, 4, dan 5": nomor naik.
 export function versionList(versions: DocumentVersion[]): string {
   const nums = versions.map((v) => v.number).sort((a, b) => a - b);
-  if (nums.length <= 1) return `versi ${nums.join("")}`;
-  if (nums.length === 2) return `versi ${nums[0]} dan ${nums[1]}`;
-  return `versi ${nums.slice(0, -1).join(", ")}, dan ${nums[nums.length - 1]}`;
+  if (nums.length === 0) return DOCS.versionOne("");
+  if (nums.length === 1) return DOCS.versionOne(nums[0]);
+  if (nums.length === 2) return DOCS.versionTwo(nums[0], nums[1]);
+  return DOCS.versionMany(nums.slice(0, -1).join(", "), nums[nums.length - 1]);
 }
 
 // Isi versi yang belum ada di laptop ini:
@@ -104,42 +109,22 @@ export function fetchState(v: DocumentVersion): FetchState | null {
 
 // Penjelasan untuk riwayat versi dan kartu bentrok.
 export function fetchText(state: FetchState): string {
-  switch (state) {
-    case "copying":
-      return "Isinya sedang disalin dari laptop rekan.";
-    case "waiting":
-      return "Isinya disalin otomatis begitu laptop rekan yang menyimpannya tersambung.";
-    case "manual":
-      return "File di atas 20 MB tidak disalin otomatis. Unduh kalau Anda perlu membukanya.";
-  }
+  return DOCS.fetch[state];
 }
 
 export function downloadLabel(v: DocumentVersion): string {
-  return `Unduh dari rekan (${formatSize(v.size)})`;
+  return DOCS.downloadLabel(formatSize(v.size));
 }
 
 // Menu klik kanan dan tombol "..." di baris file.
-export const menuLabel = (name: string) => `Aksi untuk ${name}`;
-export const menuButtonLabel = (name: string) => `Aksi lain untuk ${name}`;
-export const OPEN_READONLY_LABEL = "Buka hanya baca";
-export const HISTORY_LABEL = "Lihat riwayat versi";
-export const EXPORT_LABEL = "Simpan salinan";
-export const COPY_NAME_LABEL = "Salin nama";
-export const WAIT_REASON = "Tunggu aksi lain selesai";
-export const COPY_FAILED_TITLE = "Nama file belum bisa disalin";
-export const CLIPBOARD_MISSING = "Papan klip tidak tersedia di jendela ini.";
-export const copiedText = (name: string) => `Nama ${name} disalin.`;
+// Label tetapnya ada di DOCS (openReadOnly, history, exportCopy, copyName, waitReason).
+export const menuLabel = (name: string) => DOCS.menuLabel(name);
+export const menuButtonLabel = (name: string) => DOCS.menuButtonLabel(name);
+export const copiedText = (name: string) => DOCS.copied(name);
 
 // Simpan salinan butuh isi versi sekarang di laptop ini.
 export function exportBlockedReason(state: FetchState): string {
-  switch (state) {
-    case "copying":
-      return "Isinya masih disalin dari laptop rekan";
-    case "waiting":
-      return "Isinya menunggu laptop rekan tersambung";
-    case "manual":
-      return "Unduh dulu isinya dari rekan";
-  }
+  return DOCS.exportBlocked[state];
 }
 
 export type StatusKind = "normal" | "mine" | "rekan" | "conflict" | "fetch";
@@ -152,24 +137,23 @@ export function statusLines(doc: DocumentSummary, now: Date = new Date()): Statu
   if (doc.conflict && doc.conflictVersions.length > 1) {
     lines.push({
       kind: "conflict",
-      text: `Bentrok: ${versionList(doc.conflictVersions)} tersimpan berdampingan`,
+      text: DOCS.status.conflict(versionList(doc.conflictVersions)),
     });
   }
   for (const e of doc.editing) {
     const since = clockTime(e.since, now);
     if (e.local) {
-      const app = appName(doc.kind);
-      lines.push({ kind: "mine", text: `Sedang Anda edit${app ? ` di ${app}` : ""} sejak ${since}` });
+      lines.push({ kind: "mine", text: DOCS.status.mine(appName(doc.kind), since) });
     } else {
-      lines.push({ kind: "rekan", text: `Sedang diedit ${e.editor.displayName} sejak ${since}` });
+      lines.push({ kind: "rekan", text: DOCS.status.rekan(e.editor.displayName, since) });
     }
   }
   if (lines.length === 0) {
     const v = doc.current;
-    const verb = v.origin === "added" ? "Ditambahkan" : "Diubah";
+    const line = v.origin === "added" ? DOCS.status.added : DOCS.status.edited;
     lines.push({
       kind: "normal",
-      text: `Versi ${v.number} · ${verb} ${person(v.author)} ${relativeTime(v.createdAt, now)}`,
+      text: line(v.number, personInline(v.author), relativeTime(v.createdAt, now)),
     });
   }
   // Kepala bentrok punya keterangan sendiri di kotak bentrok.
@@ -178,10 +162,10 @@ export function statusLines(doc: DocumentSummary, now: Date = new Date()): Statu
     const n = doc.current.number;
     const text =
       fetch === "copying"
-        ? `Versi ${n} sedang disalin dari laptop rekan`
+        ? DOCS.status.copying(n)
         : fetch === "waiting"
-          ? `Versi ${n} menunggu laptop rekan tersambung`
-          : `Versi ${n} belum diunduh (${formatSize(doc.current.size)})`;
+          ? DOCS.status.waiting(n)
+          : DOCS.status.manual(n, formatSize(doc.current.size));
     lines.push({ kind: "fetch", text });
   }
   return lines;
@@ -190,15 +174,15 @@ export function statusLines(doc: DocumentSummary, now: Date = new Date()): Statu
 export function originText(v: DocumentVersion, kind: DocumentKind): string {
   switch (v.origin) {
     case "added":
-      return "Ditambahkan";
+      return DOCS.origin.added;
     case "edited": {
       const app = appName(kind);
-      return app ? `Disimpan dari ${app}` : "Disimpan";
+      return app ? DOCS.origin.savedFrom(app) : DOCS.origin.saved;
     }
     case "restored":
-      return v.restoredFromNumber !== null ? `Dipulihkan dari versi ${v.restoredFromNumber}` : "Dipulihkan dari versi lama";
+      return v.restoredFromNumber !== null ? DOCS.origin.restoredFrom(v.restoredFromNumber) : DOCS.origin.restoredOld;
     case "resolved":
-      return "Bentrok diselesaikan";
+      return DOCS.origin.resolved;
   }
 }
 
@@ -207,53 +191,38 @@ export function formatSize(bytes: number): string {
   const kb = bytes / 1024;
   if (kb < 1024) return `${Math.round(kb)} KB`;
   const mb = kb / 1024;
-  return `${mb.toLocaleString("id-ID", { maximumFractionDigits: 1 })} MB`;
+  return `${mb.toLocaleString(locale(), { maximumFractionDigits: 1 })} MB`;
 }
 
 // Saran tambahan untuk error dari inti Rust, sesuai aksi yang gagal.
 export type ActionKind = "add" | "edit" | "finish" | "open" | "restore" | "resolve" | "export" | "download";
 
-// Pesan Indonesia dari inti Rust dipakai apa adanya, kecuali kode yang perlu
-// kalimat lebih jelas untuk orang awam.
-export const NOT_AVAILABLE_TEXT = "Belum ada laptop rekan yang tersambung dan menyimpan file ini.";
+// Pesan dari inti Rust dipakai apa adanya (call() sudah menerjemahkannya saat
+// bahasa Inggris aktif), kecuali kode yang perlu kalimat lebih jelas untuk orang awam.
+// Ekspor hidup (let) supaya ikut berganti bersama bahasa; dibaca langsung oleh tes.
+export let NOT_AVAILABLE_TEXT = DOCS.notAvailable;
+subscribeLang(() => {
+  NOT_AVAILABLE_TEXT = DOCS.notAvailable;
+});
 
 export function errorMessage(error: AppError): string {
-  return error.code === "not_available" ? NOT_AVAILABLE_TEXT : error.message;
+  return error.code === "not_available" ? DOCS.notAvailable : error.message;
 }
 
 export function errorTitle(error: AppError, action: ActionKind): string {
-  if (error.code === "forbidden") return "Anda tidak punya izin untuk ini";
-  if (error.code === "not_found") return "File atau versi ini sudah tidak ada";
-  switch (action) {
-    case "download":
-      return "File belum bisa diunduh";
-    case "add":
-      return "File belum bisa ditambahkan";
-    case "edit":
-      return "File belum bisa dibuka untuk diedit";
-    case "finish":
-      return "Edit belum bisa diselesaikan";
-    case "open":
-      return "File belum bisa dibuka";
-    case "restore":
-      return "Versi belum bisa dipulihkan";
-    case "resolve":
-      return "Bentrok belum bisa diselesaikan";
-    case "export":
-      return "Salinan belum bisa disimpan";
-  }
+  if (error.code === "forbidden") return DOCS.errorTitle.forbidden;
+  if (error.code === "not_found") return DOCS.errorTitle.notFound;
+  return DOCS.errorTitle[action];
 }
 
 export function errorHint(error: AppError, action: ActionKind): string | null {
   if (error.code === "document_editing") {
-    if (action === "finish") return "Tutup file di Word atau Excel dulu, lalu tekan Selesai mengedit lagi.";
-    if (action === "restore" || action === "resolve") return "File ini sedang diedit. Selesaikan edit dulu, lalu coba lagi.";
-    return "File ini sedang diedit. Tunggu sampai editnya selesai.";
+    if (action === "finish") return DOCS.errorHint.finishEditing;
+    if (action === "restore" || action === "resolve") return DOCS.errorHint.editingRetry;
+    return DOCS.errorHint.editingWait;
   }
-  if (error.code === "not_available") {
-    return "Coba lagi saat laptop rekan yang menyimpan versi ini menyala dan tersambung ke Mira.";
-  }
-  if (error.code === "not_found") return "Daftar file sudah dimuat ulang. Periksa lagi sebelum mencoba.";
-  if (error.code === "open_failed") return "Pastikan Microsoft Office atau aplikasi untuk jenis file ini terpasang di laptop ini.";
+  if (error.code === "not_available") return DOCS.errorHint.notAvailable;
+  if (error.code === "not_found") return DOCS.errorHint.notFound;
+  if (error.code === "open_failed") return DOCS.errorHint.openFailed;
   return null;
 }

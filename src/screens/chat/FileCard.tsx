@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
 import { chatApi, type FileView } from "../../api/chat";
 import { MenuButton, menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
+import { CHAT } from "../../i18n/chat";
 import { MENU } from "./menuText";
 import { fileKind, formatSize, type FileKind } from "./text";
 
@@ -138,10 +139,10 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
 
   const errorTitle =
     error?.action === "open"
-      ? "File belum bisa dibuka"
+      ? CHAT.file.openError
       : error?.action === "save"
-        ? "File belum tersimpan"
-        : "File belum bisa diunduh";
+        ? CHAT.file.saveError
+        : CHAT.file.downloadError;
 
   return (
     <div className="conv-file" {...menu.triggerProps}>
@@ -154,7 +155,7 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
             {file.state === "fetching" && (
               <span className="conv-file-busy">
                 <IconLoader2 size={14} className="conv-spin" aria-hidden="true" />
-                Mengunduh...
+                {CHAT.file.downloading}
               </span>
             )}
           </p>
@@ -167,10 +168,10 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
               onClick={() => void openFile()}
               aria-disabled={busy !== null || undefined}
               aria-busy={busy === "open" || undefined}
-              aria-label={`Buka ${file.name}`}
+              aria-label={CHAT.file.openLabel(file.name)}
             >
               <IconExternalLink size={16} aria-hidden="true" />
-              {busy === "open" ? "Membuka..." : "Buka"}
+              {busy === "open" ? CHAT.file.opening : CHAT.file.open}
             </button>
             <button
               type="button"
@@ -181,7 +182,7 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
               aria-label={MENU.saveCopyFile(file.name)}
             >
               <IconDeviceFloppy size={16} aria-hidden="true" />
-              {busy === "save" ? "Menyimpan..." : MENU.saveCopy}
+              {busy === "save" ? CHAT.file.saving : MENU.saveCopy}
             </button>
             {more}
           </div>
@@ -194,14 +195,14 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
               onClick={() => void download()}
               aria-disabled={busy !== null || undefined}
               aria-busy={busy === "download" || undefined}
-              aria-label={`Unduh ${file.name}`}
+              aria-label={CHAT.file.downloadLabel(file.name)}
             >
               {busy === "download" ? (
                 <IconLoader2 size={16} className="conv-spin" aria-hidden="true" />
               ) : (
                 <IconDownload size={16} aria-hidden="true" />
               )}
-              {busy === "download" ? "Mengunduh..." : "Unduh"}
+              {busy === "download" ? CHAT.file.downloading : CHAT.file.download}
             </button>
             {more}
           </div>
@@ -211,11 +212,11 @@ export function FileCard({ messageId, file, onDownloaded, onAnnounce }: Props) {
       {file.state === "missing" && (
         <p className="conv-file-note">
           <IconCloudOff size={14} aria-hidden="true" />
-          Belum tersedia. File diunduh otomatis saat laptop rekan yang menyimpannya online.
+          {CHAT.file.missing}
         </p>
       )}
       <div aria-live="polite">
-        {saved && <p className="conv-file-note">{file.name} tersimpan.</p>}
+        {saved && <p className="conv-file-note">{CHAT.file.saved(file.name)}</p>}
         {error && (
           <p className="conv-file-error" role="alert">
             <strong>{errorTitle}.</strong> {error.error.message}

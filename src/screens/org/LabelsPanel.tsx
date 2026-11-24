@@ -9,6 +9,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { MAX_LABELS_SHOWN } from "../../components/NameWithLabels";
 import { PeoplePicker } from "../../components/PeoplePicker";
+import { LABEL_TEXT as T } from "../../i18n/org-labels";
 import type { OrgPage } from "./context";
 import { useOrgLive } from "./useOrgLive";
 import "./labels.css";
@@ -19,14 +20,7 @@ const MAX_NAME = 30;
 type Data = { labels: LabelView[]; people: PersonView[] };
 
 // Teks menu klik kanan baris label. Label item sama dengan tombol di baris.
-const MENU = {
-  label: (name: string) => `Aksi untuk label ${name}`,
-  assign: "Atur orang",
-  rename: "Ganti nama",
-  remove: "Hapus",
-  restore: "Pulihkan",
-  busy: "Tunggu perubahan yang sedang disimpan.",
-};
+const MENU = T.menu;
 
 type DialogState =
   | { kind: "create" }
@@ -48,7 +42,7 @@ function chars(value: string): number {
 async function loadData(): Promise<Data> {
   const [labels, people] = await Promise.all([orgApi.labels(), orgApi.people()]);
   if (!Array.isArray(labels) || !Array.isArray(people)) {
-    throw { code: "bad_data", message: "Inti Mira mengirim data label yang tidak terbaca." };
+    throw { code: "bad_data", message: T.badData };
   }
   return { labels, people };
 }
@@ -56,12 +50,12 @@ async function loadData(): Promise<Data> {
 // Validasi nama label di tampilan. Inti Rust mengecek ulang panjangnya.
 function nameProblem(raw: string, labels: LabelView[], current?: LabelView): string | null {
   const name = raw.trim();
-  if (chars(name) === 0) return "Isi nama label dulu.";
-  if (chars(name) > MAX_NAME) return `Nama label paling banyak ${MAX_NAME} karakter (sekarang ${chars(name)}).`;
-  if (current && name === current.name) return "Nama ini sama dengan nama sekarang.";
+  if (chars(name) === 0) return T.nameEmpty;
+  if (chars(name) > MAX_NAME) return T.nameTooLong(MAX_NAME, chars(name));
+  if (current && name === current.name) return T.nameSame;
   const twin = labels.find((l) => l.id !== current?.id && collator.compare(l.name, name) === 0);
-  if (twin && !twin.archived) return `Label ${twin.name} sudah ada.`;
-  if (twin) return `Label ${twin.name} ada di bagian Dihapus. Pulihkan label itu supaya orang yang dulu memakainya ikut kembali.`;
+  if (twin && !twin.archived) return T.nameTaken(twin.name);
+  if (twin) return T.nameTakenRemoved(twin.name);
   return null;
 }
 
@@ -113,8 +107,8 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
     const ok = await page.act(
       `label-restore:${l.id}`,
       () => orgApi.setLabelArchived(l.id, false),
-      `Label ${l.name} dipulihkan dan kembali tampil di samping nama orang yang dulu memakainya.`,
-      `Label ${l.name} belum dipulihkan`,
+      T.restored(l.name),
+      T.restoreFail(l.name),
     );
     if (ok) setReturnTo(l.id);
   };
@@ -124,57 +118,43 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
       <div className="org-head">
         <div>
           <h2 id="labels-title" className="set-title">
-            Label
+            {T.title}
           </h2>
-          <p className="hint lbl-hint">
-            Label tampil di samping nama di chat, daftar pengguna, dan pemilih orang. Paling banyak {MAX_LABELS_SHOWN}{" "}
-            label tampil di samping satu nama. Hanya superadmin yang mengatur label.
-          </p>
+          <p className="hint lbl-hint">{T.intro(MAX_LABELS_SHOWN)}</p>
         </div>
         <div className="org-head-actions">
           <button type="button" className="btn" disabled={busy} onClick={() => setDialog({ kind: "create" })}>
             <IconPlus size={18} aria-hidden="true" />
-            Label baru
+            {T.newLabel}
           </button>
         </div>
       </div>
 
       {live.loading && !data && (
         <p className="hint" role="status">
-          Memuat daftar label...
+          {T.loading}
         </p>
       )}
 
       {!live.loading && !data && (
         <div role="alert">
-          <ErrorAlert title="Daftar label belum terbaca">
-            <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar label."}</p>
+          <ErrorAlert title={T.loadErrorTitle}>
+            <p>{live.error?.message ?? T.loadErrorEmpty}</p>
             <button type="button" className="btn btn-ghost org-retry" onClick={() => void live.reload()}>
-              Coba lagi
+              {T.retry}
             </button>
           </ErrorAlert>
         </div>
       )}
 
-      {data && live.error && (
-        <p className="hint">Daftar label terbaru belum bisa dibaca ({live.error.message}). Yang tampil adalah data terakhir.</p>
-      )}
+      {data && live.error && <p className="hint">{T.stale(live.error.message)}</p>}
 
       {data && active.length === 0 && (
-        <div className="org-empty">
-          {removed.length === 0 ? (
-            <p>
-              Belum ada label. Buat label untuk keahlian atau posisi, misalnya Drafter atau K3, lewat tombol Label baru,
-              lalu pasang ke orang.
-            </p>
-          ) : (
-            <p>Semua label sudah dihapus. Pulihkan dari bagian Dihapus di bawah, atau buat lewat tombol Label baru.</p>
-          )}
-        </div>
+        <div className="org-empty">{removed.length === 0 ? <p>{T.empty}</p> : <p>{T.allRemoved}</p>}</div>
       )}
 
       {data && active.length > 0 && (
-        <ul className="row-list" aria-label="Label aktif">
+        <ul className="row-list" aria-label={T.activeList}>
           {active.map((l) => (
             <LabelRow
               key={l.id}
@@ -197,13 +177,10 @@ export function LabelsPanel({ page }: { page: OrgPage }) {
         <details className="org-fold lbl-gone">
           <summary ref={removedSummary}>
             <IconChevronRight size={16} className="org-fold-chev" aria-hidden="true" />
-            Dihapus ({removed.length})
+            {T.removedFold(removed.length)}
           </summary>
-          <p className="hint lbl-gone-hint">
-            Label yang dihapus tidak tampil di samping nama siapa pun. Pulihkan supaya label kembali ke orang yang dulu
-            memakainya.
-          </p>
-          <ul className="row-list" aria-label="Label yang dihapus">
+          <p className="hint lbl-gone-hint">{T.removedHint}</p>
+          <ul className="row-list" aria-label={T.removedList}>
             {removed.map((l) => (
               <RemovedLabelRow
                 key={l.id}
@@ -275,23 +252,23 @@ function LabelRow({
     <li className="lbl-row" {...menu.triggerProps}>
       <div className="lbl-main">
         <span className="lab lbl-lab">{label.name}</span>
-        <span className="lbl-count">{count === 0 ? "Belum dipasang ke siapa pun" : `${count} orang`}</span>
+        <span className="lbl-count">{count === 0 ? T.unassigned : T.people(count)}</span>
       </div>
       <div className="lbl-actions">
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy} ref={assignRef} onClick={onAssign}>
           <span>
-            Atur orang
-            <span className="sr-only">, label {label.name}</span>
+            {MENU.assign}
+            <span className="sr-only">{T.srLabelComma(label.name)}</span>
           </span>
         </button>
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onRename}>
           <span>
-            Ganti nama
-            <span className="sr-only">, label {label.name}</span>
+            {MENU.rename}
+            <span className="sr-only">{T.srLabelComma(label.name)}</span>
           </span>
         </button>
         <button type="button" className="btn btn-ghost btn-sm lbl-del" disabled={busy} onClick={onDelete}>
-          Hapus <span className="sr-only">label {label.name}</span>
+          {MENU.remove} <span className="sr-only">{T.srLabel(label.name)}</span>
         </button>
       </div>
       {menu.element}
@@ -321,7 +298,7 @@ function RemovedLabelRow({
     <li className="lbl-row" {...menu.triggerProps}>
       <div className="lbl-main">
         <span className="lab lbl-lab lbl-lab-gone">{label.name}</span>
-        <span className="lbl-count">{count === 0 ? "Tidak ada orang tersimpan" : `${count} orang tersimpan`}</span>
+        <span className="lbl-count">{count === 0 ? T.noneSaved : T.saved(count)}</span>
       </div>
       <div className="lbl-actions">
         <button
@@ -331,8 +308,8 @@ function RemovedLabelRow({
           aria-busy={working || undefined}
           onClick={onRestore}
         >
-          {working ? "Memulihkan... " : "Pulihkan "}
-          <span className="sr-only">label {label.name}</span>
+          {working ? T.restoringBtn : T.restoreBtn}
+          <span className="sr-only">{T.srLabel(label.name)}</span>
         </button>
       </div>
       {menu.element}
@@ -380,7 +357,7 @@ function NameForm({
   return (
     <form className="dlg-form" onSubmit={submit} noValidate>
       <div className="field">
-        <label htmlFor={inputId}>Nama label</label>
+        <label htmlFor={inputId}>{T.nameLabel}</label>
         <input
           id={inputId}
           value={value}
@@ -392,7 +369,7 @@ function NameForm({
           readOnly={busy}
         />
         <p id={hintId} className="hint">
-          1 sampai {MAX_NAME} karakter, misalnya Drafter, K3, atau Senior.
+          {T.nameHint(MAX_NAME)}
         </p>
         {shown && (
           <div id={errId}>
@@ -410,7 +387,7 @@ function NameForm({
       <div className="dlg-actions">
         <DialogClose asChild>
           <button type="button" className="btn btn-ghost" disabled={busy}>
-            Batal
+            {T.cancel}
           </button>
         </DialogClose>
         <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
@@ -443,7 +420,7 @@ function CreateLabelDialog({
     setError(null);
     try {
       const id = await orgApi.createLabel(name);
-      page.notify(`Label ${name} dibuat.`);
+      page.notify(T.created(name));
       page.refresh();
       setCreated({ id, name, archived: false, createdAt: "", memberKeys: [] });
     } catch (err) {
@@ -459,7 +436,7 @@ function CreateLabelDialog({
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
-      title={created ? `Atur orang untuk label ${created.name}` : "Label baru"}
+      title={created ? T.assignTitle(created.name) : T.newLabel}
     >
       {created ? (
         <LabelAssigner
@@ -469,23 +446,18 @@ function CreateLabelDialog({
           busy={busy}
           setBusy={setBusy}
           onDone={onClose}
-          closeText="Atur nanti"
+          closeText={T.later}
           focusSearch
-          intro={
-            <p className="notice-plain">
-              Label {created.name} sudah dibuat. Centang orang yang memakainya lalu pilih Simpan, atau atur nanti lewat
-              tombol Atur orang di barisnya.
-            </p>
-          }
+          intro={<p className="notice-plain">{T.createdIntro(created.name)}</p>}
         />
       ) : (
         <NameForm
           initial=""
           labels={labels}
           busy={busy}
-          submitText="Buat label"
-          busyText="Membuat label..."
-          failTitle="Label belum dibuat"
+          submitText={T.create}
+          busyText={T.creating}
+          failTitle={T.createFail}
           error={error}
           onSubmit={(name) => void create(name)}
         />
@@ -513,7 +485,7 @@ function RenameLabelDialog({
     setError(null);
     try {
       await orgApi.renameLabel(label.id, name);
-      page.notify(`Label ${label.name} sekarang bernama ${name}.`);
+      page.notify(T.renamed(label.name, name));
       page.refresh();
       onClose();
     } catch (err) {
@@ -528,16 +500,16 @@ function RenameLabelDialog({
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
-      title={`Ganti nama label ${label.name}`}
+      title={T.renameTitle(label.name)}
     >
       <NameForm
         initial={label.name}
         labels={labels}
         current={label}
         busy={busy}
-        submitText="Simpan nama"
-        busyText="Menyimpan nama..."
-        failTitle="Nama label belum diganti"
+        submitText={T.saveName}
+        busyText={T.savingName}
+        failTitle={T.renameFail}
         error={error}
         onSubmit={(name) => void rename(name)}
       />
@@ -568,7 +540,7 @@ function DeleteLabelDialog({
     setError(null);
     try {
       await orgApi.setLabelArchived(label.id, true);
-      page.notify(`Label ${label.name} dihapus. Label ini bisa dipulihkan dari bagian Dihapus.`);
+      page.notify(T.deleted(label.name));
       page.refresh();
       onDeleted(label.id);
       onClose();
@@ -584,28 +556,21 @@ function DeleteLabelDialog({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title={`Hapus label ${label.name}?`}
-      confirmLabel={`Hapus ${label.name}`}
-      busyLabel="Menghapus..."
+      title={T.deleteTitle(label.name)}
+      confirmLabel={T.deleteConfirm(label.name)}
+      busyLabel={T.deleting}
       busy={busy}
       onConfirm={() => void remove()}
       error={
         error && (
-          <ErrorAlert title={`Label ${label.name} belum terhapus`}>
+          <ErrorAlert title={T.deleteFail(label.name)}>
             <p>{error.message}</p>
           </ErrorAlert>
         )
       }
     >
-      <p>
-        {count > 0
-          ? `Label ${label.name} hilang dari samping nama ${count} orang dan tidak bisa dipasang lagi.`
-          : `Label ${label.name} hilang dari daftar dan tidak bisa dipasang lagi.`}
-      </p>
-      <p>
-        Daftar orang yang memakainya tetap tersimpan. Kalau nanti label ini dipulihkan dari bagian Dihapus, label kembali
-        ke orang yang sama.
-      </p>
+      <p>{count > 0 ? T.deleteBodyCount(label.name, count) : T.deleteBody(label.name)}</p>
+      <p>{T.deleteKeep}</p>
     </ConfirmDialog>
   );
 }
@@ -628,9 +593,9 @@ function AssignDialog({
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
-      title={`Atur orang untuk label ${label.name}`}
+      title={T.assignTitle(label.name)}
     >
-      <LabelAssigner page={page} label={label} people={people} busy={busy} setBusy={setBusy} onDone={onClose} closeText="Batal" />
+      <LabelAssigner page={page} label={label} people={people} busy={busy} setBusy={setBusy} onDone={onClose} closeText={T.cancel} />
     </Dialog>
   );
 }
@@ -698,7 +663,7 @@ function LabelAssigner({
     const base = new Set(baseline);
     let done = 0;
     for (const step of steps) {
-      setProgress(`Menyimpan perubahan ${done + 1} dari ${steps.length}...`);
+      setProgress(T.progress(done + 1, steps.length));
       try {
         await orgApi.setLabelAssigned(label.id, step.key, step.assigned);
       } catch (err) {
@@ -715,10 +680,7 @@ function LabelAssigner({
     }
     setProgress(null);
     setBusy(false);
-    const parts: string[] = [];
-    if (toAdd.length > 0) parts.push(`dipasang ke ${toAdd.length} orang`);
-    if (toRemove.length > 0) parts.push(`dilepas dari ${toRemove.length} orang`);
-    page.notify(`Label ${label.name} ${parts.join(" dan ")}.`);
+    page.notify(T.assignDone(label.name, toAdd.length, toRemove.length));
     page.refresh();
     onDone();
   };
@@ -730,36 +692,25 @@ function LabelAssigner({
         people={people}
         selected={chosen}
         onToggle={toggle}
-        listLabel={`Orang untuk label ${label.name}`}
+        listLabel={T.pickerList(label.name)}
         labelsOf={(p) => p.labels.filter((l) => l.id !== label.id)}
         isMe={page.isMe}
         disabled={busy}
         autoFocusSearch={focusSearch}
-        summaryExtra={changes > 0 ? `, ${changes} perubahan belum disimpan` : null}
+        summaryExtra={changes > 0 ? T.unsaved(changes) : null}
         renderNote={(p) => {
           const others = p.labels.filter((l) => l.id !== label.id).length;
-          return others >= MAX_LABELS_SHOWN
-            ? `Sudah punya ${others} label lain. Di samping nama hanya tampil ${MAX_LABELS_SHOWN} label pertama menurut abjad.`
-            : null;
+          return others >= MAX_LABELS_SHOWN ? T.tooMany(others, MAX_LABELS_SHOWN) : null;
         }}
       />
 
       <div aria-live="polite">
         {progress && <p className="hint">{progress}</p>}
         {saveError && (
-          <ErrorAlert
-            title={
-              saveError.assigned
-                ? `Berhenti saat memasang label ke ${saveError.who}`
-                : `Berhenti saat melepas label dari ${saveError.who}`
-            }
-          >
+          <ErrorAlert title={saveError.assigned ? T.stopAssign(saveError.who) : T.stopRemove(saveError.who)}>
             <p>{saveError.error.message}</p>
             <p>
-              {saveError.done === 0
-                ? "Belum ada perubahan yang tersimpan."
-                : `${saveError.done} dari ${saveError.total} perubahan sudah tersimpan.`}{" "}
-              Pilih Simpan untuk mencoba sisanya.
+              {saveError.done === 0 ? T.noneStored : T.someStored(saveError.done, saveError.total)} {T.retryRest}
             </p>
           </ErrorAlert>
         )}
@@ -772,7 +723,7 @@ function LabelAssigner({
           </button>
         </DialogClose>
         <button type="button" className="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => void save()}>
-          {busy ? "Menyimpan..." : "Simpan"}
+          {busy ? T.saving : T.save}
         </button>
       </div>
     </div>

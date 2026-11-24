@@ -4,6 +4,7 @@ import { boardApi, type ProjectSummary } from "../../api/board";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { BOARD_DETAIL } from "../../i18n/board-detail";
 import { projectNameProblem } from "./format";
 import { useHeld } from "./useHeld";
 
@@ -81,6 +82,7 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
     }
   }
 
+  const T = BOARD_DETAIL.rename;
   return (
     <Dialog
       open={open}
@@ -89,11 +91,11 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
         if (!next) reset();
         onOpenChange(next);
       }}
-      title="Ubah nama proyek"
+      title={T.title}
     >
       <form className="np-form" onSubmit={submit} noValidate>
         <div className="field">
-          <label htmlFor={inputId}>Nama proyek</label>
+          <label htmlFor={inputId}>{T.nameLabel}</label>
           <input
             ref={inputRef}
             id={inputId}
@@ -111,25 +113,20 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
             readOnly={busy}
           />
           <p id={hintId} className="hint">
-            2 sampai 80 karakter. Kode {project.code} dan nomor task seperti {project.code}-1 tidak berubah.
+            {T.hint(project.code)}
           </p>
           <div id={errId} aria-live="polite">
             {problem && <FieldError text={problem} />}
             {moved && (
               <p className="np-moved">
-                Nama ini baru diubah di laptop lain menjadi "{project.name}".{" "}
-                {draft === null
-                  ? "Simpan nama tidak mengubah apa pun selama Anda belum mengetik."
-                  : "Simpan nama mengganti nama itu dengan ketikan Anda."}
+                {T.moved(project.name)} {draft === null ? T.movedUntyped : T.movedTyped}
               </p>
             )}
           </div>
         </div>
         <div aria-live="polite">
           {server && (
-            <ErrorAlert
-              title={server.code === "forbidden" ? "Anda tidak punya izin mengubah nama proyek ini" : "Nama proyek belum diubah"}
-            >
+            <ErrorAlert title={server.code === "forbidden" ? T.forbiddenTitle : T.failedTitle}>
               <p>{server.message}</p>
             </ErrorAlert>
           )}
@@ -137,11 +134,11 @@ export function RenameProjectDialog({ open, onOpenChange, project, onRenamed }: 
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {T.cancel}
             </button>
           </DialogClose>
           <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
-            {busy ? "Menyimpan..." : "Simpan nama"}
+            {busy ? T.saving : T.save}
           </button>
         </div>
       </form>

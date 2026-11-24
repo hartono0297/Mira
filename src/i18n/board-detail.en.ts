@@ -1,0 +1,161 @@
+import type { Dict } from "./core";
+import { plural } from "./core";
+import type id from "./board-detail.id";
+
+const people = (n: number) => `${n} ${plural(n, "person", "people")}`;
+
+const en: Dict<typeof id> = {
+  reminder: {
+    title: "Due date reminders",
+    dayBefore: "A day before the due date",
+    dueDay: "On the due date",
+    note: (system: string) =>
+      `For tasks assigned to you that aren't done yet. Notifications appear in ${system}, on this laptop only. If the laptop is off at that time, the reminder shows up once it's back on and Mira is running again.`,
+    loading: "Loading settings...",
+    loadErrorTitle: "Couldn't read the reminder settings",
+    retry: "Try again",
+    legend: "Send reminders",
+    saved: (label: string, on: boolean) => `Reminder "${label}" turned ${on ? "on" : "off"}.`,
+    saveErrorTitle: (label: string) => `Reminder "${label}" not saved`,
+    reverted: "The checkbox is back to how it was. Try changing it again.",
+  },
+  rename: {
+    title: "Rename project",
+    nameLabel: "Project name",
+    hint: (code: string) => `2 to 80 characters. The code ${code} and task numbers like ${code}-1 stay the same.`,
+    moved: (name: string) => `Someone on another laptop just renamed this to "${name}".`,
+    movedUntyped: "Save name changes nothing until you type.",
+    movedTyped: "Save name replaces that name with what you typed.",
+    forbiddenTitle: "You don't have permission to rename this project",
+    failedTitle: "Project not renamed",
+    cancel: "Cancel",
+    saving: "Saving...",
+    save: "Save name",
+  },
+  newProject: {
+    title: "New project",
+    description: "Each project has its own board. The project code becomes the prefix of its task numbers.",
+    codeRule: "The code must be 2 to 6 characters, letters A to Z or digits, starting with a letter. For example: PA or WEB2.",
+    forbiddenTitle: "You don't have permission to create projects",
+    failedTitle: "Project not created",
+    forbiddenHint: "Projects are created by a superadmin or a department admin. Ask your department admin to create it for you.",
+    summaryNone:
+      "Nobody selected yet: this project will have only you, as its manager. You can add members and Guests later from the Project members panel.",
+    summaryPicked: (picked: string) =>
+      `${picked}, plus you as the manager. Guests are invited after the project is created, from the Project members panel.`,
+    cannotTitle: "Only a superadmin or a department admin can create projects.",
+    cannotGuest: "Guests only see the projects they're invited to. Ask a project manager to add you.",
+    cannotAskAdmins: (names: string) => `Ask your department admin (${names}) to create it and add you as a member.`,
+    cannotAsk: "Ask your department admin or a superadmin to create it and add you as a member.",
+    you: "You",
+    youManager: "You, manager",
+    deptAndMembers: "Department and members",
+    loadingOrg: "Loading departments and people...",
+    orgError: (message: string) =>
+      `Couldn't read the departments and people (${message}). You can create the project once the list loads, so its department and members are right.`,
+    retryRead: "Read again",
+    dept: "Department",
+    noDept: "No department",
+    deptHint: (dept: string) =>
+      `The ${dept} department admins help you manage this project, and Guests invited through this department can be given access. Only the members you pick can see the project.`,
+    noDeptHint:
+      "A project without a department is managed by you and any superadmin who is a member. Only the members you pick can see the project.",
+    emptyPeople:
+      "There's nobody else to pick yet. You can still create the project and add members later from the Project members panel.",
+    close: "Close",
+    nameLabel: "Project name",
+    codeLabel: "Project code",
+    codeHint: (example: string) =>
+      `2 to 6 letters or digits, starting with a letter. Tasks in this project are numbered like ${example}. The code can't be changed after the project is created.`,
+    cancel: "Cancel",
+    creating: "Creating project...",
+    create: "Create project",
+  },
+  members: {
+    title: "Project members",
+    groupManager: "Managers",
+    groupMember: "Members",
+    groupGuest: "Guests",
+    guestByInvite: "Guest by invite",
+    guestAdded: "Guest, added to this project",
+    creator: (dept: string) => `${dept}, project creator`,
+    me: (name: string) => `${name} (you)`,
+    removedSay: (name: string) => `${name} was removed from the project.`,
+    addedOneSay: (name: string) => `${name} was added to the project.`,
+    addedManySay: (n: number) => `${people(n)} added to the project.`,
+    loading: "Loading project members...",
+    loadErrorTitle: "Couldn't read the member list",
+    loadErrorEmpty: "The Mira core didn't send the member list.",
+    retry: "Try again",
+    notRegistered:
+      "This project isn't registered with the organization yet, so its members can't be managed. Older projects are registered automatically when their creator's laptop opens this version of Mira.",
+    onlyYou: "Only you can see this project's board, chat, and documents.",
+    onlyN: (n: number) =>
+      n === 1
+        ? "Only this person can see this project's board, chat, and documents."
+        : `Only these ${n} people can see this project's board, chat, and documents.`,
+    stale: (message: string) => `Couldn't read the latest data (${message}). Showing the last data loaded.`,
+    removeLabel: (name: string) => `Remove ${name} from the project`,
+    remove: "Remove",
+    leave: "Leave project",
+    add: "Add members",
+    close: "Close",
+    confirmRemoveTitle: (name: string) => `Remove ${name} from the project?`,
+    confirmLeaveTitle: "Leave this project?",
+    removing: "Removing...",
+    leaving: "Leaving...",
+    removeFailed: (name: string) => `${name} wasn't removed`,
+    leaveFailed: "You haven't left the project",
+    removeBody: (name: string) =>
+      `${name} stops receiving new data from this project, and the project disappears from their board.`,
+    removeInvite: "Their Guest access to this project through an invite is revoked too.",
+    addBack: "A project manager can add them back at any time.",
+    leaveBody: "You stop receiving new data from this project, and the project disappears from your board.",
+    leaveLast:
+      "You're the last member. Once you leave, nobody can open this project until a superadmin adds themselves from Other projects on the Board.",
+    leaveOnlyManager:
+      "You're the only manager of this project without a department. Once you leave, nobody can add or remove members until a superadmin adds themselves from Other projects on the Board.",
+    comeBack: "To come back, ask a project manager to add you again.",
+  },
+  addMembers: {
+    title: "Add project members",
+    description: "People you add can see this project's board, chat, and documents. You can add Guests here too.",
+    pickOne: "Pick at least one person.",
+    someone: "This person",
+    loading: "Loading people...",
+    loadErrorTitle: "Couldn't read the list of people",
+    retry: "Try again",
+    pickerLabel: "People to add",
+    empty: "Everyone in the organization is already a member of this project.",
+    failedOne: (name: string) => `${name} wasn't added`,
+    failedMany: (n: number) => `${people(n)} weren't added`,
+    keptSelected: "Anyone not added yet stays selected. Press Add to try again.",
+    cancel: "Cancel",
+    adding: "Adding...",
+    submit: "Add",
+  },
+  picker: {
+    label: "Members",
+    empty: "There's nobody else to pick yet.",
+    guest: "Guest",
+    noDept: "No department yet",
+    deptFallback: "Department",
+    all: "All",
+    joinTwo: (a: string, b: string) => `${a} and ${b}`,
+    joinMany: (head: string, last: string) => `${head}, and ${last}`,
+    inDept: (n: number, depts: number) => `${people(n)} from ${depts} ${plural(depts, "department", "departments")}`,
+    withoutDept: (n: number) => `${people(n)} without a department`,
+    guests: (n: number) => `${n} ${plural(n, "Guest", "Guests")}`,
+    picked: (summary: string) => `${summary} selected.`,
+    noneSelected: "Nobody selected yet.",
+    noMatch: (query: string) => `No names match "${query}".`,
+    noMatchIn: (query: string, group: string) => `No names match "${query}" in ${group}.`,
+    search: "Search names or departments",
+    filterLabel: "Filter by department",
+    listLabel: "People",
+    pickedLabel: "Selected people",
+    unpick: (name: string) => `Remove ${name} from the selection`,
+  },
+};
+
+export default en;

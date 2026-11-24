@@ -16,6 +16,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { BOARD_DETAIL } from "../../i18n/board-detail";
 import { NO_DEPARTMENT } from "./format";
 import { PeoplePicker } from "./PeoplePicker";
 import "./members.css";
@@ -63,16 +64,19 @@ export function useProjectMembers(projectId: string): ProjectMembers {
   return { view, error, loading, reload };
 }
 
-const GROUPS: { role: ProjectRole; title: string }[] = [
-  { role: "manager", title: "Pengelola" },
-  { role: "member", title: "Anggota" },
-  { role: "guest", title: "Tamu" },
-];
+const GROUPS: ProjectRole[] = ["manager", "member", "guest"];
+
+// Dibaca saat render supaya mengikuti bahasa aktif.
+function groupTitle(role: ProjectRole): string {
+  const T = BOARD_DETAIL.members;
+  return role === "manager" ? T.groupManager : role === "member" ? T.groupMember : T.groupGuest;
+}
 
 function memberSub(m: ProjectMemberView): string {
-  if (m.role === "guest") return m.byInvite ? "Tamu lewat undangan" : "Tamu, ditambahkan ke proyek ini";
+  const T = BOARD_DETAIL.members;
+  if (m.role === "guest") return m.byInvite ? T.guestByInvite : T.guestAdded;
   const dept = m.departmentName ?? NO_DEPARTMENT;
-  return m.isCreator ? `${dept}, pembuat proyek` : dept;
+  return m.isCreator ? T.creator(dept) : dept;
 }
 
 type Props = {
@@ -99,6 +103,7 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
   // Baris yang tombolnya membuka konfirmasi sudah hilang; fokus dipindah ke ringkasan.
   const [refocus, setRefocus] = useState(0);
   const ids = useId();
+  const T = BOARD_DETAIL.members;
 
   useEffect(() => {
     if (!refocus) return;
@@ -116,7 +121,7 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
   }
 
   function nameOf(m: ProjectMemberView) {
-    return m.publicKey === me ? `${m.displayName} (Anda)` : m.displayName;
+    return m.publicKey === me ? T.me(m.displayName) : m.displayName;
   }
 
   async function confirm() {
@@ -133,7 +138,7 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
         return;
       }
       await reload();
-      say(`${pending.member.displayName} dikeluarkan dari proyek.`);
+      say(T.removedSay(pending.member.displayName));
       setPending(null);
       setRefocus((n) => n + 1);
     } catch (err) {
@@ -152,29 +157,24 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
     if (!view && loading) {
       return (
         <p className="hint" role="status">
-          Memuat anggota proyek...
+          {T.loading}
         </p>
       );
     }
     if (!view) {
       return (
         <div role="alert">
-          <ErrorAlert title="Daftar anggota belum terbaca">
-            <p>{error?.message ?? "Inti Mira tidak mengirim daftar anggota."}</p>
+          <ErrorAlert title={T.loadErrorTitle}>
+            <p>{error?.message ?? T.loadErrorEmpty}</p>
             <button type="button" className="btn btn-ghost btn-sm bd-retry" onClick={() => void reload()}>
-              Coba lagi
+              {T.retry}
             </button>
           </ErrorAlert>
         </div>
       );
     }
     if (!view.registered) {
-      return (
-        <p className="pm-note">
-          Proyek ini belum terdaftar di organisasi, jadi anggotanya belum bisa diatur. Proyek lama didaftarkan otomatis
-          saat laptop pembuatnya membuka Mira versi ini.
-        </p>
-      );
+      return <p className="pm-note">{T.notRegistered}</p>;
     }
     const count = view.members.length;
     return (
@@ -182,15 +182,11 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
         <p className="notice pm-notice" ref={noticeRef} tabIndex={-1}>
           <IconLock size={18} aria-hidden="true" />
           <span>
-            {count === 1 && view.members[0]?.publicKey === me
-              ? "Hanya Anda yang melihat board, chat, dan dokumen proyek ini."
-              : count === 1
-              ? "Hanya 1 orang ini yang melihat board, chat, dan dokumen proyek ini."
-              : `Hanya ${count} orang ini yang melihat board, chat, dan dokumen proyek ini.`}
+            {count === 1 && view.members[0]?.publicKey === me ? T.onlyYou : T.onlyN(count)}
           </span>
         </p>
-        {error && <p className="hint">Data terbaru belum terbaca ({error.message}). Yang tampil adalah data terakhir.</p>}
-        {GROUPS.map(({ role, title }) => {
+        {error && <p className="hint">{T.stale(error.message)}</p>}
+        {GROUPS.map((role) => {
           const rows = view.members
             .filter((m) => m.role === role)
             .sort((a, b) =>
@@ -201,7 +197,7 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
           return (
             <section key={role} className="pm-group" aria-labelledby={headId}>
               <h3 id={headId} className="pm-group-title">
-                {title}
+                {groupTitle(role)}
               </h3>
               <ul className="pm-list">
                 {rows.map((m) => (
@@ -217,10 +213,10 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm pm-remove"
-                        aria-label={`Keluarkan ${m.displayName} dari proyek`}
+                        aria-label={T.removeLabel(m.displayName)}
                         onClick={() => openConfirm({ kind: "remove", member: m })}
                       >
-                        Keluarkan
+                        {T.remove}
                       </button>
                     )}
                   </li>
@@ -243,7 +239,7 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
       (view.teamId === null && managers.length === 1 && managers[0].publicKey === me));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="Anggota proyek">
+    <Dialog open={open} onOpenChange={onOpenChange} title={T.title}>
       <div className="pm-body">{body()}</div>
       <div className="sr-only" role="status" aria-live="polite">
         <span key={announce.n}>{announce.text}</span>
@@ -252,18 +248,18 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
         {view?.canLeave && (
           <button type="button" className="btn btn-ghost pm-leave" onClick={() => openConfirm({ kind: "leave" })}>
             <IconLogout size={16} aria-hidden="true" />
-            Keluar dari proyek
+            {T.leave}
           </button>
         )}
         {view?.registered && view.canManage && (
           <button type="button" className="btn btn-ghost" onClick={() => setAdding(true)}>
             <IconUserPlus size={16} aria-hidden="true" />
-            Tambah anggota
+            {T.add}
           </button>
         )}
         <DialogClose asChild>
           <button type="button" className="btn">
-            Tutup
+            {T.close}
           </button>
         </DialogClose>
       </div>
@@ -273,14 +269,14 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
         onOpenChange={(next) => {
           if (!next) setPending(null);
         }}
-        title={removing ? `Keluarkan ${removing.displayName} dari proyek?` : "Keluar dari proyek ini?"}
-        confirmLabel={removing ? "Keluarkan" : "Keluar dari proyek"}
-        busyLabel={removing ? "Mengeluarkan..." : "Keluar..."}
+        title={removing ? T.confirmRemoveTitle(removing.displayName) : T.confirmLeaveTitle}
+        confirmLabel={removing ? T.remove : T.leave}
+        busyLabel={removing ? T.removing : T.leaving}
         busy={busy}
         onConfirm={() => void confirm()}
         error={
           actionError && (
-            <ErrorAlert title={removing ? `${removing.displayName} belum dikeluarkan` : "Anda belum keluar dari proyek"}>
+            <ErrorAlert title={removing ? T.removeFailed(removing.displayName) : T.leaveFailed}>
               <p>{actionError.message}</p>
             </ErrorAlert>
           )
@@ -289,22 +285,20 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
         {removing ? (
           <>
             <p>
-              {removing.displayName} berhenti menerima data baru proyek ini, dan proyek ini hilang dari board-nya.
-              {removing.byInvite ? " Akses Tamu lewat undangan untuk proyek ini ikut dicabut." : ""}
+              {T.removeBody(removing.displayName)}
+              {removing.byInvite ? ` ${T.removeInvite}` : ""}
             </p>
-            <p className="pm-confirm-p">Pengelola proyek bisa menambahkannya lagi kapan saja.</p>
+            <p className="pm-confirm-p">{T.addBack}</p>
           </>
         ) : (
           <>
-            <p>Anda berhenti menerima data baru proyek ini, dan proyek ini hilang dari board Anda.</p>
+            <p>{T.leaveBody}</p>
             {leaveOrphans ? (
               <p className="pm-confirm-p">
-                {view && view.members.length <= 1
-                  ? "Anda anggota terakhir. Setelah Anda keluar, tidak ada yang bisa membuka proyek ini sampai superadmin menambahkan dirinya dari Proyek lain di Board."
-                  : "Anda satu-satunya pengelola proyek tanpa departemen ini. Setelah Anda keluar, tidak ada yang bisa menambah atau mengeluarkan anggota sampai superadmin menambahkan dirinya dari Proyek lain di Board."}
+                {view && view.members.length <= 1 ? T.leaveLast : T.leaveOnlyManager}
               </p>
             ) : (
-              <p className="pm-confirm-p">Untuk kembali, minta pengelola proyek menambahkan Anda lagi.</p>
+              <p className="pm-confirm-p">{T.comeBack}</p>
             )}
           </>
         )}
@@ -318,8 +312,8 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
           existing={view.members.map((m) => m.publicKey)}
           onAdded={async (names) => {
             await reload();
-            if (names.length === 1) say(`${names[0]} ditambahkan ke proyek.`);
-            else if (names.length > 1) say(`${names.length} orang ditambahkan ke proyek.`);
+            if (names.length === 1) say(T.addedOneSay(names[0]));
+            else if (names.length > 1) say(T.addedManySay(names.length));
           }}
         />
       )}
@@ -347,6 +341,7 @@ function AddMembersDialog({ open, onOpenChange, projectId, existing, onAdded }: 
   const [problem, setProblem] = useState<string | null>(null);
   const [failures, setFailures] = useState<Failure[]>([]);
   const seq = useRef(0);
+  const T = BOARD_DETAIL.addMembers;
 
   const loadPeople = useCallback(() => {
     const mine = ++seq.current;
@@ -378,7 +373,7 @@ function AddMembersDialog({ open, onOpenChange, projectId, existing, onAdded }: 
     e.preventDefault();
     if (busy) return;
     if (selected.length === 0) {
-      setProblem("Pilih minimal satu orang.");
+      setProblem(T.pickOne);
       return;
     }
     setProblem(null);
@@ -388,7 +383,7 @@ function AddMembersDialog({ open, onOpenChange, projectId, existing, onAdded }: 
     const added: string[] = [];
     const failed: Failure[] = [];
     for (const key of selected) {
-      const name = byKey.get(key) ?? "Orang ini";
+      const name = byKey.get(key) ?? T.someone;
       try {
         await orgApi.addProjectMember(projectId, key);
         added.push(name);
@@ -412,23 +407,21 @@ function AddMembersDialog({ open, onOpenChange, projectId, existing, onAdded }: 
       onOpenChange={(next) => {
         if (!busy) onOpenChange(next);
       }}
-      title="Tambah anggota proyek"
+      title={T.title}
     >
       <form className="pm-add" onSubmit={(e) => void submit(e)} noValidate>
-        <p className="dlg-desc">
-          Orang yang ditambahkan ikut melihat board, chat, dan dokumen proyek ini. Tamu juga bisa ditambahkan di sini.
-        </p>
+        <p className="dlg-desc">{T.description}</p>
         {people.status === "loading" && (
           <p className="hint" role="status">
-            Memuat daftar orang...
+            {T.loading}
           </p>
         )}
         {people.status === "error" && (
           <div role="alert">
-            <ErrorAlert title="Daftar orang belum terbaca">
+            <ErrorAlert title={T.loadErrorTitle}>
               <p>{people.error.message}</p>
               <button type="button" className="btn btn-ghost btn-sm bd-retry" onClick={loadPeople}>
-                Coba lagi
+                {T.retry}
               </button>
             </ErrorAlert>
           </div>
@@ -443,16 +436,14 @@ function AddMembersDialog({ open, onOpenChange, projectId, existing, onAdded }: 
             }}
             exclude={existing}
             disabled={busy}
-            label="Orang yang ditambahkan"
-            emptyText="Semua orang di organisasi sudah menjadi anggota proyek ini."
+            label={T.pickerLabel}
+            emptyText={T.empty}
           />
         )}
         <div aria-live="polite">
           {problem && <p className="field-error">{problem}</p>}
           {failures.length > 0 && (
-            <ErrorAlert
-              title={failures.length === 1 ? `${failures[0].name} belum ditambahkan` : `${failures.length} orang belum ditambahkan`}
-            >
+            <ErrorAlert title={failures.length === 1 ? T.failedOne(failures[0].name) : T.failedMany(failures.length)}>
               <ul className="pm-fail">
                 {failures.map((f) => (
                   <li key={f.key}>
@@ -460,14 +451,14 @@ function AddMembersDialog({ open, onOpenChange, projectId, existing, onAdded }: 
                   </li>
                 ))}
               </ul>
-              <p>Yang belum ditambahkan tetap terpilih. Tekan Tambahkan untuk mencoba lagi.</p>
+              <p>{T.keptSelected}</p>
             </ErrorAlert>
           )}
         </div>
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {T.cancel}
             </button>
           </DialogClose>
           <button
@@ -476,7 +467,7 @@ function AddMembersDialog({ open, onOpenChange, projectId, existing, onAdded }: 
             disabled={busy || people.status !== "ready" || candidates.length === 0}
             aria-busy={busy || undefined}
           >
-            {busy ? "Menambahkan..." : "Tambahkan"}
+            {busy ? T.adding : T.submit}
           </button>
         </div>
       </form>

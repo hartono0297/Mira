@@ -4,6 +4,7 @@
 // superadmin atau admin departemen menyetujuinya.
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri, NO_TAURI_ERROR, toAppError } from ".";
+import { localizeError } from "../i18n/errors";
 import type { OrgInfo } from "./types";
 
 // Data laptop ini yang nanti dilihat penyetuju (layar "Mencari kantor").
@@ -86,7 +87,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 

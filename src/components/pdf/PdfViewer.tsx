@@ -3,7 +3,8 @@ import type { PDFPageProxy, RenderTask } from "pdfjs-dist";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ErrorAlert } from "../ErrorAlert";
 import { displaySize, normalizeRotation } from "./coords";
-import { describePdfError, isRenderCancelled, loadPdf, type LoadedPdf, type PdfErrorText } from "./pdfjs";
+import { PDF_TEXT as T } from "../../i18n/components";
+import { describePdfError, isRenderCancelled, loadPdf, type LoadedPdf } from "./pdfjs";
 import type { PageGeometry, PageRenderInfo } from "./types";
 import "./pdf.css";
 
@@ -37,7 +38,8 @@ const MAX_CANVAS_PIXELS = 16_777_216;
 
 type Doc =
   | { status: "loading" }
-  | { status: "error"; error: PdfErrorText }
+  // Galat mentah; teksnya disusun saat render supaya ikut bahasa aktif.
+  | { status: "error"; error: unknown }
   | { status: "empty" }
   | { status: "ready"; pdf: LoadedPdf; pages: PageGeometry[]; proxies: PDFPageProxy[] };
 
@@ -104,7 +106,7 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
         onLoadedRef.current?.({ pageCount: count, pages });
       } catch (err) {
         if (ctrl.signal.aborted) return;
-        setDoc({ status: "error", error: describePdfError(err) });
+        setDoc({ status: "error", error: err });
       }
     })();
     return () => {
@@ -231,10 +233,11 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
 
   const info: PageRenderInfo | null = geometry ? { ...geometry, scale, cssWidth: css.width, cssHeight: css.height } : null;
   const shownState = pageState.key === renderKey ? pageState : { key: renderKey, status: "drawing" as const };
+  const docError = doc.status === "error" ? describePdfError(doc.error) : null;
 
   return (
     <div className="pdf-viewer">
-      <div className="pdf-toolbar" role="toolbar" aria-label={`Kontrol tampilan ${label}`}>
+      <div className="pdf-toolbar" role="toolbar" aria-label={T.toolbar(label)}>
         <div className="pdf-toolbar-row">
           <div className="pdf-tool-group">
             <button
@@ -245,11 +248,11 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
               }}
               disabled={!ready}
               aria-disabled={ready && atFirst ? true : undefined}
-              aria-label="Sebelumnya"
-              title="Halaman sebelumnya"
+              aria-label={T.prev}
+              title={T.prevTitle}
             >
               <IconChevronLeft size={16} aria-hidden="true" />
-              <span className="pdf-btn-text">Sebelumnya</span>
+              <span className="pdf-btn-text">{T.prev}</span>
             </button>
             <PageField
               id={pageInputId}
@@ -266,10 +269,10 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
               }}
               disabled={!ready}
               aria-disabled={ready && atLast ? true : undefined}
-              aria-label="Berikutnya"
-              title="Halaman berikutnya"
+              aria-label={T.next}
+              title={T.nextTitle}
             >
-              <span className="pdf-btn-text">Berikutnya</span>
+              <span className="pdf-btn-text">{T.next}</span>
               <IconChevronRight size={16} aria-hidden="true" />
             </button>
           </div>
@@ -280,13 +283,13 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
               onClick={() => zoomBy(-1)}
               disabled={!ready}
               aria-disabled={ready && atMinZoom ? true : undefined}
-              aria-label="Perkecil"
-              title="Perkecil"
+              aria-label={T.zoomOut}
+              title={T.zoomOut}
             >
               <IconMinus size={16} aria-hidden="true" />
             </button>
             {ready ? (
-              <span className="pdf-zoom-value" aria-label={`Perbesaran ${Math.round(scale * 100)} persen`}>
+              <span className="pdf-zoom-value" aria-label={T.zoomValue(Math.round(scale * 100))}>
                 {Math.round(scale * 100)}%
               </span>
             ) : (
@@ -300,8 +303,8 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
               onClick={() => zoomBy(1)}
               disabled={!ready}
               aria-disabled={ready && atMaxZoom ? true : undefined}
-              aria-label="Perbesar"
-              title="Perbesar"
+              aria-label={T.zoomIn}
+              title={T.zoomIn}
             >
               <IconPlus size={16} aria-hidden="true" />
             </button>
@@ -312,7 +315,7 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
               onClick={() => setZoom("fit")}
               disabled={!ready}
             >
-              Sesuai lebar
+              {T.fitWidth}
             </button>
             {toolbarExtra}
           </div>
@@ -327,38 +330,35 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
         tabIndex={0}
         onKeyDown={onAreaKeyDown}
       >
-        {doc.status === "loading" && <p className="pdf-status">Membuka PDF...</p>}
-        {doc.status === "error" && (
+        {doc.status === "loading" && <p className="pdf-status">{T.loading}</p>}
+        {docError && (
           <div className="pdf-status-box" role="alert">
-            <ErrorAlert title={doc.error.title}>
-              <p>{doc.error.detail}</p>
+            <ErrorAlert title={docError.title}>
+              <p>{docError.detail}</p>
             </ErrorAlert>
           </div>
         )}
         {doc.status === "empty" && (
-          <p className="pdf-status">PDF ini tidak punya halaman, jadi tidak ada yang bisa ditampilkan. Periksa file aslinya.</p>
+          <p className="pdf-status">{T.empty}</p>
         )}
         {info && (
           <div
             className="pdf-page"
             style={{ width: css.width, height: css.height }}
-            aria-label={`Halaman ${pageNumber} dari ${pageCount}`}
+            aria-label={T.pageOf(pageNumber, pageCount)}
             role="group"
             data-page-state={shownState.status}
           >
             <div ref={hostRef} className="pdf-canvas-host" />
             {shownState.status === "drawing" && (
               <p className="pdf-page-note" aria-hidden="true">
-                Menampilkan halaman {pageNumber}...
+                {T.drawing(pageNumber)}
               </p>
             )}
             {shownState.status === "error" && (
               <div className="pdf-page-error" role="alert">
-                <ErrorAlert title={`Halaman ${pageNumber} gagal ditampilkan`}>
-                  <p>
-                    Isi halaman ini tidak bisa digambar{shownState.message ? ` (${shownState.message})` : ""}. Pindah ke halaman lain lalu
-                    kembali, atau buka ulang file.
-                  </p>
+                <ErrorAlert title={T.pageErrorTitle(pageNumber)}>
+                  <p>{T.pageErrorBody(shownState.message ?? "")}</p>
                 </ErrorAlert>
               </div>
             )}
@@ -367,7 +367,7 @@ export function PdfViewer({ data, label, page, onPageChange, zoom, onZoomChange,
         )}
       </div>
       <p className="sr-only" aria-live="polite">
-        {ready ? `Halaman ${pageNumber} dari ${pageCount}` : ""}
+        {ready ? T.pageOf(pageNumber, pageCount) : ""}
       </p>
     </div>
   );
@@ -396,7 +396,7 @@ function PageField({ id, page, count, disabled, onCommit }: PageFieldProps) {
   return (
     <span className="pdf-page-field">
       <label htmlFor={id} className="pdf-page-label">
-        Halaman
+        {T.pageField}
       </label>
       <input
         id={id}
@@ -417,7 +417,7 @@ function PageField({ id, page, count, disabled, onCommit }: PageFieldProps) {
           }
         }}
       />
-      <span>dari {count || "-"}</span>
+      <span>{T.pageFieldOf(count ? String(count) : "-")}</span>
     </span>
   );
 }

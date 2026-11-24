@@ -7,6 +7,7 @@ import { MenuButton } from "../../components/ContextMenu";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 import {
   ChatActionsContext,
   ConversationActionsContext,
@@ -170,6 +171,8 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
   const dialogOpenRef = useRef(dialogOpen);
   dialogOpenRef.current = dialogOpen;
   const { group, loading, error, reload } = state;
+  const T = CHAT_DIALOGS.groupMembers;
+  const M = CHAT_DIALOGS.members;
 
   useEffect(() => {
     alive.current = true;
@@ -243,12 +246,12 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
     content = (
       <p className="conv-group-state" role="status">
         <IconLoader2 size={16} className="conv-spin" aria-hidden="true" />
-        Memuat anggota...
+        {M.loading}
       </p>
     );
   } else if (!group) {
     content = (
-      <ErrorAlert title="Daftar anggota belum bisa dimuat">
+      <ErrorAlert title={M.loadFailed}>
         <p>{error?.message}</p>
         <button
           type="button"
@@ -257,12 +260,12 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
           disabled={loading}
           aria-busy={loading || undefined}
         >
-          {loading ? "Memuat ulang..." : "Coba lagi"}
+          {loading ? M.retrying : M.retry}
         </button>
       </ErrorAlert>
     );
   } else if (members.length === 0) {
-    content = <p className="conv-group-state">Belum ada anggota yang tercatat di grup ini.</p>;
+    content = <p className="conv-group-state">{T.empty}</p>;
   } else {
     content = (
       <ul className="conv-members">
@@ -277,17 +280,17 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
               person={m.person}
               me={m.me}
               department={departments.get(m.person.publicKey)}
-              chip={m.owner ? "Pemilik grup" : undefined}
+              chip={m.owner ? T.owner : undefined}
               onRemove={askRemove}
             >
               {m.canRemove && (
                 <button
                   type="button"
                   className="conv-member-remove"
-                  aria-label={`Keluarkan ${m.person.name} dari grup`}
+                  aria-label={T.removeLabel(m.person.name)}
                   onClick={askRemove}
                 >
-                  Keluarkan
+                  {T.remove}
                 </button>
               )}
             </MemberRow>
@@ -307,7 +310,7 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((v) => !v)}
       >
-        Grup · {memberCount} anggota
+        {T.button(memberCount)}
         <IconChevronDown size={14} aria-hidden="true" />
       </button>
       {open && (
@@ -327,11 +330,11 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
           }}
         >
           <p id={titleId} className="conv-pop-title">
-            Anggota grup ({count})
+            {T.panelTitle(count)}
           </p>
           {group && error && (
             <p className="conv-group-stale" role="status">
-              Daftar terbaru belum bisa dimuat. Yang tampil adalah daftar terakhir.
+              {M.stale}
             </p>
           )}
           <MemberPanelActions close={() => close(true)}>{content}</MemberPanelActions>
@@ -365,7 +368,7 @@ export function GroupMembers({ memberCount, title, state, onChanged, onGone }: M
         onConfirm={() => void removeMember()}
         error={
           actionError && (
-            <ErrorAlert title={`${removeName} belum dikeluarkan`}>
+            <ErrorAlert title={T.removeFailed(removeName)}>
               <p>{actionError.message}</p>
             </ErrorAlert>
           )
@@ -410,12 +413,13 @@ export function AddPeopleDialog({ open, onOpenChange, group, onAdded }: AddProps
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const departments = usePeopleDirectory(open);
+  const T = CHAT_DIALOGS.addPeople;
 
   const pickError =
     selected.length === 0
-      ? "Pilih minimal satu orang."
+      ? T.pickNone
       : selected.length > GROUP_PICK_MAX
-        ? `Paling banyak ${GROUP_PICK_MAX} orang sekaligus.`
+        ? CHAT_DIALOGS.newGroup.pickTooMany(GROUP_PICK_MAX)
         : null;
 
   function reset() {
@@ -452,7 +456,7 @@ export function AddPeopleDialog({ open, onOpenChange, group, onAdded }: AddProps
         if (!next) reset();
         onOpenChange(next);
       }}
-      title={`Tambah orang ke ${group.name}`}
+      title={T.title(group.name)}
     >
       <form className="group-form" onSubmit={(e) => void submit(e)} noValidate>
         <PeoplePicker
@@ -461,17 +465,13 @@ export function AddPeopleDialog({ open, onOpenChange, group, onAdded }: AddProps
           selected={selected}
           onChange={setSelected}
           disabled={busy}
-          emptyText="Semua rekan yang bisa dimasukkan sudah ada di grup ini. Tamu tidak bisa dimasukkan ke grup."
-          hint={
-            count === 0
-              ? "Orang yang ditambahkan bisa membaca pesan lama di grup ini."
-              : `${count} orang dipilih. Orang yang ditambahkan bisa membaca pesan lama di grup ini.`
-          }
+          emptyText={T.empty}
+          hint={count === 0 ? T.hintNone : T.hintSome(count)}
         />
         <div aria-live="polite">
           {tried && pickError && group.candidates.length > 0 && <InlineError text={pickError} />}
           {error && (
-            <ErrorAlert title="Orang belum ditambahkan">
+            <ErrorAlert title={T.failed}>
               <p>{error.message}</p>
             </ErrorAlert>
           )}
@@ -479,7 +479,7 @@ export function AddPeopleDialog({ open, onOpenChange, group, onAdded }: AddProps
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {CHAT_DIALOGS.common.cancel}
             </button>
           </DialogClose>
           {group.candidates.length > 0 && (
@@ -490,7 +490,7 @@ export function AddPeopleDialog({ open, onOpenChange, group, onAdded }: AddProps
               aria-busy={busy || undefined}
               disabled={busy}
             >
-              {busy ? "Menambahkan..." : "Tambah ke grup"}
+              {busy ? T.adding : T.add}
             </button>
           )}
         </div>
@@ -513,6 +513,7 @@ export function RenameGroupDialog({ open, onOpenChange, conv, name, onRenamed }:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const ids = useId();
+  const T = CHAT_DIALOGS.renameGroup;
 
   // Setiap kali dibuka, kolom diisi nama sekarang.
   useEffect(() => {
@@ -553,12 +554,12 @@ export function RenameGroupDialog({ open, onOpenChange, conv, name, onRenamed }:
       onOpenChange={(next) => {
         if (!busy) onOpenChange(next);
       }}
-      title="Ganti nama grup"
-      description="Nama baru terlihat oleh semua anggota grup."
+      title={T.title}
+      description={T.description}
     >
       <form className="group-form" onSubmit={(e) => void submit(e)} noValidate>
         <div className="field">
-          <label htmlFor={`${ids}-name`}>Nama grup</label>
+          <label htmlFor={`${ids}-name`}>{CHAT_DIALOGS.newGroup.nameLabel}</label>
           <input
             id={`${ids}-name`}
             type="text"
@@ -574,7 +575,7 @@ export function RenameGroupDialog({ open, onOpenChange, conv, name, onRenamed }:
         </div>
         <div aria-live="polite">
           {error && (
-            <ErrorAlert title="Nama grup belum diganti">
+            <ErrorAlert title={T.failed}>
               <p>{error.message}</p>
             </ErrorAlert>
           )}
@@ -582,11 +583,11 @@ export function RenameGroupDialog({ open, onOpenChange, conv, name, onRenamed }:
         <div className="dlg-actions">
           <DialogClose asChild>
             <button type="button" className="btn btn-ghost" disabled={busy}>
-              Batal
+              {CHAT_DIALOGS.common.cancel}
             </button>
           </DialogClose>
           <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined}>
-            {busy ? "Menyimpan..." : "Simpan nama"}
+            {busy ? T.saving : T.save}
           </button>
         </div>
       </form>

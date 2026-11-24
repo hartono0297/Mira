@@ -1,37 +1,23 @@
-// Teks antarmuka board v0.4 (subtask, pelacakan waktu, dialog task), dikumpulkan
-// supaya mudah diterjemahkan nanti. Berkas ini titik masuknya:
-// - TEKS di bawah: kartu board dan format durasi;
+// Teks antarmuka board, dikumpulkan di kamus src/i18n/board*.id.ts dan .en.ts.
+// Berkas ini titik masuknya:
+// - TEKS di bawah: kartu board, durasi, nama kolom dan prioritas, tanggal,
+//   kelompok Task saya, riwayat aktivitas;
+// - TEKS_LAYAR: layar Board, board proyek, tambah task, Proyek lain, Task saya;
 // - teksDialog.ts: dialog detail task (properti, tenggat, label, Lainnya, tab);
 // - teksSubtask.ts: daftar subtask;
 // - teksWaktu.ts: timer dan bagian Waktu;
 // - teksMenu.ts: menu klik kanan board.
-// Semuanya diekspor ulang dari sini. Kalimat yang memuat angka ditulis sebagai
-// fungsi kecil. Teks sebelum v0.4 masih ada di format.ts dan komponennya.
+// Semuanya diekspor ulang dari sini dan selalu membaca bahasa aktif. Kalimat
+// yang memuat angka ditulis sebagai fungsi kecil.
+import { defineText } from "../../i18n/core";
+import en from "../../i18n/board.en";
+import id from "../../i18n/board.id";
+import screenEn from "../../i18n/board-screen.en";
+import screenId from "../../i18n/board-screen.id";
 
-export const TEKS = {
-  // Baris meta kartu board. Teks sr-only diawali koma karena dibaca menyambung
-  // setelah kode task, sama dengan meta yang sudah ada.
-  kartu: {
-    subtaskSr: (done: number, total: number) => `, ${done} dari ${total} subtask selesai`,
-    waktuSr: (durasi: string) => `, waktu tercatat ${durasi}`,
-    timerBerjalanSr: ", timer berjalan",
-  },
+export const TEKS = defineText(id, en);
 
-  // Format durasi (timeFormat.ts) dan isian durasi bebas (parseMinutes).
-  waktu: {
-    // "hr", bukan "h": "2h 5j" mudah terbaca 2 jam.
-    pendek: { hari: "hr", jam: "j", menit: "m" },
-    panjang: { hari: "hari", jam: "jam", menit: "menit" },
-    kurangDariSemenit: "<1m",
-    kurangDariSemenitPanjang: "kurang dari 1 menit",
-    isian: {
-      kosong: "Isi durasinya dulu, misalnya 1j 30m.",
-      tidakDikenali: "Durasi tidak dikenali. Tulis misalnya 90, 1j 30m, 1:30, atau 1,5j.",
-      terlaluSingkat: "Durasi paling singkat 1 menit.",
-      terlaluLama: "Durasi paling lama 24 jam (1440 menit).",
-    },
-  },
-} as const;
+export const TEKS_LAYAR = defineText(screenId, screenEn);
 
 export * from "./teksDialog";
 export * from "./teksMenu";

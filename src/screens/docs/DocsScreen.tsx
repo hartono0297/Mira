@@ -26,18 +26,13 @@ import { readLocation, resolveLocation, writeLocation, type DocsLocation } from 
 import {
   addedText,
   appName,
-  CLIPBOARD_MISSING,
-  COPY_FAILED_TITLE,
   copiedText,
+  DOCS,
   emptyTitle,
   errorHint,
   errorMessage,
   errorTitle,
   goneNote,
-  GUEST_EMPTY_TEXT,
-  GUEST_NO_PROJECT_TEXT,
-  GUEST_NO_PROJECT_TITLE,
-  LIBRARY_LABEL,
   placeText,
   projectLabel,
   visibilityHint,
@@ -266,8 +261,8 @@ export function DocsScreen() {
         // mengembalikan ringkasan dengan versi itu masih `downloading`.
         const same = [result?.current, ...(result?.conflictVersions ?? [])].find((v) => v?.id === version.id);
         const text = same?.downloading
-          ? `Versi ${version.number} sedang disalin. Daftar diperbarui begitu selesai.`
-          : `Isi versi ${version.number} dari ${doc.name} sudah ada di laptop ini.`;
+          ? DOCS.done.copyingNow(version.number)
+          : DOCS.done.downloaded(version.number, doc.name);
         setFeedback({ kind: "ok", text });
       } catch (err) {
         const error = toAppError(err);
@@ -288,16 +283,14 @@ export function DocsScreen() {
       pending,
       downloads,
       edit: (doc, from) => {
-        const app = appName(doc.kind) ?? "aplikasi bawaan";
+        const app = appName(doc.kind) ?? DOCS.done.defaultApp;
         void run(
           keys.edit(doc.id, from?.id ?? null),
           "edit",
           doc.id,
           () => startEdit(doc.id, from?.id ?? null),
           () =>
-            from
-              ? `Versi ${from.number} dibuka di ${app}. Gabungkan isinya, lalu simpan untuk menyelesaikan bentrok.`
-              : `${doc.name} dibuka di ${app}. Setiap kali Anda menyimpan, Mira mencatat versi baru.`,
+            from ? DOCS.done.editConflict(from.number, app) : DOCS.done.editOpened(doc.name, app),
         );
       },
       finish: (doc) => {
@@ -306,7 +299,7 @@ export function DocsScreen() {
           "finish",
           doc.id,
           () => finishEdit(doc.id),
-          () => `Selesai mengedit ${doc.name}. Rekan sekarang bisa mengeditnya.`,
+          () => DOCS.done.finished(doc.name),
         );
       },
       open: (doc, version) => {
@@ -316,7 +309,7 @@ export function DocsScreen() {
           "open",
           doc.id,
           () => openReadOnly(doc.id, version?.id ?? null),
-          () => `${doc.name} versi ${number} dibuka hanya baca.`,
+          () => DOCS.done.openedReadOnly(doc.name, number),
         );
       },
       exportCopy: (doc, version) => {
@@ -330,7 +323,7 @@ export function DocsScreen() {
             await exportVersion(doc.id, version.id, destination);
             return destination;
           },
-          (destination) => (destination ? `Salinan versi ${version.number} disimpan di ${destination}.` : null),
+          (destination) => (destination ? DOCS.done.exported(version.number, destination) : null),
         );
       },
       askRestore: (doc, version) => {
@@ -344,7 +337,7 @@ export function DocsScreen() {
           "resolve",
           doc.id,
           () => resolveConflict(doc.id, keep.id),
-          (result) => `Bentrok selesai. Versi ${result.current.number} berisi isi versi ${keep.number}.`,
+          (result) => DOCS.done.resolved(result.current.number, keep.number),
         );
       },
       showConflict: (doc) => {
@@ -362,10 +355,11 @@ export function DocsScreen() {
       copyName: (doc) => {
         const write = navigator.clipboard
           ? navigator.clipboard.writeText(doc.name)
-          : Promise.reject(new Error(CLIPBOARD_MISSING));
+          : Promise.reject(new Error(DOCS.clipboardMissing));
         write.then(
           () => setFeedback({ kind: "ok", text: copiedText(doc.name) }),
-          (err: unknown) => setFeedback({ kind: "error", title: COPY_FAILED_TITLE, error: toAppError(err), hint: null }),
+          (err: unknown) =>
+            setFeedback({ kind: "error", title: DOCS.copyFailedTitle, error: toAppError(err), hint: null }),
         );
       },
     }),
@@ -382,7 +376,7 @@ export function DocsScreen() {
       setRestore(null);
       setFeedback({
         kind: "ok",
-        text: `Versi ${restore.version.number} dipulihkan menjadi versi ${result.current.number}.`,
+        text: DOCS.done.restored(restore.version.number, result.current.number),
       });
       void reloadAll();
     } catch (err) {
@@ -424,7 +418,7 @@ export function DocsScreen() {
       aria-busy={addBusy || undefined}
     >
       <IconPlus size={18} aria-hidden="true" />
-      {addBusy ? "Menambahkan..." : "Tambah file"}
+      {addBusy ? DOCS.screen.adding : DOCS.screen.addFile}
     </button>
   );
 
@@ -432,7 +426,7 @@ export function DocsScreen() {
     <main className="docs" aria-labelledby="page-title">
       <header className="page-head docs-head">
         <h1 id="page-title" className="page-title">
-          Dokumen
+          {DOCS.screen.title}
         </h1>
         {/* Tamu tidak bisa menambah file (documents::access). */}
         {!isGuest && !empty && <div className="docs-head-action">{addButton}</div>}
@@ -441,14 +435,14 @@ export function DocsScreen() {
       <div className="docs-loc">
         {hasOptions && (
           <div className="field">
-            <label htmlFor={`${ids}-loc`}>Lokasi</label>
+            <label htmlFor={`${ids}-loc`}>{DOCS.screen.location}</label>
             <select
               id={`${ids}-loc`}
               value={selectValue}
               onChange={(e) => chooseLocation(e.target.value)}
               aria-describedby={hint ? `${ids}-loc-hint` : undefined}
             >
-              {!isGuest && <option value="">{LIBRARY_LABEL}</option>}
+              {!isGuest && <option value="">{DOCS.library}</option>}
               {pendingOption && <option value={chosen.projectId}>{chosen.label}</option>}
               {(projects.list ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
@@ -466,15 +460,15 @@ export function DocsScreen() {
         <div aria-live="polite">
           {projects.list === null && !projects.error && (
             <p className="hint" role="status">
-              Memuat daftar proyek...
+              {DOCS.screen.loadingProjects}
             </p>
           )}
           {projects.error && (
             <p className="hint">
-              Daftar proyek belum terbaca ({projects.error.message}).
-              {!isGuest && ` ${LIBRARY_LABEL} tetap bisa dipakai.`}{" "}
+              {DOCS.screen.projectsError(projects.error.message)}
+              {!isGuest && ` ${DOCS.screen.libraryStillUsable}`}{" "}
               <button type="button" className="link-btn" onClick={() => void projects.reload()}>
-                Baca daftar proyek lagi
+                {DOCS.screen.retryProjects}
               </button>
             </p>
           )}
@@ -490,24 +484,22 @@ export function DocsScreen() {
           </ErrorAlert>
         )}
         {docs && list.error && (
-          <p className="hint">
-            Daftar terbaru belum bisa dibaca ({list.error.message}). Yang tampil adalah data terakhir.
-          </p>
+          <p className="hint">{DOCS.screen.staleList(list.error.message)}</p>
         )}
       </div>
 
       {listLoading && !docs && (
         <p className="docs-pad hint" role="status">
-          Memuat daftar dokumen...
+          {DOCS.screen.loadingDocs}
         </p>
       )}
 
       {location !== undefined && !listLoading && !docs && (
         <div className="docs-pad docs-narrow" role="alert">
-          <ErrorAlert title="Daftar dokumen belum terbaca">
-            <p>{list.error?.message ?? "Inti Mira tidak mengirim daftar dokumen."}</p>
+          <ErrorAlert title={DOCS.screen.listErrorTitle}>
+            <p>{list.error?.message ?? DOCS.screen.listMissing}</p>
             <button type="button" className="btn btn-ghost btn-sm docs-retry" onClick={() => void list.reload()}>
-              Coba baca lagi
+              {DOCS.screen.retryRead}
             </button>
           </ErrorAlert>
         </div>
@@ -520,13 +512,10 @@ export function DocsScreen() {
               {emptyTitle(locationLabel)}
             </h2>
             {isGuest ? (
-              <p>{GUEST_EMPTY_TEXT}</p>
+              <p>{DOCS.guestEmptyText}</p>
             ) : (
               <>
-                <p>
-                  Tambahkan file Word, Excel, PDF, atau jenis lain. Setiap kali file Word atau Excel disimpan, Mira
-                  mencatat versi baru, jadi versi lama tetap bisa dibuka dan dipulihkan.
-                </p>
+                <p>{DOCS.screen.emptyBody}</p>
                 <div>{addButton}</div>
               </>
             )}
@@ -538,16 +527,16 @@ export function DocsScreen() {
         <div className="docs-pad">
           <section className="docs-empty" aria-labelledby="docs-guest-title">
             <h2 id="docs-guest-title" className="docs-empty-title">
-              {GUEST_NO_PROJECT_TITLE}
+              {DOCS.guestNoProjectTitle}
             </h2>
-            <p>{GUEST_NO_PROJECT_TEXT}</p>
+            <p>{DOCS.guestNoProjectText}</p>
           </section>
         </div>
       )}
 
       {docs && docs.length > 0 && (
         <div className="docs-layout">
-          <ul className="doc-list" aria-label={`File di ${placeText(locationLabel)}`}>
+          <ul className="doc-list" aria-label={DOCS.screen.listLabel(placeText(locationLabel))}>
             {docs.map((doc) => (
               <DocumentRow
                 key={doc.id}
@@ -580,9 +569,9 @@ export function DocsScreen() {
         onOpenChange={(open) => {
           if (!open) setRestore(null);
         }}
-        title={restore ? `Pulihkan versi ${restore.version.number}?` : "Pulihkan versi"}
-        confirmLabel={restore ? `Pulihkan versi ${restore.version.number}` : "Pulihkan"}
-        busyLabel="Memulihkan..."
+        title={restore ? DOCS.restore.titleOf(restore.version.number) : DOCS.restore.title}
+        confirmLabel={restore ? DOCS.restore.confirmOf(restore.version.number) : DOCS.restore.confirm}
+        busyLabel={DOCS.restore.busy}
         busy={restoreBusy}
         danger={false}
         onConfirm={() => void confirmRestore()}
@@ -597,11 +586,8 @@ export function DocsScreen() {
       >
         {restore && (
           <>
-            <p>
-              Mira membuat versi baru berisi isi versi {restore.version.number} dari {restore.doc.name}. Semua versi
-              lain tetap ada di riwayat.
-            </p>
-            {restore.doc.conflict && <p>Bentrok di file ini juga selesai, karena versi baru menggantikan semua versi yang berdampingan.</p>}
+            <p>{DOCS.restore.body(restore.version.number, restore.doc.name)}</p>
+            {restore.doc.conflict && <p>{DOCS.restore.conflict}</p>}
           </>
         )}
       </ConfirmDialog>

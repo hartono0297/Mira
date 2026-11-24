@@ -1,4 +1,5 @@
 import { useId, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { PDF_TEXT } from "../../i18n/components";
 import { clampCss } from "./coords";
 import type { CssRect, Size } from "./types";
 
@@ -16,8 +17,8 @@ type Props = {
   children?: ReactNode;
 };
 
-const KEY_HINT =
-  "Tombol panah memindah kotak, Shift dan panah memindah lebih jauh. Alt dan panah, atau tombol plus dan minus, mengubah ukuran.";
+// Catatan tepi disimpan sebagai kunci, teksnya dibaca saat render.
+type EdgeNote = "" | "edge" | "largest" | "smallest";
 
 type Drag = {
   pointerId: number;
@@ -94,7 +95,8 @@ export function PlacementBox({
   const descId = useId();
   const drag = useRef<Drag | null>(null);
   const [dragging, setDragging] = useState<Drag["mode"] | null>(null);
-  const [edgeNote, setEdgeNote] = useState("");
+  const [edgeNote, setEdgeNote] = useState<EdgeNote>("");
+  const T = PDF_TEXT.place;
 
   const sizeOpts = { aspectRatio, minWidth };
 
@@ -102,7 +104,7 @@ export function PlacementBox({
     const fitted = clampCss(next, bounds);
     if (fromKeyboard) {
       const blocked = fitted.left !== next.left || fitted.top !== next.top || fitted.width !== next.width || fitted.height !== next.height;
-      setEdgeNote(blocked ? "Sudah di tepi halaman." : "");
+      setEdgeNote(blocked ? "edge" : "");
     }
     if (fitted.left !== rect.left || fitted.top !== rect.top || fitted.width !== rect.width || fitted.height !== rect.height) {
       onChange(fitted);
@@ -123,7 +125,7 @@ export function PlacementBox({
     const next = resizeAroundCenter(rect, w, h, bounds, sizeOpts);
     if (fromKeyboard) {
       const blocked = Math.abs(next.width - w) > 0.001 || Math.abs(next.height - h) > 0.001;
-      setEdgeNote(blocked ? (delta > 0 ? "Sudah ukuran terbesar di halaman ini." : "Sudah ukuran terkecil.") : "");
+      setEdgeNote(blocked ? (delta > 0 ? "largest" : "smallest") : "");
     }
     if (next.left !== rect.left || next.top !== rect.top || next.width !== rect.width || next.height !== rect.height) {
       onChange(next);
@@ -205,7 +207,7 @@ export function PlacementBox({
       className="pdf-place"
       data-dragging={dragging ?? undefined}
       role="group"
-      aria-roledescription="kotak yang bisa dipindah"
+      aria-roledescription={T.role}
       aria-label={label}
       aria-describedby={describedBy}
       tabIndex={0}
@@ -227,10 +229,10 @@ export function PlacementBox({
         </span>
       )}
       <span id={hintId} className="sr-only">
-        {KEY_HINT}
+        {T.keyHint}
       </span>
       <span className="sr-only" aria-live="polite">
-        {edgeNote}
+        {edgeNote ? T[edgeNote] : ""}
       </span>
     </div>
   );

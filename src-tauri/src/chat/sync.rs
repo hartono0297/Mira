@@ -31,6 +31,7 @@ use crate::permissions::{
     format::{format_time, parse_time},
 };
 use crate::state::{Core, MiraState};
+use crate::ui_lang::UiLang;
 
 /// Most passes over the deferred records of one batch.
 const MAX_INGEST_PASSES: usize = 8;
@@ -498,6 +499,8 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
         }
         latest.insert(m.conv.clone(), i);
     }
+    let lang = ctx.lang();
+    let at = lang.pick("di", "in");
     let mut out = Vec::new();
     for (conv, i) in latest {
         let m = &fx.new_messages[i];
@@ -509,18 +512,18 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
         };
         let sender = ctx.dir.name(&m.author);
         let title = if info.is_project_chat() {
-            format!("{sender} di {}", project_label(&info.scope_name))
+            format!("{sender} {at} {}", project_label(&info.scope_name, lang))
         } else if info.is_channel() {
-            format!("{sender} di #{}", info.name)
+            format!("{sender} {at} #{}", info.name)
         } else if info.is_group() {
-            format!("{sender} di {}", info.name)
+            format!("{sender} {at} {}", info.name)
         } else {
             sender
         };
         out.push(MessageNotification {
             conv,
             title,
-            body: notification_body(&m.text, m.files.len()),
+            body: notification_body(&m.text, m.files.len(), lang),
         });
     }
     fx.notifications.extend(out);
@@ -528,26 +531,32 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
 }
 
 /// "Proyek Alfa"; a name that already starts with "Proyek" is kept as it is
-/// (same as `conversationTarget` in `src/screens/chat/text.ts`).
-pub(crate) fn project_label(name: &str) -> String {
-    let starts = name
-        .get(..7)
-        .is_some_and(|p| p.eq_ignore_ascii_case("proyek "));
-    if starts {
-        name.to_owned()
-    } else {
-        format!("Proyek {name}")
+/// (same as `conversationTarget` in `src/screens/chat/text.ts`). In English
+/// "Project Alfa", keeping a name that starts with "Proyek" or "Project".
+pub(crate) fn project_label(name: &str, lang: UiLang) -> String {
+    let starts_with = |word: &str| {
+        name.get(..word.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(word))
+    };
+    match lang {
+        UiLang::Id if starts_with("proyek ") => name.to_owned(),
+        UiLang::Id => format!("Proyek {name}"),
+        UiLang::En if starts_with("proyek ") || starts_with("project ") => name.to_owned(),
+        UiLang::En => format!("Project {name}"),
     }
 }
 
-pub(crate) fn notification_body(text: &str, files: usize) -> String {
+/// Up to 120 characters of the text, or which files were sent.
+pub(crate) fn notification_body(text: &str, files: usize, lang: UiLang) -> String {
     let text = text.trim();
     if !text.is_empty() {
         return truncate_chars(text, NOTIFY_TEXT_CHARS);
     }
-    match files {
-        0 | 1 => "Mengirim file".to_owned(),
-        n => format!("Mengirim {n} file"),
+    match (files, lang) {
+        (0 | 1, UiLang::Id) => "Mengirim file".to_owned(),
+        (n, UiLang::Id) => format!("Mengirim {n} file"),
+        (0 | 1, UiLang::En) => "Sent a file".to_owned(),
+        (n, UiLang::En) => format!("Sent {n} files"),
     }
 }
 

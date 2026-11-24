@@ -6,6 +6,7 @@ import { isAppError, type AppError } from "../../api";
 import type { RequestDetail, SignMode, SignerView, Unlocked } from "../../api/signing";
 import { clampCss, cssRectToPdf, displaySize, pdfRectToCss } from "../../components/pdf/coords";
 import type { CssRect, PageGeometry } from "../../components/pdf/types";
+import { SIGN_TEXT } from "../../i18n/sign";
 import { appendAuditPage, stampSignature, type AuditSigner, type PdfRect } from "./stamp";
 
 // ---------------------------------------------------------------------------
@@ -83,18 +84,20 @@ export function placementOffsetsPt(rect: PdfRect, page: PageGeometry): { left: n
   return { left: Math.round(v.left), bottom: Math.round(size.height - v.top - v.height), width: Math.round(v.width) };
 }
 
-// "kanan bawah", "tengah atas", "tengah" ... menurut titik tengah kotak.
+// "kanan bawah", "tengah atas", "tengah" ... menurut titik tengah kotak, dalam
+// bahasa tampilan aktif ("bottom right", "top center", "center").
 export function describeSpot(rect: PdfRect, page: PageGeometry): string {
+  const t = SIGN_TEXT.spot;
   const v = visual(rect, page);
   const size = displaySize(page, 1);
   const fx = (v.left + v.width / 2) / size.width;
   const fy = (v.top + v.height / 2) / size.height;
-  const h = fx < 1 / 3 ? "kiri" : fx > 2 / 3 ? "kanan" : "tengah";
-  const vert = fy < 1 / 3 ? "atas" : fy > 2 / 3 ? "bawah" : "tengah";
-  if (h === "tengah" && vert === "tengah") return "tengah";
-  if (h === "tengah") return `tengah ${vert}`;
-  if (vert === "tengah") return `${h} tengah`;
-  return `${h} ${vert}`;
+  const h = fx < 1 / 3 ? "left" : fx > 2 / 3 ? "right" : "center";
+  const vert = fy < 1 / 3 ? "top" : fy > 2 / 3 ? "bottom" : "center";
+  if (h === "center" && vert === "center") return t.center;
+  if (h === "center") return t.centerV(t[vert]);
+  if (vert === "center") return t.centerH(t[h]);
+  return t.corner(t[h], t[vert]);
 }
 
 export type SignFlowApi = {
@@ -147,7 +150,7 @@ function auditSigners(signers: SignerView[], mode: SignMode, mySignedAt: string)
       if (!signedAt) {
         throw {
           code: "audit_incomplete",
-          message: `${s.displayName} belum tercatat menandatangani, jadi halaman catatan belum bisa dibuat. Muat ulang dokumen lalu coba lagi.`,
+          message: SIGN_TEXT.flow.auditIncomplete(s.displayName),
         } satisfies AppError;
       }
       return { name: s.displayName, kind: s.kind, signedAt, fingerprint: fingerprintOf(s.publicKey) };
@@ -170,7 +173,7 @@ export async function runSignFlow({ pin, detail, bytes, placement, me, api, time
       timeZone,
     });
   } catch (err) {
-    throw flowError("stamp_failed", "Tanda tangan belum bisa ditempel ke PDF.", err);
+    throw flowError("stamp_failed", SIGN_TEXT.flow.stampFailed, err);
   } finally {
     // Gambar tanda tangan hanya perlu ada selama stempel. Kosongkan isinya
     // supaya tidak tertinggal di memori setelah dipakai.
@@ -192,13 +195,13 @@ export async function runSignFlow({ pin, detail, bytes, placement, me, api, time
         timeZone,
       });
     } catch (err) {
-      throw flowError("audit_failed", "Halaman catatan belum bisa ditambahkan.", err);
+      throw flowError("audit_failed", SIGN_TEXT.flow.auditFailed, err);
     }
   }
 
   try {
     return await api.complete(detail.id, unlocked.token, detail.currentHash, finalBytes);
   } catch (err) {
-    throw flowError("save_failed", "PDF bertanda tangan belum tersimpan.", err);
+    throw flowError("save_failed", SIGN_TEXT.flow.saveFailed, err);
   }
 }

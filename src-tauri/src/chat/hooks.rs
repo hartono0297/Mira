@@ -15,7 +15,7 @@ pub struct MessageNotification {
     pub conv: String,
     /// Sender name, plus the channel name for channels ("Sari di #umum").
     pub title: String,
-    /// Up to 120 characters of text, or "Mengirim file".
+    /// Up to 120 characters of text, or "Mengirim file" ("Sent a file").
     pub body: String,
 }
 

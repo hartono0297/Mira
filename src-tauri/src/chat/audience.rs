@@ -10,7 +10,7 @@
 //! is only between two active members who are not guests; a deleted team has
 //! no members.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -26,6 +26,7 @@ use crate::board::{
 use crate::error::AppResult;
 use crate::identity;
 use crate::permissions::{self, format::parse_time};
+use crate::ui_lang::UiLang;
 
 /// Shown as the scope of `#umum` and organization channels.
 pub const ORG_SCOPE_NAME: &str = "Seluruh kantor";
@@ -510,6 +511,8 @@ pub struct Ctx<'a> {
     groups: RefCell<HashMap<String, Option<Rc<GroupState>>>>,
     /// Stored ops by group conversation, loaded on first use.
     group_ops: RefCell<HashMap<String, Rc<Vec<GroupOp>>>>,
+    /// Display language for view text, read on first use.
+    lang: Cell<Option<UiLang>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -522,7 +525,18 @@ impl<'a> Ctx<'a> {
             project_members: RefCell::new(None),
             groups: RefCell::new(HashMap::new()),
             group_ops: RefCell::new(HashMap::new()),
+            lang: Cell::new(None),
         }
+    }
+
+    /// The display language chosen on this laptop (read once per `Ctx`).
+    pub fn lang(&self) -> UiLang {
+        if let Some(lang) = self.lang.get() {
+            return lang;
+        }
+        let lang = UiLang::load(self.conn);
+        self.lang.set(Some(lang));
+        lang
     }
 
     /// `None` when there is no organization.

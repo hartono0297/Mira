@@ -3,7 +3,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { API_TEXT } from "../i18n/api";
 import { isTauri, NO_TAURI_ERROR, toAppError } from "./index";
+import { localizeError } from "../i18n/errors";
 
 export type DocumentKind = "word" | "excel" | "pdf" | "other";
 export type VersionOrigin = "added" | "edited" | "restored" | "resolved";
@@ -55,7 +57,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 
@@ -93,20 +95,20 @@ export const exportVersion = (documentId: string, versionId: string | null, dest
 export async function pickFilesToAdd(): Promise<string[] | null> {
   if (!isTauri()) throw NO_TAURI_ERROR;
   try {
-    const picked = await open({ title: "Pilih file untuk pustaka", multiple: true, directory: false });
+    const picked = await open({ title: API_TEXT.pickFilesTitle, multiple: true, directory: false });
     if (picked === null) return null;
     return Array.isArray(picked) ? picked : [picked];
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 
 export async function pickExportDestination(name: string): Promise<string | null> {
   if (!isTauri()) throw NO_TAURI_ERROR;
   try {
-    return await save({ title: "Simpan salinan", defaultPath: name });
+    return await save({ title: API_TEXT.saveCopyTitle, defaultPath: name });
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 

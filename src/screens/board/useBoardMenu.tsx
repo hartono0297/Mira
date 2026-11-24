@@ -14,6 +14,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { isTextField, SEPARATOR, useContextMenu, type ContextMenuHandle, type MenuAction, type MenuEntry } from "../../components/ContextMenu";
 import { isDisabled, isSeparator } from "../../components/ContextMenu/items";
 import { MenuPopup, type MenuAnchor } from "../../components/ContextMenu/MenuPopup";
+import { TEKS } from "./teks";
 import { TEKS_MENU } from "./teksMenu";
 import "./board-menu.css";
 
@@ -368,7 +369,7 @@ export function useBoardMenu({ label, items }: { label: string; items: BoardMenu
           busy={confirmBusy}
           danger={confirming.danger ?? true}
           onConfirm={() => void runConfirmed()}
-          error={confirmError && <ErrorAlert title={`${confirming.label} gagal`}>{confirmError.message}</ErrorAlert>}
+          error={confirmError && <ErrorAlert title={TEKS.aksiGagal(confirming.label)}>{confirmError.message}</ErrorAlert>}
         >
           {confirming.confirm.body}
         </ConfirmDialog>

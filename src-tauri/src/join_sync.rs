@@ -23,6 +23,7 @@ use crate::network::feature::{FeatureHub, FeatureIngest, FeatureRecord, FeatureS
 use crate::org_commands::EVENT_JOIN_REQUESTS;
 use crate::permissions::{self, JoinRequestView};
 use crate::state::MiraState;
+use crate::ui_lang::UiLang;
 
 /// At most one notification per this window (contract 8.6).
 pub const NOTIFY_WINDOW: Duration = Duration::from_secs(5 * 60);
@@ -124,6 +125,10 @@ pub fn join_requests_changed<R: Runtime>(app: &AppHandle<R>) {
 /// The requests this laptop may decide right now.
 pub trait PendingJoins: Send + Sync {
     fn pending(&self) -> AppResult<Vec<JoinRequestView>>;
+    /// Language of the notification text.
+    fn lang(&self) -> UiLang {
+        UiLang::default()
+    }
 }
 
 /// `permissions::pending_join_requests` for this laptop.
@@ -144,6 +149,10 @@ impl PendingJoins for DbPendingJoins {
                 clock::now(),
             )
         })
+    }
+
+    fn lang(&self) -> UiLang {
+        UiLang::current(&self.state)
     }
 }
 
@@ -167,7 +176,12 @@ pub struct AlertGate {
 }
 
 impl AlertGate {
-    pub fn decide(&mut self, pending: &[JoinRequestView], now: Instant) -> AlertDecision {
+    pub fn decide(
+        &mut self,
+        pending: &[JoinRequestView],
+        now: Instant,
+        lang: UiLang,
+    ) -> AlertDecision {
         // Forget requests that were decided or dropped, so the set stays small.
         self.notified
             .retain(|id| pending.iter().any(|p| &p.id == id));
@@ -184,7 +198,7 @@ impl AlertGate {
                 return AlertDecision::WaitUntil(open_at);
             }
         }
-        let (title, body) = alert_text(&new);
+        let (title, body) = alert_text(&new, lang);
         for p in &new {
             self.notified.insert(p.id.clone());
         }
@@ -194,7 +208,10 @@ impl AlertGate {
 }
 
 /// Notification text for the requests not notified yet (at least one).
-pub fn alert_text(new: &[&JoinRequestView]) -> (String, String) {
+pub fn alert_text(new: &[&JoinRequestView], lang: UiLang) -> (String, String) {
+    if lang == UiLang::En {
+        return alert_text_en(new);
+    }
     let title = "Permintaan bergabung baru".to_owned();
     let body = match new {
         [one] if one.team_name.is_empty() => format!(
@@ -207,6 +224,25 @@ pub fn alert_text(new: &[&JoinRequestView]) -> (String, String) {
         ),
         many => format!(
             "{} orang minta bergabung. Buka Organisasi untuk memeriksanya.",
+            many.len()
+        ),
+    };
+    (title, body)
+}
+
+fn alert_text_en(new: &[&JoinRequestView]) -> (String, String) {
+    let title = "New join request".to_owned();
+    let body = match new {
+        [one] if one.team_name.is_empty() => format!(
+            "{} wants to join the office. Open Organization to match the code and approve.",
+            one.display_name
+        ),
+        [one] => format!(
+            "{} wants to join the {} department. Open Organization to match the code and approve.",
+            one.display_name, one.team_name
+        ),
+        many => format!(
+            "{} people want to join. Open Organization to review them.",
             many.len()
         ),
     };
@@ -242,11 +278,12 @@ impl JoinNotifier {
                 return None;
             }
         };
+        let lang = self.source.lang();
         let decision = self
             .gate
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .decide(&pending, now);
+            .decide(&pending, now, lang);
         match decision {
             AlertDecision::Nothing => None,
             AlertDecision::WaitUntil(at) => Some(at),
@@ -408,6 +445,32 @@ mod tests {
             sent[1].1,
             "Dewi minta bergabung ke kantor. Buka Organisasi untuk mencocokkan kode dan menyetujui."
         );
+    }
+
+    #[test]
+    fn alert_text_in_english() {
+        let (a, b, c) = (
+            req("a", "Rina", "Desain"),
+            req("b", "Joko", ""),
+            req("c", "Sari", "Desain"),
+        );
+        assert_eq!(
+            alert_text(&[&a], UiLang::En),
+            (
+                "New join request".into(),
+                "Rina wants to join the Desain department. Open Organization to match the code and approve."
+                    .into()
+            )
+        );
+        assert_eq!(
+            alert_text(&[&b], UiLang::En).1,
+            "Joko wants to join the office. Open Organization to match the code and approve."
+        );
+        assert_eq!(
+            alert_text(&[&a, &c], UiLang::En).1,
+            "2 people want to join. Open Organization to review them."
+        );
+        assert_eq!(alert_text(&[&a], UiLang::Id).0, "Permintaan bergabung baru");
     }
 
     #[test]

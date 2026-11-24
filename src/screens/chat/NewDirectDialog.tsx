@@ -4,6 +4,7 @@ import { chatApi, type ConversationSummary, type Person } from "../../api/chat";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
+import { CHAT_DIALOGS } from "../../i18n/chat-dialogs";
 
 type Props = {
   open: boolean;
@@ -14,6 +15,7 @@ type Props = {
 
 // Pesan pribadi baru: cari rekan lalu pilih. Chat pribadi yang sudah ada dibuka lagi, bukan dibuat dobel.
 export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props) {
+  const T = CHAT_DIALOGS.newDirect;
   const [query, setQuery] = useState("");
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<AppError | null>(null);
@@ -53,17 +55,15 @@ export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props)
         if (!next) reset();
         onOpenChange(next);
       }}
-      title="Pesan baru"
-      description="Pilih rekan untuk chat pribadi. Hanya Anda berdua yang bisa membacanya."
+      title={T.title}
+      description={T.description}
     >
       {people.length === 0 ? (
-        <p className="chat-note">
-          Belum ada rekan lain di kantor ini. Undang rekan dari menu Organisasi, lalu chat pribadi bisa dimulai.
-        </p>
+        <p className="chat-note">{T.noPeople}</p>
       ) : (
         <>
           <div className="field">
-            <label htmlFor={searchId}>Cari rekan</label>
+            <label htmlFor={searchId}>{T.searchLabel}</label>
             <input
               id={searchId}
               type="search"
@@ -73,11 +73,11 @@ export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props)
               aria-describedby={countId}
             />
             <p id={countId} className="sr-only" aria-live="polite">
-              {shown.length} rekan
+              {T.count(shown.length)}
             </p>
           </div>
           {shown.length > 0 ? (
-            <ul className="chat-people" aria-label="Rekan">
+            <ul className="chat-people" aria-label={T.listLabel}>
               {shown.map((p) => (
                 <li key={p.publicKey}>
                   <button
@@ -91,19 +91,19 @@ export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props)
                       {initials(p.name)}
                     </span>
                     <span className="chat-person-name">{p.name}</span>
-                    {busyKey === p.publicKey && <span className="chat-person-busy">Membuka...</span>}
+                    {busyKey === p.publicKey && <span className="chat-person-busy">{T.opening}</span>}
                   </button>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="chat-note">Tidak ada rekan bernama "{query.trim()}".</p>
+            <p className="chat-note">{T.noMatch(query.trim())}</p>
           )}
         </>
       )}
       <div aria-live="polite">
         {error && (
-          <ErrorAlert title="Chat pribadi belum terbuka">
+          <ErrorAlert title={T.failed}>
             <p>{error.message}</p>
           </ErrorAlert>
         )}
@@ -111,7 +111,7 @@ export function NewDirectDialog({ open, onOpenChange, people, onOpened }: Props)
       <div className="dlg-actions">
         <DialogClose asChild>
           <button type="button" className="btn btn-ghost" disabled={busyKey !== null}>
-            Batal
+            {CHAT_DIALOGS.common.cancel}
           </button>
         </DialogClose>
       </div>

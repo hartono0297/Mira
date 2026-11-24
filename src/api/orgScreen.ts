@@ -2,13 +2,14 @@
 // Kontrak bersama ada di ./org.ts; file ini hanya untuk B.
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri, NO_TAURI_ERROR, toAppError } from ".";
+import { localizeError } from "../i18n/errors";
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!isTauri()) throw NO_TAURI_ERROR;
   try {
     return await invoke<T>(command, args);
   } catch (err) {
-    throw toAppError(err);
+    throw localizeError(toAppError(err));
   }
 }
 

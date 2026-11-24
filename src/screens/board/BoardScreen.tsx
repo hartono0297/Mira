@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { boardApi, subscribeBoard, type ProjectSummary } from "../../api/board";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { SidebarCount } from "../../components/SidebarCount";
+import { subscribeLang } from "../../i18n/core";
 import { useCreateOptions } from "./createOptions";
 import { dueSummary, type DueSummary } from "./dueCounts";
 import { todayIso } from "./format";
@@ -11,6 +12,7 @@ import { NewProjectDialog } from "./NewProjectDialog";
 import { OutsideProjects } from "./OutsideProjects";
 import { ProjectBoard, type ProjectBoardHandle } from "./ProjectBoard";
 import { TaskDetail } from "./TaskDetail";
+import { TEKS_LAYAR } from "./teks";
 import { TEKS_MENU } from "./teksMenu";
 import { boardMenuItems, useBoardMenu } from "./useBoardMenu";
 import { useBoardLive } from "./useBoardLive";
@@ -22,8 +24,12 @@ export const BOARD_SELECTION_KEY = "mira.board.selection";
 export const MY_TASKS = "__mine__";
 // Angka tenggat dihitung ulang tiap menit juga, supaya pergantian hari ikut terhitung.
 export const DUE_POLL_MS = 60000;
-export const CREATE_NOTE = "Proyek dibuat oleh superadmin atau admin departemen.";
-const DUE_MEANING = "task tenggat hari ini atau lewat";
+// Catatan di bawah daftar proyek untuk yang tidak boleh membuat proyek. `export let`
+// diperbarui saat bahasa berganti, jadi yang mengimpornya membaca teks terbaru.
+export let CREATE_NOTE = TEKS_LAYAR.layar.catatanBuat;
+subscribeLang(() => {
+  CREATE_NOTE = TEKS_LAYAR.layar.catatanBuat;
+});
 
 function readSelection(): string | null {
   try {
@@ -94,9 +100,9 @@ function ProjectLink({ project: p, current, due, onSelect, onRequest }: LinkProp
         <span className="bd-link-count">
           <span className="sr-only">, </span>
           {p.openCount}
-          <span className="sr-only"> task belum selesai</span>
+          <span className="sr-only">{TEKS_LAYAR.layar.belumSelesaiSr(p.openCount)}</span>
         </span>
-        <SidebarCount count={due} meaning={DUE_MEANING} className="bd-link-due" />
+        <SidebarCount count={due} meaning={TEKS_LAYAR.layar.artiTenggat} className="bd-link-due" />
       </button>
       {menu.element}
     </li>
@@ -285,11 +291,13 @@ export function BoardScreen() {
   const overview = createOpts.status === "ready" ? createOpts.data.overview : null;
   const leftSelf = !!lostShown && leftId === lostShown.id;
 
+  const L = TEKS_LAYAR.layar;
+
   return (
     <main className="bd" aria-labelledby="page-title">
-      <nav className="bd-nav" aria-label="Task saya dan proyek">
+      <nav className="bd-nav" aria-label={L.navLabel}>
         <h1 id="page-title" className="page-title bd-title">
-          Board
+          {L.judul}
         </h1>
         <ul className="bd-navlist">
           <li>
@@ -300,19 +308,19 @@ export function BoardScreen() {
               onClick={() => select(MY_TASKS)}
             >
               <IconListCheck size={18} aria-hidden="true" />
-              <span className="bd-link-name">Task saya</span>
-              <SidebarCount count={due?.total ?? 0} meaning={DUE_MEANING} className="bd-link-due" />
+              <span className="bd-link-name">{L.taskSaya}</span>
+              <SidebarCount count={due?.total ?? 0} meaning={L.artiTenggat} className="bd-link-due" />
             </button>
           </li>
         </ul>
 
-        <h2 className="bd-lbl">Proyek</h2>
+        <h2 className="bd-lbl">{L.proyek}</h2>
         {live.loading && !projects && (
           <p className="bd-nav-note" role="status">
-            Memuat proyek...
+            {L.memuatProyek}
           </p>
         )}
-        {projects && projects.length === 0 && <p className="bd-nav-note">Belum ada proyek.</p>}
+        {projects && projects.length === 0 && <p className="bd-nav-note">{L.belumAdaProyek}</p>}
         {projects && projects.length > 0 && (
           <ul className="bd-navlist">
             {projects.map((p) => (
@@ -330,10 +338,10 @@ export function BoardScreen() {
         {projects && canCreateProject && (
           <button type="button" className="btn btn-ghost btn-sm bd-new" onClick={() => setCreating(true)}>
             <IconPlus size={16} aria-hidden="true" />
-            Proyek baru
+            {L.proyekBaru}
           </button>
         )}
-        {projects && projects.length > 0 && !canCreateProject && <p className="bd-nav-note">{CREATE_NOTE}</p>}
+        {projects && projects.length > 0 && !canCreateProject && <p className="bd-nav-note">{L.catatanBuat}</p>}
         {overview?.isSuperadmin && <OutsideProjects myKey={overview.publicKey} onJoined={joined} />}
       </nav>
 
@@ -341,24 +349,24 @@ export function BoardScreen() {
         <div className="sr-only" role="status">
           {lostShown
             ? leftSelf
-              ? `Anda sudah keluar dari proyek ${lostShown.code} ${lostShown.name}.`
-              : `Proyek ${lostShown.code} ${lostShown.name} tidak tersedia lagi.`
+              ? L.keluarSr(lostShown.code, lostShown.name)
+              : L.hilangSr(lostShown.code, lostShown.name)
             : ""}
         </div>
         {!projects && !live.loading && (
           <div className="bd-pad bd-narrow" role="alert">
-            <ErrorAlert title="Daftar proyek belum terbaca">
-              <p>{live.error?.message ?? "Inti Mira tidak mengirim daftar proyek."}</p>
-              <p>Tunggu sebentar lalu coba lagi. Data board tersimpan di laptop ini, tidak ada yang hilang.</p>
+            <ErrorAlert title={L.daftarBelumTerbaca}>
+              <p>{live.error?.message ?? L.intiTanpaDaftar}</p>
+              <p>{L.tungguDaftar}</p>
               <button type="button" className="btn btn-ghost btn-sm bd-retry" onClick={() => void reload()}>
-                Coba lagi
+                {L.cobaLagi}
               </button>
             </ErrorAlert>
           </div>
         )}
         {!projects && live.loading && (
           <p className="bd-pad hint" role="status">
-            Memuat board...
+            {L.memuatBoard}
           </p>
         )}
         {projects && current === MY_TASKS && (
@@ -383,37 +391,32 @@ export function BoardScreen() {
           <div className="bd-empty">
             <h2 className="bd-empty-title" ref={lostHeadingRef} tabIndex={-1}>
               {leftSelf
-                ? `Anda sudah keluar dari proyek ${lostShown.code} ${lostShown.name}`
-                : `Proyek ${lostShown.code} ${lostShown.name} tidak tersedia lagi`}
+                ? L.keluarJudul(lostShown.code, lostShown.name)
+                : L.hilangJudul(lostShown.code, lostShown.name)}
             </h2>
             <p>
-              {leftSelf
-                ? "Proyek ini tidak tampil lagi di board Anda, dan laptop ini berhenti menerima data baru proyek ini."
-                : "Anda tidak bisa membuka proyek ini lagi. Biasanya karena pengelola proyek mengeluarkan Anda dari anggotanya."}
+              {leftSelf ? L.keluarIsi : L.hilangIsi}
             </p>
-            <p>Kalau masih perlu, minta pengelola proyek menambahkan Anda lagi.</p>
+            <p>{L.mintaTambah}</p>
             {nextProject && (
               <button type="button" className="btn" onClick={() => select(nextProject.id)}>
-                Buka {nextProject.code} {nextProject.name}
+                {L.bukaProyek(nextProject.code, nextProject.name)}
               </button>
             )}
           </div>
         )}
         {projects && projects.length === 0 && current !== MY_TASKS && !lostShown && (
           <div className="bd-empty">
-            <h2 className="bd-empty-title">{canCreateProject ? "Belum ada proyek" : "Belum ada proyek yang bisa Anda lihat"}</h2>
-            <p>
-              Satu proyek punya satu board dengan kolom To do, Dikerjakan, dan Selesai. Task diberi nomor dari kode
-              proyeknya, misalnya PA-1 untuk proyek berkode PA.
-            </p>
+            <h2 className="bd-empty-title">{canCreateProject ? L.kosongJudul : L.kosongJudulTamu}</h2>
+            <p>{L.kosongIsi}</p>
             {canCreateProject ? (
               <button type="button" className="btn" onClick={() => setCreating(true)}>
                 <IconPlus size={16} aria-hidden="true" />
-                Buat proyek pertama
+                {L.buatPertama}
               </button>
             ) : (
               <p>
-                {CREATE_NOTE} Board proyek muncul di sini setelah pengelolanya menambahkan Anda sebagai anggota.
+                {L.catatanBuat} {L.munculSetelahDitambah}
               </p>
             )}
           </div>

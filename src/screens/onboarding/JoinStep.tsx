@@ -8,6 +8,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
 import { firewallName } from "../../platform";
 import { StepHeading } from "./StepHeading";
+import { ONB } from "./texts";
 
 type Props = {
   identity: IdentityInfo;
@@ -107,18 +108,16 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
   }
 
   const text = errors.server ? inviteErrorText(errors.server) : null;
+  const T = ONB.join;
 
   return (
     <form className="onb-form" onSubmit={submit} noValidate aria-busy={searching || undefined}>
-      <StepHeading>Gabung dengan kode undangan</StepHeading>
-      <p className="onb-lead">
-        Minta kode undangan ke admin kantor atau admin departemen Anda. Kode berisi 20 huruf dan angka, misalnya
-        ABCD-EFGH-JKMN-PQRS-TVWX.
-      </p>
+      <StepHeading>{T.heading}</StepHeading>
+      <p className="onb-lead">{T.lead}</p>
 
       {askName && (
         <div className="field">
-          <label htmlFor={nameId}>Nama tampilan</label>
+          <label htmlFor={nameId}>{T.nameLabel}</label>
           <input
             ref={nameRef}
             id={nameId}
@@ -131,7 +130,7 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
             disabled={searching}
           />
           <p id={nameHint} className="hint">
-            Nama yang dilihat rekan kerja, 1 sampai 50 karakter.
+            {T.nameHint}
           </p>
           <div id={nameErr} aria-live="polite">
             {errors.name && <FieldError text={errors.name} />}
@@ -140,7 +139,7 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
       )}
 
       <div className="field">
-        <label htmlFor={codeId}>Kode undangan</label>
+        <label htmlFor={codeId}>{T.codeLabel}</label>
         <input
           ref={codeRef}
           id={codeId}
@@ -156,7 +155,7 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
           disabled={searching}
         />
         <p id={codeHint} className="hint">
-          Huruf besar atau kecil sama saja. Spasi dan tanda strip boleh ikut ditempel.
+          {T.codeHint}
         </p>
         <div id={codeErr} aria-live="polite">
           {errors.code && <FieldError text={errors.code} />}
@@ -177,10 +176,10 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
           ) : (
             <IconChevronRight size={16} aria-hidden="true" />
           )}
-          Rekan tidak ditemukan otomatis?
+          {T.addressToggle}
         </button>
         <div id={addrPanel} hidden={!showAddress} className="field onb-disclosure-panel">
-          <label htmlFor={addrId}>Alamat laptop rekan (boleh dikosongkan)</label>
+          <label htmlFor={addrId}>{T.addressLabel}</label>
           <input
             ref={addressRef}
             id={addrId}
@@ -194,8 +193,7 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
             disabled={searching}
           />
           <p id={addrHint} className="hint">
-            Minta rekan membuka Pengaturan, bagian Jaringan, di Mira. Isi alamat yang tertera di sana, misalnya
-            192.168.1.20 atau 192.168.1.20:47800, atau tempel tautan yang diawali mira://.
+            {T.addressHint}
           </p>
           <div id={addrErr} aria-live="polite">
             {errors.address && <FieldError text={errors.address} />}
@@ -206,8 +204,8 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
       <div aria-live="polite" role="status" className="onb-live">
         {searching && (
           <div className="onb-searching">
-            <strong>Mencari laptop rekan dan memeriksa kode...</strong>
-            <p>Ini bisa makan waktu sampai 20 detik. Biarkan jendela ini terbuka.</p>
+            <strong>{T.searchingTitle}</strong>
+            <p>{T.searchingHint}</p>
           </div>
         )}
       </div>
@@ -225,12 +223,12 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
             )}
             {errors.server.code === "no_peer_found" && (
               <button type="button" className="btn btn-ghost onb-inline-btn" onClick={onFirewall}>
-                Periksa {firewallName()}
+                {T.checkFirewall(firewallName())}
               </button>
             )}
             {(errors.server.code === "already_in_org" || errors.server.code === "name_required") && (
               <button type="button" className="btn btn-ghost onb-inline-btn" onClick={onReload}>
-                Muat ulang data laptop ini
+                {T.reload}
               </button>
             )}
           </ErrorAlert>
@@ -240,10 +238,10 @@ export function JoinStep({ identity, onIdentity, onBack, onFirewall, onJoined, o
       <div className="onb-actions">
         <button type="button" className="btn btn-ghost" onClick={onBack} disabled={searching}>
           <IconArrowLeft size={18} aria-hidden="true" />
-          Kembali
+          {T.back}
         </button>
         <button type="submit" className="btn" disabled={searching} aria-busy={searching || undefined}>
-          {searching ? "Mencari..." : "Gabung ke organisasi"}
+          {searching ? T.submitting : T.submit}
         </button>
       </div>
     </form>
