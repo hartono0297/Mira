@@ -17,6 +17,8 @@ Isinya:
 
 Laptop 0.3 menolak subtask dan catatan waktu di task. Perbarui semua laptop bersamaan; setelah diperbarui, laptop itu menyusul sendiri. Laporan per bagian ada di `docs/progress/v04-*.md`.
 
+Diperiksa pada kode gabungan (branch `integrasi-v04`) di satu PC Windows: `cargo test` 1109 lulus (7 diabaikan), clippy tanpa peringatan, tsc bersih, Vitest 1632 tes di 113 file lulus, dan 14 skrip uji ujung ke ujung pada build debug lulus dengan 435 dari 435 pemeriksaan, semuanya pada percobaan pertama.
+
 ## v0.3.0
 
 Departemen, bergabung dengan persetujuan dan kode cocok, anggota proyek, chat lima bagian dengan grup, label keahlian, angka notifikasi, daftar pengguna untuk superadmin, cek pembaruan dari dalam aplikasi dengan dialog Yang baru, serta perbaikan seret kartu board dan tanda tangan PDF yang salah ditolak. Laptop 0.1.0 atau 0.2.0 perlu menjalankan perintah pasang sekali lagi; setelah itu pembaruan bisa dari dalam Mira.
