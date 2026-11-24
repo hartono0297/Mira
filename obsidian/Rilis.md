@@ -15,6 +15,8 @@ Isinya:
 
 Organisasi kantor di-reset pada 24 November 2026 dan dibuat ulang di versi ini, karena laptop 0.3.0 sempat membuat kantor kedua tanpa melihat kantor 0.1.0. Bergabung lewat data AD aktif setelah semua laptop memakai 0.5.0. Jalur LDAP sungguhan belum diuji di PC domain kantor; semua uji memakai AD tiruan. Laporan: `docs/progress/onboarding-ad.md` dan `docs/progress/task-detail-bingkai.md`.
 
+Diperiksa pada kode gabungan (branch `integrasi-v05`) di satu PC Windows: `cargo test` 1225 lulus (7 diabaikan), clippy tanpa peringatan, tsc bersih, Vitest 1746 tes di 118 file lulus, dan 15 skrip uji ujung ke ujung pada build debug lulus dengan 627 dari 627 pemeriksaan, termasuk `ad-e2e` 97/97, semuanya pada percobaan pertama.
+
 ## v0.4.0
 
 Isinya:
