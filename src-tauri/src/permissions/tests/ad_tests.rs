@@ -373,7 +373,7 @@ fn v040_reads_a_join_info_answer_with_ad_fields() {
         }],
         extras: crate::network::JOIN_INFO_EXTRAS_AD,
         ad_domain: Some(DOMAIN.into()),
-        ad_ou_map: vec![OuMapping {
+        ad_ou_map: vec![crate::network::OuMapWire {
             ou: "Kantor Pusat".into(),
             team: "1".repeat(32),
         }],
@@ -662,19 +662,23 @@ fn ad_settings_need_live_departments_and_valid_input() {
         err.to_string(),
         "Departemen untuk OU \"Gudang\" tidak ditemukan atau sudah dihapus."
     );
-    // The fold refuses a missing department as well.
-    let err = p::author_op(
+    // The fold leaves rows of a missing department out instead of refusing
+    // the op: a department deleted concurrently by another superadmin must
+    // not undo the domain.
+    p::author_op(
         &mut o.andi.conn,
         &o.andi.id,
         Scope::Org,
         Body::AdSettingsSet {
             domain: DOMAIN.into(),
-            ou_map: vec![row("Gudang", &unknown)],
+            ou_map: vec![row("Gudang", &unknown), row("Desain", &o.desain)],
         },
         now(),
     )
-    .unwrap_err();
-    assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    .unwrap();
+    let ad = o.andi.state().ad;
+    assert_eq!(ad.domain.as_deref(), Some(DOMAIN));
+    assert_eq!(ad.ou_map, [row("Desain", &o.desain)]);
 
     // A deleted department is gone; an archived one may stay mapped.
     let gudang = p::create_team(&mut o.andi.conn, &o.andi.id, "Gudang", now())
@@ -929,6 +933,7 @@ fn the_card_shows_the_claim_and_a_suggested_department() {
             "name",
             "ous",
             "suggestedTeamId",
+            "usedBy",
             "user"
         ]
     );
@@ -1058,4 +1063,141 @@ fn join_info_announces_ad_only_with_settings() {
     let info = p::join_info(&o.dimas.conn).unwrap().unwrap();
     assert!(!info.accepts_ad);
     assert_eq!(info.ad_domain.as_deref(), Some(DOMAIN));
+}
+
+#[test]
+fn approving_a_claim_waits_for_the_gate_again() {
+    let mut o = open_office();
+    let mut sari = Node::new("Sari");
+    let mine = request_with(&o, &mut sari, Some(&ad_extras(claim())), "0.5.0");
+    p::receive_join_request(
+        &mut o.andi.conn,
+        &o.andi.id,
+        &mine.request,
+        &sari.pk(),
+        ip("192.168.1.50"),
+        now(),
+    )
+    .unwrap();
+    // A laptop on an older Mira shows up after the request was stored.
+    o.dimas.report_version("0.3.0");
+    o.dimas.sync_to(&mut o.andi);
+    assert!(!j::join_ad_allowed(&o.andi.state()));
+    let err = p::approve_join(&mut o.andi.conn, &o.andi.id, &mine.request_id, now()).unwrap_err();
+    assert!(
+        matches!(&err, AppError::InvalidInput(m) if m == p::AD_CLAIM_GATE_CLOSED),
+        "{err:?}"
+    );
+    assert_eq!(
+        p::AD_CLAIM_GATE_CLOSED,
+        "Permintaan ini membawa data AD, tapi masih ada laptop kantor dengan Mira versi lama. Perbarui Mira di laptop itu dulu, atau tolak permintaan ini dan minta peminta mengirim ulang."
+    );
+    assert!(!o.andi.state().is_active(&sari.pk()));
+    // Once that laptop is updated, the same request can be approved.
+    o.dimas.report_version(crate::device::APP_VERSION);
+    o.dimas.sync_to(&mut o.andi);
+    p::approve_join(&mut o.andi.conn, &o.andi.id, &mine.request_id, now()).unwrap();
+    assert!(o.andi.state().is_active(&sari.pk()));
+}
+
+#[test]
+fn the_card_names_a_member_already_admitted_with_the_same_account() {
+    let mut o = open_office();
+    let mut sari = Node::new("Sari");
+    let first = request_with(&o, &mut sari, Some(&ad_extras(claim())), "0.5.0");
+    let receive = |o: &mut Office, r: &p::OutgoingJoinRequest, n: &Node| {
+        p::receive_join_request(
+            &mut o.andi.conn,
+            &o.andi.id,
+            &r.request,
+            &n.pk(),
+            ip("192.168.1.51"),
+            now(),
+        )
+        .unwrap();
+    };
+    receive(&mut o, &first, &sari);
+    let card = |o: &Office| {
+        let st = o.andi.state();
+        p::pending_join_requests(&o.andi.conn, &st, &o.andi.pk(), now()).unwrap()
+    };
+    assert_eq!(card(&o)[0].ad.as_ref().unwrap().used_by, None);
+    p::approve_join(&mut o.andi.conn, &o.andi.id, &first.request_id, now()).unwrap();
+    let decision = o.andi.state().join_decisions[&first.request_id].clone();
+    assert_eq!(
+        decision.ad_account,
+        Some((DOMAIN.to_owned(), "sari.l".to_owned()))
+    );
+
+    // Someone else claims the same account, in other letter case.
+    let mut tono = Node::new("Tono");
+    let copy = JoinAdClaim {
+        user: "SARI.L".into(),
+        ..claim()
+    };
+    let second = request_with(&o, &mut tono, Some(&ad_extras(copy)), "0.5.0");
+    receive(&mut o, &second, &tono);
+    let cards = card(&o);
+    assert_eq!(cards.len(), 1);
+    let ad = cards[0].ad.as_ref().unwrap();
+    assert_eq!(ad.used_by.as_deref(), Some("Sari"));
+    assert_eq!(serde_json::to_value(ad).unwrap()["usedBy"], "Sari");
+    assert_eq!(p::ad_account_used_by(&o.andi.state(), DOMAIN, "other"), None);
+    // Only active members count.
+    let sari_pk = sari.pk();
+    p::remove_member(&mut o.andi.conn, &o.andi.id, &sari_pk, now()).unwrap();
+    assert_eq!(card(&o)[0].ad.as_ref().unwrap().used_by, None);
+}
+
+#[test]
+fn ad_settings_rows_of_a_department_deleted_meanwhile_are_dropped() {
+    let mut o = open_office();
+    let gudang = p::create_team(&mut o.andi.conn, &o.andi.id, "Gudang", now())
+        .unwrap()
+        .id;
+    o.andi.sync_to(&mut o.rina);
+    // Rina becomes superadmin; both edit at the same time.
+    let rina = o.rina.pk();
+    p::add_superadmin(&mut o.andi.conn, &o.andi.id, &rina, now()).unwrap();
+    o.andi.sync_to(&mut o.rina);
+    p::set_ad_settings(
+        &mut o.rina.conn,
+        &o.rina.id,
+        DOMAIN,
+        vec![row("Gudang", &gudang), row("Desain", &o.desain)],
+        now(),
+    )
+    .unwrap();
+    p::delete_team(&mut o.andi.conn, &o.andi.id, &gudang, now()).unwrap();
+    o.rina.sync_to(&mut o.andi);
+    o.andi.sync_to(&mut o.rina);
+    for n in [&o.andi, &o.rina] {
+        let ad = n.state().ad;
+        assert_eq!(ad.domain.as_deref(), Some(DOMAIN), "the domain is kept");
+        assert!(ad.ou_map.contains(&row("Desain", &o.desain)));
+    }
+    assert_eq!(o.andi.state().ad, o.rina.state().ad);
+}
+
+#[test]
+fn join_info_rows_ignore_unknown_fields_but_the_op_does_not() {
+    let team = "1".repeat(32);
+    let json = serde_json::json!({
+        "org": {
+            "id": "a".repeat(32),
+            "name": "Biro Contoh",
+            "founder_public_key": "f".repeat(64),
+            "created_at": "2026-11-22T08:00:00Z",
+            "genesis_signature": "0".repeat(128),
+        },
+        "fingerprint": "AB12-CD34",
+        "departments": [],
+        "extras": 2,
+        "ad_domain": DOMAIN,
+        "ad_ou_map": [{ "ou": "Desain", "team": team, "priority": 1 }],
+    });
+    let info: crate::network::JoinInfoWire = serde_json::from_value(json).unwrap();
+    assert_eq!(info.ad_ou_map[0].ou, "Desain");
+    let row_json = serde_json::json!({ "ou": "Desain", "team": team, "priority": 1 });
+    assert!(serde_json::from_value::<OuMapping>(row_json).is_err());
 }

@@ -201,6 +201,7 @@ const en: Dict<typeof id> = {
       settingsWaitForLaptops: "AD settings can be saved once every office laptop runs the latest Mira version.",
       requesterOutdated: "The requester's Mira is too old for an office that uses AD settings. Ask them to update Mira first, then send the request again.",
       oldVersionAd: "This office still has laptops on an older Mira version. Send the request again without AD data.",
+      claimGateClosed: "This request carries AD data, but some office laptops still run an older Mira version. Update Mira on those laptops first, or reject this request and ask the requester to send it again.",
       requestNoAd: "This join request has no AD data.",
     },
     misc: {

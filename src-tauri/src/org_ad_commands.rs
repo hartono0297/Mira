@@ -202,6 +202,10 @@ struct CheckTarget {
     name: String,
     team_id: String,
     team_name: String,
+    /// What the requester's laptop reported: `displayName`, `department`, DN.
+    claim_name: Option<String>,
+    claim_department: Option<String>,
+    claim_dn: Option<String>,
     /// (id, name) of the open departments.
     departments: Vec<(String, String)>,
     ou_map: Vec<OuMapping>,
@@ -228,6 +232,9 @@ fn find_target(
         name: req.display_name,
         team_id: req.team_id,
         team_name: req.team_name,
+        claim_name: claim.name,
+        claim_department: claim.department,
+        claim_dn: claim.dn,
         departments,
         ou_map,
     })
@@ -243,6 +250,11 @@ fn check_result(
             &t.name,
             &t.team_id,
             &t.team_name,
+            Some(check::ClaimFields {
+                name: t.claim_name.as_deref(),
+                department: t.claim_department.as_deref(),
+                dn: t.claim_dn.as_deref(),
+            }),
             &entry,
             &t.departments,
             &t.ou_map,
@@ -528,6 +540,9 @@ mod tests {
             name: "Rina Wijaya".into(),
             team_id: TEAM.into(),
             team_name: "Keuangan".into(),
+            claim_name: Some("Rina Wijaya".into()),
+            claim_department: Some("Keuangan".into()),
+            claim_dn: Some("CN=rina,OU=Staf,DC=macf,DC=co,DC=id".into()),
             departments: vec![(TEAM.into(), "Keuangan".into())],
             ou_map: Vec::new(),
         }
@@ -575,6 +590,7 @@ mod tests {
             ous: Vec::new(),
             suggested_team_id: Some(TEAM.into()),
             department_in_mira: true,
+            used_by: None,
         }
     }
 
@@ -630,8 +646,27 @@ mod tests {
             AdCheckStatus::OtherDomain
         );
         let c = check_result(&t, Ok(entry("Rini", "Keuangan", false)), at());
-        assert_eq!(c.mismatches.len(), 1);
+        // The request's name and the claim's name both differ.
+        assert_eq!(c.mismatches.len(), 2);
         assert_eq!(c.checked_at, at());
+        assert_eq!(c.directory_ous, ["Staf"]);
+        // A claim that does not match the directory is a mismatch even when
+        // the request itself does.
+        let forged = CheckTarget {
+            claim_department: Some("Direksi".into()),
+            claim_dn: Some("CN=rina,OU=Direksi,DC=macf,DC=co,DC=id".into()),
+            ..target()
+        };
+        let c = check_result(&forged, Ok(entry("Rina Wijaya", "Keuangan", false)), at());
+        assert_eq!(c.status, AdCheckStatus::Mismatch);
+        let fields: Vec<_> = c.mismatches.iter().map(|m| m.field).collect();
+        assert_eq!(
+            fields,
+            [
+                crate::ad::check::AdField::ClaimDepartment,
+                crate::ad::check::AdField::Location
+            ]
+        );
     }
 
     #[tokio::test]

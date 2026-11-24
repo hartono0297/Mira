@@ -196,6 +196,8 @@ pub struct JoinDecision {
     pub approved: bool,
     pub by: String,
     pub at: String,
+    /// AD onboarding: `(domain, user)` of the request's AD claim, if any.
+    pub ad_account: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1355,14 +1357,19 @@ impl OrgState {
             }
             Body::AdSettingsSet { domain, ou_map } => {
                 self.require_superadmin(&author)?;
+                // Rows of a deleted (or unknown) department are left out
+                // rather than refusing the op: a department deleted
+                // concurrently must not undo another superadmin's domain.
                 // Archived departments may stay mapped (suggestions skip
-                // them); deleted ones are gone for good.
-                if ou_map.iter().any(|row| self.live_team(&row.team).is_none()) {
-                    return Err(Reason::TeamNotFound);
-                }
+                // them).
+                let ou_map: Vec<OuMapping> = ou_map
+                    .iter()
+                    .filter(|row| self.live_team(&row.team).is_some())
+                    .cloned()
+                    .collect();
                 let next = AdSettings {
                     domain: (!domain.is_empty()).then(|| domain.clone()),
-                    ou_map: ou_map.clone(),
+                    ou_map,
                     set: true,
                 };
                 if self.ad == next {
@@ -1402,6 +1409,11 @@ impl OrgState {
                 approved,
                 by,
                 at,
+                ad_account: req
+                    .payload
+                    .ad
+                    .as_ref()
+                    .map(|c| (c.domain.clone(), c.user.clone())),
             },
         );
     }

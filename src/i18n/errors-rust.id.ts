@@ -204,6 +204,7 @@ const id = {
       settingsWaitForLaptops: "Pengaturan AD baru bisa disimpan setelah semua laptop kantor memakai Mira versi terbaru.",
       requesterOutdated: "Mira di laptop peminta terlalu lama untuk kantor yang memakai pengaturan AD. Minta peminta memperbarui Mira dulu, lalu mengirim permintaan lagi.",
       oldVersionAd: "Kantor ini masih punya laptop Mira versi lama. Kirim ulang permintaan tanpa data AD.",
+      claimGateClosed: "Permintaan ini membawa data AD, tapi masih ada laptop kantor dengan Mira versi lama. Perbarui Mira di laptop itu dulu, atau tolak permintaan ini dan minta peminta mengirim ulang.",
       requestNoAd: "Permintaan bergabung ini tidak membawa data AD.",
     },
     misc: {

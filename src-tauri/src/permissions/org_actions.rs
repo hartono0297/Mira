@@ -11,7 +11,7 @@ use super::actions::{author_in, reason_error};
 use super::fold::{AdSettings, MemberStatus, Reason};
 use super::format::{is_lower_hex, validate_label_name, validate_team_name};
 use super::join::{
-    AD_OU_MAP_MAX_ROWS, ad_settings_allowed, is_below_ad_threshold, is_valid_ou_name,
+    AD_OU_MAP_MAX_ROWS, ad_settings_allowed, is_below_ad_threshold, is_valid_ou_name, join_ad_allowed,
     parse_request_payload,
 };
 use super::join_store::{DeviceProfile, stored_request};
@@ -24,6 +24,9 @@ use crate::identity::Identity;
 /// `approve_join` refusal when the office has AD settings and the
 /// requester's Mira is older than `JOIN_AD_SINCE`.
 pub const REQUESTER_OUTDATED: &str = "Mira di laptop peminta terlalu lama untuk kantor yang memakai pengaturan AD. Minta peminta memperbarui Mira dulu, lalu mengirim permintaan lagi.";
+/// `approve_join` refusal for a request with an AD claim while some laptop
+/// of the office runs a Mira older than `JOIN_AD_SINCE`.
+pub const AD_CLAIM_GATE_CLOSED: &str = "Permintaan ini membawa data AD, tapi masih ada laptop kantor dengan Mira versi lama. Perbarui Mira di laptop itu dulu, atau tolak permintaan ini dan minta peminta mengirim ulang.";
 /// `set_ad_settings` refusal while some laptop runs an older Mira.
 pub const AD_SETTINGS_GATE_CLOSED: &str =
     "Pengaturan AD baru bisa disimpan setelah semua laptop kantor memakai Mira versi terbaru.";
@@ -165,13 +168,20 @@ fn decide_join(
                 .into(),
         )
     })?;
-    // An office with AD settings has an `ad_settings_set` op in its log.
-    // An older Mira refuses that op, so the new member's log would stall.
     if approve
-        && load_state(&tx)?.is_some_and(|s| s.ad.set)
-        && parse_request_payload(&req.payload).is_ok_and(|p| is_below_ad_threshold(&p.app_version))
+        && let (Some(state), Ok(p)) = (load_state(&tx)?, parse_request_payload(&req.payload))
     {
-        return Err(AppError::InvalidInput(REQUESTER_OUTDATED.into()));
+        // An office with AD settings has an `ad_settings_set` op in its log.
+        // An older Mira refuses that op, so the new member's log would stall.
+        if state.ad.set && is_below_ad_threshold(&p.app_version) {
+            return Err(AppError::InvalidInput(REQUESTER_OUTDATED.into()));
+        }
+        // The gate may have closed since the request was stored (a laptop
+        // on an older Mira joined by invite code): that laptop would refuse
+        // the `join_approve` op carrying the claim.
+        if p.has_ad() && !join_ad_allowed(&state) {
+            return Err(AppError::InvalidInput(AD_CLAIM_GATE_CLOSED.into()));
+        }
     }
     let body = if approve {
         Body::JoinApprove {

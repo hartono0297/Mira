@@ -1213,6 +1213,11 @@ pub struct JoinAdView {
     pub suggested_team_id: Option<String>,
     /// The suggested department exists in this office.
     pub department_in_mira: bool,
+    /// Name of an active member already admitted (`join_approve`) with
+    /// the same AD account (domain and user, ignoring case): a sign that
+    /// someone claims another person's account. Filled by
+    /// `pending_join_requests`.
+    pub used_by: Option<String>,
 }
 
 impl JoinAdView {
@@ -1238,8 +1243,24 @@ impl JoinAdView {
             ous,
             suggested_team_id: suggestion.team_id,
             department_in_mira: suggestion.in_mira,
+            used_by: None,
         }
     }
+}
+
+/// The active member admitted through an approved join request whose AD
+/// claim names `domain` and `user` (ignoring case), by display name.
+pub fn ad_account_used_by(state: &OrgState, domain: &str, user: &str) -> Option<String> {
+    state
+        .join_decisions
+        .values()
+        .filter(|d| d.approved && state.is_active(&d.member))
+        .find(|d| {
+            d.ad_account.as_ref().is_some_and(|(dom, usr)| {
+                dom.eq_ignore_ascii_case(domain) && usr.to_lowercase() == user.to_lowercase()
+            })
+        })
+        .map(|d| display_name_for(state, &d.member, None))
 }
 
 /// (id, name) of the open departments, for `ad::dept::suggest`.
@@ -1308,9 +1329,13 @@ pub fn pending_join_requests(
         let p = req.payload;
         let requester_outdated = state.ad.set && is_below_ad_threshold(&p.app_version);
         out.push(JoinRequestView {
-            ad: p
-                .ad
-                .map(|claim| JoinAdView::new(claim, &departments, &state.ad.ou_map)),
+            ad: p.ad.map(|claim| {
+                let used_by = ad_account_used_by(state, &claim.domain, &claim.user);
+                JoinAdView {
+                    used_by,
+                    ..JoinAdView::new(claim, &departments, &state.ad.ou_map)
+                }
+            }),
             requester_outdated,
             id: row.id,
             code: row.code,

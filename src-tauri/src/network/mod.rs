@@ -132,7 +132,34 @@ pub struct JoinInfoWire {
     pub ad_domain: Option<String>,
     /// AD onboarding: OU to department rows whose department is open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ad_ou_map: Vec<crate::ad::OuMapping>,
+    pub ad_ou_map: Vec<OuMapWire>,
+}
+
+/// One OU mapping row in a `join_info` answer. Unlike `ad::OuMapping` (the
+/// strict shape inside the `ad_settings_set` op), unknown fields are
+/// ignored, so a later Mira can add some without breaking the answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OuMapWire {
+    pub ou: String,
+    pub team: String,
+}
+
+impl From<crate::ad::OuMapping> for OuMapWire {
+    fn from(m: crate::ad::OuMapping) -> Self {
+        OuMapWire {
+            ou: m.ou,
+            team: m.team,
+        }
+    }
+}
+
+impl From<OuMapWire> for crate::ad::OuMapping {
+    fn from(m: OuMapWire) -> Self {
+        crate::ad::OuMapping {
+            ou: m.ou,
+            team: m.team,
+        }
+    }
 }
 
 fn is_zero(v: &u32) -> bool {

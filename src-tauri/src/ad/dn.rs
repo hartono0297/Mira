@@ -121,9 +121,20 @@ fn parse_rdn(part: &[DnChar]) -> Option<Rdn> {
     if value.iter().any(bad) {
         return None;
     }
+    let value: String = value.iter().map(|ch| ch.c).collect();
+    // OU names reach the approver's card and the fold's OU rules: no bidi,
+    // invisible or blank-looking characters, even escaped (`\E2\80\AE`), and
+    // no piles of combining marks.
+    if value
+        .chars()
+        .any(crate::permissions::join::is_join_forbidden_char)
+        || crate::permissions::join::has_long_mark_run(&value)
+    {
+        return None;
+    }
     Some(Rdn {
         attr: attr.iter().map(|ch| ch.c.to_ascii_uppercase()).collect(),
-        value: value.iter().map(|ch| ch.c).collect(),
+        value,
     })
 }
 
@@ -319,6 +330,25 @@ mod tests {
         ] {
             assert_eq!(parse_dn(dn), None, "{dn:?}");
         }
+    }
+
+    #[test]
+    fn invisible_or_stacked_characters_rejected_even_escaped() {
+        for dn in [
+            "OU=Dir\\E2\\80\\AEeksi,DC=macf,DC=co,DC=id",
+            "OU=Dir\u{202E}eksi,DC=macf,DC=co,DC=id",
+            "OU=Keu\\E2\\80\\8Bangan,DC=macf,DC=co,DC=id",
+            "OU=Keu\u{3164}angan,DC=macf,DC=co,DC=id",
+            "CN=a\u{0301}\u{0301}\u{0301},DC=macf,DC=co,DC=id",
+            "CN=Budi\\EF\\B8\\8F,DC=macf,DC=co,DC=id",
+        ] {
+            assert_eq!(parse_dn(dn), None, "{dn:?}");
+            assert!(ous(dn).is_empty(), "{dn:?}");
+            assert_eq!(domain_of(dn), None, "{dn:?}");
+        }
+        // Two stacked marks and plain accents are fine.
+        let ok = parse_dn("OU=Nguye\u{0302}\u{0323}n,OU=Pe\\C3\\B1a,DC=x,DC=id").unwrap();
+        assert_eq!(ok[1].value, "Pe\u{f1}a");
     }
 
     #[test]

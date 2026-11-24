@@ -662,7 +662,8 @@ fn check_info(info: &JoinInfoWire) -> bool {
 fn drop_bad_ad(info: &mut JoinInfoWire) {
     use crate::permissions::join::{check_ou_map, is_valid_ad_domain};
     let domain_ok = info.ad_domain.as_deref().is_none_or(is_valid_ad_domain);
-    if !domain_ok || check_ou_map(&info.ad_ou_map).is_err() {
+    let rows: Vec<crate::ad::OuMapping> = info.ad_ou_map.iter().cloned().map(Into::into).collect();
+    if !domain_ok || check_ou_map(&rows).is_err() {
         info.ad_domain = None;
         info.ad_ou_map.clear();
     }
@@ -981,8 +982,8 @@ mod tests {
         assert!(check_info(&i), "the name limit counts characters");
     }
 
-    fn ad_row(ou: &str) -> crate::ad::OuMapping {
-        crate::ad::OuMapping {
+    fn ad_row(ou: &str) -> super::super::OuMapWire {
+        super::super::OuMapWire {
             ou: ou.into(),
             team: "1".repeat(32),
         }

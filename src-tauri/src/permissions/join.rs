@@ -234,7 +234,8 @@ pub fn is_combining_mark(c: char) -> bool {
     )
 }
 
-fn has_long_mark_run(s: &str) -> bool {
+/// More than [`JOIN_MAX_COMBINING_RUN`] combining marks in a row.
+pub fn has_long_mark_run(s: &str) -> bool {
     let mut run = 0;
     for c in s.chars() {
         run = if is_combining_mark(c) { run + 1 } else { 0 };

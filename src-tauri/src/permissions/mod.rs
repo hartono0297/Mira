@@ -65,7 +65,8 @@ pub use join::{
 pub use join_store::{
     DeviceProfile, JoinAdView, JoinDepartment, JoinInfo, JoinIngest, JoinRecord, JoinRequestRefusal,
     JoinRequestView, JoinStatusAnswer, JoinTarget, MAX_PENDING_PER_IP, MAX_PENDING_REQUESTS,
-    OutgoingJoinRequest, OutgoingStatus, Seen, cancel_join_request, create_join_request,
+    OutgoingJoinRequest, OutgoingStatus, Seen, ad_account_used_by, cancel_join_request,
+    create_join_request,
     ingest_join_records, install_approved_org, ip_group, join_info, join_record_ids_for,
     join_records_for, join_request_id, join_status_for, mark_join_rejected, mark_join_sent,
     open_departments, outgoing_join_request, pending_join_requests, prune_join_requests,
@@ -73,8 +74,8 @@ pub use join_store::{
 };
 pub(crate) use org_actions::{register_own_project_in, register_project_for_in};
 pub use org_actions::{
-    AD_SETTINGS_GATE_CLOSED, REQUESTER_OUTDATED, add_project_member, approve_join, assign_label,
-    create_label, ensure_device_op, move_member, recompute, reject_join, remove_project_member,
+    AD_CLAIM_GATE_CLOSED, AD_SETTINGS_GATE_CLOSED, REQUESTER_OUTDATED, add_project_member,
+    approve_join, assign_label, create_label, ensure_device_op, move_member, recompute, reject_join, remove_project_member,
     rename_department, rename_label, require_state, set_ad_settings, set_department_archived,
     set_label_archived,
 };

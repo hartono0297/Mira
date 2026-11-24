@@ -536,8 +536,9 @@ struct VerifiedInfo {
 /// OU rows of an answer that could be real (1 to 64 printable
 /// characters), at most [`MAX_OU_ROWS`]. Rows naming a department the
 /// office does not list are skipped later by `ad::dept::suggest`.
-fn clean_ou_map(rows: Vec<OuMapping>) -> Vec<OuMapping> {
+fn clean_ou_map(rows: Vec<crate::network::OuMapWire>) -> Vec<OuMapping> {
     rows.into_iter()
+        .map(OuMapping::from)
         .filter(|r| {
             let n = r.ou.chars().count();
             (1..=MAX_OU_CHARS).contains(&n)
@@ -2365,7 +2366,7 @@ mod tests {
             departments: Vec::new(),
             extras: JOIN_INFO_EXTRAS_AD,
             ad_domain: domain.map(str::to_owned),
-            ad_ou_map: map,
+            ad_ou_map: map.into_iter().map(Into::into).collect(),
         };
         let info = verify_info(wire(Some("MACF.co.id."), Vec::new()), None).unwrap();
         let key = st.record(&"01".repeat(32), a1, info, at(1));
