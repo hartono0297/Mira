@@ -69,7 +69,8 @@ pub async fn org_people(state: State<'_, MiraState>) -> AppResult<Vec<PersonView
     })
 }
 
-/// Superadmin only (`forbidden` otherwise).
+/// Superadmin: everyone; department admin: their department's people
+/// (`forbidden` for anyone else).
 #[tauri::command]
 pub async fn org_users(
     state: State<'_, MiraState>,
@@ -355,6 +356,84 @@ pub async fn org_set_label_assigned(
             assigned,
             clock::now(),
         )
+    })
+    .await
+}
+
+// ----- 0.5.1: suspend, reinstate, remove for good ----------------------------------
+// (docs/plans/perbaikan-bergabung.md).
+
+/// Active members whose laptop keeps the suspend gate closed.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuspendGateView {
+    pub allowed: bool,
+    pub outdated: Vec<OutdatedLaptop>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutdatedLaptop {
+    pub name: String,
+    pub app_version: Option<String>,
+}
+
+/// Whether this laptop may write `member_suspend` now, and the laptops
+/// that keep the gate closed.
+#[tauri::command]
+pub async fn org_suspend_gate(state: State<'_, MiraState>) -> AppResult<SuspendGateView> {
+    state.with_core(|c| {
+        let s = state_of(c)?;
+        let outdated: Vec<OutdatedLaptop> = permissions::suspend_blockers(&s)
+            .into_iter()
+            .map(|b| OutdatedLaptop {
+                name: b.name,
+                app_version: b.app_version,
+            })
+            .collect();
+        Ok(SuspendGateView {
+            allowed: outdated.is_empty(),
+            outdated,
+        })
+    })
+}
+
+#[tauri::command]
+pub async fn org_suspend_member(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+    public_key: String,
+) -> AppResult<()> {
+    mutate(&state, &net, &app, |c| {
+        permissions::suspend_member(&mut c.db, &c.identity, &public_key, clock::now())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn org_reinstate_member(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+    public_key: String,
+) -> AppResult<()> {
+    mutate(&state, &net, &app, |c| {
+        permissions::reinstate_member(&mut c.db, &c.identity, &public_key, clock::now())
+    })
+    .await
+}
+
+/// Removes for good: an active or a suspended member.
+#[tauri::command]
+pub async fn org_remove_member(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+    public_key: String,
+) -> AppResult<()> {
+    mutate(&state, &net, &app, |c| {
+        permissions::remove_member(&mut c.db, &c.identity, &public_key, clock::now())
     })
     .await
 }

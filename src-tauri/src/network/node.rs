@@ -35,6 +35,10 @@ pub(crate) mod code {
     pub const ORG_MISMATCH: u32 = 0x13;
     pub const PROTOCOL: u32 = 0x14;
     pub const SELF_CONNECTION: u32 = 0x15;
+    /// 0.5.1: the member connection of a laptop that was just suspended,
+    /// closed after its `member_suspend` op was pushed. Its laptop dials
+    /// again and gets a limited connection (membership log only).
+    pub const SUSPENDED: u32 = 0x16;
 }
 
 /// Limit for one frame read and for opening or accepting a stream.
@@ -47,6 +51,23 @@ const SYNC_INTERVAL: Duration = Duration::from_secs(30);
 const STARTING_PERIOD: Duration = Duration::from_secs(5);
 /// Time to let a `Removed` message reach the peer before closing.
 const REMOVED_LINGER: Duration = Duration::from_secs(3);
+/// A limited connection (0.5.1, a suspended laptop on either side) is
+/// closed when the other side opens no stream for this long. Both sides
+/// sync every `SYNC_INTERVAL`, so a working connection stays open.
+pub(crate) const LIMITED_IDLE: Duration = Duration::from_secs(60);
+/// How often `check_membership` looks at the sync marks.
+const CHECK_POLL: Duration = Duration::from_millis(50);
+/// A check started this soon after the previous one neither resets the
+/// dial backoff nor dials again.
+const CHECK_REDIAL_MIN: Duration = Duration::from_secs(5);
+/// At most one sync back to a suspended laptop per this long. The office
+/// still pushes new ops to it right away (`sync_all`), so a check counts a
+/// sync from it within this long as current.
+pub(crate) const SYNC_BACK_MIN: Duration = Duration::from_secs(10);
+/// Ids a responder asks a suspended laptop for in one session. It cannot
+/// author ops that count, so a small number covers what it may still hold
+/// from others and bounds the work a modified laptop can cause.
+const MAX_WANTED_FROM_SUSPENDED: usize = 2_000;
 /// Connections (established plus handshaking) at once.
 const MAX_CONNECTIONS: usize = 128;
 /// Incoming connections from one IP that are not (yet) registered members:
@@ -153,12 +174,57 @@ struct PeerEntry {
     /// `Hello.features` of the peer (1 for v0.2). Feature sync runs only
     /// with peers at `wire::FEATURE_PROTO_VERSION` or above.
     features: u32,
+    /// 0.5.1: this laptop or the peer is suspended. The connection syncs
+    /// the membership log only: it is left out of `connected_peers`,
+    /// `feature_peers`, `peer_conn` and the status, and its streams other
+    /// than `SyncHave` are reset with `NOT_MEMBER`. `recheck_peers` turns it
+    /// into a full connection once both sides are active members.
+    limited: bool,
+}
+
+impl PeerEntry {
+    fn live(&self) -> bool {
+        self.conn.close_reason().is_none()
+    }
+
+    /// A live connection that may carry feature data.
+    fn full(&self) -> bool {
+        self.live() && !self.limited
+    }
 }
 
 #[derive(Default)]
 struct SyncState {
     running: HashSet<String>,
     again: HashSet<String>,
+}
+
+/// When op sync with a peer last completed, per direction (0.5.1,
+/// `check_membership`).
+#[derive(Debug, Default, Clone, Copy)]
+struct SyncMarks {
+    /// The peer's session (it offered us its ops) ended normally.
+    received: Option<Instant>,
+    /// Our session (we offered ours) ended normally.
+    sent: Option<Instant>,
+}
+
+/// This laptop's own membership as the network sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Standing {
+    Active(String),
+    /// 0.5.1: suspended; syncs the membership log only.
+    Suspended(String),
+    NoOrg,
+}
+
+impl Standing {
+    pub(crate) fn org(&self) -> Option<&str> {
+        match self {
+            Standing::Active(o) | Standing::Suspended(o) => Some(o),
+            Standing::NoOrg => None,
+        }
+    }
 }
 
 /// How an outgoing connection was started.
@@ -184,6 +250,19 @@ pub(crate) struct Inner {
     closing: AtomicBool,
     peers: Mutex<HashMap<String, PeerEntry>>,
     sync: Mutex<SyncState>,
+    /// Op sync completions per registered peer (`check_membership`).
+    sync_marks: Mutex<HashMap<String, SyncMarks>>,
+    /// When a sync back to each suspended peer last started.
+    sync_backs: Mutex<HashMap<String, Instant>>,
+    /// One `check_membership` at a time; when the last one started.
+    check_gate: tokio::sync::Mutex<Option<Instant>>,
+    /// Tests: checks that reset the backoff and dialed.
+    #[cfg(test)]
+    pub(crate) check_redials: std::sync::atomic::AtomicUsize,
+    /// Tests: (peer, application close code) of registered connections the
+    /// peer closed.
+    #[cfg(test)]
+    pub(crate) peer_closes: Mutex<Vec<(String, u64)>>,
     pub(crate) disc: Discovery,
     pub(crate) join_limiter: Mutex<RateLimiter>,
     /// `join_status_get` only: a waiting requester asks every 5 seconds.
@@ -270,6 +349,13 @@ impl Inner {
             closing: AtomicBool::new(false),
             peers: Mutex::new(HashMap::new()),
             sync: Mutex::new(SyncState::default()),
+            sync_marks: Mutex::new(HashMap::new()),
+            sync_backs: Mutex::new(HashMap::new()),
+            check_gate: tokio::sync::Mutex::new(None),
+            #[cfg(test)]
+            check_redials: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            peer_closes: Mutex::new(Vec::new()),
             disc: Discovery::new(),
             join_limiter: Mutex::new(RateLimiter::new(
                 join::JOIN_ATTEMPTS_PER_MINUTE,
@@ -363,21 +449,70 @@ impl Inner {
         }
     }
 
+    /// This laptop's own membership: active (`org_id`), suspended
+    /// (`suspended_org`) or neither. Backend reads; may hit the database.
+    pub(crate) fn standing(&self) -> Standing {
+        if let Some(org) = self.backend.org_id() {
+            Standing::Active(org)
+        } else if let Some(org) = self.backend.suspended_org() {
+            Standing::Suspended(org)
+        } else {
+            Standing::NoOrg
+        }
+    }
+
+    /// Peers with a live full member connection, sorted. Limited
+    /// connections (0.5.1) are left out.
     pub(crate) fn connected_peers(&self) -> Vec<String> {
         let mut v: Vec<String> = lock(&self.peers)
             .iter()
-            .filter(|(_, e)| e.conn.close_reason().is_none())
+            .filter(|(_, e)| e.full())
             .map(|(k, _)| k.clone())
             .collect();
         v.sort();
         v
     }
 
-    /// The live member connection to `pk`, if any.
+    /// Peers with any live connection, limited ones included (op sync and
+    /// dialing), sorted.
+    pub(crate) fn linked_peers(&self) -> Vec<String> {
+        let mut v: Vec<String> = lock(&self.peers)
+            .iter()
+            .filter(|(_, e)| e.live())
+            .map(|(k, _)| k.clone())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// `true` when `pk` has a live connection, limited or full.
+    pub(crate) fn is_linked(&self, pk: &str) -> bool {
+        lock(&self.peers).get(pk).is_some_and(PeerEntry::live)
+    }
+
+    /// `Some(true)` when the registered connection with id `conn_id` to
+    /// `pk` is limited, `Some(false)` when it is full, `None` when that
+    /// connection is not (or no longer) the registered one.
+    fn link_limited(&self, pk: &str, conn_id: usize) -> Option<bool> {
+        lock(&self.peers)
+            .get(pk)
+            .filter(|e| e.conn.stable_id() == conn_id)
+            .map(|e| e.limited)
+    }
+
+    /// What a fresh reading says a connection with `pk` should be: limited
+    /// unless both this laptop and `pk` are active members.
+    fn should_be_limited(&self, pk: &str) -> bool {
+        !(matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. })
+            && self.backend.org_id().is_some())
+    }
+
+    /// The live full member connection to `pk`, if any. Never a limited
+    /// one: everything that asks for it sends or fetches feature data.
     pub(crate) fn peer_conn(&self, pk: &str) -> Option<Connection> {
         lock(&self.peers)
             .get(pk)
-            .filter(|e| e.conn.close_reason().is_none())
+            .filter(|e| e.full())
             .map(|e| e.conn.clone())
     }
 
@@ -389,25 +524,32 @@ impl Inner {
     pub(crate) fn feature_capable(&self, pk: &str) -> bool {
         lock(&self.peers)
             .get(pk)
-            .is_some_and(|e| e.conn.close_reason().is_none() && feature_capable(e.features))
+            .is_some_and(|e| e.full() && feature_capable(e.features))
     }
 
     /// `connected_peers` limited to the feature-capable ones, sorted.
     pub(crate) fn feature_peers(&self) -> Vec<String> {
         let mut v: Vec<String> = lock(&self.peers)
             .iter()
-            .filter(|(_, e)| e.conn.close_reason().is_none() && feature_capable(e.features))
+            .filter(|(_, e)| e.full() && feature_capable(e.features))
             .map(|(k, _)| k.clone())
             .collect();
         v.sort();
         v
     }
 
-    /// `true` when the backend says `pk` is an active member right now.
+    /// `true` when feature data may flow with `pk` right now: the backend
+    /// says `pk` is an active member and this laptop is one too (0.5.1: a
+    /// suspended laptop neither sends nor stores feature data). Every
+    /// feature and blob path checks this besides using only full
+    /// connections.
     pub(crate) fn is_member(&self, pk: &str) -> bool {
         matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. })
+            && self.backend.org_id().is_some()
     }
 
+    /// Addresses of every live connection, limited ones included, so they
+    /// are not dialed again.
     pub(crate) fn connected_addresses(&self) -> HashSet<SocketAddr> {
         lock(&self.peers)
             .values()
@@ -429,7 +571,7 @@ impl Inner {
         let org = self.backend.org_id();
         let mut peers: Vec<PeerConn> = lock(&self.peers)
             .iter()
-            .filter(|(_, e)| e.conn.close_reason().is_none())
+            .filter(|(_, e)| e.full())
             .map(|(pk, e)| PeerConn {
                 public_key: pk.clone(),
                 address: e.conn.remote_address(),
@@ -517,6 +659,11 @@ impl Inner {
             Some(ALPN_MEMBER) => {
                 let _ = self.establish(conn, None, slot).await;
             }
+            // A suspended laptop (0.5.1) accepts member connections for the
+            // membership log but serves no joins.
+            Some(ALPN_JOIN) if self.backend.org_id().is_none() => {
+                conn.close(VarInt::from_u32(code::NOT_MEMBER), b"not a member");
+            }
             Some(ALPN_JOIN) => {
                 join::serve(&self, conn).await;
                 drop(slot);
@@ -575,7 +722,9 @@ impl Inner {
             close(code::SELF_CONNECTION, b"self");
             return Err("Alamat ini adalah laptop ini sendiri.".into());
         }
-        let Some(org) = self.backend.org_id() else {
+        let standing = self.standing();
+        let self_suspended = matches!(standing, Standing::Suspended(_));
+        let Some(org) = standing.org().map(str::to_owned) else {
             close(code::ORG_MISMATCH, b"no org");
             return Err("Laptop ini belum tergabung di organisasi.".into());
         };
@@ -591,7 +740,9 @@ impl Inner {
             close(code::UNEXPECTED_PEER, b"unexpected peer");
             return Err("Laptop di alamat ini bukan laptop yang diharapkan.".into());
         }
-        self.authorize(&conn, &pk).await?;
+        let peer_suspended = self.authorize(&conn, &pk).await?;
+        // 0.5.1: either side suspended: membership log only.
+        let limited = self_suspended || peer_suspended;
 
         // Pushes (a `Removed` notice) can arrive at any time from here on.
         tokio::spawn(self.clone().read_pushes(conn.clone(), pk.clone()));
@@ -633,24 +784,37 @@ impl Inner {
             pk.clone()
         };
         let route = route::classify(remote);
-        if !self.register(&pk, &conn, opener, route, hello.features) {
+        if !self.register(&pk, &conn, opener, route, hello.features, limited) {
             return Ok(pk);
         }
-        // A registered member no longer counts against its IP.
+        // A registered member (or suspended laptop of the organization) no
+        // longer counts against its IP.
         slot.pending = None;
-        self.emit(NetEvent::StatusChanged);
         tokio::spawn(self.clone().drive(conn, pk.clone(), hello.features, slot));
+        // Membership log both ways. On a limited connection that is all:
+        // no status change (it is not listed) and no feature sync.
         self.schedule_sync(&pk);
-        self.feature_peer_up(&pk);
+        if !limited {
+            self.emit(NetEvent::StatusChanged);
+            self.feature_peer_up(&pk);
+        }
+        // Membership may have changed during the handshake (a reinstate or
+        // suspension ingested meanwhile): let `recheck_peers` fix the flag.
+        if self.should_be_limited(&pk) != limited {
+            self.recheck_peers();
+        }
         Ok(pk)
     }
 
     /// Membership check for a proven key. Closes the connection (sending the
-    /// removal op first, when there is one) unless the key is a member.
-    async fn authorize(&self, conn: &Connection, pk: &str) -> Result<(), String> {
+    /// removal op first, when there is one) unless the key is a member or
+    /// (0.5.1) suspended. `Ok(true)` for a suspended key: the connection
+    /// will be limited to the membership log.
+    async fn authorize(&self, conn: &Connection, pk: &str) -> Result<bool, String> {
         let remote = conn.remote_address();
         match self.backend.peer_auth(pk) {
-            PeerAuth::Member { .. } => Ok(()),
+            PeerAuth::Member { .. } => Ok(false),
+            PeerAuth::Suspended { .. } => Ok(true),
             PeerAuth::Unknown => {
                 self.log_rejection(
                     Some(pk),
@@ -787,6 +951,7 @@ impl Inner {
         opener: String,
         route: Route,
         features: u32,
+        limited: bool,
     ) -> bool {
         let mut peers = lock(&self.peers);
         if self.is_closing() {
@@ -815,27 +980,52 @@ impl Inner {
                 route,
                 connected_at: crate::clock::now_rfc3339(),
                 features,
+                limited,
             },
         );
         true
     }
 
-    fn unregister(&self, pk: &str, conn_id: usize) -> bool {
+    /// Removes the registered connection `conn_id` to `pk`. `Some(limited)`
+    /// when it was registered, `None` otherwise.
+    fn unregister(&self, pk: &str, conn_id: usize) -> Option<bool> {
         let mut peers = lock(&self.peers);
         if peers.get(pk).map(|e| e.conn.stable_id()) == Some(conn_id) {
-            peers.remove(pk);
-            true
+            let limited = peers.remove(pk).map(|e| e.limited);
+            drop(peers);
+            lock(&self.sync_marks).remove(pk);
+            limited
         } else {
-            false
+            None
         }
     }
 
     /// Serves the peer's streams until the connection ends. `features` is
-    /// what the peer's `Hello` on this connection said.
+    /// what the peer's `Hello` on this connection said. While the connection
+    /// is limited (0.5.1) it is closed after `LIMITED_IDLE` without a stream
+    /// from the peer.
     async fn drive(self: Arc<Self>, conn: Connection, pk: String, features: u32, slot: ConnSlot) {
         let streams = Arc::new(Semaphore::new(tls::MAX_BIDI_STREAMS as usize));
         let op_syncs = Arc::new(Semaphore::new(MAX_OP_SYNC_RESPONDERS));
-        while let Ok((mut send, mut recv)) = conn.accept_bi().await {
+        let conn_id = conn.stable_id();
+        loop {
+            let next = if self.link_limited(&pk, conn_id) == Some(true) {
+                match tokio::time::timeout(LIMITED_IDLE, conn.accept_bi()).await {
+                    Ok(next) => next,
+                    Err(_) => {
+                        if self.link_limited(&pk, conn_id) == Some(true) {
+                            conn.close(VarInt::from_u32(code::NORMAL), b"idle");
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                conn.accept_bi().await
+            };
+            let Ok((mut send, mut recv)) = next else {
+                break;
+            };
             let Ok(slot) = streams.clone().try_acquire_owned() else {
                 let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
                 let _ = recv.stop(VarInt::from_u32(code::PROTOCOL));
@@ -845,22 +1035,35 @@ impl Inner {
             let pk = pk.clone();
             let op_syncs = op_syncs.clone();
             tokio::spawn(async move {
-                me.handle_stream(&pk, features, &op_syncs, send, recv).await;
+                me.handle_stream(&pk, conn_id, features, &op_syncs, send, recv)
+                    .await;
                 drop(slot);
             });
         }
-        if self.unregister(&pk, conn.stable_id()) {
+        #[cfg(test)]
+        if let Some(ConnectionError::ApplicationClosed(c)) = conn.close_reason() {
+            lock(&self.peer_closes).push((pk.clone(), c.error_code.into_inner()));
+        }
+        if self.unregister(&pk, conn_id) == Some(false) {
             self.emit(NetEvent::StatusChanged);
         }
         drop(slot);
     }
 
     /// Uni streams from the peer. The only push is `Removed`, accepted once.
+    /// 0.5.1: unless the connection is a registered full one, only a
+    /// suspension, reinstatement or removal of this laptop is ingested (what
+    /// an office laptop pushes); a suspended peer cannot push anything else.
     async fn read_pushes(self: Arc<Self>, conn: Connection, pk: String) {
         let mut removed_seen = false;
+        let conn_id = conn.stable_id();
         while let Ok(mut recv) = conn.accept_uni().await {
             match wire::read_msg_timeout(&mut recv, MAX_PUSH_FRAME, READ_TIMEOUT).await {
-                Ok(Some(Msg::Removed { op })) if !removed_seen => {
+                Ok(Some(Msg::Removed { op }))
+                    if !removed_seen
+                        && (self.link_limited(&pk, conn_id) == Some(false)
+                            || wire::is_membership_op_for(&op, &self.me)) =>
+                {
                     removed_seen = true;
                     self.ingest_from(&pk, vec![op]).await;
                 }
@@ -871,36 +1074,74 @@ impl Inner {
         }
     }
 
-    /// One bidirectional stream from member `pk`. `op_syncs` limits the
-    /// op-sync responder sessions of this connection. `features` is the
-    /// peer's `Hello.features`: below `FEATURE_PROTO_VERSION` only op sync is
-    /// served.
+    /// One bidirectional stream from `pk` on connection `conn_id`. `op_syncs`
+    /// limits the op-sync responder sessions of this connection. `features`
+    /// is the peer's `Hello.features`: below `FEATURE_PROTO_VERSION` only op
+    /// sync is served. On a limited connection (0.5.1) only op sync is
+    /// served too, and every other stream is reset with `NOT_MEMBER`.
     async fn handle_stream(
         self: &Arc<Self>,
         pk: &str,
+        conn_id: usize,
         features: u32,
         op_syncs: &Arc<Semaphore>,
         mut send: SendStream,
         mut recv: RecvStream,
     ) {
-        if !matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. }) {
+        let auth = self.backend.peer_auth(pk);
+        let peer_suspended = matches!(auth, PeerAuth::Suspended { .. });
+        if !matches!(auth, PeerAuth::Member { .. }) && !peer_suspended {
             let _ = send.reset(VarInt::from_u32(code::NOT_MEMBER));
             self.recheck_peers();
             return;
         }
-        match wire::read_msg_timeout(&mut recv, MAX_FIRST_FRAME, READ_TIMEOUT).await {
+        // Feature data only on a registered full connection with a member.
+        // A connection that is not (or no longer) the registered one counts
+        // as limited.
+        let link_limited = self.link_limited(pk, conn_id);
+        let full = !peer_suspended && link_limited == Some(false);
+        if peer_suspended && link_limited == Some(false) {
+            // Suspended since the connection was made: cut it.
+            self.recheck_peers();
+        }
+        if !peer_suspended && link_limited == Some(true) && self.backend.org_id().is_some() {
+            // Both sides active again but the link is still limited (a
+            // reinstatement `recheck_peers` has not seen yet): upgrade it.
+            // This stream is still served as limited.
+            self.recheck_peers();
+        }
+        let first = wire::read_msg_timeout(&mut recv, MAX_FIRST_FRAME, READ_TIMEOUT).await;
+        if !full && !matches!(first, Ok(Some(Msg::SyncHave { .. }))) {
+            let _ = send.reset(VarInt::from_u32(code::NOT_MEMBER));
+            let _ = recv.stop(VarInt::from_u32(code::NOT_MEMBER));
+            return;
+        }
+        match first {
             Ok(Some(Msg::SyncHave { ids })) => {
                 let Ok(_permit) = op_syncs.clone().try_acquire_owned() else {
                     let _ = send.reset(VarInt::from_u32(code::PROTOCOL));
                     let _ = recv.stop(VarInt::from_u32(code::PROTOCOL));
                     return;
                 };
-                let _ = tokio::time::timeout(
+                let done = tokio::time::timeout(
                     SYNC_SESSION_TIMEOUT,
-                    self.respond_sync(pk, ids, &mut send, &mut recv),
+                    self.respond_sync(pk, peer_suspended, ids, &mut send, &mut recv),
                 )
                 .await;
                 let _ = send.finish();
+                if done == Ok(true) {
+                    self.mark_synced(pk, |m| &mut m.received);
+                    // A suspended laptop cannot ask for ops, only offer its
+                    // own: answer its session with ours (org ops only, as
+                    // the backend filters them) so "Periksa lagi" sees the
+                    // current log. At most once per `SYNC_BACK_MIN`, and
+                    // never between two suspended laptops, which would sync
+                    // back and forth forever.
+                    if peer_suspended && self.backend.org_id().is_some() && self.sync_back_due(pk)
+                    {
+                        self.schedule_sync(pk);
+                    }
+                }
             }
             // A v0.2 laptop: no feature session. Stopped and finished like an
             // unknown topic, which its initiator ends quietly ("done")
@@ -942,27 +1183,40 @@ impl Inner {
     // ----- Sync ------------------------------------------------------------
 
     /// Responder side of a sync session: answer each `SyncHave` with the ids
-    /// we lack, ingest `SyncOps` that contain only ops we asked for.
+    /// we lack, ingest `SyncOps` that contain only ops we asked for. `true`
+    /// when the initiator finished its side normally.
+    ///
+    /// 0.5.1: from a suspended peer (`peer_suspended`) at most
+    /// `MAX_WANTED_FROM_SUSPENDED` ids are asked for, and ops it authored
+    /// itself are dropped unread. Ops of others it still holds are taken:
+    /// they are signed ops of the organization that the fold checks like
+    /// any other, and they may be ones this laptop missed.
     async fn respond_sync(
         self: &Arc<Self>,
         pk: &str,
+        peer_suspended: bool,
         first: Vec<String>,
         send: &mut SendStream,
         recv: &mut RecvStream,
-    ) {
+    ) -> bool {
+        let max_wanted = if peer_suspended {
+            MAX_WANTED_FROM_SUSPENDED
+        } else {
+            MAX_WANTED_PER_SESSION
+        };
         let mut wanted: HashSet<String> = HashSet::new();
         let mut have = Some(first);
         loop {
             if let Some(ids) = have.take() {
                 if ids.len() > SYNC_ID_CHUNK {
-                    return;
+                    return false;
                 }
                 let offered: HashSet<String> =
                     ids.into_iter().filter(|id| wire::is_hex64(id)).collect();
                 let ask: Vec<String> = offered.iter().cloned().collect();
                 let missing = match self.blocking(move |b| b.unknown_op_ids(&ask)).await {
                     Some(Ok(m)) => m,
-                    _ => return,
+                    _ => return false,
                 };
                 let mut want: Vec<String> = missing
                     .into_iter()
@@ -970,31 +1224,121 @@ impl Inner {
                     .collect();
                 want.sort();
                 want.dedup();
-                if wanted.len() + want.len() > MAX_WANTED_PER_SESSION {
-                    return;
+                if wanted.len() + want.len() > max_wanted {
+                    return false;
                 }
                 wanted.extend(want.iter().cloned());
                 if wire::write_msg_timeout(send, &Msg::SyncWant { ids: want }, WRITE_TIMEOUT)
                     .await
                     .is_err()
                 {
-                    return;
+                    return false;
                 }
             }
             match wire::read_msg_timeout(recv, MAX_FRAME, READ_TIMEOUT).await {
-                Ok(None) => return,
+                Ok(None) => return true,
                 Ok(Some(Msg::SyncHave { ids })) => have = Some(ids),
                 Ok(Some(Msg::SyncOps { ops })) => {
                     let ops: Vec<WireOp> = ops
                         .into_iter()
                         .filter(|op| wanted.remove(&wire::op_id(op)))
+                        .filter(|op| {
+                            !peer_suspended || wire::op_author(op).as_deref() != Some(pk)
+                        })
                         .collect();
                     if !ops.is_empty() {
                         self.ingest_from(pk, ops).await;
                     }
                 }
-                _ => return,
+                _ => return false,
             }
+        }
+    }
+
+    /// Notes that op sync with `pk` completed now in the direction `which`
+    /// selects (`check_membership`).
+    fn mark_synced(&self, pk: &str, which: impl FnOnce(&mut SyncMarks) -> &mut Option<Instant>) {
+        if !self.is_linked(pk) {
+            return;
+        }
+        let mut marks = lock(&self.sync_marks);
+        *which(marks.entry(pk.to_owned()).or_default()) = Some(Instant::now());
+    }
+
+    /// `true` (and noted) when no sync back to the suspended peer `pk`
+    /// started within `SYNC_BACK_MIN`.
+    fn sync_back_due(&self, pk: &str) -> bool {
+        let now = Instant::now();
+        let mut backs = lock(&self.sync_backs);
+        backs.retain(|_, t| now.saturating_duration_since(*t) < SYNC_BACK_MIN);
+        if backs.contains_key(pk) {
+            return false;
+        }
+        backs.insert(pk.to_owned(), now);
+        true
+    }
+
+    /// See `Network::check_membership`. One check runs at a time; a check
+    /// within `CHECK_REDIAL_MIN` of the previous one does not dial again.
+    pub(crate) async fn check_membership(self: &Arc<Self>, limit: Duration) -> usize {
+        let start = Instant::now();
+        let deadline = start + limit;
+        if self.is_closing() {
+            return 0;
+        }
+        let Ok(mut gate) = tokio::time::timeout(limit, self.check_gate.lock()).await else {
+            return 0;
+        };
+        let suspended = matches!(
+            self.blocking(|b| b.org_id().is_none()).await,
+            Some(true)
+        );
+        let redial = gate.is_none_or(|last| start.saturating_duration_since(last) >= CHECK_REDIAL_MIN);
+        *gate = Some(start);
+        if redial {
+            #[cfg(test)]
+            self.check_redials
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.disc.reset_backoff();
+            discovery::dial_pass(self);
+        }
+        // An office syncs back to a suspended laptop at most once per
+        // `SYNC_BACK_MIN` and pushes new ops at once, so a sync from it
+        // within that long is as current as asking again.
+        let fresh_since = if suspended {
+            start.checked_sub(SYNC_BACK_MIN).unwrap_or(start)
+        } else {
+            start
+        };
+        let mut asked: HashSet<String> = HashSet::new();
+        let mut reached: HashSet<String> = HashSet::new();
+        loop {
+            let linked = self.linked_peers();
+            for pk in &linked {
+                if asked.insert(pk.clone()) {
+                    self.schedule_sync(pk);
+                }
+            }
+            {
+                let marks = lock(&self.sync_marks);
+                let after = |t: Option<Instant>, since: Instant| t.is_some_and(|t| t >= since);
+                for pk in &linked {
+                    if marks.get(pk).is_some_and(|m| {
+                        after(m.received, fresh_since) || (!suspended && after(m.sent, start))
+                    })
+                    {
+                        reached.insert(pk.clone());
+                    }
+                }
+            }
+            let settled = !linked.is_empty()
+                && linked.iter().all(|pk| reached.contains(pk))
+                && !self.disc.dials_in_flight();
+            if settled || Instant::now() >= deadline || self.is_closing() {
+                return reached.len();
+            }
+            tokio::time::sleep(CHECK_POLL.min(deadline.saturating_duration_since(Instant::now())))
+                .await;
         }
     }
 
@@ -1013,52 +1357,98 @@ impl Inner {
         self.emit(NetEvent::OrgChanged);
         self.recheck_peers();
         discovery::refresh_mdns(self).await;
+        // This laptop may have just been suspended (its connections were cut
+        // and must come back limited) or reinstated (other colleagues are
+        // worth dialing again).
+        discovery::dial_pass(self);
         self.sync_all(from);
         // Membership decides feature scoping too (a new team member may now
         // receive that team's records).
         self.feature_sync_all(None);
     }
 
-    /// Re-checks every connected peer against the backend and drops those
-    /// that are no longer members. Also drops everyone when this laptop has
-    /// no organization any more.
+    /// Re-checks every connection against the backend. Drops peers that are
+    /// no longer members, and everyone when this laptop has no organization
+    /// any more. 0.5.1: a full connection with a peer that is now suspended
+    /// gets the suspension op and is closed with `SUSPENDED` (the peer dials
+    /// again and gets a limited one); full connections of a laptop that is
+    /// now suspended itself are closed; a limited connection becomes full
+    /// once both sides are active members.
     pub(crate) fn recheck_peers(self: &Arc<Self>) {
-        let org = self.backend.org_id();
-        let mut dropped: Vec<(String, Connection, Option<PeerAuth>)> = Vec::new();
+        let standing = self.standing();
+        let mut dropped: Vec<(String, Connection, Cut)> = Vec::new();
+        let mut upgraded: Vec<String> = Vec::new();
         {
             let mut peers = lock(&self.peers);
             let keys: Vec<String> = peers.keys().cloned().collect();
             for pk in keys {
-                let auth = if org.is_none() {
-                    None
-                } else {
-                    match self.backend.peer_auth(&pk) {
-                        PeerAuth::Member { .. } => continue,
-                        other => Some(other),
+                let Some(limited) = peers.get(&pk).map(|e| e.limited) else {
+                    continue;
+                };
+                let cut = match &standing {
+                    Standing::NoOrg => Cut::NoOrg,
+                    Standing::Active(_) | Standing::Suspended(_) => {
+                        let me_active = matches!(standing, Standing::Active(_));
+                        match self.backend.peer_auth(&pk) {
+                            PeerAuth::Member { .. } if limited && me_active => {
+                                if let Some(e) = peers.get_mut(&pk)
+                                    && e.live()
+                                {
+                                    e.limited = false;
+                                    upgraded.push(pk.clone());
+                                }
+                                continue;
+                            }
+                            PeerAuth::Member { .. } if !me_active && !limited => Cut::SelfSuspended,
+                            PeerAuth::Member { .. } => continue,
+                            PeerAuth::Suspended { .. } if limited => continue,
+                            PeerAuth::Suspended { suspension, .. } => {
+                                Cut::PeerSuspended(suspension)
+                            }
+                            PeerAuth::Removed { removal } => Cut::Removed(removal),
+                            PeerAuth::Unknown => Cut::NotMember,
+                        }
                     }
                 };
                 if let Some(e) = peers.remove(&pk) {
-                    dropped.push((pk, e.conn, auth));
+                    dropped.push((pk, e.conn, cut));
                 }
             }
         }
-        if dropped.is_empty() {
+        if dropped.is_empty() && upgraded.is_empty() {
             return;
         }
-        for (pk, conn, auth) in dropped {
+        for (pk, conn, cut) in dropped {
+            lock(&self.sync_marks).remove(&pk);
             let remote = conn.remote_address();
-            match auth {
-                None => conn.close(VarInt::from_u32(code::ORG_MISMATCH), b"no org"),
-                Some(PeerAuth::Removed { removal }) => {
+            match cut {
+                Cut::NoOrg => conn.close(VarInt::from_u32(code::ORG_MISMATCH), b"no org"),
+                Cut::Removed(removal) => {
                     self.log_rejection(
                         Some(&pk),
                         Some(remote),
                         "removed_member",
                         "Anggota yang dikeluarkan diputus dari jaringan.",
                     );
-                    tokio::spawn(async move { send_removed_and_close(&conn, removal).await });
+                    tokio::spawn(async move {
+                        push_op_and_close(&conn, removal, code::REMOVED, b"removed").await
+                    });
                 }
-                Some(_) => {
+                Cut::PeerSuspended(suspension) => {
+                    self.log_rejection(
+                        Some(&pk),
+                        Some(remote),
+                        "suspended_member",
+                        "Anggota yang dinonaktifkan diputus; laptopnya hanya boleh menyinkronkan log keanggotaan.",
+                    );
+                    tokio::spawn(async move {
+                        push_op_and_close(&conn, suspension, code::SUSPENDED, b"suspended").await
+                    });
+                }
+                // Not the peer's doing: a plain close. This laptop dials
+                // again and gets a limited connection.
+                Cut::SelfSuspended => conn.close(VarInt::from_u32(code::NORMAL), b"suspended"),
+                Cut::NotMember => {
                     self.log_rejection(
                         Some(&pk),
                         Some(remote),
@@ -1069,15 +1459,27 @@ impl Inner {
                 }
             }
         }
+        for pk in &upgraded {
+            self.schedule_sync(pk);
+            self.feature_peer_up(pk);
+        }
         self.emit(NetEvent::StatusChanged);
     }
 
+    /// Schedules op sync with every connected peer except `except`, limited
+    /// connections included: that is how a suspended laptop learns that it
+    /// was reinstated or removed.
     pub(crate) fn sync_all(self: &Arc<Self>, except: Option<&str>) {
-        for pk in self.connected_peers() {
+        for pk in self.linked_peers() {
             if Some(pk.as_str()) != except {
                 self.schedule_sync(&pk);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn schedule_sync_for_test(self: &Arc<Self>, pk: &str) {
+        self.schedule_sync(pk);
     }
 
     /// Runs a sync session with `pk`, coalescing requests that arrive while
@@ -1113,7 +1515,11 @@ impl Inner {
             .get(pk)
             .map(|e| e.conn.clone())
             .ok_or("tidak tersambung")?;
-        if !matches!(self.backend.peer_auth(pk), PeerAuth::Member { .. }) {
+        // A suspended peer gets what `op_ids_for` allows it: org ops only.
+        if !matches!(
+            self.backend.peer_auth(pk),
+            PeerAuth::Member { .. } | PeerAuth::Suspended { .. }
+        ) {
             self.recheck_peers();
             return Err("bukan anggota".into());
         }
@@ -1123,6 +1529,7 @@ impl Inner {
             .await
             .ok_or("backend gagal")??;
         if ids.is_empty() {
+            self.mark_synced(pk, |m| &mut m.sent);
             return Ok(());
         }
         let (mut send, mut recv) = tokio::time::timeout(READ_TIMEOUT, conn.open_bi())
@@ -1194,9 +1601,23 @@ impl Inner {
         let _ = send.finish();
         // Wait for the responder to finish reading (it finishes its side when
         // done) so the session's ops are ingested before we report back.
-        let _ = wire::read_msg_timeout(&mut recv, MAX_FRAME, READ_TIMEOUT).await;
+        if let Ok(None) = wire::read_msg_timeout(&mut recv, MAX_FRAME, READ_TIMEOUT).await {
+            self.mark_synced(pk, |m| &mut m.sent);
+        }
         Ok(())
     }
+}
+
+/// Why `recheck_peers` cuts a connection.
+enum Cut {
+    /// This laptop has no organization any more.
+    NoOrg,
+    Removed(Option<WireOp>),
+    /// 0.5.1: the peer was suspended while connected.
+    PeerSuspended(Option<WireOp>),
+    /// 0.5.1: this laptop was suspended; its full connections end.
+    SelfSuspended,
+    NotMember,
 }
 
 /// Dialable addresses from a peer's `Hello`. Loopback addresses count only
@@ -1228,7 +1649,19 @@ pub(crate) fn feature_capable(features: u32) -> bool {
 /// Sends the removal op (if any) on a uni stream, gives it a moment to
 /// arrive, then closes with `REMOVED`.
 async fn send_removed_and_close(conn: &Connection, removal: Option<WireOp>) {
-    if let Some(op) = removal
+    push_op_and_close(conn, removal, code::REMOVED, b"removed").await;
+}
+
+/// Pushes `op` (if any) as `Msg::Removed` on a uni stream, gives it a
+/// moment to arrive, then closes with `close_code`. Used for removal and
+/// (0.5.1) suspension ops: the receiver only ingests the op.
+async fn push_op_and_close(
+    conn: &Connection,
+    op: Option<WireOp>,
+    close_code: u32,
+    reason: &'static [u8],
+) {
+    if let Some(op) = op
         && let Ok(Ok(mut s)) = tokio::time::timeout(REMOVED_LINGER, conn.open_uni()).await
         && wire::write_msg_timeout(&mut s, &Msg::Removed { op }, REMOVED_LINGER)
             .await
@@ -1237,7 +1670,7 @@ async fn send_removed_and_close(conn: &Connection, removal: Option<WireOp>) {
         let _ = s.finish();
         let _ = tokio::time::timeout(REMOVED_LINGER, s.stopped()).await;
     }
-    conn.close(VarInt::from_u32(code::REMOVED), b"removed");
+    conn.close(VarInt::from_u32(close_code), reason);
 }
 
 async fn accept_loop(weak: Weak<Inner>, endpoint: Endpoint) {
@@ -1257,8 +1690,9 @@ async fn accept_loop(weak: Weak<Inner>, endpoint: Endpoint) {
             let _ = incoming.retry();
             continue;
         }
-        // A laptop without an organization serves nobody.
-        if inner.backend.org_id().is_none() {
+        // A laptop without an organization serves nobody. A suspended one
+        // (0.5.1) still takes member connections for the membership log.
+        if inner.backend.org_id().is_none() && inner.backend.suspended_org().is_none() {
             incoming.refuse();
             continue;
         }
@@ -1326,6 +1760,9 @@ fn describe_close_code(c: u64) -> &'static str {
             "Laptop rekan menolak: laptop ini bukan anggota organisasinya."
         }
         x if x == u64::from(code::REMOVED) => "Laptop ini sudah dikeluarkan dari organisasi.",
+        x if x == u64::from(code::SUSPENDED) => {
+            "Akun di laptop ini sedang dinonaktifkan. Hanya daftar anggota yang disinkronkan."
+        }
         x if x == u64::from(code::ORG_MISMATCH) => "Laptop rekan berada di organisasi lain.",
         x if x == u64::from(code::UNEXPECTED_PEER) => "Laptop rekan mengharapkan laptop lain.",
         x if x == u64::from(code::SELF_CONNECTION) => "Alamat ini adalah laptop ini sendiri.",

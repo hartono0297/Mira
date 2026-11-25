@@ -41,6 +41,8 @@ pub struct RejectedChange {
 pub enum Membership {
     None,
     Active,
+    /// 0.5.1: suspended; can be reinstated.
+    Suspended,
     Removed,
 }
 
@@ -48,6 +50,11 @@ pub enum Membership {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PeerAuthState {
     Member {
+        display_name: String,
+    },
+    /// 0.5.1: suspended member. Its connection serves membership op sync
+    /// only (org-scope ops), nothing else.
+    Suspended {
         display_name: String,
     },
     /// Removed member; `removal_op` is the id of the `member_remove` op.
@@ -279,6 +286,17 @@ pub fn display_name_for(state: &OrgState, pk: &str, me: Option<(&str, Option<&st
     identity::fingerprint(pk)
 }
 
+/// `members.status` as stored. The column only allows `active` and
+/// `removed` (v2 migration); the feature modules read it as "may take part
+/// or not", so a suspended member is written as `removed`. The fold state
+/// (`load_state`) keeps the real status.
+fn derived_status(status: MemberStatus) -> &'static str {
+    match status {
+        MemberStatus::Active => "active",
+        MemberStatus::Suspended | MemberStatus::Removed => "removed",
+    }
+}
+
 /// Rewrites members, teams, team_members, invites, guest_access, channels.
 pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()> {
     let me = self_row(conn)?;
@@ -308,7 +326,7 @@ pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()
             display_name_for(state, &m.public_key, me_ref),
             state.org_role(&m.public_key).as_str(),
             m.joined_at,
-            m.status.as_str(),
+            derived_status(m.status),
             m.is_superadmin,
             m.kind.as_str(),
             m.removed_at,
@@ -421,19 +439,30 @@ pub(crate) fn write_derived(conn: &Connection, state: &OrgState) -> AppResult<()
 }
 
 /// Plan 1.4: whether `peer` may receive an op with this scope and author.
+/// A suspended peer receives org-scope ops only (membership log sync, so it
+/// learns when it is reinstated or removed); a removed or unknown peer
+/// nothing.
 pub fn may_receive(state: &OrgState, peer: &str, scope_team: Option<&str>, author: &str) -> bool {
-    if !state.is_active(peer) {
-        return false;
+    match state.member(peer).map(|m| m.status) {
+        Some(MemberStatus::Active) => match scope_team {
+            None => true,
+            Some(team) => author == peer || state.team_role(team, peer).is_some(),
+        },
+        Some(MemberStatus::Suspended) => scope_team.is_none(),
+        Some(MemberStatus::Removed) | None => false,
     }
-    match scope_team {
-        None => true,
-        Some(team) => author == peer || state.team_role(team, peer).is_some(),
-    }
+}
+
+/// Whether `peer` may receive any op at all (active or suspended).
+fn may_sync(state: &OrgState, peer: &str) -> bool {
+    state
+        .member(peer)
+        .is_some_and(|m| matches!(m.status, MemberStatus::Active | MemberStatus::Suspended))
 }
 
 /// Ids of every stored op that `peer` may receive, in fold order.
 pub fn op_ids_for(conn: &Connection, state: &OrgState, peer: &str) -> AppResult<Vec<String>> {
-    if !state.is_active(peer) {
+    if !may_sync(state, peer) {
         return Ok(Vec::new());
     }
     let mut stmt =
@@ -462,7 +491,7 @@ pub fn ops_for(
     peer: &str,
     ids: &[String],
 ) -> AppResult<Vec<SignedOp>> {
-    if !state.is_active(peer) {
+    if !may_sync(state, peer) {
         return Ok(Vec::new());
     }
     let mut stmt = conn
@@ -524,31 +553,41 @@ pub fn load_op(conn: &Connection, id: &str) -> AppResult<Option<SignedOp>> {
 }
 
 pub fn peer_auth(state: &OrgState, pk: &str) -> PeerAuthState {
+    let name = |m: &super::fold::MemberState| {
+        m.display_name
+            .clone()
+            .unwrap_or_else(|| identity::fingerprint(pk))
+    };
     match state.member(pk) {
-        Some(m) if m.status == MemberStatus::Active => PeerAuthState::Member {
-            display_name: m
-                .display_name
-                .clone()
-                .unwrap_or_else(|| identity::fingerprint(pk)),
-        },
-        Some(m) => PeerAuthState::Removed {
-            removal_op: m.removal_op.clone(),
+        Some(m) => match m.status {
+            MemberStatus::Active => PeerAuthState::Member {
+                display_name: name(m),
+            },
+            MemberStatus::Suspended => PeerAuthState::Suspended {
+                display_name: name(m),
+            },
+            MemberStatus::Removed => PeerAuthState::Removed {
+                removal_op: m.removal_op.clone(),
+            },
         },
         None => PeerAuthState::Unknown,
     }
 }
 
-/// `none` without an organization, `active` when this laptop is an active
-/// member, otherwise `removed` (removed, or never admitted).
+/// `none` without an organization, `active` or `suspended` by this
+/// laptop's member status, otherwise `removed` (removed, or never
+/// admitted).
 pub fn membership(conn: &Connection, identity: &Identity) -> AppResult<Membership> {
     let Some(state) = load_state(conn)? else {
         return Ok(Membership::None);
     };
-    Ok(if state.is_active(identity.public_key_hex()) {
-        Membership::Active
-    } else {
-        Membership::Removed
-    })
+    Ok(
+        match state.member(identity.public_key_hex()).map(|m| m.status) {
+            Some(MemberStatus::Active) => Membership::Active,
+            Some(MemberStatus::Suspended) => Membership::Suspended,
+            Some(MemberStatus::Removed) | None => Membership::Removed,
+        },
+    )
 }
 
 /// Records a refused change; keeps only the latest 1000 rows.

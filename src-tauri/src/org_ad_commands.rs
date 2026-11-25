@@ -577,6 +577,7 @@ mod tests {
             account: None,
             ad,
             requester_outdated: false,
+            previously_removed: None,
         }
     }
 
@@ -847,6 +848,7 @@ mod tests {
             extras: 2,
             ad_domain: ad.map(str::to_owned),
             ad_ou_map: Vec::new(),
+            ad_outdated: None,
         }
     }
 

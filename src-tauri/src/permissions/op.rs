@@ -186,6 +186,16 @@ pub enum Body {
     MemberRemove {
         member: String,
     },
+    /// 0.5.1: superadmin, or the department admin of a regular member,
+    /// suspends `member` (can be reinstated, same laptop key). Only written
+    /// once every member is past `SUSPEND_SINCE`.
+    MemberSuspend {
+        member: String,
+    },
+    /// 0.5.1: makes a suspended member active again.
+    MemberReinstate {
+        member: String,
+    },
     InviteCreate {
         invite: String,
         team: String,
@@ -318,6 +328,8 @@ impl Body {
             Body::TeamMemberAdd { .. } => "team_member_add",
             Body::TeamMemberRemove { .. } => "team_member_remove",
             Body::MemberRemove { .. } => "member_remove",
+            Body::MemberSuspend { .. } => "member_suspend",
+            Body::MemberReinstate { .. } => "member_reinstate",
             Body::InviteCreate { .. } => "invite_create",
             Body::InviteRevoke { .. } => "invite_revoke",
             Body::InviteAccept { .. } => "invite_accept",
@@ -562,7 +574,9 @@ pub fn validate_payload(p: &Payload) -> Result<OffsetDateTime, String> {
         }
         Body::SuperadminAdd { member }
         | Body::SuperadminRemove { member }
-        | Body::MemberRemove { member } => {
+        | Body::MemberRemove { member }
+        | Body::MemberSuspend { member }
+        | Body::MemberReinstate { member } => {
             org_scope(p)?;
             key64(member, "member")?;
         }

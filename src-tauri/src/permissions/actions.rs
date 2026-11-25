@@ -81,6 +81,7 @@ pub(crate) fn author_in(
     match state.member(me).map(|m| m.status) {
         Some(MemberStatus::Active) => {}
         Some(MemberStatus::Removed) => return Err(AppError::Removed),
+        Some(MemberStatus::Suspended) => return Err(AppError::Suspended),
         None => {
             return Err(AppError::Forbidden(
                 "Laptop ini belum menjadi anggota organisasi.".into(),
@@ -355,6 +356,67 @@ pub fn remove_member(
     author_one(conn, identity, body, now)
 }
 
+/// `suspend_member` refusal while some laptop runs a Mira older than
+/// `SUSPEND_SINCE`; `names` are those laptops' people.
+pub fn suspend_gate_closed(names: &[String]) -> String {
+    format!(
+        "Ada laptop yang belum diperbarui ke Mira {}: {}. Perbarui dulu, lalu coba lagi.",
+        super::join::SUSPEND_SINCE,
+        names.join(", ")
+    )
+}
+
+/// Superadmin, or admin of the member's department for a regular member:
+/// suspends the member (can be reinstated). Refused while some laptop runs
+/// a Mira that does not know `member_suspend`.
+pub fn suspend_member(
+    conn: &mut Connection,
+    identity: &Identity,
+    member: &str,
+    now: OffsetDateTime,
+) -> AppResult<()> {
+    check_member_key(member)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let org = require_org(&tx)?;
+    let state = state_in(&tx, &org)?;
+    // The rights first, so someone without them is not told to update.
+    let me = identity.public_key_hex();
+    if state.is_active(me) {
+        state.may_suspend(me, member).map_err(reason_error)?;
+    }
+    let blockers = super::join::suspend_blockers(&state);
+    if !blockers.is_empty() {
+        let names: Vec<String> = blockers.into_iter().map(|b| b.name).collect();
+        return Err(AppError::InvalidInput(suspend_gate_closed(&names)));
+    }
+    author_in(
+        &tx,
+        identity,
+        Scope::Org,
+        Body::MemberSuspend {
+            member: member.into(),
+        },
+        now,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Superadmin, or admin of the department the member was a regular member
+/// of: makes a suspended member active again. Not gated.
+pub fn reinstate_member(
+    conn: &mut Connection,
+    identity: &Identity,
+    member: &str,
+    now: OffsetDateTime,
+) -> AppResult<()> {
+    check_member_key(member)?;
+    let body = Body::MemberReinstate {
+        member: member.into(),
+    };
+    author_one(conn, identity, body, now)
+}
+
 /// Creates an invite; returns its view and the code (shown once, never stored).
 pub fn create_invite(
     conn: &mut Connection,
@@ -590,9 +652,10 @@ pub fn join_accept(
     {
         return Err(JoinRejectCode::InvalidProof);
     }
+    // A suspended laptop comes back only through `member_reinstate`.
     if state
         .member(&proof.member)
-        .is_some_and(|m| m.status == MemberStatus::Removed)
+        .is_some_and(|m| matches!(m.status, MemberStatus::Removed | MemberStatus::Suspended))
     {
         return Err(JoinRejectCode::Removed);
     }
@@ -704,6 +767,7 @@ pub fn redeem_as_member(
     let me = identity.public_key_hex();
     match state.member(me) {
         Some(m) if m.status == MemberStatus::Removed => return Err(AppError::Removed),
+        Some(m) if m.status == MemberStatus::Suspended => return Err(AppError::Suspended),
         Some(m) if m.kind == MemberKind::Member => {}
         Some(_) => {
             return Err(AppError::Forbidden(

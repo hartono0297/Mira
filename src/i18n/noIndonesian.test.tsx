@@ -364,6 +364,11 @@ function userView(p: PersonView, extra: Partial<UserView> = {}): UserView {
     status: "active",
     joinedAt: "2026-11-04T02:00:00Z",
     removedAt: null,
+    suspendedAt: null,
+    suspendedByName: null,
+    canSuspend: false,
+    canReinstate: false,
+    canRemove: false,
     device: { laptop: "LAPTOP-NW-01", os: "Windows 11 24H2", appVersion: "0.4.0", reportedAt: minutesAgo(30) },
     lastIp: "192.168.1.23",
     online: true,
@@ -376,7 +381,7 @@ function userView(p: PersonView, extra: Partial<UserView> = {}): UserView {
 
 const USERS: UserView[] = [
   userView(PEOPLE[0]),
-  userView(PEOPLE[1], { online: false, lastSeenAt: minutesAgo(5) }),
+  userView(PEOPLE[1], { online: false, lastSeenAt: minutesAgo(5), canSuspend: true, canRemove: true }),
   userView(PEOPLE[2], { online: false, lastSeenAt: minutesAgo(60 * 26), device: null, lastIp: null }),
   userView(personView({ publicKey: PK_D, name: "Casey Kim" }, {
     role: "guest",
@@ -385,6 +390,15 @@ const USERS: UserView[] = [
     departmentName: null,
     departmentRole: null,
   }), { guestProjectCount: 2 }),
+  // 0.5.1: orang yang dinonaktifkan.
+  userView(personView({ publicKey: "e".repeat(64), name: "Jamie Park" }), {
+    status: "suspended",
+    online: false,
+    suspendedAt: minutesAgo(60 * 3),
+    suspendedByName: "Alex Morgan",
+    canReinstate: true,
+    canRemove: true,
+  }),
 ];
 
 const ORG_OVERVIEW: OrgOverview = {
@@ -395,6 +409,7 @@ const ORG_OVERVIEW: OrgOverview = {
   decideJoinTeamIds: [TEAM_1, TEAM_2],
   pendingJoinCount: 1,
   manageOrg: true,
+  listUsers: true,
 };
 
 function department(id: string, name: string, extra: Partial<DepartmentView> = {}): DepartmentView {
@@ -442,6 +457,7 @@ const JOIN_REQUESTS: JoinRequestView[] = [
     account: "riley",
     ad: null,
     requesterOutdated: false,
+    previouslyRemoved: { name: "Morgan Lee", status: "removed", at: minutesAgo(60 * 48), match: "laptop" },
   },
 ];
 
@@ -839,6 +855,8 @@ function backend(overrides: Record<string, Answer> = {}) {
     org_departments: DEPARTMENTS,
     org_labels: LABELS,
     org_join_requests: JOIN_REQUESTS,
+    org_ad_settings: { domain: null, ouMap: [], canEdit: true, allowed: true, outdated: [], machineDomain: "example.com" },
+    org_suspend_gate: { allowed: true, outdated: [] },
     org_project_members: {
       projectId: PROJ_1,
       registered: true,
@@ -1113,6 +1131,6 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
     renderApp();
     expect(await screen.findByText("AAAA BBBB CCCC DDDD")).toBeInTheDocument();
     await settle();
-    expectEnglish("Layar dikeluarkan", ["Check again"]);
+    expectEnglish("Layar dikeluarkan", ["Reset and start over"]);
   });
 });

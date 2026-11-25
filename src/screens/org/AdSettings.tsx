@@ -15,7 +15,7 @@ const T = AD_TEXT.settings;
 
 // Sama dengan batas op ad_settings_set di inti Rust (docs/plans/onboarding-ad.md 3.5).
 export const AD_MAX_ROWS = 100;
-const OU_MAX_CHARS = 64;
+export const AD_OU_MAX_CHARS = 64;
 
 type Row = { key: number; ou: string; team: string };
 // Kode galat, bukan teks: teksnya dibaca dari kamus saat render, jadi ikut bahasa aktif.
@@ -334,7 +334,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                                 id={ouId}
                                 className="ad-set-input"
                                 value={r.ou}
-                                maxLength={OU_MAX_CHARS}
+                                maxLength={AD_OU_MAX_CHARS}
                                 autoComplete="off"
                                 spellCheck={false}
                                 aria-invalid={ouMsg ? true : undefined}

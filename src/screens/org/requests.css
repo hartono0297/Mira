@@ -371,3 +371,183 @@
 .req-ad-used p {
   margin-top: 2px;
 }
+
+/* Petunjuk "pernah dipakai" (0.5.1): akun AD atau nama laptop peminta sama dengan
+   orang yang dikeluarkan atau sedang nonaktif. Satu kalimat bernada peringatan
+   (--state, bukan merah: ini petunjuk, bukan bukti), lalu catatan biasa.
+   --state di atas --card 5,89:1 (terang) dan 7,89:1 (gelap); --text-sec di atas
+   --card 5,86:1 dan 7,61:1. Ikon riwayat: yang ditandai adalah pemakaian lama. */
+.req-prev {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.req-prev > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--state);
+}
+
+.req-prev > div {
+  min-width: 0;
+}
+
+.req-prev p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.req-prev strong {
+  font-weight: 700;
+  color: var(--state);
+}
+
+.req-prev-note {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+/* "Cocokkan OU ini ke departemen..." (0.5.1, superadmin). Form kecil di dalam blok
+   AD (latar --bg). Mengikuti aturan berbingkai v0.5.0: daftar OU yang bisa dipilih
+   berbingkai --border-strong (3,19:1 di atas --bg terang, 4,18:1 gelap), teks yang
+   hanya dibaca tanpa bingkai. Lingkaran pilihan memakai --accent: 5,20:1 / 6,45:1
+   di atas --card, 4,47:1 di atas --hover terang (non-teks, cukup 3:1). */
+.req-ad-match {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.req-ad-match-open {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.req-ad-match-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.req-ad-match-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.req-ad-match-ous {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.req-ad-match-ous legend {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.req-ad-match-ous .hint {
+  margin: 2px 0 6px;
+}
+
+.req-ad-match-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.req-ad-match-ou {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.req-ad-match-ou:hover:not([data-disabled]) {
+  background: var(--hover);
+}
+
+.req-ad-match-ou[data-disabled] {
+  cursor: not-allowed;
+  color: var(--text-sec);
+}
+
+.req-ad-match-ou input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.req-ad-match-ou-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.req-ad-match-tag {
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.req-ad-match-dept select {
+  width: 100%;
+  max-width: 360px;
+  min-width: 0;
+}
+
+.req-ad-match-dept select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.req-ad-match-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.req-ad-match-outdated {
+  margin: 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* Kosong tetap ada di pohon aksesibilitas, seperti .ad-set-live. */
+.req-ad-match-live:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.req-ad-match-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.req-ad-matched {
+  overflow-wrap: anywhere;
+}

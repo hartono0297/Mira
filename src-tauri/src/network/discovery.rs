@@ -176,6 +176,11 @@ impl Discovery {
         lock(&self.mdns).is_some()
     }
 
+    /// `true` while a dial round for some peer or address is running.
+    pub(crate) fn dials_in_flight(&self) -> bool {
+        !lock(&self.in_flight).is_empty()
+    }
+
     /// Laptops announcing an organization (TXT `org`, `on`, `j`, `ad`), freshest
     /// first, without this laptop and without candidates older than
     /// `CANDIDATE_TTL` (v0.3 onboarding). Hints only.
@@ -429,7 +434,7 @@ async fn browse_loop(weak: Weak<Inner>, rx: mdns_sd::Receiver<ServiceEvent>) {
             );
             added = true;
         }
-        if added && org.is_some() && org == inner.backend.org_id() {
+        if added && org.is_some() && org.as_deref() == inner.standing().org() {
             dial_pass(&inner);
         }
     }
@@ -462,12 +467,13 @@ pub(crate) async fn dial_loop(weak: Weak<Inner>) {
 
 /// One round: for every active member without a live connection, try its
 /// addresses (last successful first) whose backoff has passed. Manual
-/// addresses not yet tied to a key are tried as well.
+/// addresses not yet tied to a key are tried as well. A suspended laptop
+/// (0.5.1) dials too: its connections carry the membership log only.
 pub(crate) fn dial_pass(inner: &Arc<Inner>) {
     if inner.is_closing() {
         return;
     }
-    let Some(org) = inner.backend.org_id() else {
+    let Some(org) = inner.standing().org().map(str::to_owned) else {
         return;
     };
     let members: HashSet<String> = inner
@@ -476,7 +482,8 @@ pub(crate) fn dial_pass(inner: &Arc<Inner>) {
         .into_iter()
         .filter(|m| *m != inner.me)
         .collect();
-    let connected: HashSet<String> = inner.connected_peers().into_iter().collect();
+    // Limited connections count as connected: no second dial.
+    let connected: HashSet<String> = inner.linked_peers().into_iter().collect();
     let connected_addrs = inner.connected_addresses();
     let own = inner.own_addresses();
     let resolved = lock(&inner.disc.resolved_manual).clone();
@@ -576,7 +583,7 @@ async fn dial_target(inner: &Arc<Inner>, attempts: Vec<Attempt>) {
             return;
         }
         if let Some(pk) = &a.ctx.expected
-            && inner.connected_peers().iter().any(|p| p == pk)
+            && inner.is_linked(pk)
         {
             return;
         }

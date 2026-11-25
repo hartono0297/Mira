@@ -87,22 +87,20 @@ describe("App", () => {
   });
 
   it("laptop yang dikeluarkan melihat layar penuh dengan langkah berikutnya", async () => {
-    const user = userEvent.setup();
-    let state: AppState = { ...ready, membership: "removed" };
+    const state: AppState = { ...ready, membership: "removed" };
     invoke.mockImplementation(async (cmd: string) => (cmd === "get_app_state" ? state : null));
     renderApp();
 
     expect(
-      await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari organisasi Kantor Contoh" }),
+      await screen.findByRole("heading", { name: "Laptop ini sudah dikeluarkan dari Kantor Contoh" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/tetap tersimpan di sini/)).toBeInTheDocument();
-    expect(screen.getByText(/belum bisa bergabung lagi/)).toBeInTheDocument();
+    expect(screen.getByText(/Untuk bergabung lagi, reset laptop ini dulu/)).toBeInTheDocument();
     expect(screen.getByText("A1B2 C3D4 E5F6 0718")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Menu utama" })).not.toBeInTheDocument();
-
-    state = { ...ready, membership: "active" };
-    await user.click(screen.getByRole("button", { name: "Periksa lagi" }));
-    expect(await screen.findByRole("navigation", { name: "Menu utama" })).toBeInTheDocument();
+    // 0.5.1: keluar permanen tidak bisa dicek ulang; jalan keluarnya reset.
+    expect(screen.queryByRole("button", { name: "Periksa lagi" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset dan mulai dari awal" })).toBeInTheDocument();
   });
 
   it("status jaringan removed memuat ulang data lalu menampilkan layar dikeluarkan", async () => {
@@ -125,6 +123,6 @@ describe("App", () => {
       return null;
     });
     renderApp();
-    expect(await screen.findByRole("heading", { name: /sudah dikeluarkan dari organisasi/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /sudah dikeluarkan dari Kantor/ })).toBeInTheDocument();
   });
 });

@@ -58,6 +58,11 @@ pub enum AppError {
         "Laptop ini sudah dikeluarkan dari organisasi, jadi tidak bisa membuat perubahan lagi."
     )]
     Removed,
+    /// 0.5.1: this laptop's member is suspended.
+    #[error(
+        "Akun Anda di organisasi ini sedang dinonaktifkan, jadi tidak bisa membuat perubahan. Hubungi IT atau superadmin kantor."
+    )]
+    Suspended,
     #[error(
         "Organisasi harus punya minimal satu superadmin. Angkat superadmin lain dulu sebelum melepas yang terakhir."
     )]
@@ -107,6 +112,7 @@ impl AppError {
             AppError::PeerUnreachable(_) => "peer_unreachable",
             AppError::AlreadyInOrg => "already_in_org",
             AppError::Removed => "removed",
+            AppError::Suspended => "suspended",
             AppError::LastSuperadmin => "last_superadmin",
             AppError::InvalidAddress(_) => "invalid_address",
             AppError::Network(_) => "network",
@@ -167,6 +173,7 @@ mod tests {
             (AppError::PeerUnreachable("x".into()), "peer_unreachable"),
             (AppError::AlreadyInOrg, "already_in_org"),
             (AppError::Removed, "removed"),
+            (AppError::Suspended, "suspended"),
             (AppError::LastSuperadmin, "last_superadmin"),
             (AppError::InvalidAddress("x".into()), "invalid_address"),
             (AppError::Network("x".into()), "network"),

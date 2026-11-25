@@ -25,12 +25,12 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use super::actions::JoinAcceptedData;
-use super::fold::{MemberStatus, OrgState};
+use super::fold::{MemberState, MemberStatus, OrgState};
 use super::format::{format_time, is_lower_hex, parse_time};
 use super::join::{
     JOIN_NOTE_MAX_CHARS, JOIN_REQUEST_VALIDITY, JOIN_REQUEST_VERSION, JoinAdClaim, JoinExtras,
-    JoinRequestPayload, SignedJoinRequest, VerifiedJoinRequest, fit_ad_claim,
-    is_below_ad_threshold, is_valid_ad_dn, is_valid_ad_text, is_valid_ad_user,
+    JoinRequestPayload, SignedJoinRequest, VerifiedJoinRequest, ad_blockers, fit_ad_claim,
+    is_below_ad_threshold, is_below_suspend_threshold, is_valid_ad_dn, is_valid_ad_text, is_valid_ad_user,
     is_valid_join_account, is_valid_join_note, join_ad_allowed, join_extras_allowed,
     org_fingerprint, org_fingerprint_short, request_code, request_id, sign_join_request,
     strip_join_text, verify_join_request,
@@ -570,6 +570,11 @@ pub struct JoinInfo {
     /// ([`join_ad_allowed`]).
     #[serde(default)]
     pub accepts_ad: bool,
+    /// 0.5.1: active members (guests included) below the AD threshold
+    /// ([`ad_blockers`]), so the requester can say why its AD data is not
+    /// used. Always `Some` from 0.5.1; `None` from older laptops.
+    #[serde(default)]
+    pub ad_outdated: Option<u32>,
 }
 
 /// Organization record and open departments, sorted by name. `None` when
@@ -610,6 +615,7 @@ pub fn join_info(conn: &Connection) -> AppResult<Option<JoinInfo>> {
         fingerprint: org_fingerprint_short(&state.org),
         extras: join_extras_allowed(&state),
         accepts_ad: join_ad_allowed(&state),
+        ad_outdated: Some(u32::try_from(ad_blockers(&state).len()).unwrap_or(u32::MAX)),
         ad_domain: state.ad.domain.clone(),
         ad_ou_map,
         org: state.org,
@@ -722,7 +728,7 @@ fn admissible(
     }
     match state.member(&req.payload.member).map(|m| m.status) {
         Some(MemberStatus::Removed) => return Err(JoinRequestRefusal::Removed),
-        Some(MemberStatus::Active) => return Ok(false),
+        Some(MemberStatus::Active | MemberStatus::Suspended) => return Ok(false),
         None => {}
     }
     if !in_window(req, now) {
@@ -1193,9 +1199,107 @@ pub struct JoinRequestView {
     /// AD onboarding: the claim from the signed request (reported by the
     /// requester's laptop), with what this office makes of it.
     pub ad: Option<JoinAdView>,
-    /// The office has AD settings and the requester's Mira is older than
-    /// `JOIN_AD_SINCE`: approving is refused until it updates.
+    /// Approving is refused until the requester updates Mira: the office
+    /// has AD settings and it is older than `JOIN_AD_SINCE`, or the log
+    /// holds a `member_suspend` and it is older than `SUSPEND_SINCE`.
     pub requester_outdated: bool,
+    /// 0.5.1: the request's AD account or laptop name is that of someone
+    /// suspended or removed. A hint, not proof.
+    pub previously_removed: Option<PreviouslyRemoved>,
+}
+
+/// Someone suspended or removed whose AD account or laptop name a new
+/// request shares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviouslyRemoved {
+    pub name: String,
+    /// `suspended` or `removed`.
+    pub status: MemberStatus,
+    /// When suspended or removed.
+    pub at: String,
+    #[serde(rename = "match")]
+    pub matched_by: PreviousMatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviousMatch {
+    /// Same AD domain and user (ignoring case) as recorded in the join
+    /// decision that admitted that person.
+    AdAccount,
+    /// Same laptop name (ignoring case) as that person's device profile.
+    Laptop,
+}
+
+/// The suspended or removed person a request with this AD account and
+/// laptop name points at, if any: an AD account match first, then a laptop
+/// name match; the latest suspension or removal among several.
+pub fn previously_removed(
+    state: &OrgState,
+    requester: &str,
+    ad: Option<(&str, &str)>,
+    laptop: &str,
+) -> Option<PreviouslyRemoved> {
+    let gone = |pk: &str| {
+        state.member(pk).and_then(|m| {
+            let at = match m.status {
+                MemberStatus::Suspended => m.suspended_at.clone(),
+                MemberStatus::Removed => m.removed_at.clone(),
+                MemberStatus::Active => None,
+            };
+            (pk != requester).then_some((m, at?))
+        })
+    };
+    fn latest(found: Vec<(&MemberState, String)>) -> Option<(&MemberState, String)> {
+        found
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.public_key.cmp(&a.0.public_key)))
+    }
+    let by_ad = ad.and_then(|(domain, user)| {
+        let user = user.to_lowercase();
+        latest(
+            state
+                .join_decisions
+                .values()
+                .filter(|d| d.approved)
+                .filter(|d| {
+                    d.ad_account.as_ref().is_some_and(|(dom, usr)| {
+                        dom.eq_ignore_ascii_case(domain) && usr.to_lowercase() == user
+                    })
+                })
+                .filter_map(|d| gone(&d.member))
+                .collect(),
+        )
+    });
+    let (m, at, matched_by) = match by_ad {
+        Some((m, at)) => (m, at, PreviousMatch::AdAccount),
+        None => {
+            let laptop = laptop.trim().to_lowercase();
+            if laptop.is_empty() {
+                return None;
+            }
+            let (m, at) = latest(
+                state
+                    .members
+                    .values()
+                    .filter(|m| {
+                        m.device
+                            .as_ref()
+                            .is_some_and(|d| d.laptop.trim().to_lowercase() == laptop)
+                    })
+                    .filter_map(|m| gone(&m.public_key))
+                    .collect(),
+            )?;
+            (m, at, PreviousMatch::Laptop)
+        }
+    };
+    Some(PreviouslyRemoved {
+        name: display_name_for(state, &m.public_key, None),
+        status: m.status,
+        at,
+        matched_by,
+    })
 }
 
 /// The AD claim of a pending request, as the approver's card shows it.
@@ -1327,8 +1431,16 @@ pub fn pending_join_requests(
             continue;
         };
         let p = req.payload;
-        let requester_outdated = state.ad.set && is_below_ad_threshold(&p.app_version);
+        let requester_outdated = (state.ad.set && is_below_ad_threshold(&p.app_version))
+            || (state.suspend_used && is_below_suspend_threshold(&p.app_version));
+        let previously_removed = previously_removed(
+            state,
+            &p.member,
+            p.ad.as_ref().map(|c| (c.domain.as_str(), c.user.as_str())),
+            &p.laptop,
+        );
         out.push(JoinRequestView {
+            previously_removed,
             ad: p.ad.map(|claim| {
                 let used_by = ad_account_used_by(state, &claim.domain, &claim.user);
                 JoinAdView {

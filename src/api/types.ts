@@ -17,7 +17,17 @@ export type OrgInfo = {
   createdAt: string;
 };
 
-export type Membership = "none" | "active" | "removed";
+// "suspended" (0.5.1): dinonaktifkan, bisa diaktifkan lagi. "removed": keluar permanen.
+export type Membership = "none" | "active" | "suspended" | "removed";
+
+// Hasil "Periksa lagi" di layar nonaktif (0.5.1).
+export type MembershipCheck = {
+  membership: Membership;
+  // RFC 3339.
+  checkedAt: string;
+  // Laptop kantor yang berhasil disinkronkan saat pemeriksaan.
+  peersReached: number;
+};
 
 export type AppState = {
   identity: IdentityInfo;
@@ -36,7 +46,7 @@ export type MemberView = {
   displayName: string;
   orgRole: Role;
   isSuperadmin: boolean;
-  status: "active" | "removed";
+  status: "active" | "suspended" | "removed";
   joinedAt: string;
   teams: { teamId: string; role: TeamRole }[];
 };
@@ -83,7 +93,7 @@ export type CreatedInvite = { code: string; invite: InviteView };
 
 // Jaringan
 
-export type NetState = "starting" | "no_org" | "alone" | "lan" | "vpn" | "offline" | "removed";
+export type NetState = "starting" | "no_org" | "alone" | "lan" | "vpn" | "offline" | "removed" | "suspended";
 export type Route = "lan" | "vpn" | "local";
 
 export type PeerView = {
@@ -157,6 +167,7 @@ export type AppErrorCode =
   | "peer_unreachable"
   | "already_in_org"
   | "removed"
+  | "suspended"
   | "last_superadmin"
   | "invalid_address"
   | "network"

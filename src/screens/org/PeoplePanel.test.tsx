@@ -28,7 +28,7 @@ function people(): PersonView[] {
   ];
 }
 
-function renderPeople(table: Record<string, unknown> = {}, ov: OrgOverview = memberOverview()) {
+function renderPeople(table: Record<string, unknown> = {}, ov: OrgOverview = memberOverview({ listUsers: false })) {
   invoke.mockImplementation(
     router({
       org_overview: ov,
@@ -69,11 +69,11 @@ describe("Anggota (bukan superadmin)", () => {
     expect(invoke.mock.calls.some((c) => c[0] === "org_users")).toBe(false);
   });
 
-  it("admin departemen juga melihat tab Anggota, bukan Pengguna", async () => {
-    const ue = renderPeople({}, adminOverview());
-    await openTab(ue);
-    expect(screen.queryByRole("button", { name: "Pengguna" })).not.toBeInTheDocument();
-    expect(await screen.findByText("Rina")).toBeInTheDocument();
+  it("admin departemen (0.5.1, listUsers) melihat tab Pengguna, bukan Anggota", async () => {
+    renderPeople({ org_users: [] }, adminOverview({ listUsers: true }));
+    expect(await screen.findByRole("button", { name: "Pengguna" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Anggota" })).not.toBeInTheDocument();
+    expect(invoke.mock.calls.some((c) => c[0] === "org_people")).toBe(false);
   });
 
   it("menampilkan nama, label, departemen, dan peran tanpa laptop atau aksi", async () => {

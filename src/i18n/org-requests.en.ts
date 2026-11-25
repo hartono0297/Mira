@@ -17,6 +17,18 @@ const en: Dict<typeof id> = {
     codeLabel: "Match code",
     verifyHint:
       "Make sure it's the right person: call them on a number you already know, not one from the note, or go to their desk. Ask them to read out the code on their screen, and approve only if the codes match.",
+    previous: {
+      accountRemoved: (name: string, date: string) =>
+        `This Windows account was used by ${name}, who was removed on ${date}.`,
+      laptopRemoved: (name: string, date: string) =>
+        `A laptop with this name was used by ${name}, who was removed on ${date}.`,
+      accountSuspended: (name: string, date: string) =>
+        `This Windows account was used by ${name}, who has been deactivated since ${date}.`,
+      laptopSuspended: (name: string, date: string) =>
+        `A laptop with this name was used by ${name}, who has been deactivated since ${date}.`,
+      reinstate: "Consider reactivating that person instead of approving a new laptop.",
+      notProof: "This is a hint, not proof: the requesting laptop reports its own account and laptop name.",
+    },
   },
   title: "Join requests",
   intro: "New laptops on the office network that choose this organization show up here.",

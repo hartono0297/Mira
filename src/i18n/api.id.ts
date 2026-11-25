@@ -41,6 +41,7 @@ const id = {
     vpn: "Tersambung lewat VPN",
     offline: "Tidak tersambung ke jaringan kantor",
     removed: "Laptop ini sudah dikeluarkan dari organisasi",
+    suspended: "Akun Anda di organisasi ini sedang dinonaktifkan",
   },
   offlineHint: "Kalau sedang di luar kantor, nyalakan VPN kantor.",
   inviteError: {

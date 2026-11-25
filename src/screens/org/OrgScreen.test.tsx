@@ -101,17 +101,25 @@ describe("Organisasi: tab per peran", () => {
     expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
   });
 
-  it("admin departemen melihat Anggota, Permintaan bergabung, Undangan", async () => {
-    answer({ org_overview: adminOverview() });
+  it("admin departemen melihat Pengguna (departemennya), Permintaan bergabung, Undangan", async () => {
+    answer({ org_overview: adminOverview({ listUsers: true }) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Anggota", "Permintaan bergabung", "Undangan", "Kopi"]);
-    expect(screen.getByRole("button", { name: "Anggota" })).toHaveAttribute("aria-current", "true");
+    expect(tabNames()).toEqual(["Pengguna", "Permintaan bergabung", "Undangan", "Kopi"]);
+    expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
+    expect(screen.queryByRole("button", { name: "Anggota" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Departemen" })).not.toBeInTheDocument();
   });
 
+  it("admin departemen tanpa listUsers (laptop rekan belum 0.5.1) tetap melihat Anggota", async () => {
+    answer({ org_overview: adminOverview({ listUsers: false }) });
+    renderOrg();
+    await screen.findByRole("navigation", { name: "Bagian organisasi" });
+    expect(tabNames()).toEqual(["Anggota", "Permintaan bergabung", "Undangan", "Kopi"]);
+  });
+
   it("anggota biasa di departemen hanya melihat Anggota", async () => {
-    answer({ org_overview: memberOverview(), get_directory: directory(plainMember) });
+    answer({ org_overview: memberOverview({ listUsers: false }), get_directory: directory(plainMember) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
     // Direktori lama juga tidak memberi hak mengelola departemen apa pun.
@@ -126,7 +134,7 @@ describe("Organisasi: tab per peran", () => {
 
   it("anggota biasa tanpa departemen melihat Anggota dan Undangan untuk memakai kode", async () => {
     const user = userEvent.setup();
-    answer({ org_overview: memberOverview({ departmentId: null }), get_directory: directory(plainMember) });
+    answer({ org_overview: memberOverview({ departmentId: null, listUsers: false }), get_directory: directory(plainMember) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
     expect(tabNames()).toEqual(["Anggota", "Undangan", "Kopi"]);
@@ -139,7 +147,7 @@ describe("Organisasi: tab per peran", () => {
 
   it("Tamu hanya melihat Anggota", async () => {
     answer({
-      org_overview: memberOverview({ isGuest: true, departmentId: null }),
+      org_overview: memberOverview({ isGuest: true, departmentId: null, listUsers: false }),
       get_directory: directory(plainMember),
     });
     renderOrg();

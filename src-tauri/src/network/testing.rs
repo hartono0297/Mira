@@ -24,6 +24,13 @@ pub type IngestHook = Box<dyn Fn(&mut MemState, &str, &[WireOp]) + Send>;
 #[derive(Default)]
 pub struct MemState {
     pub org: Option<String>,
+    /// 0.5.1: answer to `suspended_org` (set it with `org = None`).
+    pub suspended_org: Option<String>,
+    /// 0.5.1: ops a `Suspended` peer may not receive (team-scoped ops in
+    /// the real backend). A suspended peer gets every other op.
+    pub team_ops: HashSet<String>,
+    /// Number of `op_ids_for` calls (op sync sessions this laptop started).
+    pub offers: usize,
     pub name: Option<String>,
     /// Keys not listed here are `Unknown`.
     pub auth: HashMap<String, PeerAuth>,
@@ -111,14 +118,48 @@ impl MemoryBackend {
         });
     }
 
+    /// Marks `pk` suspended, with `suspension` as the op that did it.
+    pub fn suspend(&self, pk: &str, suspension: Option<WireOp>) {
+        self.with(|s| {
+            s.auth.insert(
+                pk.to_owned(),
+                PeerAuth::Suspended {
+                    display_name: format!("nonaktif {}", &pk[..4]),
+                    suspension,
+                },
+            );
+        });
+    }
+
+    /// This laptop's own membership: suspended (`true`) or active again.
+    pub fn set_self_suspended(&self, suspended: bool) {
+        self.with(|s| {
+            let org = s.org.take().or_else(|| s.suspended_org.take());
+            if suspended {
+                s.suspended_org = org;
+            } else {
+                s.org = org;
+            }
+        });
+    }
+
     fn may_see(s: &MemState, peer: &str, id: &str) -> bool {
-        s.visible.get(peer).is_none_or(|set| set.contains(id))
+        let allowed = match s.auth.get(peer) {
+            Some(PeerAuth::Member { .. }) => true,
+            Some(PeerAuth::Suspended { .. }) => !s.team_ops.contains(id),
+            _ => false,
+        };
+        allowed && s.visible.get(peer).is_none_or(|set| set.contains(id))
     }
 }
 
 impl SyncBackend for MemoryBackend {
     fn org_id(&self) -> Option<String> {
         self.with(|s| s.org.clone())
+    }
+
+    fn suspended_org(&self) -> Option<String> {
+        self.with(|s| s.suspended_org.clone())
     }
 
     fn display_name(&self) -> Option<String> {
@@ -141,9 +182,7 @@ impl SyncBackend for MemoryBackend {
 
     fn op_ids_for(&self, peer: &str) -> Result<Vec<String>, String> {
         self.with(|s| {
-            if !matches!(s.auth.get(peer), Some(PeerAuth::Member { .. })) {
-                return Ok(vec![]);
-            }
+            s.offers += 1;
             Ok(s.ops
                 .keys()
                 .filter(|id| Self::may_see(s, peer, id))
@@ -154,7 +193,10 @@ impl SyncBackend for MemoryBackend {
 
     fn ops_for(&self, peer: &str, ids: &[String]) -> Result<Vec<WireOp>, String> {
         self.with(|s| {
-            if !matches!(s.auth.get(peer), Some(PeerAuth::Member { .. })) {
+            if !matches!(
+                s.auth.get(peer),
+                Some(PeerAuth::Member { .. } | PeerAuth::Suspended { .. })
+            ) {
                 return Ok(vec![]);
             }
             let out: Vec<(String, WireOp)> = ids

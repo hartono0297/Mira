@@ -96,6 +96,7 @@ pub(crate) fn is_revocation(body: &Body) -> bool {
     matches!(
         body,
         Body::MemberRemove { .. }
+            | Body::MemberSuspend { .. }
             | Body::SuperadminRemove { .. }
             | Body::TeamAdminUnset { .. }
             | Body::TeamMemberRemove { .. }
@@ -133,6 +134,19 @@ impl OrgState {
         let any = match &op.payload.body {
             Body::ProfileSet { .. } | Body::ChannelCreate { .. } | Body::DeviceSet { .. } => {
                 Vec::new()
+            }
+            Body::MemberSuspend { member } => {
+                let team = self
+                    .suspend_admin_team(author, member)
+                    .or_else(|| self.snapshot_admin_team(author, member));
+                one_of(author, sa, team.is_some(), team.as_deref().unwrap_or(""))
+            }
+            // A reinstatement made concurrently with another suspension or
+            // a removal of the same person loses to it.
+            Body::MemberReinstate { member } => {
+                used.push(Right::Member(member.clone()));
+                let team = self.reinstate_admin_team(author, member);
+                one_of(author, sa, team.is_some(), team.as_deref().unwrap_or(""))
             }
             Body::TeamCreate { .. }
             | Body::TeamDelete { .. }
@@ -227,7 +241,9 @@ impl OrgState {
     /// Rights a revocation takes away at this state (empty for other ops).
     fn rights_taken(&self, op: &VerifiedOp) -> Vec<Right> {
         match &op.payload.body {
-            Body::MemberRemove { member } => vec![Right::Member(member.clone())],
+            Body::MemberRemove { member } | Body::MemberSuspend { member } => {
+                vec![Right::Member(member.clone())]
+            }
             Body::SuperadminRemove { member } => vec![Right::Superadmin(member.clone())],
             Body::TeamAdminUnset { team, member } => {
                 vec![Right::TeamAdmin(team.clone(), member.clone())]
@@ -297,8 +313,10 @@ struct Log<'a> {
     ops: Vec<&'a VerifiedOp>,
     /// False when a present dep does not have a lower lamport.
     deps_ok: Vec<bool>,
-    /// Causal past of revocations and accepts.
+    /// Causal past of revocations, accepts and reinstatements.
     past: Vec<Option<Bits>>,
+    /// Position of each op id.
+    index: HashMap<&'a str, usize>,
 }
 
 impl<'a> Log<'a> {
@@ -307,8 +325,9 @@ impl<'a> Log<'a> {
         sorted.sort_by(|a, b| a.order_key().cmp(&b.order_key()));
         sorted.dedup_by(|a, b| a.id == b.id);
         let n = sorted.len();
-        let index: HashMap<&str, usize> = sorted
+        let index: HashMap<&'a str, usize> = sorted
             .iter()
+            .copied()
             .enumerate()
             .map(|(i, op)| (op.id.as_str(), i))
             .collect();
@@ -329,7 +348,11 @@ impl<'a> Log<'a> {
         let past = (0..n)
             .map(|i| {
                 let body = &sorted[i].payload.body;
-                let needed = is_revocation(body) || matches!(body, Body::InviteAccept { .. });
+                let needed = is_revocation(body)
+                    || matches!(
+                        body,
+                        Body::InviteAccept { .. } | Body::MemberReinstate { .. }
+                    );
                 (deps_ok[i] && needed).then(|| closure(&parents, i, n))
             })
             .collect();
@@ -337,13 +360,14 @@ impl<'a> Log<'a> {
             ops: sorted,
             deps_ok,
             past,
+            index,
         }
     }
 
     fn past(&self, i: usize) -> &Bits {
         self.past[i]
             .as_ref()
-            .expect("past is kept for revocations and accepts")
+            .expect("past is kept for revocations, accepts and reinstatements")
     }
 }
 
@@ -484,6 +508,19 @@ impl<'a> Pass<'a> {
             && !log.past(i).contains(c)
         {
             return Err(Reason::BadDeps);
+        }
+        // A reinstatement answers the suspensions its author saw. One that
+        // did not see every suspension in force (some made by another
+        // laptop concurrently) does not lift them.
+        if let Body::MemberReinstate { member } = &op.payload.body
+            && let Some(m) = self.state.member(member)
+            && m.suspension_op
+                .iter()
+                .chain(&m.joint_suspensions)
+                .filter_map(|s| log.index.get(s.as_str()))
+                .any(|&j| !log.past(i).contains(j))
+        {
+            return Err(Reason::ConcurrentWithRevocation);
         }
         match decided {
             Some(false) => return Err(Reason::ConcurrentWithRevocation),

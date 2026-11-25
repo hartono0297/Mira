@@ -4,12 +4,12 @@ import type id from "./org-users.id";
 
 const people = (n: number) => `${n} ${plural(n, "person", "people")}`;
 const isAre = (n: number) => plural(n, "is", "are");
-
 const en: Dict<typeof id> = {
   status: {
-    active: "Everyone active",
+    current: "Everyone except removed",
     online: "Online",
     offline: "Offline",
+    suspended: "Deactivated",
     removed: "Removed",
   },
   empty: {
@@ -19,6 +19,7 @@ const en: Dict<typeof id> = {
     subjectDept: (name: string) => `people in ${name}`,
     clauseOnline: "who are online",
     clauseOffline: "who are offline",
+    clauseSuspended: "who are deactivated",
     clauseRemoved: "who were removed",
     clauseQuery: (query: string) => `who match "${query}"`,
     and: " and ",
@@ -29,7 +30,7 @@ const en: Dict<typeof id> = {
     countDept: (n: number, name: string) => `${people(n)} in ${name}`,
     nowOffline: (n: number, who: string) => `${who} ${isAre(n)} offline.`,
     nowOnline: (n: number, who: string) => `${who} ${isAre(n)} online.`,
-    stillActive: (n: number, who: string) => `${who} ${isAre(n)} still active.`,
+    stillActive: (n: number, who: string) => `${who} ${isAre(n)} still in the organization.`,
     clearStatus: "Clear status filter",
     clearDept: "Clear department filter",
     otherDepts: (n: number) => `Other departments have ${n} matching ${plural(n, "person", "people")}.`,
@@ -41,6 +42,10 @@ const en: Dict<typeof id> = {
   guestCell: (projects: number) => `Guest, ${projects} ${plural(projects, "project", "projects")}`,
   noDepartment: "No department yet",
   removedOn: (date: string) => `Removed${date ? ` ${date}` : ""}`,
+  suspended: {
+    chip: "Deactivated",
+    since: (date: string, by: string | null) => `Deactivated${date ? ` ${date}` : ""}${by ? ` by ${by}` : ""}`,
+  },
   thisLaptop: "This laptop",
   online: "Online",
   lastSeen: (when: string) => `Last seen ${when}`,
@@ -50,7 +55,10 @@ const en: Dict<typeof id> = {
     label: (name: string) => `Actions for ${name}`,
     move: "Change department",
     role: "Change role",
-    remove: "Remove from organization",
+    takeOut: "Deactivate or remove",
+    suspend: "Deactivate",
+    reinstate: "Reactivate",
+    removeForGood: "Remove for good",
     busy: "Wait for the other action to finish",
   },
   cancel: "Cancel",
@@ -108,11 +116,15 @@ const en: Dict<typeof id> = {
   otherDept: "Other department",
   title: "Users",
   hint: "Each laptop reports its name, system, and Mira version when it connects. The IP address comes from the last connection.",
+  hintDept:
+    "People in your department, including anyone deactivated from it. You can deactivate and reactivate regular members.",
   loading: "Loading users...",
   loadErrorTitle: "Couldn't read the user list",
   loadErrorEmpty: "The Mira core didn't send the user list.",
   alone:
     "You're the only one in this organization so far. Create an invite code in the Invites tab and give it to a colleague so their laptop can join.",
+  aloneDept:
+    "You're the only one in this department so far. Create an invite code in the Invites tab and give it to a colleague so their laptop can join.",
   search: "Search",
   searchPlaceholder: "Search name, laptop, or IP",
   department: "Department",
@@ -130,16 +142,48 @@ const en: Dict<typeof id> = {
   notReported: "Not reported yet",
   notRecorded: "Not recorded",
   notSeen: "Not seen yet",
-  remove: {
-    done: (name: string) => `${name} was removed from the organization.`,
-    title: (name: string) => `Remove ${name} from the organization?`,
-    confirm: (name: string) => `Remove ${name}`,
+  takeOut: {
+    titleBoth: (name: string) => `Deactivate or remove ${name}?`,
+    titleSuspend: (name: string) => `Deactivate ${name}?`,
+    legend: "What happens to this person",
+    suspend: "Deactivate",
+    suspendDesc: (name: string) =>
+      `You can reactivate them later. While deactivated, ${name} gets no new messages or changes. Once reactivated, ${name} uses the same laptop, keeps their data, and returns to the departments, projects, and labels that still exist. While deactivated, Mira on ${name}'s laptop only shows a notice that the account is deactivated.`,
+    remove: "Remove for good",
+    gateLoading: "Checking the Mira version on other laptops...",
+    gateBlocked: (who: string) => `Not available yet. Update these laptops to Mira 0.5.1 first: ${who}. If this is only temporary, update those laptops first. Remove for good can't be undone.`,
+    gateBlockedUnknown:
+      "Not available yet. At least one laptop in the office needs Mira 0.5.1 first. If this is only temporary, update it first. Remove for good can't be undone.",
+    gateError: "Couldn't read the Mira version on other laptops. Mira checks again when you press Deactivate.",
+    version: (v: string) => `Mira ${v}`,
+    versionUnknown: "version not reported",
+    and: "and",
+    choose: "Choose one first",
+    submitSuspend: (name: string) => `Deactivate ${name}`,
+    suspending: "Deactivating...",
+    failSuspend: (name: string) => `${name} wasn't deactivated`,
+    doneSuspend: (name: string) => `${name} is now deactivated. You can reactivate them from this list.`,
+  },
+  reinstate: {
+    title: (name: string) => `Reactivate ${name}?`,
+    body: (name: string) =>
+      `${name} can use Mira again on the same laptop. Their department, roles, projects, labels, and guest access come back as far as they still exist.`,
+    gone: (name: string) =>
+      `Departments, projects, or labels archived or deleted while ${name} was deactivated don't come back.`,
+    confirm: (name: string) => `Reactivate ${name}`,
+    busy: "Reactivating...",
+    failTitle: (name: string) => `${name} wasn't reactivated`,
+    done: (name: string) => `${name} is active again.`,
+  },
+  removeForGood: {
+    title: (name: string) => `Remove ${name} for good?`,
+    effect: (name: string) =>
+      `This can't be undone. ${name} leaves their department and loses all their roles. To come back, their laptop has to be reset and ask to join again from the start.`,
+    data: (name: string) => `Data already on ${name}'s laptop stays there. Mira can't delete it remotely.`,
+    confirm: (name: string) => `Remove ${name} for good`,
     busy: "Removing...",
     failTitle: (name: string) => `${name} wasn't removed`,
-    effect: (name: string) =>
-      `${name} leaves their department and loses all their roles. Their laptop stops receiving new messages and changes, and colleagues' laptops refuse connections from it.`,
-    data: (name: string) => `Data already on ${name}'s laptop stays there. Mira can't delete it remotely.`,
-    final: "That laptop can't rejoin this organization, even with a new invite code. This can't be undone.",
+    done: (name: string) => `${name} was removed from the organization for good.`,
   },
 };
 

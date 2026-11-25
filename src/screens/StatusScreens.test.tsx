@@ -1,4 +1,4 @@
-// Layar status (gagal dibuka, dikeluarkan) dalam bahasa Inggris.
+// Layar status (gagal dibuka, dikeluarkan, nonaktif) dalam bahasa Inggris.
 import { screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLang } from "../i18n/core";
@@ -7,6 +7,7 @@ import { renderInLang } from "../test/i18n";
 import { ThemeProvider } from "../theme/ThemeProvider";
 import { RemovedScreen } from "./RemovedScreen";
 import { ErrorScreen, LoadingScreen } from "./StatusScreens";
+import { SuspendedScreen } from "./SuspendedScreen";
 
 afterEach(() => {
   setLang("id");
@@ -43,15 +44,33 @@ describe("layar status dalam bahasa Inggris", () => {
     const state = appState({ membership: "removed" });
     renderInLang(() => (
       <ThemeProvider>
-        <RemovedScreen state={state as never} onRecheck={vi.fn()} />
+        <RemovedScreen state={state as never} onReset={vi.fn()} />
       </ThemeProvider>
     ));
     expect(
       screen.getByRole("heading", { name: `This laptop has been removed from ${state.organization?.name}` }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Give them this laptop's fingerprint/)).toBeInTheDocument();
+    expect(screen.getByText(/give them this laptop's fingerprint/)).toBeInTheDocument();
+    expect(screen.getByText("This laptop's fingerprint")).toBeInTheDocument();
+    expect(screen.getByText(state.identity.fingerprint)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset and start over" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check again" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/dikeluarkan|Periksa lagi|Reset dan/)).not.toBeInTheDocument();
+  });
+
+  it("akun dinonaktifkan", () => {
+    const state = appState({ membership: "suspended" });
+    renderInLang(() => (
+      <ThemeProvider>
+        <SuspendedScreen state={state as never} onRefresh={vi.fn()} />
+      </ThemeProvider>
+    ));
+    expect(
+      screen.getByRole("heading", { name: `Your account at ${state.organization?.name} is deactivated` }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Contact IT, your department admin, or a superadmin at your office. They can reactivate your account.")).toBeInTheDocument();
     expect(screen.getByText(state.identity.fingerprint)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
-    expect(screen.queryByText(/dikeluarkan|Periksa lagi/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/dinonaktifkan|Periksa lagi|Hubungi/)).not.toBeInTheDocument();
   });
 });

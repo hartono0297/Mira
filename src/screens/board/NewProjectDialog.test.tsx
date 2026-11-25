@@ -44,6 +44,7 @@ function overview(extra: Partial<OrgOverview> = {}): OrgOverview {
     decideJoinTeamIds: [],
     pendingJoinCount: 0,
     manageOrg: false,
+    listUsers: false,
     ...extra,
   };
 }

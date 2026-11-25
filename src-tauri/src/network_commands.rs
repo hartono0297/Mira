@@ -111,10 +111,10 @@ pub async fn get_network_status(
         Ok((membership, me, views, peers::manual_addresses(&c.db)?))
     })?;
 
-    let state_view = if membership == Membership::Removed {
-        NetState::Removed
-    } else {
-        snap.state
+    let state_view = match membership {
+        Membership::Removed => NetState::Removed,
+        Membership::Suspended => NetState::Suspended,
+        _ => snap.state,
     };
     let share_link = if snap.listen_port.is_some() {
         qr::share_link(&me, &snap.local_addresses)
@@ -192,4 +192,43 @@ pub async fn request_firewall_rule() -> AppResult<FirewallRequest> {
         .await
         .map_err(|e| AppError::Internal(format!("Pengaturan firewall berhenti. Detail: {e}")))??;
     Ok(FirewallRequest { started })
+}
+
+/// 0.5.1: result of "Periksa lagi" on the suspended screen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MembershipCheck {
+    pub membership: Membership,
+    /// RFC 3339, when the check finished.
+    pub checked_at: String,
+    /// Office laptops this laptop synced with during the check.
+    pub peers_reached: u32,
+}
+
+/// Longest "Periksa lagi" check.
+pub const CHECK_MEMBERSHIP_LIMIT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Syncs the membership log with every reachable office laptop (dialing
+/// the ones that are not connected, waits at most
+/// [`CHECK_MEMBERSHIP_LIMIT`]), then reports this laptop's membership. A
+/// suspended laptop syncs org-scope ops only (decision 6).
+#[tauri::command]
+pub async fn check_membership(
+    state: State<'_, MiraState>,
+    net: State<'_, AppNet>,
+    app: AppHandle,
+) -> AppResult<MembershipCheck> {
+    let network = net.get(&state, &app).await?;
+    let reached = network.check_membership(CHECK_MEMBERSHIP_LIMIT).await;
+    membership_check(&state, reached)
+}
+
+/// The command's answer once the sync is done.
+pub(crate) fn membership_check(state: &MiraState, reached: usize) -> AppResult<MembershipCheck> {
+    let membership = state.with_core(|c| permissions::membership(&c.db, &c.identity))?;
+    Ok(MembershipCheck {
+        membership,
+        checked_at: permissions::format::format_time(clock::now()),
+        peers_reached: u32::try_from(reached).unwrap_or(u32::MAX),
+    })
 }

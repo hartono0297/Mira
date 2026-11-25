@@ -912,6 +912,7 @@ mod tests {
             extras: super::super::JOIN_INFO_EXTRAS,
             ad_domain: None,
             ad_ou_map: Vec::new(),
+            ad_outdated: None,
         }
     }
 
@@ -953,6 +954,50 @@ mod tests {
         }
     }
 
+    /// 0.5.1 `ad_outdated`: Mira 0.5.0 (the struct without the field, no
+    /// `deny_unknown_fields`) reads a new answer; a new laptop reads `None`
+    /// from a 0.5.0 answer; the field is left out when `None`.
+    #[test]
+    fn join_info_ad_outdated_is_optional_both_ways() {
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct V050Info {
+            org: super::super::OrgRecord,
+            fingerprint: String,
+            departments: Vec<super::super::JoinDept>,
+            #[serde(default)]
+            extras: u32,
+            #[serde(default)]
+            ad_domain: Option<String>,
+            #[serde(default)]
+            ad_ou_map: Vec<super::super::OuMapWire>,
+        }
+        let new = JoinInfoWire {
+            extras: super::super::JOIN_INFO_EXTRAS_AD,
+            ad_outdated: Some(2),
+            ..info()
+        };
+        let v = serde_json::to_value(&new).unwrap();
+        assert_eq!(v["ad_outdated"], 2);
+        let old: V050Info = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(old.extras, super::super::JOIN_INFO_EXTRAS_AD);
+        // Through the frame decoder, both ways.
+        let frame = serde_json::to_vec(&wire::Msg::JoinInfo { info: new.clone() }).unwrap();
+        match wire::decode(&frame).unwrap() {
+            wire::Msg::JoinInfo { info: i } => assert_eq!(i.ad_outdated, Some(2)),
+            other => panic!("{other:?}"),
+        }
+        let mut answer_050 = serde_json::to_value(wire::Msg::JoinInfo { info: new }).unwrap();
+        answer_050["info"]
+            .as_object_mut()
+            .unwrap()
+            .remove("ad_outdated");
+        match wire::decode(&serde_json::to_vec(&answer_050).unwrap()).unwrap() {
+            wire::Msg::JoinInfo { info: i } => assert_eq!(i.ad_outdated, None),
+            other => panic!("{other:?}"),
+        }
+        assert!(serde_json::to_value(info()).unwrap().get("ad_outdated").is_none());
+    }
     #[test]
     fn join_info_shape_is_checked() {
         assert!(check_info(&info()));

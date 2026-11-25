@@ -1,10 +1,12 @@
-// Teks tab Pengguna (khusus superadmin): saringan, tabel, menu aksi, dan dialog
-// ubah departemen, ubah peran, dan keluarkan.
+// Teks tab Pengguna (superadmin, dan sejak 0.5.1 admin departemen untuk
+// departemennya): saringan, tabel, menu aksi, dan dialog ubah departemen, ubah
+// peran, nonaktifkan, aktifkan lagi, dan keluarkan permanen.
 const id = {
   status: {
-    active: "Semua yang aktif",
+    current: "Semua kecuali yang dikeluarkan",
     online: "Online",
     offline: "Offline",
+    suspended: "Nonaktif",
     removed: "Dikeluarkan",
   },
   empty: {
@@ -14,6 +16,7 @@ const id = {
     subjectDept: (name: string) => `orang ${name}`,
     clauseOnline: "sedang online",
     clauseOffline: "sedang offline",
+    clauseSuspended: "sedang nonaktif",
     clauseRemoved: "sudah dikeluarkan",
     clauseQuery: (query: string) => `cocok dengan "${query}"`,
     and: " dan ",
@@ -25,7 +28,7 @@ const id = {
     // who sudah memuat jumlahnya; n untuk bahasa yang membedakan jamak.
     nowOffline: (_n: number, who: string) => `${who} sedang offline.`,
     nowOnline: (_n: number, who: string) => `${who} sedang online.`,
-    stillActive: (_n: number, who: string) => `${who} masih aktif.`,
+    stillActive: (_n: number, who: string) => `${who} masih ada di organisasi.`,
     clearStatus: "Hapus saringan status",
     clearDept: "Hapus saringan departemen",
     otherDepts: (n: number) => `Di departemen lain ada ${n} orang yang cocok.`,
@@ -37,6 +40,10 @@ const id = {
   guestCell: (projects: number) => `Tamu, ${projects} proyek`,
   noDepartment: "Belum ada departemen",
   removedOn: (date: string) => `Dikeluarkan${date ? ` ${date}` : ""}`,
+  suspended: {
+    chip: "Nonaktif",
+    since: (date: string, by: string | null) => `Dinonaktifkan${date ? ` ${date}` : ""}${by ? ` oleh ${by}` : ""}`,
+  },
   thisLaptop: "Laptop ini",
   online: "Online",
   lastSeen: (when: string) => `Terakhir terlihat ${when}`,
@@ -47,7 +54,10 @@ const id = {
     label: (name: string) => `Aksi untuk ${name}`,
     move: "Ubah departemen",
     role: "Ubah peran",
-    remove: "Keluarkan dari organisasi",
+    takeOut: "Nonaktifkan atau keluarkan",
+    suspend: "Nonaktifkan",
+    reinstate: "Aktifkan lagi",
+    removeForGood: "Keluarkan permanen",
     busy: "Tunggu aksi lain selesai",
   },
   cancel: "Batal",
@@ -107,11 +117,15 @@ const id = {
   otherDept: "Departemen lain",
   title: "Pengguna",
   hint: "Setiap laptop melaporkan nama laptop, sistem, dan versi Mira saat tersambung. Alamat IP dilihat dari sambungan terakhir.",
+  hintDept:
+    "Orang di departemen Anda, termasuk yang dinonaktifkan dari departemen ini. Anda bisa menonaktifkan dan mengaktifkan lagi anggota biasa.",
   loading: "Memuat daftar pengguna...",
   loadErrorTitle: "Daftar pengguna belum terbaca",
   loadErrorEmpty: "Inti Mira tidak mengirim daftar pengguna.",
   alone:
     "Baru Anda di organisasi ini. Buat kode undangan di tab Undangan, lalu berikan ke rekan supaya laptopnya bisa bergabung.",
+  aloneDept:
+    "Baru Anda di departemen ini. Buat kode undangan di tab Undangan, lalu berikan ke rekan supaya laptopnya bisa bergabung.",
   search: "Cari",
   searchPlaceholder: "Cari nama, laptop, atau IP",
   department: "Departemen",
@@ -129,17 +143,49 @@ const id = {
   notReported: "Belum dilaporkan",
   notRecorded: "Tidak dicatat",
   notSeen: "Belum terlihat",
-  remove: {
-    done: (name: string) => `${name} sudah dikeluarkan dari organisasi.`,
-    title: (name: string) => `Keluarkan ${name} dari organisasi?`,
-    confirm: (name: string) => `Keluarkan ${name}`,
+  takeOut: {
+    titleBoth: (name: string) => `Nonaktifkan atau keluarkan ${name}?`,
+    titleSuspend: (name: string) => `Nonaktifkan ${name}?`,
+    legend: "Yang terjadi pada orang ini",
+    suspend: "Nonaktifkan",
+    suspendDesc: (name: string) =>
+      `Bisa diaktifkan lagi nanti. Selama nonaktif, ${name} tidak menerima pesan dan perubahan baru. Saat diaktifkan lagi, ${name} memakai laptop yang sama, datanya tetap ada, dan kembali ke departemen, proyek, dan label yang masih ada. Selama nonaktif, Mira di laptop ${name} hanya menampilkan pemberitahuan bahwa akunnya dinonaktifkan.`,
+    remove: "Keluarkan permanen",
+    gateLoading: "Memeriksa versi Mira di laptop lain...",
+    gateBlocked: (who: string) => `Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: ${who}. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.`,
+    gateBlockedUnknown:
+      "Belum bisa dipilih. Ada laptop yang perlu diperbarui ke Mira 0.5.1 dulu. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.",
+    gateError: "Versi Mira di laptop lain belum terbaca. Mira memeriksanya lagi saat Anda menekan Nonaktifkan.",
+    version: (v: string) => `Mira ${v}`,
+    versionUnknown: "versi belum dilaporkan",
+    // Penyambung daftar laptop: "A dan B", "A, B, dan C".
+    and: "dan",
+    choose: "Pilih salah satu dulu",
+    submitSuspend: (name: string) => `Nonaktifkan ${name}`,
+    suspending: "Menonaktifkan...",
+    failSuspend: (name: string) => `${name} belum dinonaktifkan`,
+    doneSuspend: (name: string) => `${name} sekarang nonaktif. Anda bisa mengaktifkannya lagi dari daftar ini.`,
+  },
+  reinstate: {
+    title: (name: string) => `Aktifkan ${name} lagi?`,
+    body: (name: string) =>
+      `${name} bisa memakai Mira lagi dengan laptop yang sama. Departemen, peran, proyek, label, dan akses Tamu dikembalikan sejauh masih ada.`,
+    gone: (name: string) =>
+      `Departemen, proyek, atau label yang diarsipkan atau dihapus selama ${name} nonaktif tidak ikut kembali.`,
+    confirm: (name: string) => `Aktifkan ${name}`,
+    busy: "Mengaktifkan...",
+    failTitle: (name: string) => `${name} belum diaktifkan`,
+    done: (name: string) => `${name} aktif lagi.`,
+  },
+  removeForGood: {
+    title: (name: string) => `Keluarkan ${name} permanen?`,
+    effect: (name: string) =>
+      `Tidak bisa dibatalkan. ${name} keluar dari departemen dan kehilangan semua perannya. Untuk kembali, laptopnya harus direset lalu meminta bergabung lagi dari awal.`,
+    data: (name: string) => `Data yang sudah ada di laptop ${name} tetap di sana. Mira tidak bisa menghapusnya dari jauh.`,
+    confirm: (name: string) => `Keluarkan ${name} permanen`,
     busy: "Mengeluarkan...",
     failTitle: (name: string) => `${name} belum dikeluarkan`,
-    effect: (name: string) =>
-      `${name} keluar dari departemennya dan kehilangan semua perannya. Laptopnya tidak menerima pesan dan perubahan baru lagi, dan laptop rekan menolak sambungan dari laptop itu.`,
-    data: (name: string) => `Data yang sudah ada di laptop ${name} tetap ada di sana. Mira tidak bisa menghapusnya dari jauh.`,
-    final:
-      "Laptop itu tidak bisa bergabung lagi ke organisasi ini, juga dengan kode undangan baru. Langkah ini tidak bisa dibatalkan.",
+    done: (name: string) => `${name} sudah dikeluarkan permanen dari organisasi.`,
   },
 };
 

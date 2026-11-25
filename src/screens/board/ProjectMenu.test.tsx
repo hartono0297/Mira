@@ -91,6 +91,7 @@ function overview(): OrgOverview {
     decideJoinTeamIds: [],
     pendingJoinCount: 0,
     manageOrg: false,
+    listUsers: false,
   };
 }
 

@@ -8,13 +8,19 @@ export const NETWORK_POLL_MS = 5000;
 
 // Satu sumber status jaringan untuk sidebar, Organisasi, dan Pengaturan.
 // Memuat ulang saat event mira://network datang, dan polling tiap 5 detik.
+//
+// onRemoved dipanggil saat jaringan melaporkan laptop ini dikeluarkan atau
+// akunnya dinonaktifkan, supaya App memuat ulang AppState dan berganti layar.
+// Dipanggil lagi di setiap data baru selama keadaan itu bertahan, jadi kalau
+// AppState sempat tertinggal dari status jaringan, polling berikutnya mengejarnya.
 export function NetworkProvider({ children, onRemoved }: { children: ReactNode; onRemoved: () => void }) {
   const live = useLive(api.getNetworkStatus, "mira://network", NETWORK_POLL_MS);
-  const removed = live.data?.state === "removed";
+  const data = live.data;
 
   useEffect(() => {
-    if (removed) onRemoved();
-  }, [removed, onRemoved]);
+    const state = data?.state;
+    if (state === "removed" || state === "suspended") onRemoved();
+  }, [data, onRemoved]);
 
   return <NetworkCtx.Provider value={live}>{children}</NetworkCtx.Provider>;
 }

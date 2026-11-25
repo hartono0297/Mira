@@ -437,6 +437,39 @@ pub fn ad_blockers_since(
     out
 }
 
+// ----- Suspend gate (0.5.1) --------------------------------------------------
+
+/// First Mira version that folds `member_suspend` and `member_reinstate`
+/// (docs/plans/perbaikan-bergabung.md 5). Same `min` rule as
+/// [`JOIN_AD_SINCE`]: while this build is numbered below 0.5.1 the
+/// threshold is this build's own version.
+pub const SUSPEND_SINCE: &str = "0.5.1";
+
+/// The version every active member must have reported before this laptop
+/// writes `member_suspend`.
+pub fn suspend_threshold() -> (u32, u32, u32) {
+    let since = parse_app_version(SUSPEND_SINCE).unwrap_or((0, 5, 1));
+    parse_app_version(crate::device::APP_VERSION).map_or(since, |own| own.min(since))
+}
+
+/// Whether `member_suspend` may be written now: every active member,
+/// guests included, reported at least [`suspend_threshold`]. Not a fold
+/// rule, and `member_reinstate` is not gated.
+pub fn suspend_allowed(state: &super::fold::OrgState) -> bool {
+    join_extras_allowed_since(state, suspend_threshold())
+}
+
+/// Whether a requester reporting `app_version` is older than
+/// [`suspend_threshold`] (an unparseable version counts as older).
+pub fn is_below_suspend_threshold(app_version: &str) -> bool {
+    parse_app_version(app_version).is_none_or(|v| v < suspend_threshold())
+}
+
+/// Active members (guests included) below [`suspend_threshold`], by name.
+pub fn suspend_blockers(state: &super::fold::OrgState) -> Vec<AdBlocker> {
+    ad_blockers_since(state, suspend_threshold())
+}
+
 /// A DNS domain as stored: already `normalize_domain`d.
 pub fn is_valid_ad_domain(s: &str) -> bool {
     crate::ad::dn::normalize_domain(s).as_deref() == Some(s)

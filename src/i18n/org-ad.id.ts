@@ -92,6 +92,50 @@ const id = {
     saved: "Pengaturan Active Directory disimpan.",
     saveFail: "Pengaturan AD belum disimpan",
   },
+  // Tawaran di atas halaman Organisasi (superadmin, 0.5.1): kantor belum punya
+  // domain AD dan laptop ini tergabung di domain. Domain selalu dari data.
+  domainOffer: {
+    title: (domain: string) => `Pakai ${domain} sebagai domain AD kantor ini?`,
+    body: (domain: string) =>
+      `Laptop baru yang login dengan akun domain ${domain} akan mengisi nama dari akun Windows-nya, dan departemen kalau sudah dicocokkan. Admin tetap menyetujui setiap permintaan.`,
+    use: (domain: string) => `Pakai ${domain}`,
+    later: "Sembunyikan",
+    saving: "Menyimpan...",
+    saved: (domain: string) => `Domain AD kantor ini sekarang ${domain}.`,
+    hidden: "Tawaran disembunyikan. Domain AD bisa diatur kapan saja di tab Departemen, bagian Active Directory.",
+    saveFail: "Domain AD belum disimpan",
+    blocked: (domain: string) => `${domain} baru bisa dipakai setelah laptop berikut memperbarui Mira:`,
+  },
+  // "Cocokkan OU ini ke departemen..." di blok AD kartu permintaan (superadmin, 0.5.1).
+  match: {
+    open: "Cocokkan OU ini ke departemen...",
+    openAria: (name: string) => `Cocokkan OU ini ke departemen (akun ${name})`,
+    loading: "Memuat pengaturan AD...",
+    loadFailTitle: "Pengaturan AD belum terbaca",
+    retry: "Coba lagi",
+    noDomain: "Kantor ini belum punya domain AD, jadi OU belum bisa dicocokkan. Atur domainnya dulu.",
+    setupDomain: "Atur domain AD",
+    blocked: "Pemetaan OU belum bisa diubah sampai laptop berikut memperbarui Mira:",
+    ouLegend: "OU yang dicocokkan",
+    ouHint: "Dari OU paling luar ke paling dalam.",
+    innermost: "paling dalam",
+    tooLong: (max: number) => `terlalu panjang, paling banyak ${max} karakter`,
+    deptLabel: "Departemen di Mira",
+    choose: "Pilih departemen",
+    noDepartments: "Belum ada departemen terbuka. Buat departemen dulu di tab Departemen.",
+    errDept: "Pilih departemen.",
+    submit: "Cocokkan",
+    submitting: "Mencocokkan...",
+    cancel: "Batal",
+    saveFail: "OU belum dicocokkan",
+    conflict: (ou: string, dept: string) =>
+      `OU ${ou} sudah dicocokkan ke departemen ${dept}, mungkin baru saja oleh admin lain. Kalau perlu diganti, ubah di tab Departemen, bagian Active Directory.`,
+    full: (max: number) =>
+      `Pemetaan OU sudah ${max} baris. Hapus baris yang tidak dipakai di tab Departemen, bagian Active Directory.`,
+    done: (ou: string, dept: string) =>
+      `OU ${ou} sekarang dicocokkan ke departemen ${dept}. Laptop baru dari OU ini akan mendapat usulan departemen ${dept}.`,
+    doneOther: (team: string) => ` Permintaan ini tetap ke departemen ${team} yang dipilih peminta.`,
+  },
   // Pemberitahuan di halaman Organisasi: laptop di jaringan yang tergabung di
   // kantor Mira lain (docs/plans/onboarding-ad.md bagian 6 butir 3). Hanya petunjuk.
   otherOffices: {

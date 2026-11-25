@@ -1,5 +1,5 @@
 import { IconAlertTriangle } from "@tabler/icons-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, toAppError, type AppError, type AppState, type Directory, type OrgInfo } from "../../api";
 import { actionErrorTitle } from "../../api/messages";
 import { orgApi } from "../../api/org";
@@ -7,9 +7,11 @@ import { orgScreenApi } from "../../api/orgScreen";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { useLang } from "../../i18n/core";
 import { KOPI_BOARD_TEXT } from "../../i18n/kopi-board";
+import { AD_TEXT } from "../../i18n/org-ad";
 import { ORG_TEXT } from "../../i18n/org";
 import { makeCtx, type Act, type OrgPage } from "./context";
 import { DepartmentsPanel } from "./DepartmentsPanel";
+import { DomainOffer } from "./DomainOffer";
 import { InvitesPanel } from "./InvitesPanel";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { KopiBoardPanel } from "./KopiBoardPanel";
@@ -50,6 +52,10 @@ export function OrgScreen({ state, onRefresh }: Props) {
   const [part, setPart] = useState<Part | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  // Tawaran domain AD (superadmin): bisa ditampilkan lagi dari kartu permintaan.
+  const [offerAvailable, setOfferAvailable] = useState(false);
+  const [revealOffer, setRevealOffer] = useState(0);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const lang = useLang();
   const T = ORG_TEXT.screen;
 
@@ -94,6 +100,31 @@ export function OrgScreen({ state, onRefresh }: Props) {
 
   const notify = useCallback((text: string) => setFeedback({ kind: "ok", text }), []);
 
+  // Kartu permintaan: "Atur domain AD". Tawaran di atas halaman kalau laptop ini
+  // tergabung di domain; kalau tidak, tab Departemen (bagian Active Directory).
+  const openDomainSetup = useCallback(() => {
+    if (offerAvailable) setRevealOffer((n) => n + 1);
+    else {
+      setPart("departments");
+      setFeedback(null);
+    }
+  }, [offerAvailable]);
+
+  // Tawaran hilang (disimpan atau disembunyikan): fokus ke judul halaman,
+  // supaya tidak jatuh ke awal dokumen.
+  const offerSaved = useCallback(
+    (domain: string) => {
+      setFeedback({ kind: "ok", text: AD_TEXT.domainOffer.saved(domain) });
+      refresh();
+      titleRef.current?.focus();
+    },
+    [refresh],
+  );
+  const offerHidden = useCallback(() => {
+    setFeedback({ kind: "ok", text: AD_TEXT.domainOffer.hidden });
+    titleRef.current?.focus();
+  }, []);
+
   const page: OrgPage | null = useMemo(
     () =>
       overview
@@ -137,7 +168,9 @@ export function OrgScreen({ state, onRefresh }: Props) {
     if (!overview) return [];
     const list: { id: Part; label: string; count?: number }[] = [];
     const tabs = ORG_TEXT.screen.tabs;
-    if (overview.manageOrg) list.push({ id: "users", label: tabs.users });
+    // 0.5.1: admin departemen juga melihat Pengguna, terbatas pada departemennya,
+    // untuk menonaktifkan dan mengaktifkan lagi anggota biasa.
+    if (overview.manageOrg || overview.listUsers) list.push({ id: "users", label: tabs.users });
     else list.push({ id: "people", label: tabs.people });
     if (overview.manageOrg) list.push({ id: "departments", label: tabs.departments });
     if (overview.isSuperadmin || overview.decideJoinTeamIds.length > 0) {
@@ -157,7 +190,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
   return (
     <main className="settings org" aria-labelledby="page-title">
       <header className="page-head">
-        <h1 id="page-title" className="page-title">
+        <h1 id="page-title" className="page-title" tabIndex={-1} ref={titleRef}>
           {T.title}
         </h1>
         <span className="page-sub">
@@ -215,6 +248,17 @@ export function OrgScreen({ state, onRefresh }: Props) {
             </div>
           )}
 
+          {overview?.isSuperadmin && (
+            <DomainOffer
+              orgId={state.organization.id}
+              version={version}
+              reveal={revealOffer}
+              onAvailable={setOfferAvailable}
+              onSaved={offerSaved}
+              onHidden={offerHidden}
+            />
+          )}
+
           <OtherOfficesNotice superadmin={!!overview?.isSuperadmin} />
 
           <nav className="org-tabs-wrap" aria-label={T.tabsAria}>
@@ -259,7 +303,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
             {current.id === "users" && <UsersPanel page={page} />}
             {current.id === "people" && <PeoplePanel page={page} />}
             {current.id === "departments" && <DepartmentsPanel page={page} />}
-            {current.id === "requests" && <JoinRequestsPanel page={page} />}
+            {current.id === "requests" && <JoinRequestsPanel page={page} onSetupDomain={openDomainSetup} />}
             {current.id === "labels" && <LabelsPanel page={page} />}
             {current.id === "kopi" && <KopiBoardPanel page={page} />}
             {current.id === "invites" &&

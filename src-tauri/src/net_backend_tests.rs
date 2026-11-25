@@ -75,7 +75,7 @@ async fn start_net_with_extras(
     hub.register(Arc::new(JoinFeature::new(state.clone())));
     Network::start_with_features(
         NetConfig {
-            identity_secret,
+            identity_secret: identity_secret.clone(),
             public_key,
             port: Some(0),
             mdns_enabled: false,
@@ -1186,4 +1186,191 @@ fn join_info_announces_the_ad_level_and_settings() {
         .expect("member");
     assert_eq!(v04.extras, 1);
     assert_eq!(v04.ad_domain.as_deref(), Some("maju.co.id"));
+}
+
+// ----- 0.5.1: suspended laptops (docs/plans/perbaikan-bergabung.md 6) -----------
+
+/// `by` suspends `who` once every laptop's device profile has arrived (the
+/// version gate needs all of them).
+async fn suspend(by: &Node, who: &Node) {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let r = by.state.with_core(|c| {
+            permissions::suspend_member(&mut c.db, &c.identity, &who.pk, clock::now())
+        });
+        match r {
+            Ok(()) => break,
+            Err(e) if Instant::now() < deadline => {
+                eprintln!("suspend not yet: {e}");
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            Err(e) => panic!("{} cannot suspend {}: {e}", by.name, who.name),
+        }
+    }
+    by.net.refresh();
+}
+
+/// The office with device profiles published, B suspended by A and every
+/// laptop aware of it.
+async fn office_with_b_suspended() -> Office {
+    let o = office().await;
+    for n in [&o.a, &o.b, &o.c] {
+        n.publish_device();
+    }
+    suspend(&o.a, &o.b).await;
+    wait_until("B learns it is suspended", || {
+        o.b.membership() == Membership::Suspended
+    })
+    .await;
+    wait_until("C applies the suspension", || {
+        o.c.member_status(&o.b.pk) == Some(MemberStatus::Suspended)
+    })
+    .await;
+    wait_until("A and C list B no more", || {
+        !o.a.connected(&o.b) && !o.c.connected(&o.b) && o.b.net.connected_peers().is_empty()
+    })
+    .await;
+    o
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn suspended_member_syncs_the_membership_log_only_until_reinstated() {
+    let Office {
+        a, b, c, desain, ..
+    } = office_with_b_suspended().await;
+    let b_desain_before = b.team_scoped_ops(&desain);
+
+    // After the suspension: a new department (org op) with its channel (a
+    // team-scoped op), and C moved into it.
+    let pemasaran = a.create_team("Tim Pemasaran");
+    a.move_to_team(&pemasaran, &c);
+    wait_until("C gets Tim Pemasaran's team op", || {
+        c.team_scoped_ops(&pemasaran) == 1
+    })
+    .await;
+    wait_until("B receives the org op over its limited connection", || {
+        b.team_id("Tim Pemasaran").is_some()
+    })
+    .await;
+    settle(&[&a, &b, &c]).await;
+    assert_eq!(b.membership(), Membership::Suspended);
+    assert_eq!(b.team_scoped_ops(&pemasaran), 0, "team op reached B");
+    assert_eq!(b.team_scoped_ops(&desain), b_desain_before);
+    assert!(b.net.connected_peers().is_empty());
+    assert!(!a.connected(&b) && !c.connected(&b));
+    assert!(a.net.is_linked(&b.pk) || c.net.is_linked(&b.pk));
+    assert!(a.rejected(&b.pk, "suspended_member"));
+
+    // "Periksa lagi" on B.
+    let reached = b
+        .net
+        .check_membership(crate::network_commands::CHECK_MEMBERSHIP_LIMIT)
+        .await;
+    let check = crate::network_commands::membership_check(&b.state, reached).expect("check");
+    assert_eq!(check.membership, Membership::Suspended);
+    assert!(check.peers_reached >= 1, "{check:?}");
+    assert!(OffsetDateTime::parse(
+        &check.checked_at,
+        &time::format_description::well_known::Rfc3339
+    )
+    .is_ok());
+
+    // Reinstated: no restart, the same networks turn into full connections
+    // and B gets the team ops it missed.
+    a.core(|c| permissions::reinstate_member(&mut c.db, &c.identity, &b.pk, clock::now()));
+    a.net.refresh();
+    wait_until("B is active again", || b.membership() == Membership::Active).await;
+    wait_until("full mesh again", || {
+        a.connected(&b) && b.connected(&a) && b.connected(&c) && c.connected(&b)
+    })
+    .await;
+    // Team ops flow again: moved into Tim Pemasaran, B gets the channel op
+    // created while it was suspended.
+    assert_eq!(b.team_scoped_ops(&pemasaran), 0, "B is not in Tim Pemasaran");
+    a.move_to_team(&pemasaran, &b);
+    wait_until("B gets Tim Pemasaran's team op", || {
+        b.team_scoped_ops(&pemasaran) == 1
+    })
+    .await;
+    let check = crate::network_commands::membership_check(
+        &b.state,
+        b.net.check_membership(Duration::from_secs(4)).await,
+    )
+    .expect("check");
+    assert_eq!(check.membership, Membership::Active);
+    assert_eq!(check.peers_reached, 2);
+    shutdown(&[&a, &b, &c]).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_suspended_member_is_a_permanent_removal() {
+    let Office { a, b, c, .. } = office_with_b_suspended().await;
+    a.core(|c| permissions::remove_member(&mut c.db, &c.identity, &b.pk, clock::now()));
+    a.net.refresh();
+    wait_until("B learns it was removed", || {
+        b.membership() == Membership::Removed
+    })
+    .await;
+    wait_until("C applies the removal", || {
+        c.member_status(&b.pk) == Some(MemberStatus::Removed)
+    })
+    .await;
+    wait_until("nobody keeps a connection with B", || {
+        !a.net.is_linked(&b.pk) && !c.net.is_linked(&b.pk)
+    })
+    .await;
+    a.create_team("Tim Rahasia");
+    settle(&[&a, &b, &c]).await;
+    assert!(b.team_id("Tim Rahasia").is_none(), "B received Tim Rahasia");
+    assert!(!a.net.is_linked(&b.pk) && !c.net.is_linked(&b.pk));
+    assert_eq!(b.membership(), Membership::Removed);
+    shutdown(&[&a, &b, &c]).await;
+}
+
+/// 0.5.1 reset: a network whose backend was attached and then detached
+/// releases its UDP port on shutdown, so a new network can bind the same
+/// port (a fixed `MIRA_PORT`) right after.
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_after_detach_frees_the_port() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let state = MiraState::new(
+        Ok(dir.path().to_path_buf()),
+        Box::new(MemoryKeyStore::new()),
+    );
+    let (identity_secret, public_key) = state
+        .with_core(|c| Ok((c.identity.secret_bytes(), c.identity.public_key_hex().to_owned())))
+        .expect("identity");
+    let start = |port: Option<u16>, backend: Arc<MiraBackend>| {
+        let cfg = NetConfig {
+            identity_secret: identity_secret.clone(),
+            public_key: public_key.clone(),
+            port,
+            mdns_enabled: false,
+        };
+        async move {
+            Network::start_with_features(cfg, backend, Arc::new(|_| {}), Arc::new(FeatureHub::default()))
+                .await
+        }
+    };
+    let backend = Arc::new(MiraBackend::new(state.clone()));
+    let net = start(Some(0), backend.clone()).await.expect("network starts");
+    backend.attach(net.clone());
+    let port = net.status().listen_port.expect("listening");
+    backend.detach();
+    net.shutdown().await;
+    drop(net);
+    drop(backend);
+    let mut again = None;
+    for _ in 0..20 {
+        match start(Some(port), Arc::new(MiraBackend::new(state.clone()))).await {
+            Ok(n) => {
+                again = Some(n);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(250)).await,
+        }
+    }
+    let again = again.expect("the same port can be bound again after shutdown");
+    assert_eq!(again.status().listen_port, Some(port));
+    again.shutdown().await;
 }

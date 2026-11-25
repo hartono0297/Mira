@@ -84,6 +84,47 @@ const en: Dict<typeof id> = {
     saved: "Active Directory settings saved.",
     saveFail: "AD settings not saved",
   },
+  domainOffer: {
+    title: (domain: string) => `Use ${domain} as this office's AD domain?`,
+    body: (domain: string) =>
+      `New laptops signed in with a ${domain} account will fill in their name from their Windows account, and their department once it's matched. An admin still approves every request.`,
+    use: (domain: string) => `Use ${domain}`,
+    later: "Hide",
+    saving: "Saving...",
+    saved: (domain: string) => `This office's AD domain is now ${domain}.`,
+    hidden: "Offer hidden. You can set the AD domain any time in the Departments tab, Active Directory section.",
+    saveFail: "AD domain not saved",
+    blocked: (domain: string) => `${domain} can be used once these laptops update Mira:`,
+  },
+  match: {
+    open: "Match this OU to a department...",
+    openAria: (name: string) => `Match this OU to a department (${name}'s account)`,
+    loading: "Loading AD settings...",
+    loadFailTitle: "Couldn't read the AD settings",
+    retry: "Try again",
+    noDomain: "This office has no AD domain yet, so OUs can't be matched. Set the domain first.",
+    setupDomain: "Set the AD domain",
+    blocked: "The OU mapping can't change until these laptops update Mira:",
+    ouLegend: "OU to match",
+    ouHint: "From the outermost OU to the innermost.",
+    innermost: "innermost",
+    tooLong: (max: number) => `too long, ${max} characters at most`,
+    deptLabel: "Department in Mira",
+    choose: "Choose a department",
+    noDepartments: "No open departments yet. Create one in the Departments tab first.",
+    errDept: "Choose a department.",
+    submit: "Match",
+    submitting: "Matching...",
+    cancel: "Cancel",
+    saveFail: "OU not matched",
+    conflict: (ou: string, dept: string) =>
+      `The OU ${ou} is already matched to ${dept}, maybe just now by another admin. To change it, go to the Departments tab, Active Directory section.`,
+    full: (max: number) =>
+      `The OU mapping already has ${max} rows. Remove unused rows in the Departments tab, Active Directory section.`,
+    done: (ou: string, dept: string) =>
+      `The OU ${ou} now maps to ${dept}. New laptops from this OU will get ${dept} as their suggested department.`,
+    doneOther: (team: string) => ` This request still asks for ${team}, the department the requester chose.`,
+  },
   otherOffices: {
     title: (n: number) =>
       `${n} ${plural(n, "laptop", "laptops")} on this network ${plural(n, "belongs", "belong")} to another Mira office.`,

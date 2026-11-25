@@ -14,6 +14,7 @@ export const STATE_ICON: Record<NetState, { icon: Icon; tone: NetTone }> = {
   vpn: { icon: IconPlugConnected, tone: "ok" },
   offline: { icon: IconPlugConnectedX, tone: "bad" },
   removed: { icon: IconBan, tone: "bad" },
+  suspended: { icon: IconBan, tone: "bad" },
 };
 
 // Status jaringan di sidebar ringkas: satu ikon berwarna (hijau tersambung,

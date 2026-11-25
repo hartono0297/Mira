@@ -44,7 +44,12 @@ const en: Dict<typeof id> = {
       labelNameEmpty: "Label names can't be empty.",
       labelNameChars: "The label name contains characters that aren't allowed, such as line breaks or tabs.",
       deptNameRule: "Department names must be 2 to 60 characters, without line breaks.",
-      usersSuperadmin: "Only superadmins can see the user list.",
+      usersSuperadmin: "Only superadmins and department admins can see the user list.",
+      resetOnlyRemoved: "Reset is only for a laptop that was removed for good.",
+      targetNotSuspended: "That person isn't deactivated.",
+      requesterOutdatedSuspend: "The requester's Mira is too old for this office. Ask them to update Mira first, then send the request again.",
+      suspended:
+        "Your account in this organization is deactivated, so you can't make changes. Contact IT, your department admin, or an office superadmin.",
       notInOrg: "This laptop isn't in an organization yet.",
     },
     invite: {
@@ -119,6 +124,8 @@ const en: Dict<typeof id> = {
       addressNotMember: "The laptop at this address isn't an organization member.",
       removedRefused: "Connection refused: the laptop was removed from the organization.",
       addressRemoved: "The laptop at this address was removed from the organization.",
+      selfSuspended: "Your account on this laptop is deactivated. Only the member list is synced.",
+      suspendedDropped: "A deactivated member was disconnected; their laptop may only sync the membership log.",
       badGreeting: "The colleague's laptop didn't send a valid greeting.",
       greetingKey: "The key in the greeting differs from the proven key.",
       otherOrg: "The colleague's laptop belongs to another organization.",
@@ -486,6 +493,15 @@ const en: Dict<typeof id> = {
     kopiReasonMax: (max: string) => `The reason can be at most ${max} characters.`,
     kopiDailyLimit: (limit: string) => `You've used all your Coffee for today (${limit} a day). Try again tomorrow.`,
     kopiInvalid: (detail: string) => `The Coffee data isn't valid: ${detail}.`,
+    suspendGateClosed: (version: string, names: string) => `Some laptops haven't been updated to Mira ${version} yet: ${names}. Update them first, then try again.`,
+    resetUndoFailed: (message: string, dir: string, detail: string) => `${message} The old data couldn't be put back either; a copy is in ${dir}. Details: ${detail}`,
+    resetFailed: (detail: string) => `The reset didn't finish. Details: ${detail}`,
+    resetDbClose: (detail: string) => `Mira's database couldn't be closed for the reset. Close and reopen Mira, then try again. Details: ${detail}`,
+    resetFolder: (detail: string) => `Mira's data folder couldn't be changed for the reset. Details: ${detail}`,
+    resetFileInUse: (name: string, detail: string) => `The old organization data couldn't be deleted because the file ${name} is still in use. Close any other program that has it open, or close and reopen Mira, then try Reset again. Details: ${detail}`,
+    resetKeyDelete: (store: string, detail: string) => `This laptop's old key in ${store} couldn't be deleted, so the reset was canceled and no data was changed. Details: ${detail}`,
+    resetNewData: (detail: string) => `The old data was deleted, but the new data couldn't be created. Close and reopen Mira. Details: ${detail}`,
+    dataFolderOpen: (path: string, detail: string) => `Mira's data folder at ${path} couldn't be created or opened. Details: ${detail}`,
   },
 };
 

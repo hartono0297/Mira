@@ -34,13 +34,13 @@ pub(crate) use actions::ensure_profile_in;
 pub use actions::{
     JoinAcceptedData, JoinRejectCode, add_superadmin, add_team_member, author_op, create_invite,
     create_team, delete_team, ensure_profile_op, install_joined_org, join_accept, join_lookup,
-    redeem_as_member, remove_member, remove_superadmin, remove_team_member, revoke_invite,
-    set_display_name_op, set_team_admin,
+    redeem_as_member, reinstate_member, remove_member, remove_superadmin, remove_team_member,
+    revoke_invite, set_display_name_op, set_team_admin, suspend_gate_closed, suspend_member,
 };
 pub use causal::heads;
 pub use fold::{
     AdSettings, ChannelState, DeviceInfo, FoldResult, GuestAccess, InviteState, JoinDecision,
-    LabelState, MemberKind, MemberState, MemberStatus, OrgState, Outcome, ProjectMember,
+    LabelState, MemberKind, MemberState, MemberStatus, OrgState, SuspendSnapshot, Outcome, ProjectMember,
     ProjectState, Reason, TeamMember, TeamRole, TeamState, UMUM_CHANNEL_NAME, fold, project_id_for,
     umum_channel_id,
 };
@@ -58,14 +58,16 @@ pub use store::{
     op_ids_for, ops_for, peer_auth, rejected_changes,
 };
 pub use join::{
-    AdBlocker, JOIN_AD_SINCE, JoinAdClaim, JoinExtras, JoinRequestPayload, SignedJoinRequest,
-    ad_blockers, ad_settings_allowed, join_ad_allowed, matching_code, org_fingerprint,
-    org_fingerprint_short, request_code,
+    AdBlocker, JOIN_AD_SINCE, JoinAdClaim, JoinExtras, JoinRequestPayload, SUSPEND_SINCE,
+    SignedJoinRequest, ad_blockers, ad_settings_allowed, join_ad_allowed, matching_code,
+    org_fingerprint, org_fingerprint_short, request_code, suspend_allowed, suspend_blockers,
+    suspend_threshold,
 };
 pub use join_store::{
     DeviceProfile, JoinAdView, JoinDepartment, JoinInfo, JoinIngest, JoinRecord, JoinRequestRefusal,
     JoinRequestView, JoinStatusAnswer, JoinTarget, MAX_PENDING_PER_IP, MAX_PENDING_REQUESTS,
-    OutgoingJoinRequest, OutgoingStatus, Seen, ad_account_used_by, cancel_join_request,
+    OutgoingJoinRequest, OutgoingStatus, PreviousMatch, PreviouslyRemoved, Seen,
+    ad_account_used_by, cancel_join_request, previously_removed,
     create_join_request,
     ingest_join_records, install_approved_org, ip_group, join_info, join_record_ids_for,
     join_records_for, join_request_id, join_status_for, mark_join_rejected, mark_join_sent,
@@ -74,7 +76,8 @@ pub use join_store::{
 };
 pub(crate) use org_actions::{register_own_project_in, register_project_for_in};
 pub use org_actions::{
-    AD_CLAIM_GATE_CLOSED, AD_SETTINGS_GATE_CLOSED, REQUESTER_OUTDATED, add_project_member,
+    AD_CLAIM_GATE_CLOSED, AD_SETTINGS_GATE_CLOSED, REQUESTER_OUTDATED, REQUESTER_OUTDATED_SUSPEND,
+    add_project_member,
     approve_join, assign_label, create_label, ensure_device_op, move_member, recompute, reject_join, remove_project_member,
     rename_department, rename_label, require_state, set_ad_settings, set_department_archived,
     set_label_archived,

@@ -1,5 +1,6 @@
 import {
   IconAlertTriangle,
+  IconCheck,
   IconCircleCheck,
   IconInfoCircle,
   IconPlugConnectedX,
@@ -10,6 +11,7 @@ import {
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { orgApi, type AdCheck, type AdCheckStatus, type JoinAdView, type JoinRequestView } from "../../api/org";
 import { AD_TEXT } from "../../i18n/org-ad";
+import { JoinAdMatchOu } from "./JoinAdMatchOu";
 
 const T = AD_TEXT.card;
 
@@ -169,12 +171,22 @@ function Fact({ label, value, claim }: { label: string; value: string; claim?: s
   );
 }
 
+// Untuk superadmin: "Cocokkan OU ini ke departemen..." saat departemen AD peminta
+// belum ada di Mira. onMatched dipanggil setelah pemetaan tersimpan (muat ulang daftar).
+export type MatchOuProps = { onSetupDomain?: () => void; onMatched: () => void };
+
 // Blok "Active Directory" di kartu permintaan. Sebelum cek selesai atau kalau cek
 // gagal, yang tampil adalah laporan laptop peminta, dengan label yang mengatakannya.
 // Setelah cek berhasil, yang ditonjolkan adalah nilai dari direktori; laporan
 // peminta hanya tampil sebagai pembanding kalau berbeda. Cek dipanggil sekali
 // saat kartu tampil (bukan polling); "Periksa lagi" memaksa cek baru.
-export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: JoinAdView } }) {
+export function JoinAdBlock({
+  request,
+  match,
+}: {
+  request: JoinRequestView & { ad: JoinAdView };
+  match?: MatchOuProps;
+}) {
   const ad = request.ad;
   const headingId = useId();
   const [check, setCheck] = useState<AdCheck | null>(null);
@@ -187,6 +199,9 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
   // Permintaan yang sudah diperiksa, supaya effect yang dijalankan ulang
   // (StrictMode, muat ulang daftar) tidak memanggil cek lagi.
   const started = useRef<string | null>(null);
+  // Hasil "Cocokkan OU" terakhir, tampil di kartu dan menerima fokus.
+  const [matched, setMatched] = useState<string | null>(null);
+  const matchedRef = useRef<HTMLParagraphElement>(null);
 
   const run = useCallback(
     async (refresh: boolean) => {
@@ -223,6 +238,16 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
   const claims = verified ? claimMismatches(verified) : [];
   const nameDiffers = !!done && done.mismatches.some((m) => m.field === "name");
   const requestDiffs = done ? done.mismatches.filter((m) => m.field === "name" || m.field === "department") : [];
+
+  // Departemen AD belum ada di Mira: OU dari direktori kalau cek berhasil, kalau
+  // tidak dari laporan peminta (pemetaan hanya mengarahkan usulan departemen).
+  const inMira = verified ? verified.departmentInMira : ad.departmentInMira;
+  const matchOus = (verified ? verified.directoryOus : ad.ous).map((o) => o.trim()).filter((o) => o !== "");
+  const showMatch = !!match && !inMira && matchOus.length > 0 && matched === null;
+
+  useEffect(() => {
+    if (matched !== null) matchedRef.current?.focus();
+  }, [matched]);
 
   const claimName = ad.name?.trim() || T.notSent;
   const claimDept = ad.department?.trim() || null;
@@ -331,6 +356,26 @@ export function JoinAdBlock({ request }: { request: JoinRequestView & { ad: Join
         )}
 
         {nameDiffers && <p className="req-ad-note">{T.nameNote}</p>}
+
+        {showMatch && match && (
+          <JoinAdMatchOu
+            request={request}
+            ous={matchOus}
+            onSetupDomain={match.onSetupDomain}
+            onMatched={(text) => {
+              setMatched(text);
+              match.onMatched();
+              void run(true);
+            }}
+          />
+        )}
+
+        {matched !== null && (
+          <p className="ok-line req-ad-matched" tabIndex={-1} ref={matchedRef} data-testid="join-ad-matched">
+            <IconCheck size={16} aria-hidden="true" />
+            <span>{matched}</span>
+          </p>
+        )}
 
         {/* Wilayah pengumuman terpisah dari teks yang terlihat: kosong sampai "Periksa lagi". */}
         <span className="sr-only" aria-live="polite" aria-atomic="true" data-testid="join-ad-live">

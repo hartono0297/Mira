@@ -23,6 +23,7 @@ export function office(overrides: Partial<FoundOffice> = {}): FoundOffice {
     conflict: false,
     sameName: false,
     acceptsNote: true,
+    adOutdated: 0,
     adDomain: null,
     acceptsAd: false,
     createdAt: "2026-01-05T08:00:00Z",

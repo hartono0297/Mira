@@ -377,6 +377,7 @@ fn v040_reads_a_join_info_answer_with_ad_fields() {
             ou: "Kantor Pusat".into(),
             team: "1".repeat(32),
         }],
+        ad_outdated: None,
     };
     let json = serde_json::to_value(&info).unwrap();
     assert_eq!(json["extras"], 2);
@@ -421,6 +422,12 @@ fn member(pk: &str, kind: MemberKind, version: Option<&str>) -> MemberState {
             app_version: v.into(),
             at: "2026-11-01T00:00:00Z".into(),
         }),
+        suspended_at: None,
+        suspended_by: None,
+        suspension_op: None,
+        snapshot: None,
+        joint_suspensions: Vec::new(),
+        suspended_by_superadmin: false,
     }
 }
 

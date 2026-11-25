@@ -17,6 +17,20 @@ const id = {
     codeLabel: "Kode cocok",
     verifyHint:
       "Pastikan orangnya benar: telepon dia di nomor yang sudah Anda kenal, bukan nomor dari keterangan, atau datangi mejanya. Minta ia membacakan kode di layarnya, dan setujui hanya kalau kodenya sama.",
+    // 0.5.1: akun AD atau nama laptop peminta sama dengan orang yang dikeluarkan
+    // atau sedang nonaktif. Petunjuk, bukan bukti.
+    previous: {
+      accountRemoved: (name: string, date: string) =>
+        `Akun Windows ini pernah dipakai ${name}, yang dikeluarkan pada ${date}.`,
+      laptopRemoved: (name: string, date: string) =>
+        `Laptop dengan nama ini pernah dipakai ${name}, yang dikeluarkan pada ${date}.`,
+      accountSuspended: (name: string, date: string) =>
+        `Akun Windows ini pernah dipakai ${name}, yang sedang dinonaktifkan sejak ${date}.`,
+      laptopSuspended: (name: string, date: string) =>
+        `Laptop dengan nama ini pernah dipakai ${name}, yang sedang dinonaktifkan sejak ${date}.`,
+      reinstate: "Pertimbangkan mengaktifkan lagi orang itu daripada menyetujui laptop baru.",
+      notProof: "Ini petunjuk, bukan bukti: nama akun dan nama laptop dilaporkan oleh laptop peminta.",
+    },
   },
   title: "Permintaan bergabung",
   intro: "Laptop baru di jaringan kantor yang memilih organisasi ini muncul di sini.",
