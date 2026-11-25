@@ -9,6 +9,7 @@ import { KopiProfileSection } from "../../components/KopiProfileSection";
 import { Avatar } from "../../components/Avatar";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { PROFILE } from "../../i18n/chat-dialogs";
+import { deptWithDivisions, DIVISION_SEPARATOR } from "../org/divisionText";
 import { useChatActions } from "./ChatActions";
 import "./profile.css";
 
@@ -158,8 +159,8 @@ function ProfileBody({ person, onOpenChange }: { person: Person; onOpenChange: (
             <div>
               <dt>{PROFILE.department}</dt>
               <dd>
-                {p.departmentName ?? PROFILE.noDepartment}
-                {p.departmentName && p.departmentRole === "admin" && `, ${PROFILE.deptAdmin}`}
+                {deptWithDivisions(p.departmentName, p.divisions) ?? PROFILE.noDepartment}
+                {p.departmentName && p.departmentRole === "admin" && `${DIVISION_SEPARATOR}${PROFILE.deptAdmin}`}
               </dd>
             </div>
           )}

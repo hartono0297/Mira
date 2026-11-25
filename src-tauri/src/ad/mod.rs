@@ -31,6 +31,10 @@ pub struct OuMapping {
     pub ou: String,
     /// Department (team) id, 32 hex.
     pub team: String,
+    /// v0.6: a division in `team` (32 hex). Absent from older rows, which
+    /// keep their exact bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub division: Option<String>,
 }
 
 /// The domain account logged in on this laptop. Any part but `domain` may

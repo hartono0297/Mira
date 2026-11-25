@@ -51,6 +51,9 @@ export type PersonView = {
   departmentRole: TeamRole | null;
   // Label aktif, urut nama. Tampilkan paling banyak 3 di samping nama.
   labels: LabelRef[];
+  // Divisi aktif (tidak diarsipkan) orang ini, sejak v0.6. Opsional supaya data lama tetap sah;
+  // role belum dikirim inti sebelum pemeriksaan v0.6 ini.
+  divisions?: { id: string; name: string; role?: "head" | "member" }[];
 };
 
 export type DeviceView = { laptop: string; os: string; appVersion: string; reportedAt: string };
@@ -217,8 +220,9 @@ export type OtherOfficesView = {
   olderSameDomain: { name: string; createdAt: string; fingerprint: string } | null;
 };
 
-// Satu baris pemetaan OU AD ke departemen Mira.
-export type OuMapping = { ou: string; team: string };
+// Satu baris pemetaan OU AD ke departemen Mira. division (sejak v0.6): divisi di
+// departemen itu; orang yang disetujui lewat AD otomatis masuk divisi ini.
+export type OuMapping = { ou: string; team: string; division?: string | null };
 
 export type AdSettingsView = {
   domain: string | null;

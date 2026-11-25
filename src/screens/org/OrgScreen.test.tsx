@@ -93,19 +93,27 @@ describe("Organisasi: memuat dan error", () => {
 });
 
 describe("Organisasi: tab per peran", () => {
-  it("superadmin melihat Pengguna, Departemen, Permintaan bergabung, Label, Undangan", async () => {
+  it("superadmin melihat Pengguna, Departemen, Departemen saya, Permintaan bergabung, Label, Undangan, Kopi", async () => {
     answer();
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan", "Kopi"]);
+    expect(tabNames()).toEqual([
+      "Pengguna",
+      "Departemen",
+      "Departemen saya",
+      "Permintaan bergabung",
+      "Label",
+      "Undangan",
+      "Kopi",
+    ]);
     expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
   });
 
-  it("admin departemen melihat Pengguna (departemennya), Permintaan bergabung, Undangan", async () => {
+  it("admin departemen melihat Pengguna (departemennya), Departemen saya, Permintaan bergabung, Undangan", async () => {
     answer({ org_overview: adminOverview({ listUsers: true }) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Pengguna", "Permintaan bergabung", "Undangan", "Kopi"]);
+    expect(tabNames()).toEqual(["Pengguna", "Departemen saya", "Permintaan bergabung", "Undangan", "Kopi"]);
     expect(screen.getByRole("button", { name: "Pengguna" })).toHaveAttribute("aria-current", "true");
     expect(screen.queryByRole("button", { name: "Anggota" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Departemen" })).not.toBeInTheDocument();
@@ -115,7 +123,7 @@ describe("Organisasi: tab per peran", () => {
     answer({ org_overview: adminOverview({ listUsers: false }) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
-    expect(tabNames()).toEqual(["Anggota", "Permintaan bergabung", "Undangan", "Kopi"]);
+    expect(tabNames()).toEqual(["Anggota", "Departemen saya", "Permintaan bergabung", "Undangan", "Kopi"]);
   });
 
   it("anggota biasa di departemen hanya melihat Anggota", async () => {

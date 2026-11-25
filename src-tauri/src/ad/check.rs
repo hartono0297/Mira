@@ -345,6 +345,7 @@ mod tests {
         let m = vec![OuMapping {
             ou: "Penjualan".into(),
             team: "t_sales".into(),
+            division: None,
         }];
         let e = entry(Some("Budi"), Some("Penjualan"), DN, false);
         let c = compare("Budi", "t_it", "IT", None, &e, &depts(), &m, AT.into());

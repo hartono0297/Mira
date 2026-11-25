@@ -191,29 +191,102 @@ pub fn create_project_with_members(
     team_id: Option<&str>,
     members: &[String],
 ) -> AppResult<ProjectSummary> {
+    create_project_for(state, hook, name, code, team_id, members, None)
+}
+
+/// The department of a division project and its people who join from the
+/// start (active, not guests, still in the department). Refuses unknown,
+/// deleted and archived divisions, and a department other than the
+/// division's.
+fn division_for_project(
+    core: &Core,
+    team_id: Option<&str>,
+    division: &str,
+) -> AppResult<(String, Vec<String>)> {
+    let state = crate::permissions::load_state(&core.db)?;
+    let d = state
+        .as_ref()
+        .and_then(|s| s.live_division(division))
+        .filter(|d| !d.archived)
+        .ok_or_else(|| {
+            AppError::NotFound(
+                "Divisi yang dipilih tidak ditemukan atau sudah diarsipkan. Pilih divisi lain atau buat proyek tanpa divisi.".into(),
+            )
+        })?;
+    if team_id.is_some_and(|t| t != d.team) {
+        return Err(AppError::InvalidInput(
+            "Proyek divisi harus berada di departemen divisi itu. Pilih departemen divisinya.".into(),
+        ));
+    }
+    let people = state
+        .as_ref()
+        .map(|s| {
+            s.division_people(division)
+                .into_iter()
+                .map(|(pk, _)| pk.to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((d.team.clone(), people))
+}
+
+/// "Proyek baru", optionally for a division (v0.6): the project goes into
+/// the division's department and starts with the division's people plus
+/// `members`. Only a head of the division, an admin of its department or a
+/// superadmin may make one.
+pub fn create_project_for(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    name: &str,
+    code: &str,
+    team_id: Option<&str>,
+    members: &[String],
+    division_id: Option<&str>,
+) -> AppResult<ProjectSummary> {
     let team_id = model::normalize_team_id(team_id);
+    let division_id = division_id.map(str::trim).filter(|d| !d.is_empty());
     let (summary, project_id, changes) = with_ctx(state, |core, policy, dir| {
         let me = core.identity.public_key_hex().to_owned();
+        let (team_id, wanted) = match division_id {
+            Some(d) => {
+                let (team, mut people) = division_for_project(core, team_id, d)?;
+                people.extend(members.iter().cloned());
+                (Some(team), people)
+            }
+            None => (team_id.map(str::to_owned), members.to_vec()),
+        };
         policy.check(
             &core.db,
             &me,
             &BoardAction::CreateProject {
-                team_id: team_id.map(str::to_owned),
+                team_id: team_id.clone(),
+                division_id: division_id.map(str::to_owned),
             },
         )?;
-        let members = check_initial_members(core, members)?;
+        let members = check_initial_members(core, &wanted)?;
         let Committed {
             value: row,
             changes,
             ..
-        } = store::create_project_with_members(
-            &mut core.db,
-            &core.identity,
-            name,
-            code,
-            team_id,
-            &members,
-        )?;
+        } = match (division_id, team_id.as_deref()) {
+            (Some(d), Some(team)) => store::create_division_project(
+                &mut core.db,
+                &core.identity,
+                name,
+                code,
+                team,
+                &members,
+                d,
+            )?,
+            _ => store::create_project_with_members(
+                &mut core.db,
+                &core.identity,
+                name,
+                code,
+                team_id.as_deref(),
+                &members,
+            )?,
+        };
         let summary = ctx(core, policy, dir).summary(&row)?;
         Ok((summary, row.id, changes))
     })?;
@@ -917,14 +990,16 @@ pub async fn board_create_project(
     code: String,
     team_id: Option<String>,
     members: Option<Vec<String>>,
+    division_id: Option<String>,
 ) -> AppResult<ProjectSummary> {
-    let out = create_project_with_members(
+    let out = create_project_for(
         &state,
         board.hook.as_ref(),
         &name,
         &code,
         team_id.as_deref(),
         members.as_deref().unwrap_or(&[]),
+        division_id.as_deref(),
     )?;
     emit(&app);
     net_backend::after_change(&net, &app).await;

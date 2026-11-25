@@ -165,6 +165,7 @@ impl From<OuMapWire> for crate::ad::OuMapping {
         crate::ad::OuMapping {
             ou: m.ou,
             team: m.team,
+            division: None,
         }
     }
 }

@@ -74,6 +74,12 @@ fn member(pk: &str, name: &str, kind: MemberKind, superadmin: bool) -> MemberSta
         removal_op: None,
         has_profile: true,
         device: None,
+        suspended_at: None,
+        suspended_by: None,
+        suspension_op: None,
+        snapshot: None,
+        joint_suspensions: Vec::new(),
+        suspended_by_superadmin: false,
     }
 }
 

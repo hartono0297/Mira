@@ -11,8 +11,10 @@ import {
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { Avatar } from "../../components/Avatar";
 import { CHAT } from "../../i18n/chat";
+import { CHAT_DIVISION } from "../../i18n/chat-division";
 import type { ConvRequest } from "./ChatActions";
 import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
+import { isDivisionChat, withDivisionOrder } from "./divisionOrder";
 import {
   SECTION_TITLES,
   badgeCount,
@@ -69,7 +71,7 @@ export function ConversationList({
   // Dibaca sekali saat dipasang; setelah itu layar ini yang memegang lipatan.
   const [folded, setFolded] = useState<ChatSection[]>(() => overview.folded);
   const ids = useId();
-  const groups = groupConversations(overview.conversations);
+  const groups = withDivisionOrder(groupConversations(overview.conversations));
   // Error aksi langsung dari menu baris (Bisukan, Arsipkan, dan seterusnya).
   const [actionError, setActionError] = useState<ActionError | null>(null);
 
@@ -310,6 +312,7 @@ function Section({
 
 function rowLabel(c: ConversationSummary): string {
   if (c.kind === "dm") return CHAT.list.rowDirect(c.name);
+  if (isDivisionChat(c)) return CHAT_DIVISION.row(c.name);
   if (c.kind === "group") return CHAT.list.rowGroup(c.name);
   if (c.kind === "project") return CHAT.list.rowProject(c.name);
   return CHAT.list.rowChannel(c.name);
@@ -364,6 +367,7 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
     c.muted ? "chat-row-muted" : "",
     state ? "chat-row-dim" : "",
     menu.isOpen ? "chat-row-menu" : "",
+    isDivisionChat(c) ? "chat-row-division" : "",
   ].filter(Boolean);
 
   return (
@@ -378,7 +382,7 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
       >
         {c.kind === "dm" ? (
           <Avatar className="chat-av" name={c.name} publicKey={c.peer?.publicKey} />
-        ) : c.kind === "group" || c.kind === "project" ? (
+        ) : c.kind === "group" || c.kind === "project" || isDivisionChat(c) ? (
           <IconUsers size={18} className="chat-kind" aria-hidden="true" />
         ) : (
           <span className="chat-hash" aria-hidden="true">

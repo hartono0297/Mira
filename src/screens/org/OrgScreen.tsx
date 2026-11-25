@@ -9,6 +9,7 @@ import { useLang } from "../../i18n/core";
 import { KOPI_BOARD_TEXT } from "../../i18n/kopi-board";
 import { AD_TEXT } from "../../i18n/org-ad";
 import { ORG_TEXT } from "../../i18n/org";
+import { DIVISION_TEXT } from "../../i18n/org-division";
 import { makeCtx, type Act, type OrgPage } from "./context";
 import { DepartmentsPanel } from "./DepartmentsPanel";
 import { DomainOffer } from "./DomainOffer";
@@ -16,16 +17,20 @@ import { InvitesPanel } from "./InvitesPanel";
 import { JoinRequestsPanel } from "./JoinRequestsPanel";
 import { KopiBoardPanel } from "./KopiBoardPanel";
 import { LabelsPanel } from "./LabelsPanel";
+import { MyDepartmentPanel } from "./MyDepartmentPanel";
 import { OtherOfficesNotice } from "./OtherOfficesNotice";
 import { PeoplePanel } from "./PeoplePanel";
 import { formatCount } from "./usePendingJoinCount";
+import { useMyDeptVisible } from "./useMyDeptVisible";
 import { useOrgLive } from "./useOrgLive";
 import { UsersPanel } from "./UsersPanel";
 import "../settings/settings.css";
 import "./nav-count.css";
 import "./org.css";
 
-export type Part = "users" | "people" | "departments" | "requests" | "labels" | "invites" | "kopi";
+export type Part = "users" | "people" | "departments" | "mydept" | "requests" | "labels" | "invites" | "kopi";
+
+const NO_IDS: readonly string[] = [];
 
 type Feedback = { kind: "ok"; text: string } | { kind: "error"; title: string; error: AppError } | null;
 
@@ -40,9 +45,15 @@ function errorHint(error: AppError): string | null {
   return null;
 }
 
-type Props = { state: AppState & { organization: OrgInfo }; onRefresh: () => void };
+type Props = {
+  state: AppState & { organization: OrgInfo };
+  onRefresh: () => void;
+  // Tombol Buka chat dan Buka di Board di tab Departemen saya; tanpa ini tombolnya tidak tampil.
+  onOpenChat?: (conv: string) => void;
+  onOpenProject?: (projectId: string) => void;
+};
 
-export function OrgScreen({ state, onRefresh }: Props) {
+export function OrgScreen({ state, onRefresh, onOpenChat, onOpenProject }: Props) {
   const [version, setVersion] = useState(0);
   const overviewLive = useOrgLive(orgApi.overview, { version });
   const dirLive = useOrgLive(api.getDirectory, { version });
@@ -163,6 +174,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
   const canInvite =
     !!overview &&
     (overview.isSuperadmin || overview.decideJoinTeamIds.length > 0 || (dir?.can.manageTeamIds.length ?? 0) > 0);
+  const showMyDept = useMyDeptVisible(overview, dir?.can.manageTeamIds ?? NO_IDS, version);
 
   const parts = useMemo(() => {
     if (!overview) return [];
@@ -173,6 +185,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
     if (overview.manageOrg || overview.listUsers) list.push({ id: "users", label: tabs.users });
     else list.push({ id: "people", label: tabs.people });
     if (overview.manageOrg) list.push({ id: "departments", label: tabs.departments });
+    if (showMyDept) list.push({ id: "mydept", label: DIVISION_TEXT.tab });
     if (overview.isSuperadmin || overview.decideJoinTeamIds.length > 0) {
       list.push({ id: "requests", label: tabs.requests, count: overview.pendingJoinCount });
     }
@@ -181,7 +194,7 @@ export function OrgScreen({ state, onRefresh }: Props) {
     list.push({ id: "kopi", label: KOPI_BOARD_TEXT.tab });
     return list;
     // lang: label tab ikut bahasa aktif.
-  }, [overview, canInvite, canRedeem, lang]);
+  }, [overview, canInvite, canRedeem, showMyDept, lang]);
 
   // Tab yang tadi dipilih bisa hilang kalau peran berubah: kembali ke tab pertama.
   const current = parts.find((p) => p.id === part) ?? parts[0];
@@ -303,6 +316,9 @@ export function OrgScreen({ state, onRefresh }: Props) {
             {current.id === "users" && <UsersPanel page={page} />}
             {current.id === "people" && <PeoplePanel page={page} />}
             {current.id === "departments" && <DepartmentsPanel page={page} />}
+            {current.id === "mydept" && (
+              <MyDepartmentPanel page={page} ctx={ctx} onOpenChat={onOpenChat} onOpenProject={onOpenProject} />
+            )}
             {current.id === "requests" && <JoinRequestsPanel page={page} onSetupDomain={openDomainSetup} />}
             {current.id === "labels" && <LabelsPanel page={page} />}
             {current.id === "kopi" && <KopiBoardPanel page={page} />}

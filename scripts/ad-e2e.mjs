@@ -136,7 +136,8 @@ const TXT = {
     mainMenu: "Menu utama",
     nav: { org: "Organisasi", settings: "Pengaturan" },
     settingsLanguage: "Bahasa",
-    tabs: { departments: /^Departemen/, requests: /^Permintaan bergabung/ },
+    // "Departemen" saja: tab "Departemen saya" (divisi, v0.6) juga diawali kata ini.
+    tabs: { departments: /^Departemen$/, requests: /^Permintaan bergabung/ },
     nameSubmit: "Lanjut",
     nameSource: (d) => `Diisi dari akun Windows Anda (${d})`,
     officeMatch: (d) => `Domain kantor Anda: ${d}`,

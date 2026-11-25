@@ -453,6 +453,7 @@ impl ChatSync {
             if info.scope == Scope::Umum {
                 return Err(forbidden("#umum tidak bisa diarsipkan."));
             }
+            super::division::refuse_channel_admin(&info, false)?;
             // Restoring an archive made by v0.3 stays possible.
             if info.is_project_chat() && archived {
                 return Err(invalid(
@@ -489,6 +490,7 @@ impl ChatSync {
             if info.scope == Scope::Umum {
                 return Err(forbidden("#umum tidak bisa dihapus."));
             }
+            super::division::refuse_channel_admin(&info, true)?;
             if info.is_project_chat() {
                 return Err(invalid(
                     "Chat proyek ikut proyeknya dan tidak bisa dihapus.",

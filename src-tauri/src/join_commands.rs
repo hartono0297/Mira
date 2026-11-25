@@ -2373,6 +2373,7 @@ mod tests {
             info.ad_ou_map = vec![OuMapping {
                 ou: "Jakarta".into(),
                 team: "bb".repeat(16),
+                division: None,
             }];
             info.departments.retain(|d| d.name != "Keuangan");
             client.lock().record(&"01".repeat(32), a1, info, t0)
@@ -2440,6 +2441,7 @@ mod tests {
         let row = |ou: String| OuMapping {
             ou,
             team: "aa".repeat(16),
+            division: None,
         };
         let info = verify_info(
             wire(

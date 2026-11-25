@@ -1,9 +1,11 @@
 import { IconAlertTriangle, IconPlus } from "@tabler/icons-react";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { toAppError, type AppError } from "../../api";
+import { divisionApi, type DivisionRef } from "../../api/division";
 import { orgApi, type AdSettingsView, type DepartmentView, type OuMapping } from "../../api/org";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
+import { DIVISION_MISC } from "../../i18n/division-misc";
 import { AD_TEXT } from "../../i18n/org-ad";
 // Aturan domain yang sama dengan layar kantor baru (normalize_domain di Rust).
 import { normalizeAdDomain } from "../onboarding/adProfile";
@@ -12,12 +14,14 @@ import { useOrgLive } from "./useOrgLive";
 import "./ad-settings.css";
 
 const T = AD_TEXT.settings;
+const D = () => DIVISION_MISC.ad;
 
 // Sama dengan batas op ad_settings_set di inti Rust (docs/plans/onboarding-ad.md 3.5).
 export const AD_MAX_ROWS = 100;
 export const AD_OU_MAX_CHARS = 64;
 
-type Row = { key: number; ou: string; team: string };
+// division: "" = tanpa divisi.
+type Row = { key: number; ou: string; team: string; division: string };
 // Kode galat, bukan teks: teksnya dibaca dari kamus saat render, jadi ikut bahasa aktif.
 type RowError = { ou?: { kind: "empty" } | { kind: "duplicate"; row: number }; team?: true };
 type Focus = { key: number; field: "ou" | "team" } | "add" | "domain" | null;
@@ -56,6 +60,11 @@ function byName(a: { name: string }, b: { name: string }): number {
 export function AdSettings({ page, departments }: { page: OrgPage; departments: DepartmentView[] }) {
   const live = useOrgLive(() => orgApi.adSettings(), { version: page.version });
   const data = live.data && typeof live.data === "object" ? live.data : null;
+  // Pilihan divisi per baris. Yang mengubah pengaturan ini superadmin, dan
+  // my_divisions untuk superadmin berisi semua divisi yang ia kelola (semua
+  // departemen), jadi satu panggilan cukup untuk semua baris.
+  const divLive = useOrgLive(() => divisionApi.myDivisions(), { version: page.version });
+  const divisions: DivisionRef[] = Array.isArray(divLive.data) ? divLive.data : [];
   const id = useId();
 
   const [domain, setDomain] = useState("");
@@ -83,7 +92,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
     if (snap === synced.current) return;
     synced.current = snap;
     setDomain(data.domain ?? "");
-    setRows(data.ouMap.map((m) => ({ key: nextKey.current++, ou: m.ou, team: m.team })));
+    setRows(data.ouMap.map((m) => ({ key: nextKey.current++, ou: m.ou, team: m.team, division: m.division ?? "" })));
     setErrors(new Map());
     setDomainError(false);
     setShowSummary(false);
@@ -122,11 +131,21 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
     }
   }
 
+  function setDivision(index: number, division: string) {
+    touch();
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, division } : r)));
+  }
+
+  // Departemen baris berganti: divisi yang bukan milik departemen baru dilepas.
+  function divisionFor(team: string, division: string): string {
+    return divisions.some((d) => d.id === division && d.teamId === team) ? division : "";
+  }
+
   function addRow() {
     if (rows.length >= AD_MAX_ROWS) return;
     touch();
     const key = nextKey.current++;
-    setRows((prev) => [...prev, { key, ou: "", team: "" }]);
+    setRows((prev) => [...prev, { key, ou: "", team: "", division: "" }]);
     pendingFocus.current = { key, field: "ou" };
   }
 
@@ -161,7 +180,11 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
     setShowSummary(false);
     setSaving(true);
     setSaveError(null);
-    const ouMap: OuMapping[] = rows.map((r) => ({ ou: r.ou.trim(), team: r.team }));
+    const ouMap: OuMapping[] = rows.map((r) => ({
+      ou: r.ou.trim(),
+      team: r.team,
+      ...(r.division ? { division: r.division } : {}),
+    }));
     try {
       await orgApi.setAdSettings(normalized ?? "", ouMap);
       setDirty(false);
@@ -196,6 +219,35 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
       );
     }
     return options;
+  }
+
+  // Divisi departemen baris itu yang masih aktif, ditambah pilihan saat ini
+  // kalau sudah diarsipkan atau tidak dikenal laptop ini.
+  function divisionOptions(row: Row) {
+    if (!row.team) return [<option key="" value="">{D().chooseDeptFirst}</option>];
+    const own = divisions
+      .filter((d) => d.teamId === row.team && !d.archived)
+      .sort(byName)
+      .map((d) => (
+        <option key={d.id} value={d.id}>
+          {d.name}
+        </option>
+      ));
+    if (row.division && !divisions.some((d) => d.id === row.division && d.teamId === row.team && !d.archived)) {
+      const known = divisions.find((d) => d.id === row.division);
+      own.unshift(
+        <option key={row.division} value={row.division}>
+          {known?.archived ? D().archivedOption(known.name) : D().unknownOption}
+        </option>,
+      );
+    }
+    if (own.length === 0) return [<option key="" value="">{D().noDivisions}</option>];
+    return [
+      <option key="" value="">
+        {D().none}
+      </option>,
+      ...own,
+    ];
   }
 
   const headingId = `${id}-title`;
@@ -308,6 +360,9 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                           {T.colDept}
                         </th>
                         <th role="columnheader" scope="col">
+                          {D().colDivision}
+                        </th>
+                        <th role="columnheader" scope="col">
                           <span className="sr-only">{T.colActions}</span>
                         </th>
                       </tr>
@@ -319,6 +374,8 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                         const ouMsg = ouError(err);
                         const ouId = `${id}-ou-${r.key}`;
                         const teamId = `${id}-team-${r.key}`;
+                        const divId = `${id}-div-${r.key}`;
+                        const divChoices = divisionOptions(r);
                         return (
                           <tr key={r.key} role="row">
                             <td role="cell" className="ad-set-ou">
@@ -362,7 +419,13 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                                 value={r.team}
                                 aria-invalid={err?.team ? true : undefined}
                                 aria-describedby={err?.team ? `${teamId}-err` : undefined}
-                                onChange={(e) => updateRow(i, { team: e.target.value }, "team")}
+                                onChange={(e) =>
+                                  updateRow(
+                                    i,
+                                    { team: e.target.value, division: divisionFor(e.target.value, r.division) },
+                                    "team",
+                                  )
+                                }
                               >
                                 <option value="">{T.choose}</option>
                                 {teamOptions(r.team)}
@@ -372,6 +435,21 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                                   <FieldError text={T.errDepartment} />
                                 </div>
                               )}
+                            </td>
+                            <td role="cell" className="ad-set-div">
+                              <label htmlFor={divId} className="ad-set-k">
+                                <span aria-hidden="true">{D().colDivision}</span>
+                                <span className="sr-only">{T.cellLabel(D().colDivision, n)}</span>
+                              </label>
+                              <select
+                                id={divId}
+                                className="ad-set-input"
+                                value={r.division}
+                                disabled={divLive.loading || (divChoices.length === 1 && !r.division)}
+                                onChange={(e) => setDivision(i, e.target.value)}
+                              >
+                                {divChoices}
+                              </select>
                             </td>
                             <td role="cell" className="ad-set-act">
                               <button
@@ -388,6 +466,16 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                       })}
                     </tbody>
                   </table>
+                )}
+
+                <p className="hint ad-set-order">{D().note}</p>
+                {divLive.error && !Array.isArray(divLive.data) && (
+                  <p className="hint ad-set-order">
+                    {D().loadFailed(divLive.error.message)}{" "}
+                    <button type="button" className="link-btn" onClick={() => void divLive.reload()}>
+                      {D().retry}
+                    </button>
+                  </p>
                 )}
 
                 <div className="ad-set-add">

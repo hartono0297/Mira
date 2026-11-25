@@ -56,6 +56,7 @@ fn project(creator: &Actor, team: &str) -> (String, Body) {
             creator: creator.pk.clone(),
             nonce,
             members: Vec::new(),
+            division: None,
         },
     )
 }
@@ -183,6 +184,7 @@ fn suspend_strips_everything_and_reinstate_gives_it_back() {
         m.snapshot,
         Some(SuspendSnapshot {
             department: Some((desain.clone(), TeamRole::Member)),
+            appointed: None,
             superadmin: false,
             projects: vec![proj.clone()],
             labels: vec![label.clone()],

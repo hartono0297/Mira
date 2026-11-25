@@ -125,11 +125,22 @@ type Bulk = {
   error: { title: string; error: AppError; note: string } | null;
 };
 
-// onSetupDomain: "Atur domain AD" dari form Cocokkan OU (OrgScreen menampilkan
-// tawaran domain atau membuka tab Departemen).
-export function JoinRequestsPanel({ page, onSetupDomain }: { page: OrgPage; onSetupDomain?: () => void }) {
+type Props = {
+  page: OrgPage;
+  // Tab Departemen saya: hanya permintaan ke departemen ini.
+  teamId?: string;
+  // "Atur domain AD" dari form Cocokkan OU (OrgScreen menampilkan tawaran
+  // domain atau membuka tab Departemen).
+  onSetupDomain?: () => void;
+};
+
+export function JoinRequestsPanel({ page, teamId, onSetupDomain }: Props) {
   const live = useOrgLive(() => orgApi.joinRequests(), { version: page.version });
-  const requests = useMemo(() => (Array.isArray(live.data) ? live.data : null), [live.data]);
+  const requests = useMemo(
+    () =>
+      Array.isArray(live.data) ? (teamId === undefined ? live.data : live.data.filter((r) => r.teamId === teamId)) : null,
+    [live.data, teamId],
+  );
   const [rejecting, setRejecting] = useState<JoinRequestView | null>(null);
   const [rejectBusy, setRejectBusy] = useState(false);
   const [rejectError, setRejectError] = useState<{ title: string; error: AppError } | null>(null);

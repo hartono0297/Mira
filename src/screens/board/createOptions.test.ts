@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { DivisionRef } from "../../api/division";
 import type { DepartmentView, OrgOverview, PersonView } from "../../api/org";
 import { createOptions } from "./createOptions";
 
@@ -52,6 +53,14 @@ function dep(id: string, name: string, archived = false): DepartmentView {
 }
 
 const departments = [dep(DEP_DESAIN, "Desain"), dep(DEP_ARSIP, "Arsip Lama", true), dep(DEP_ADM, "Administrasi")];
+
+const MOBILE = "4".repeat(32);
+const WEB = "5".repeat(32);
+const LAMA = "6".repeat(32);
+
+function div(id: string, name: string, role: DivisionRef["role"], extra: Partial<DivisionRef> = {}): DivisionRef {
+  return { id, name, teamId: DEP_DESAIN, teamName: "Desain", archived: false, role, ...extra };
+}
 
 describe("createOptions", () => {
   it("superadmin: semua departemen terbuka urut nama, tanpa departemen boleh, bawaan departemen saya", () => {
@@ -130,6 +139,44 @@ describe("createOptions", () => {
 
   it("saya tidak ada di daftar orang: tidak bisa membuat proyek", () => {
     const o = createOptions(overview({ isSuperadmin: true }), [], departments);
+    expect(o.canCreate).toBe(false);
+  });
+  it("kepala divisi: hanya departemen divisinya, tanpa departemen tidak boleh, hanya divisi yang ia kepalai", () => {
+    const o = createOptions(overview(), [person()], departments, [
+      div(MOBILE, "Mobile", "head"),
+      div(WEB, "Web", "member"),
+      div(LAMA, "Lama", "head", { archived: true }),
+    ]);
+    expect(o).toMatchObject({
+      canCreate: true,
+      departments: [{ id: DEP_DESAIN, name: "Desain" }],
+      allowNoDepartment: false,
+      defaultDepartment: DEP_DESAIN,
+      divisionOnly: [MOBILE],
+    });
+  });
+
+  it("anggota divisi biasa atau kepala divisi di departemen diarsipkan: tidak bisa membuat proyek", () => {
+    expect(createOptions(overview(), [person()], departments, [div(WEB, "Web", "member")]).canCreate).toBe(false);
+    const archivedDept = createOptions(overview(), [person()], departments, [
+      div(MOBILE, "Mobile", "head", { teamId: DEP_ARSIP, teamName: "Arsip Lama" }),
+    ]);
+    expect(archivedDept.canCreate).toBe(false);
+    expect(archivedDept.divisionOnly).toBeNull();
+  });
+
+  it("admin departemen yang juga kepala divisi: hak admin tetap, tanpa batas divisi", () => {
+    const o = createOptions(overview(), [person({ departmentRole: "admin" })], departments, [
+      div(MOBILE, "Mobile", "head"),
+    ]);
+    expect(o.divisionOnly).toBeNull();
+    expect(o.allowNoDepartment).toBe(true);
+  });
+
+  it("Tamu tercatat kepala divisi: tetap tidak bisa", () => {
+    const o = createOptions(overview({ isGuest: true }), [person({ isGuest: true, role: "guest" })], departments, [
+      div(MOBILE, "Mobile", "head"),
+    ]);
     expect(o.canCreate).toBe(false);
   });
 });

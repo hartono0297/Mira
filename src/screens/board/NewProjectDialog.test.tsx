@@ -1,14 +1,23 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectSummary } from "../../api/board";
+import type { DivisionRef } from "../../api/division";
 import type { DepartmentView, OrgOverview, PersonView } from "../../api/org";
+import { setLang } from "../../i18n/core";
+import { renderInLang } from "../../test/i18n";
 import { CODE_RULE, NewProjectDialog } from "./NewProjectDialog";
 
 const board = vi.hoisted(() => ({ createProject: vi.fn() }));
 vi.mock("../../api/board", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../api/board")>()),
   boardApi: board,
+}));
+
+const division = vi.hoisted(() => ({ myDivisions: vi.fn() }));
+vi.mock("../../api/division", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/division")>()),
+  divisionApi: division,
 }));
 
 const org = vi.hoisted(() => ({
@@ -119,6 +128,11 @@ beforeEach(() => {
   org.people.mockReset().mockResolvedValue([RINA, DIMAS, BUDI, HENDRA, YUSUF]);
   org.departments.mockReset().mockResolvedValue(DEPARTMENTS);
   board.createProject.mockReset();
+  division.myDivisions.mockReset().mockResolvedValue([]);
+});
+
+afterEach(() => {
+  setLang("id");
 });
 
 function renderDialog(onCreated = vi.fn(), onOpenChange = vi.fn()) {
@@ -325,5 +339,148 @@ describe("NewProjectDialog: departemen dan anggota", () => {
     const dlg = renderDialog();
     await ready(dlg);
     expect(dlg.textContent).not.toMatch(/\btim\b/i);
+  });
+});
+
+const MOBILE = "4".repeat(32);
+const WEB = "5".repeat(32);
+const GAMBAR = "6".repeat(32);
+
+function div(id: string, name: string, teamId: string, teamName: string, archived = false): DivisionRef {
+  return { id, name, teamId, teamName, archived };
+}
+
+describe("NewProjectDialog: untuk divisi", () => {
+  it("tanpa divisi: pilihan Untuk divisi tidak tampil", async () => {
+    const dlg = renderDialog();
+    await ready(dlg);
+    await waitFor(() => expect(division.myDivisions).toHaveBeenCalled());
+    expect(within(dlg).queryByRole("combobox", { name: "Untuk divisi" })).not.toBeInTheDocument();
+  });
+
+  it("admin departemen: divisi aktif di departemennya, catatan anggota otomatis, divisionId dan departemen dikirim", async () => {
+    const user = userEvent.setup();
+    division.myDivisions.mockResolvedValue([
+      div(WEB, "Web", DESAIN, "Desain", true),
+      div(MOBILE, "Mobile", DESAIN, "Desain"),
+      div(GAMBAR, "Gambar Kerja", DRAFTING, "Drafting"),
+    ]);
+    board.createProject.mockResolvedValue(created("Aplikasi Kantor", "APK"));
+    const dlg = renderDialog();
+    await ready(dlg);
+    const select = await within(dlg).findByRole("combobox", { name: "Untuk divisi" });
+    expect(select).toHaveValue("");
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Bukan proyek divisi", "Mobile, Desain"]);
+    expect(select).toHaveAccessibleDescription(/Boleh dikosongkan/);
+
+    await user.selectOptions(select, "Mobile, Desain");
+    expect(select).toHaveAccessibleDescription("Anggota divisi Mobile otomatis ikut menjadi anggota proyek.");
+    expect(within(dlg).getByRole("combobox", { name: "Departemen" })).toHaveValue(DESAIN);
+    expect(
+      within(dlg).getByText(
+        "Belum ada orang lain yang dipilih: proyek ini berisi anggota divisi Mobile dan Anda sebagai pengelola.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.type(within(dlg).getByLabelText("Nama proyek"), "Aplikasi Kantor");
+    const code = within(dlg).getByLabelText("Kode proyek");
+    await user.clear(code);
+    await user.type(code, "APK");
+    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
+    expect(board.createProject).toHaveBeenCalledWith("Aplikasi Kantor", "APK", DESAIN, [], MOBILE);
+  });
+
+  it("kepala divisi bukan admin: hanya divisi yang ia kepalai, selalu proyek divisi", async () => {
+    const user = userEvent.setup();
+    org.overview.mockResolvedValue(overview({ publicKey: DIMAS.publicKey }));
+    division.myDivisions.mockResolvedValue([
+      { ...div(MOBILE, "Mobile", DESAIN, "Desain"), role: "head" },
+      { ...div(WEB, "Web", DESAIN, "Desain"), role: "member" },
+    ]);
+    board.createProject.mockResolvedValue(created("Aplikasi Kantor", "APK"));
+    const dlg = renderDialog();
+    const dept = await ready(dlg);
+    const select = await within(dlg).findByRole("combobox", { name: "Untuk divisi" });
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Mobile, Desain"]);
+    expect(select).toHaveValue(MOBILE);
+    expect(
+      within(dept)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Desain"]);
+
+    await user.type(within(dlg).getByLabelText("Nama proyek"), "Aplikasi Kantor");
+    const code = within(dlg).getByLabelText("Kode proyek");
+    await user.clear(code);
+    await user.type(code, "APK");
+    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
+    expect(board.createProject).toHaveBeenCalledWith("Aplikasi Kantor", "APK", DESAIN, [], MOBILE);
+  });
+
+  it("superadmin: divisi memindah departemen; departemen lain melepas divisi", async () => {
+    const user = userEvent.setup();
+    org.overview.mockResolvedValue(overview({ isSuperadmin: true }));
+    org.people.mockResolvedValue([{ ...RINA, isSuperadmin: true, role: "superadmin", departmentRole: "member" }, DIMAS]);
+    division.myDivisions.mockResolvedValue([div(MOBILE, "Mobile", DESAIN, "Desain"), div(GAMBAR, "Gambar Kerja", DRAFTING, "Drafting")]);
+    board.createProject.mockResolvedValue(created("Detail", "DT"));
+    const dlg = renderDialog();
+    const dept = await ready(dlg);
+    const select = await within(dlg).findByRole("combobox", { name: "Untuk divisi" });
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Bukan proyek divisi", "Mobile, Desain", "Gambar Kerja, Drafting"]);
+
+    await user.selectOptions(select, "Gambar Kerja, Drafting");
+    expect(dept).toHaveValue(DRAFTING);
+
+    await user.selectOptions(dept, "Sipil dan Struktur");
+    expect(select).toHaveValue("");
+    expect(dept).toHaveValue(SIPIL);
+
+    await user.type(within(dlg).getByLabelText("Nama proyek"), "Detail");
+    const code = within(dlg).getByLabelText("Kode proyek");
+    await user.clear(code);
+    await user.type(code, "DT");
+    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
+    expect(board.createProject).toHaveBeenCalledWith("Detail", "DT", SIPIL, []);
+  });
+
+  it("divisi gagal dibaca: dialog tetap bisa membuat proyek tanpa divisi", async () => {
+    division.myDivisions.mockRejectedValue({ code: "database", message: "Database terkunci." });
+    const dlg = renderDialog();
+    await ready(dlg);
+    await waitFor(() => expect(division.myDivisions).toHaveBeenCalled());
+    expect(within(dlg).queryByRole("combobox", { name: "Untuk divisi" })).not.toBeInTheDocument();
+    expect(within(dlg).getByRole("button", { name: "Buat proyek" })).toBeEnabled();
+  });
+
+  it("dalam bahasa Inggris", async () => {
+    const user = userEvent.setup();
+    division.myDivisions.mockResolvedValue([div(MOBILE, "Mobile", DESAIN, "Design")]);
+    renderInLang(() => <NewProjectDialog open onOpenChange={vi.fn()} onCreated={vi.fn()} />, "en");
+    const dlg = screen.getByRole("dialog", { name: "New project" });
+    const select = await within(dlg).findByRole("combobox", { name: "Division" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Not a division project",
+      "Mobile, Design",
+    ]);
+    expect(select).toHaveAccessibleDescription(/^Optional\./);
+    await user.selectOptions(select, "Mobile, Design");
+    expect(select).toHaveAccessibleDescription("Members of the Mobile division join the project automatically.");
+    expect(
+      within(dlg).getByText(
+        "Nobody else selected yet: this project will have the Mobile division members and you as its manager.",
+      ),
+    ).toBeInTheDocument();
   });
 });

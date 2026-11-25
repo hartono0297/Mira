@@ -123,9 +123,15 @@ fn post_blocked_in(ctx: &Ctx, info: &ConvInfo, lang: UiLang) -> AppResult<Option
             Scope::Team(_) => {
                 "Anda sudah tidak di departemen ini. Pesan baru tidak dikirim lagi ke laptop Anda."
             }
+            Scope::Division(_) => {
+                "Anda sudah tidak di divisi ini. Pesan baru tidak dikirim lagi ke laptop Anda."
+            }
             Scope::Direct(..) => "Rekan ini sudah tidak bisa diajak chat pribadi.",
             Scope::Umum | Scope::Org => "Anda tidak bisa menulis di channel ini.",
         };
+        return Ok(Some(text.into()));
+    }
+    if let Some(text) = super::division::post_blocked(ctx, info, lang) {
         return Ok(Some(text.into()));
     }
     if info.archived && info.is_project_chat() {
@@ -169,9 +175,14 @@ fn post_blocked_en(ctx: &Ctx, info: &ConvInfo) -> AppResult<Option<String>> {
             Scope::Team(_) => {
                 "You're no longer in this department. New messages no longer reach your laptop."
             }
+            Scope::Division(_) => {
+                "You're no longer in this division. New messages no longer reach your laptop."
+            }
             Scope::Direct(..) => "You can no longer send direct messages to this colleague.",
             Scope::Umum | Scope::Org => "You can't post in this channel.",
         }
+    } else if let Some(text) = super::division::post_blocked(ctx, info, UiLang::En) {
+        text
     } else if info.archived && info.is_project_chat() {
         "This project chat was archived in an older version of Mira. Project managers can restore it from the menu above."
     } else if info.archived {
@@ -195,7 +206,7 @@ pub fn can_post(ctx: &Ctx, info: &ConvInfo) -> AppResult<bool> {
 pub fn section_of(info: &ConvInfo) -> ChatSection {
     match info.scope {
         Scope::Umum | Scope::Org => ChatSection::Umum,
-        Scope::Team(_) => ChatSection::Departemen,
+        Scope::Team(_) | Scope::Division(_) => ChatSection::Departemen,
         Scope::Project(_) => ChatSection::Proyek,
         Scope::Group(_) => ChatSection::Grup,
         Scope::Direct(..) => ChatSection::Pribadi,
@@ -220,6 +231,8 @@ fn scope_view(info: &ConvInfo) -> Option<ChannelScopeView> {
         Scope::Team(t) => (ScopeKind::Team, Some(t.clone())),
         Scope::Project(p) => (ScopeKind::Project, Some(p.clone())),
         Scope::Group(g) => (ScopeKind::Group, Some(g.clone())),
+        // Its department, set by `division::decorate`.
+        Scope::Division(_) => (ScopeKind::Team, None),
         Scope::Direct(..) => return None,
     };
     Some(ChannelScopeView {
@@ -230,6 +243,10 @@ fn scope_view(info: &ConvInfo) -> Option<ChannelScopeView> {
 }
 
 pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
+    super::division::decorate(ctx, info, base_summary(ctx, info)?)
+}
+
+fn base_summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
     let me = ctx.me();
     let conn = ctx.conn;
     let peer = dm_peer(info, me).map(|p| person(&ctx.dir, p));
@@ -276,6 +293,7 @@ pub fn summary(ctx: &Ctx, info: &ConvInfo) -> AppResult<ConversationSummary> {
         can_archive: admin && (!info.is_project_chat() || info.archived),
         can_delete: admin && !info.is_project_chat(),
         can_lock: can_lock(ctx, info),
+        division: None,
     })
 }
 

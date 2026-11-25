@@ -13,12 +13,14 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { CHAT } from "../../i18n/chat";
 import { useLang } from "../../i18n/core";
+import { AnnounceGate } from "./AnnounceGate";
 import { ConversationActionsContext, type ConversationActions, type ConvRequest } from "./ChatActions";
 import { Composer, type MentionRequest } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
 import { useGroupView } from "./GroupMembers";
 import { messageDomId } from "./MessageItem";
 import { buildTimeline, mergeEvents, MessageList } from "./MessageList";
+import { PinnedNote } from "./PinnedNote";
 import { conversationTarget, conversationTitle, mergeMessages, messagePreview } from "./text";
 import { useChatLive } from "./useChatLive";
 import "./conversation.css";
@@ -425,6 +427,7 @@ function ConversationPanel({
         onChanged={onChanged}
         onGone={onGone}
       />
+      <PinnedNote summary={summary} />
       <div aria-live="polite" className="conv-live">
         {view && live.error && (
           <ErrorAlert title={CHAT.conv.latestError}>
@@ -450,6 +453,7 @@ function ConversationPanel({
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>
+      <AnnounceGate summary={summary}>
       <Composer
         summary={summary}
         me={me}
@@ -463,6 +467,7 @@ function ConversationPanel({
         inputRef={inputRef}
         mentionRequest={mentionRequest}
       />
+      </AnnounceGate>
       <ConfirmDialog
         open={toDelete !== null}
         onOpenChange={(next) => {

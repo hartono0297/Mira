@@ -1170,6 +1170,7 @@ fn join_info_announces_the_ad_level_and_settings() {
                 vec![crate::ad::OuMapping {
                     ou: "Desain".into(),
                     team: desain.clone(),
+                    division: None,
                 }],
                 clock::now(),
             )

@@ -9,6 +9,7 @@
 //! - `schema`: migration v7.
 //! - `audience`: who is in which conversation, who administers it, and the
 //!   `ProjectAudience` connection point for board projects.
+//! - `division`: division chats and announcement mode (v0.6).
 //! - `judge`: may this author make this record (accept, defer, reject).
 //! - `store`: storing and applying records, purges, envelopes.
 //! - `fetch`: the local download queue and the blobs chat owns.
@@ -21,6 +22,7 @@
 
 pub mod audience;
 pub mod commands;
+pub mod division;
 pub mod fetch;
 pub mod files;
 pub mod groups;

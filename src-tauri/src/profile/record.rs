@@ -427,6 +427,8 @@ mod tests {
                 .collect(),
             teams: Default::default(),
             log_channels: Default::default(),
+            divisions: Default::default(),
+            announce: Default::default(),
         }
     }
 

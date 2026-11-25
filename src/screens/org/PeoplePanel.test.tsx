@@ -84,11 +84,11 @@ describe("Anggota (bukan superadmin)", () => {
     const rina = itemOf("Rina");
     expect(within(rina).getByText("Arsitek")).toBeInTheDocument();
     expect(within(rina).getByText("Senior")).toBeInTheDocument();
-    expect(within(rina).getByText("Desain, admin departemen")).toBeInTheDocument();
-    expect(within(itemOf("Andi")).getByText("Keuangan, superadmin")).toBeInTheDocument();
+    expect(within(rina).getByText("Desain · admin departemen")).toBeInTheDocument();
+    expect(within(itemOf("Andi")).getByText("Keuangan · superadmin")).toBeInTheDocument();
     expect(within(itemOf("Yusuf")).getByText("Tamu")).toBeInTheDocument();
     expect(within(itemOf("Penguji")).getByText("(Anda)", { exact: false })).toBeInTheDocument();
-    expect(within(itemOf("Penguji")).getByText("Desain, anggota")).toBeInTheDocument();
+    expect(within(itemOf("Penguji")).getByText("Desain · anggota")).toBeInTheDocument();
 
     expect(screen.queryByText(/LAPTOP-/)).not.toBeInTheDocument();
     expect(screen.queryByText(/192\.168/)).not.toBeInTheDocument();
@@ -144,5 +144,21 @@ describe("Anggota (bukan superadmin)", () => {
     await openTab(ue);
     expect(await screen.findByText(/Belum ada orang lain di organisasi ini/)).toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  });
+});
+
+describe("Anggota: divisi", () => {
+  it("menulis divisi setelah departemen dan bisa dicari dengan nama divisi", async () => {
+    const list = people();
+    list[1] = { ...list[1], divisions: [{ id: "d1", name: "Mobile" }, { id: "d2", name: "Web" }] };
+    const ue = renderPeople({ org_people: list });
+    await openTab(ue);
+    await screen.findByText("Rina");
+    expect(within(itemOf("Rina")).getByText("Desain · Mobile, Web · admin departemen")).toBeInTheDocument();
+    expect(within(itemOf("Penguji")).getByText("Desain · anggota")).toBeInTheDocument();
+
+    await ue.type(screen.getByRole("searchbox", { name: "Cari" }), "mobile");
+    expect(itemOf("Rina")).toBeInTheDocument();
+    expect(screen.getByText("1 orang")).toBeInTheDocument();
   });
 });

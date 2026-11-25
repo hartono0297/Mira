@@ -331,6 +331,12 @@ fn may_give(org: &OrgState, pk: &str, at: OffsetDateTime) -> bool {
             .as_deref()
             .and_then(parse_time)
             .is_some_and(|removed| at < removed),
+        // 0.5.1: gives made before the suspension stand, like a removal.
+        MemberStatus::Suspended => m
+            .suspended_at
+            .as_deref()
+            .and_then(parse_time)
+            .is_some_and(|suspended| at < suspended),
     }
 }
 
@@ -491,6 +497,12 @@ mod tests {
                     removal_op: None,
                     has_profile: true,
                     device: None,
+                    suspended_at: None,
+                    suspended_by: None,
+                    suspension_op: None,
+                    snapshot: None,
+                    joint_suspensions: Vec::new(),
+                    suspended_by_superadmin: false,
                 },
             );
         };
@@ -513,6 +525,7 @@ mod tests {
                     creator: a.clone(),
                     registered_by: a.clone(),
                     created_at: "2026-12-01T00:00:00Z".into(),
+                    division: None,
                     members: members
                         .into_iter()
                         .map(|c| {

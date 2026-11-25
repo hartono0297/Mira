@@ -16,6 +16,7 @@ import { toAppError, type AppError } from "../../api";
 import { chatApi, type ConversationSummary } from "../../api/chat";
 import { menuItems, SEPARATOR, useContextMenu, type ContextMenuHandle, type MenuEntry } from "../../components/ContextMenu";
 import { CHAT } from "../../i18n/chat";
+import { isDivisionChat } from "./divisionOrder";
 import { MENU } from "./menuText";
 import { conversationTitle } from "./text";
 
@@ -49,8 +50,9 @@ export type ConversationMenuHandlers = {
 // Pesan pribadi hanya punya Bisukan karena belum ada perintah untuk menghapusnya dari daftar.
 export function conversationMenuItems(s: ConversationSummary, h: ConversationMenuHandlers): MenuEntry[] {
   const title = conversationTitle(s);
-  const group = s.kind === "group" && !s.former;
-  const channel = s.kind === "channel";
+  // Chat divisi seperti chat proyek: tanpa ganti nama, tambah orang, keluar, arsip, atau hapus.
+  const group = s.kind === "group" && !s.former && !isDivisionChat(s);
+  const channel = s.kind === "channel" && !isDivisionChat(s);
   const unread = s.unread > 0 || s.mentionUnread > 0;
   const archive = (channel && s.canArchive) || (s.kind === "project" && s.archived && s.canArchive);
   const open = h.open;

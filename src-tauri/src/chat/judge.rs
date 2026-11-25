@@ -106,6 +106,9 @@ pub fn judge(ctx: &Ctx, rec: &VerifiedRecord, now: OffsetDateTime) -> AppResult<
             if info.deleted {
                 return Ok(Verdict::Accept);
             }
+            if let Some(v) = super::division::announce_refusal(ctx, &info, author, rec.at) {
+                return Ok(v);
+            }
             may_post(ctx, &info, author, rec.at, st)
         }
         Body::Receipt { conv, .. } => {
@@ -244,6 +247,7 @@ fn channel_create(
     let conv = channel_conv(channel);
     if channel == ctx.dir.umum
         || ctx.dir.log_channels.contains_key(channel)
+        || ctx.dir.divisions.contains_key(channel)
         || ctx.projects.project(ctx.conn, channel)?.is_some()
     {
         return Ok(reject("channel_exists", "id channel sudah dipakai"));
@@ -293,6 +297,9 @@ fn channel_admin(ctx: &Ctx, rec: &VerifiedRecord, st: Standing, conv: &str) -> A
     };
     if info.scope == Scope::Umum {
         return Ok(forbidden("#umum tidak bisa diarsipkan atau dihapus"));
+    }
+    if let Some(v) = super::division::channel_admin_refusal(&info) {
+        return Ok(v);
     }
     // v0.4: a project's chat lives as long as the project. Its conversation
     // id is fixed, so a deleted one could never come back. Restoring an

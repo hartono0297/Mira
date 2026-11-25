@@ -125,6 +125,9 @@ pub struct ProjectSummary {
     pub open_count: u32,
     pub task_count: u32,
     pub can_manage: bool,
+    /// v0.6: the division the project was made for, from the log.
+    pub division_id: Option<String>,
+    pub division_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

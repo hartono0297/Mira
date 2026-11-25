@@ -77,6 +77,8 @@ pub enum ConversationKind {
     Group,
     /// The built-in chat of a project (v0.4).
     Project,
+    /// The built-in chat of a division (v0.6).
+    Division,
     Dm,
 }
 
@@ -106,6 +108,9 @@ pub struct ConversationSummary {
     pub can_archive: bool,
     pub can_delete: bool,
     pub can_lock: bool,
+    /// Division chats only: `divisionId` and `teamId`.
+    #[serde(flatten)]
+    pub division: Option<super::division::DivisionConvIds>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +375,7 @@ mod tests {
             can_archive: false,
             can_delete: false,
             can_lock: false,
+            division: None,
         };
         let v = serde_json::to_value(&s).unwrap();
         for key in [

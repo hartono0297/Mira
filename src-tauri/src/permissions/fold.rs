@@ -11,6 +11,7 @@ use hex::FromHex;
 use serde::Serialize;
 use time::OffsetDateTime;
 
+use super::division::{ChatSettingsState, DivisionState};
 use super::format::{channel_name_for, format_time, parse_time};
 use super::invite::{invite_key_message, redeem_message};
 use super::join::{
@@ -121,6 +122,11 @@ pub struct MemberState {
 pub struct SuspendSnapshot {
     /// Department and role in it.
     pub department: Option<(String, TeamRole)>,
+    /// v0.6: order key of the op that made the member an admin of
+    /// `department`, so a reinstated admin keeps their seniority. Division
+    /// memberships are not kept: a reinstated member is added back to
+    /// divisions by hand.
+    pub appointed: Option<(u64, String, String)>,
     pub superadmin: bool,
     /// Projects the member was an explicit member of.
     pub projects: Vec<String>,
@@ -132,6 +138,11 @@ pub struct SuspendSnapshot {
 pub struct TeamMember {
     pub role: TeamRole,
     pub added_at: String,
+    /// Order key `(lamport, author, op id)` of the op that made this person
+    /// an admin of the department; `None` while a plain member. A
+    /// department admin may demote only admins appointed after them
+    /// (v0.6), so two admins can never demote each other.
+    pub appointed: Option<(u64, String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +217,8 @@ pub struct ProjectState {
     /// Explicit members (guests included). Guests invited by code are in
     /// `OrgState::guest_access` instead.
     pub members: BTreeMap<String, ProjectMember>,
+    /// v0.6: the division the project was made for, in `team`.
+    pub division: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,6 +270,10 @@ pub struct OrgState {
     /// than `join::suspend_threshold` must not be admitted (it cannot read
     /// the log).
     pub suspend_used: bool,
+    /// v0.6: divisions by id, deleted ones included (`division.rs`).
+    pub divisions: BTreeMap<String, DivisionState>,
+    /// v0.6: chat settings by `(team, division id or "")`.
+    pub chat_settings: BTreeMap<(String, String), ChatSettingsState>,
 }
 
 /// The organization's Active Directory settings (docs/plans/onboarding-ad.md).
@@ -315,6 +332,14 @@ pub enum Reason {
     JoinAlreadyDecided,
     AlreadyMember,
     TargetNotSuspended,
+    DivisionNotFound,
+    DivisionArchived,
+    AlreadyInDivision,
+    NotInDivision,
+    AlreadyDivisionHead,
+    NotDivisionHead,
+    TargetNotInDepartment,
+    LastTeamAdmin,
 }
 
 impl Reason {
@@ -360,6 +385,14 @@ impl Reason {
             Reason::JoinAlreadyDecided => "join_already_decided",
             Reason::AlreadyMember => "already_member",
             Reason::TargetNotSuspended => "target_not_suspended",
+            Reason::DivisionNotFound => "division_not_found",
+            Reason::DivisionArchived => "division_archived",
+            Reason::AlreadyInDivision => "already_in_division",
+            Reason::NotInDivision => "not_in_division",
+            Reason::AlreadyDivisionHead => "already_division_head",
+            Reason::NotDivisionHead => "not_division_head",
+            Reason::TargetNotInDepartment => "target_not_in_department",
+            Reason::LastTeamAdmin => "last_team_admin",
         }
     }
 
@@ -420,6 +453,18 @@ impl Reason {
             Reason::JoinAlreadyDecided => "Permintaan ini sudah disetujui atau ditolak.",
             Reason::AlreadyMember => "Laptop itu sudah menjadi anggota organisasi.",
             Reason::TargetNotSuspended => "Orang itu tidak sedang dinonaktifkan.",
+            Reason::DivisionNotFound => "Divisi tidak ditemukan atau sudah dihapus.",
+            Reason::DivisionArchived => "Divisi ini sudah diarsipkan.",
+            Reason::AlreadyInDivision => "Orang itu sudah menjadi anggota divisi ini.",
+            Reason::NotInDivision => "Orang itu bukan anggota divisi ini.",
+            Reason::AlreadyDivisionHead => "Orang itu sudah menjadi kepala divisi ini.",
+            Reason::NotDivisionHead => "Orang itu bukan kepala divisi ini.",
+            Reason::TargetNotInDepartment => {
+                "Orang itu bukan anggota departemen ini. Minta superadmin memindahkannya dulu."
+            }
+            Reason::LastTeamAdmin => {
+                "Departemen harus punya minimal satu admin. Angkat admin lain dulu."
+            }
         }
     }
 
@@ -428,7 +473,7 @@ impl Reason {
     }
 }
 
-const ALL_REASONS: [Reason; 40] = [
+const ALL_REASONS: [Reason; 48] = [
     Reason::AuthorNotActive,
     Reason::NotAuthorized,
     Reason::GuestNotAllowed,
@@ -469,6 +514,14 @@ const ALL_REASONS: [Reason; 40] = [
     Reason::JoinAlreadyDecided,
     Reason::AlreadyMember,
     Reason::TargetNotSuspended,
+    Reason::DivisionNotFound,
+    Reason::DivisionArchived,
+    Reason::AlreadyInDivision,
+    Reason::NotInDivision,
+    Reason::AlreadyDivisionHead,
+    Reason::NotDivisionHead,
+    Reason::TargetNotInDepartment,
+    Reason::LastTeamAdmin,
 ];
 
 pub type Outcome = Result<(), Reason>;
@@ -505,6 +558,11 @@ pub fn project_id_for(creator: &str, team: Option<&str>, nonce: &str) -> String 
 /// concurrently with a revocation of the right they used, are rejected.
 pub fn fold(org: &Organization, ops: &[VerifiedOp]) -> FoldResult {
     super::causal::fold_ops(org, ops)
+}
+
+/// Fold order key of an op, owned.
+fn op_key(op: &VerifiedOp) -> (u64, String, String) {
+    (op.lamport(), op.author().to_owned(), op.id.clone())
 }
 
 fn verify_sig(public_key: &str, message: &[u8], sig: &str) -> bool {
@@ -558,6 +616,8 @@ impl OrgState {
             join_decisions: BTreeMap::new(),
             ad: AdSettings::default(),
             suspend_used: false,
+            divisions: BTreeMap::new(),
+            chat_settings: BTreeMap::new(),
         }
     }
 
@@ -598,7 +658,7 @@ impl OrgState {
     }
 
     /// `TeamNotFound` or `DepartmentArchived` unless `id` is open.
-    fn require_open_team(&self, id: &str) -> Result<(), Reason> {
+    pub(super) fn require_open_team(&self, id: &str) -> Result<(), Reason> {
         match self.live_team(id) {
             None => Err(Reason::TeamNotFound),
             Some(t) if t.archived => Err(Reason::DepartmentArchived),
@@ -745,7 +805,7 @@ impl OrgState {
         !self.project_manager_paths(project, pk).is_empty()
     }
 
-    fn require_superadmin(&self, author: &str) -> Result<(), Reason> {
+    pub(super) fn require_superadmin(&self, author: &str) -> Result<(), Reason> {
         if self.is_superadmin(author) {
             Ok(())
         } else {
@@ -753,7 +813,7 @@ impl OrgState {
         }
     }
 
-    fn require_active_non_guest_target(&self, pk: &str) -> Result<(), Reason> {
+    pub(super) fn require_active_non_guest_target(&self, pk: &str) -> Result<(), Reason> {
         match self.member(pk) {
             Some(m) if m.status == MemberStatus::Active => {
                 if m.kind == MemberKind::Guest {
@@ -777,7 +837,7 @@ impl OrgState {
         }
     }
 
-    fn live_team_mut(&mut self, id: &str) -> Result<&mut TeamState, Reason> {
+    pub(super) fn live_team_mut(&mut self, id: &str) -> Result<&mut TeamState, Reason> {
         self.teams
             .get_mut(id)
             .filter(|t| !t.deleted)
@@ -795,10 +855,12 @@ impl OrgState {
         }
     }
 
-    /// Takes `pk` out of every department, project, label and guest access
-    /// (what `member_remove` and `member_suspend` do).
+    /// Takes `pk` out of every department, division (head role included),
+    /// project, label and guest access (what `member_remove` and
+    /// `member_suspend` do).
     fn strip_member(&mut self, pk: &str) {
         self.leave_departments(pk);
+        self.leave_divisions(pk, None);
         self.guest_access.retain(|g| g.public_key != pk);
         for p in self.projects.values_mut() {
             p.members.remove(pk);
@@ -812,6 +874,10 @@ impl OrgState {
     fn snapshot_of(&self, pk: &str) -> SuspendSnapshot {
         SuspendSnapshot {
             department: self.department_of(pk).map(|(t, r)| (t.id.clone(), r)),
+            appointed: self
+                .department_of(pk)
+                .and_then(|(t, _)| t.members.get(pk))
+                .and_then(|tm| tm.appointed.clone()),
             superadmin: self.is_superadmin(pk),
             projects: self
                 .projects
@@ -857,6 +923,9 @@ impl OrgState {
                 TeamMember {
                     role,
                     added_at: at.to_owned(),
+                    appointed: (role == TeamRole::Admin)
+                        .then(|| snapshot.appointed.clone())
+                        .flatten(),
                 },
             );
         }
@@ -1013,6 +1082,7 @@ impl OrgState {
                 t.members.clear();
                 self.channels.retain(|_, c| c.team.as_deref() != Some(team));
                 self.guest_access.retain(|g| &g.team != team);
+                self.delete_team_divisions(team);
             }
             Body::SuperadminAdd { member } => {
                 self.require_superadmin(&author)?;
@@ -1039,36 +1109,76 @@ impl OrgState {
                 }
             }
             Body::TeamAdminSet { team, member } => {
-                self.require_superadmin(&author)?;
+                // v0.6: an admin of the department may promote its people.
+                let sa = self.is_superadmin(&author);
+                if !sa && self.team_role(team, &author) != Some(TeamRole::Admin) {
+                    return Err(Reason::NotAuthorized);
+                }
                 self.require_open_team(team)?;
                 self.require_active_non_guest_target(member)?;
                 // The admin of a department is one of its people: someone in
                 // another department has to be moved first.
                 let current = self.team_role(team, member);
                 if current.is_none() {
+                    if !sa {
+                        return Err(Reason::TargetNotInDepartment);
+                    }
                     self.require_no_department(team, member)?;
                 }
+                let appointed = Some(op_key(op));
                 let t = self.live_team_mut(team)?;
                 match t.members.get_mut(member) {
                     Some(tm) if tm.role == TeamRole::Admin => return Err(Reason::AlreadyTeamAdmin),
-                    Some(tm) => tm.role = TeamRole::Admin,
+                    Some(tm) => {
+                        tm.role = TeamRole::Admin;
+                        tm.appointed = appointed;
+                    }
                     None => {
                         t.members.insert(
                             member.clone(),
                             TeamMember {
                                 role: TeamRole::Admin,
                                 added_at: at,
+                                appointed,
                             },
                         );
                     }
                 }
             }
             Body::TeamAdminUnset { team, member } => {
-                self.require_superadmin(&author)?;
+                // v0.6: an admin of the department may demote the admins
+                // appointed after them, and themselves unless they are the
+                // last one. Seniority comes from the appointing op, which
+                // the junior admin cannot choose, so a demoted admin cannot
+                // answer with a backdated demotion of the senior one.
+                let sa = self.is_superadmin(&author);
+                if !sa && self.team_role(team, &author) != Some(TeamRole::Admin) {
+                    return Err(Reason::NotAuthorized);
+                }
                 let t = self.live_team_mut(team)?;
-                match t.members.get_mut(member) {
-                    Some(tm) if tm.role == TeamRole::Admin => tm.role = TeamRole::Member,
-                    _ => return Err(Reason::NotTeamAdmin),
+                let Some(target) = t
+                    .members
+                    .get(member)
+                    .filter(|tm| tm.role == TeamRole::Admin)
+                else {
+                    return Err(Reason::NotTeamAdmin);
+                };
+                if !sa && member != &author {
+                    let mine = t.members.get(&author).and_then(|tm| tm.appointed.as_ref());
+                    let junior = matches!(
+                        (target.appointed.as_ref(), mine),
+                        (Some(theirs), Some(mine)) if theirs > mine
+                    );
+                    if !junior {
+                        return Err(Reason::NotAuthorized);
+                    }
+                }
+                if !sa && member == &author && self.team_admin_count(team) <= 1 {
+                    return Err(Reason::LastTeamAdmin);
+                }
+                if let Some(tm) = self.live_team_mut(team)?.members.get_mut(member) {
+                    tm.role = TeamRole::Member;
+                    tm.appointed = None;
                 }
             }
             Body::TeamMemberAdd { team, member } => {
@@ -1088,6 +1198,7 @@ impl OrgState {
                     TeamMember {
                         role: TeamRole::Member,
                         added_at: at,
+                        appointed: None,
                     },
                 );
             }
@@ -1109,6 +1220,7 @@ impl OrgState {
                     return Err(Reason::NotAuthorized);
                 }
                 self.live_team_mut(team)?.members.remove(member);
+                self.leave_team_divisions(member, team);
             }
             Body::MemberRemove { member } => {
                 self.may_remove(&author, member)?;
@@ -1277,7 +1389,7 @@ impl OrgState {
                     return Err(Reason::AlreadyInDepartment);
                 }
                 let inv = inv.clone();
-                self.admit(&inv, member, name, &at);
+                self.admit(&inv, member, name, &at, op_key(op));
                 if let Some(i) = self.invites.get_mut(invite) {
                     i.used_by.push(member.clone());
                 }
@@ -1338,11 +1450,13 @@ impl OrgState {
                     return Err(Reason::AlreadyInTeam);
                 }
                 self.leave_departments(member);
+                self.leave_divisions(member, Some(team));
                 self.live_team_mut(team)?.members.insert(
                     member.clone(),
                     TeamMember {
                         role: TeamRole::Member,
                         added_at: at,
+                        appointed: None,
                     },
                 );
             }
@@ -1402,6 +1516,7 @@ impl OrgState {
                     TeamMember {
                         role: TeamRole::Member,
                         added_at: at.clone(),
+                        appointed: None,
                     },
                 );
                 self.decide(&req, true, author, at);
@@ -1425,6 +1540,7 @@ impl OrgState {
                 creator,
                 nonce,
                 members: initial,
+                division,
             } => {
                 if !self.is_active_non_guest(&author) {
                     return Err(Reason::GuestNotAllowed);
@@ -1459,6 +1575,9 @@ impl OrgState {
                         return Err(Reason::NotAuthorized);
                     }
                 }
+                if let Some(division) = division {
+                    self.check_project_division(&author, team.as_deref(), division)?;
+                }
                 let mut members = BTreeMap::new();
                 let joining = initial
                     .iter()
@@ -1482,6 +1601,7 @@ impl OrgState {
                         registered_by: author,
                         created_at: at,
                         members,
+                        division: division.clone(),
                     },
                 );
             }
@@ -1614,7 +1734,7 @@ impl OrgState {
                 let ou_map: Vec<OuMapping> = ou_map
                     .iter()
                     .filter(|row| self.live_team(&row.team).is_some())
-                    .cloned()
+                    .map(|row| self.ou_row_checked(row))
                     .collect();
                 let next = AdSettings {
                     domain: (!domain.is_empty()).then(|| domain.clone()),
@@ -1626,6 +1746,41 @@ impl OrgState {
                 }
                 self.ad = next;
             }
+            Body::DivisionCreate {
+                division,
+                team,
+                name,
+            } => self.apply_division_create(&author, &at, division, team, name)?,
+            Body::DivisionRename { division, name } => {
+                self.apply_division_rename(&author, division, name)?
+            }
+            Body::DivisionArchive { division, archived } => {
+                self.apply_division_archive(&author, &at, division, *archived)?
+            }
+            Body::DivisionHeadSet {
+                division,
+                member,
+                head,
+            } => self.apply_division_head_set(&author, &at, division, member, *head)?,
+            Body::DivisionMemberAdd { division, member } => {
+                self.apply_division_member_add(&author, &at, division, member)?
+            }
+            Body::DivisionMemberRemove { division, member } => {
+                self.apply_division_member_remove(&author, division, member)?
+            }
+            Body::ChatSettingsSet {
+                team,
+                division,
+                pinned,
+                announce,
+            } => self.apply_chat_settings_set(
+                &author,
+                &at,
+                team,
+                division.as_deref(),
+                pinned,
+                *announce,
+            )?,
         }
         Ok(())
     }
@@ -1668,7 +1823,14 @@ impl OrgState {
     }
 
     /// Effect of a valid `invite_accept` (plan 1.3).
-    fn admit(&mut self, inv: &InviteState, member: &str, name: &str, at: &str) {
+    fn admit(
+        &mut self,
+        inv: &InviteState,
+        member: &str,
+        name: &str,
+        at: &str,
+        key: (u64, String, String),
+    ) {
         let guest = inv.role == InviteRole::Guest;
         let existing = self.members.get_mut(member);
         match existing {
@@ -1720,15 +1882,21 @@ impl OrgState {
         } else {
             TeamRole::Member
         };
+        let appointed = (role == TeamRole::Admin).then_some(key);
         if let Some(t) = self.teams.get_mut(&inv.team) {
             match t.members.get_mut(member) {
-                Some(tm) => tm.role = tm.role.min(role),
+                Some(tm) if tm.role == TeamRole::Admin => {}
+                Some(tm) => {
+                    tm.role = role;
+                    tm.appointed = appointed;
+                }
                 None => {
                     t.members.insert(
                         member.to_owned(),
                         TeamMember {
                             role,
                             added_at: at.to_owned(),
+                            appointed,
                         },
                     );
                 }

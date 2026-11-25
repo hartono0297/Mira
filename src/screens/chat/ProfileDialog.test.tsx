@@ -78,7 +78,7 @@ describe("ProfileDialog", () => {
     // Semua label tampil, tidak diringkas menjadi "+1".
     for (const label of ["Arsitek", "Senior", "K3", "Penguji mutu"]) expect(within(dlg).getByText(label)).toBeInTheDocument();
     expect(factOf(dlg, PROFILE.role)).toHaveTextContent(/^Anggota$/);
-    expect(factOf(dlg, PROFILE.department)).toHaveTextContent(/^Drafting, admin departemen$/);
+    expect(factOf(dlg, PROFILE.department)).toHaveTextContent(/^Drafting · admin departemen$/);
     expect(factOf(dlg, PROFILE.fingerprint)).toHaveTextContent(PROFILE.fingerprintNote("Sari Uji"));
     expect(org.people).toHaveBeenCalledTimes(1);
   });
@@ -151,5 +151,17 @@ describe("ProfileDialog", () => {
     const { onOpenChange } = renderProfile(sari);
     await user.click(within(screen.getByRole("dialog", { name: "Profil Sari Uji" })).getByRole("button", { name: PROFILE.close }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("ProfileDialog: divisi", () => {
+  it("departemen ditulis dengan divisinya", async () => {
+    org.people.mockResolvedValue([
+      { ...sariView, departmentRole: "member", divisions: [{ id: "d1", name: "Mobile" }, { id: "d2", name: "Web" }] },
+    ]);
+    renderProfile(sari);
+    const dlg = screen.getByRole("dialog", { name: "Profil Sari Uji" });
+    await within(dlg).findByText(PROFILE.department);
+    expect(factOf(dlg, PROFILE.department)).toHaveTextContent(/^Drafting · Mobile, Web$/);
   });
 });

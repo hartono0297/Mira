@@ -325,7 +325,23 @@ pub fn create_project_with_members(
     team_id: Option<&str>,
     members: &[String],
 ) -> AppResult<Committed<ProjectRow>> {
-    create_project_inner(conn, identity, name, code, team_id, Some(members))
+    create_project_inner(conn, identity, name, code, team_id, Some((members, None)))
+}
+
+/// `create_project_with_members` for a project owned by `division` (v0.6),
+/// which must be a live division of `team_id`. Permission and the member
+/// list are the caller's.
+pub fn create_division_project(
+    conn: &mut Connection,
+    identity: &Identity,
+    name: &str,
+    code: &str,
+    team_id: &str,
+    members: &[String],
+    division: &str,
+) -> AppResult<Committed<ProjectRow>> {
+    let register = Some((members, Some(division)));
+    create_project_inner(conn, identity, name, code, Some(team_id), register)
 }
 
 /// Tests whose membership tables are written directly (not by the fold):
@@ -342,15 +358,15 @@ pub fn create_project_local(
     create_project_inner(conn, identity, name, code, team_id, None)
 }
 
-/// `register`: the initial members to register in the log with, `None` to
-/// skip registration (tests only).
+/// `register`: the initial members and division to register in the log
+/// with, `None` to skip registration (tests only).
 fn create_project_inner(
     conn: &mut Connection,
     identity: &Identity,
     name: &str,
     code: &str,
     team_id: Option<&str>,
-    register: Option<&[String]>,
+    register: Option<(&[String], Option<&str>)>,
 ) -> AppResult<Committed<ProjectRow>> {
     let name = validate_project_name(name)?;
     let code = validate_project_code(code)?;
@@ -400,7 +416,7 @@ fn create_project_inner(
         ],
     )?;
     let changes = commit_and_sign(&tx, identity, &row, &mut doc, &[], now)?;
-    if let Some(members) = register {
+    if let Some((members, division)) = register {
         crate::permissions::register_own_project_in(
             &tx,
             identity,
@@ -408,6 +424,7 @@ fn create_project_inner(
             team_id,
             &nonce,
             members,
+            division,
             now,
         )?;
     }

@@ -20,6 +20,8 @@ pub const MIGRATIONS: &[&str] = &[
     V9_ORG_V03,
     // Foto profil, v10.
     crate::profile::schema::PROFILE_SCHEMA,
+    // v0.6: divisi dan pengaturan chat, v11.
+    V11_DIVISIONS,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.
@@ -266,4 +268,42 @@ CREATE TABLE join_outbox (
     last_sent_at    TEXT,
     last_error      TEXT
 ) STRICT;
+"#;
+
+/// v0.6 (docs/plans/dept-divisi.md, 4): divisions, their members and the
+/// chat settings, all derived from the membership log, plus the division a
+/// project was made for. Rewritten by the next fold like the v9 tables.
+const V11_DIVISIONS: &str = r#"
+CREATE TABLE divisions (
+    id         TEXT PRIMARY KEY CHECK (length(id) = 32),
+    team_id    TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    archived   INTEGER NOT NULL DEFAULT 0,
+    deleted    INTEGER NOT NULL DEFAULT 0
+) STRICT;
+CREATE INDEX divisions_team ON divisions (team_id);
+
+CREATE TABLE division_members (
+    division_id TEXT NOT NULL,
+    public_key  TEXT NOT NULL CHECK (length(public_key) = 64),
+    head        INTEGER NOT NULL DEFAULT 0,
+    added_at    TEXT NOT NULL,
+    added_by    TEXT NOT NULL,
+    PRIMARY KEY (division_id, public_key)
+) STRICT;
+CREATE INDEX division_members_key ON division_members (public_key);
+
+CREATE TABLE chat_settings (
+    team_id     TEXT NOT NULL,
+    division_id TEXT NOT NULL DEFAULT '',
+    pinned      TEXT NOT NULL DEFAULT '',
+    announce    INTEGER NOT NULL DEFAULT 0,
+    set_at      TEXT NOT NULL,
+    set_by      TEXT NOT NULL,
+    PRIMARY KEY (team_id, division_id)
+) STRICT;
+
+ALTER TABLE projects ADD COLUMN division_id TEXT;
 "#;

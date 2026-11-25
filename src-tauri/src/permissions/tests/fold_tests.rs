@@ -345,8 +345,9 @@ fn superadmin_remove_row_and_last_superadmin() {
 fn team_admin_set_row() {
     let mut w = world();
     let b = bodies();
+    // v0.6: a department admin promotes only in their own department.
     assert_eq!(
-        w.sim.push(&w.admin_a, b.admin_set(&w.team_a, &w.member_a)),
+        w.sim.push(&w.admin_a, b.admin_set(&w.team_b, &w.member_a)),
         Err(R::NotAuthorized)
     );
     assert_eq!(
@@ -391,9 +392,10 @@ fn team_admin_set_row() {
 fn team_admin_unset_row() {
     let mut w = world();
     let b = bodies();
+    // v0.6: the last admin of a department may not step down.
     assert_eq!(
         w.sim.push(&w.admin_a, b.admin_unset(&w.team_a, &w.admin_a)),
-        Err(R::NotAuthorized)
+        Err(R::LastTeamAdmin)
     );
     assert_eq!(
         w.sim.push(&w.admin_b, b.admin_unset(&w.team_a, &w.admin_a)),

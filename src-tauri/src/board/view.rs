@@ -1,6 +1,6 @@
 //! Builds the frontend types (`model.rs`) from stored rows and document data.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use super::assignees::AssigneeDirectory;
 use super::doc::{BoardDoc, TaskData};
@@ -50,6 +50,7 @@ impl Ctx<'_> {
 
     pub fn summary(&self, row: &ProjectRow) -> AppResult<ProjectSummary> {
         let (open, total) = store::counts(self.conn, &row.id)?;
+        let (division_id, division_name) = self.division_of(&row.id)?;
         Ok(ProjectSummary {
             id: row.id.clone(),
             code: row.code.clone(),
@@ -67,7 +68,24 @@ impl Ctx<'_> {
             can_manage: self.allows(BoardAction::ManageProject {
                 project_id: row.id.clone(),
             }),
+            division_id,
+            division_name,
         })
+    }
+
+    /// Division id and name of a registered division project.
+    fn division_of(&self, project_id: &str) -> AppResult<(Option<String>, Option<String>)> {
+        let found = self
+            .conn
+            .query_row(
+                "SELECT p.division_id, d.name FROM projects p
+                 LEFT JOIN divisions d ON d.id = p.division_id
+                 WHERE p.id = ?1 AND p.division_id IS NOT NULL",
+                [project_id],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        Ok(found.unwrap_or((None, None)))
     }
 
     /// The rights a card needs, once per project instead of once per task

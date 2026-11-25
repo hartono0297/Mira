@@ -18,19 +18,20 @@ import "./chat.css";
 
 type Open = "channel" | "group" | "direct" | "notify" | null;
 
-export function ChatScreen() {
+// initialConv: percakapan yang langsung dibuka, misalnya dari "Buka chat" di Departemen saya.
+export function ChatScreen({ initialConv }: { initialConv?: string | null } = {}) {
   return (
     <PeopleLabelsProvider>
-      <ChatScreenInner />
+      <ChatScreenInner initialConv={initialConv ?? null} />
     </PeopleLabelsProvider>
   );
 }
 
-function ChatScreenInner() {
+function ChatScreenInner({ initialConv }: { initialConv: string | null }) {
   const live = useChatLive<ChatOverview>(chatApi.overview, "overview");
   const overview = live.data;
   const { reload, setData } = live;
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialConv);
   const [open, setOpen] = useState<Open>(null);
   const [reveal, setReveal] = useState<string | null>(null);
   const revealed = useCallback(() => setReveal(null), []);

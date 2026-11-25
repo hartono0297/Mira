@@ -204,6 +204,9 @@ fn decide_join(
         }
     };
     author_in(&tx, identity, Scope::Org, body, now)?;
+    if approve {
+        super::division::join_ad_division_in(&tx, identity, request_id, now);
+    }
     tx.execute("DELETE FROM join_requests WHERE id = ?1", [request_id])?;
     tx.commit()?;
     Ok(())
@@ -264,6 +267,7 @@ pub fn set_ad_settings(
             row.ou
         )));
     }
+    super::division::check_ou_map_divisions(&state, &ou_map)?;
     let next = AdSettings {
         domain: (!domain.is_empty()).then(|| domain.clone()),
         ou_map: ou_map.clone(),
@@ -308,7 +312,14 @@ fn clean_ou_map(map: Vec<OuMapping>) -> AppResult<Vec<OuMapping>> {
                 "OU \"{ou}\" tercantum lebih dari sekali. Satu OU hanya bisa dipetakan ke satu departemen."
             )));
         }
-        out.push(OuMapping { ou, team: row.team });
+        if let Some(division) = &row.division {
+            check_id(division, Reason::DivisionNotFound)?;
+        }
+        out.push(OuMapping {
+            ou,
+            team: row.team,
+            division: row.division,
+        });
     }
     Ok(out)
 }
@@ -318,7 +329,9 @@ fn clean_ou_map(map: Vec<OuMapping>) -> AppResult<Vec<OuMapping>> {
 /// Registers a board project this laptop just created (`project_create`
 /// with this laptop as creator, plus the initial members). Returns `false`
 /// and does nothing when this laptop has no organization or is not an
-/// active non-guest member (a board kept only on this laptop).
+/// active non-guest member (a board kept only on this laptop). A project
+/// for `division` (v0.6) waits for the division gate.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn register_own_project_in(
     conn: &Connection,
     identity: &Identity,
@@ -326,6 +339,7 @@ pub(crate) fn register_own_project_in(
     team: Option<&str>,
     nonce: &str,
     members: &[String],
+    division: Option<&str>,
     now: OffsetDateTime,
 ) -> AppResult<bool> {
     let Some(state) = load_state(conn)? else {
@@ -334,6 +348,11 @@ pub(crate) fn register_own_project_in(
     let me = identity.public_key_hex();
     if !state.is_active_non_guest(me) {
         return Ok(false);
+    }
+    if division.is_some() && !super::division::division_gate_open(&state) {
+        return Err(AppError::InvalidInput(
+            super::division::DIVISION_GATE_CLOSED.into(),
+        ));
     }
     let mut members: Vec<String> = members
         .iter()
@@ -355,6 +374,7 @@ pub(crate) fn register_own_project_in(
             creator: me.to_owned(),
             nonce: nonce.to_owned(),
             members,
+            division: division.map(str::to_owned),
         },
         now,
     )?;
@@ -388,6 +408,7 @@ pub(crate) fn register_project_for_in(
             creator: creator.to_owned(),
             nonce: nonce.to_owned(),
             members,
+            division: None,
         },
         now,
     )?;

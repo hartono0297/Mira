@@ -26,9 +26,11 @@ type Props = {
   // Hanya orang tanpa departemen yang bukan Tamu yang bisa memakai kode di sini;
   // orang yang sudah di departemen ditolak `already_in_department`.
   canRedeem: boolean;
+  // Tab Departemen saya: hanya kode dan pembuatan kode untuk departemen ini.
+  teamId?: string;
 };
 
-export function InvitesPanel({ ctx, canRedeem }: Props) {
+export function InvitesPanel({ ctx, canRedeem, teamId }: Props) {
   const { dir, pending } = ctx;
   const T = INVITE_TEXT.panel;
   const [inviting, setInviting] = useState(false);
@@ -54,8 +56,11 @@ export function InvitesPanel({ ctx, canRedeem }: Props) {
   // belum terbaca, jangan blokir: Rust tetap menolak departemen yang diarsipkan.
   const open = useOrgLive(() => orgApi.departments(false));
   const openIds = Array.isArray(open.data) ? new Set(open.data.filter((d) => !d.archived).map((d) => d.id)) : null;
-  const manageable = dir.teams.filter((t) => ctx.canManageTeam(t.id) && (openIds === null || openIds.has(t.id)));
-  const invites = [...dir.invites].sort(
+  const manageable = dir.teams.filter(
+    (t) =>
+      ctx.canManageTeam(t.id) && (openIds === null || openIds.has(t.id)) && (teamId === undefined || t.id === teamId),
+  );
+  const invites = dir.invites.filter((i) => teamId === undefined || i.teamId === teamId).sort(
     (a, b) => ORDER[a.status] - ORDER[b.status] || b.createdAt.localeCompare(a.createdAt),
   );
   const busy = pending !== null || revokeBusy;

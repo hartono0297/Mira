@@ -20,6 +20,8 @@ use crate::error::{AppError, AppResult};
 pub enum BoardAction {
     CreateProject {
         team_id: Option<String>,
+        /// v0.6: made for this division of `team_id`.
+        division_id: Option<String>,
     },
     ManageProject {
         project_id: String,
@@ -141,7 +143,20 @@ fn decide(
     action: &BoardAction,
     owner: Option<&Owner>,
 ) -> AppResult<()> {
-    if let BoardAction::CreateProject { team_id } = action {
+    if let BoardAction::CreateProject {
+        team_id,
+        division_id,
+    } = action
+    {
+        if let Some(division) = division_id {
+            let team = team_id.as_deref().unwrap_or("");
+            if rights.can_create_division_project(actor, team, division) {
+                return Ok(());
+            }
+            return Err(forbidden(
+                "Proyek divisi hanya bisa dibuat oleh kepala divisi itu, admin departemennya, atau superadmin.",
+            ));
+        }
         if rights.can_create_project(actor, team_id.as_deref()) {
             return Ok(());
         }
@@ -314,6 +329,7 @@ mod tests {
     fn create(team: Option<&str>) -> BoardAction {
         BoardAction::CreateProject {
             team_id: team.map(str::to_owned),
+            division_id: None,
         }
     }
 
