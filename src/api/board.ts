@@ -47,6 +47,9 @@ export type TaskCard = {
   canEdit?: boolean;
   canDelete?: boolean;
   myTimerRunning?: boolean;
+  // Timer saya pernah berjalan di task ini (ada segmen timer, bukan manual, yang
+  // belum dihapus) dan sekarang tidak berjalan: menu kartu menawarkan Lanjutkan.
+  myTimerPaused?: boolean;
 };
 
 export type Column = { id: ColumnId; name: string; tasks: TaskCard[] };
@@ -118,6 +121,22 @@ export type StatusTime = {
   // Ada waktu di masa depan atau urutan riwayat tidak cocok dengan urutan waktu:
   // jam beberapa laptop mungkin berbeda.
   clockWarning: boolean;
+};
+
+// Timer saya yang dijeda otomatis oleh inti Rust (docs/plans/timer-jeda.md).
+// switched: saya memulai timer di task lain (startedCode = task itu).
+// done / deleted: task dipindah ke Selesai atau dihapus (oleh saya atau rekan).
+// idle: Mira tertutup atau laptop tidur; segmen ditutup pada saat Mira terakhir aktif.
+export type TimerPauseReason = "switched" | "done" | "deleted" | "idle";
+export type TimerNotice = {
+  reason: TimerPauseReason;
+  projectId: string;
+  taskId: string;
+  code: string;
+  title: string;
+  // Akhir segmen yang ditutup (RFC 3339).
+  at: string;
+  startedCode: string | null;
 };
 
 export type TaskDetail = TaskCard & {
@@ -230,10 +249,15 @@ export const boardApi = {
     call<TaskDetail>("board_move_subtask", { projectId, taskId, subtaskId, index }),
   deleteSubtask: (projectId: string, taskId: string, subtaskId: string) =>
     call<TaskDetail>("board_delete_subtask", { projectId, taskId, subtaskId }),
-  // Menghentikan timer saya yang lain di proyek yang sama.
+  // Mulai atau lanjutkan timer saya (segmen baru). Timer saya yang berjalan di
+  // task lain, di proyek mana pun, dijeda; pemberitahuannya lewat takeTimerNotices.
   startTimer: (projectId: string, taskId: string) => call<TaskDetail>("board_start_timer", { projectId, taskId }),
+  // Jeda = menutup segmen timer saya yang berjalan. Nama command tetap
+  // board_stop_timer supaya cocok dengan laptop v0.5.
   stopTimer: (projectId: string, taskId: string, note: string | null = null) =>
     call<TaskDetail>("board_stop_timer", { projectId, taskId, note }),
+  // Mengambil lalu mengosongkan antrean pemberitahuan jeda otomatis.
+  takeTimerNotices: () => call<TimerNotice[]>("board_take_timer_notices"),
   // minutes 1 sampai 1440.
   logTime: (projectId: string, taskId: string, minutes: number, note: string | null = null) =>
     call<TaskDetail>("board_log_time", { projectId, taskId, minutes, note }),

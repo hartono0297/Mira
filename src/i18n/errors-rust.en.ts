@@ -258,7 +258,7 @@ const en: Dict<typeof id> = {
       entryNotFound: "Time entry not found. It may have been deleted. Close and reopen this task.",
       docNoProject: "The project document is incomplete: project data is missing.",
       subtaskChurn: "Subtasks on this task have been added and deleted too many times. Create a new task to continue this work.",
-      timerStopped: "Your timer on this task has already stopped. Close and reopen this task to see the latest entries.",
+      timerStopped: "Your timer on this task is already paused. The latest total shows after this task reloads.",
       clockUnreadable: "Couldn't read this laptop's clock. Check the Windows date and time settings, then try again.",
       deleteOwnEntry: "You can only delete your own time entries. Ask the owner to delete that entry.",
       docNoTasks: "The project document is incomplete: the task list is missing.",

@@ -1,6 +1,6 @@
 // Format dan hitungan waktu tercatat board v0.4. Semua fungsi murni: "sekarang"
 // selalu dioper oleh pemanggil (lihat useNow), supaya mudah dites.
-import type { ColumnId, StatusTime, TaskCard } from "../../api/board";
+import type { ColumnId, StatusTime, TaskCard, TaskDetail, TimeEntry } from "../../api/board";
 import { getLang } from "../../i18n/core";
 import { TEKS } from "./teks";
 
@@ -89,6 +89,47 @@ export function cardTrackedSecs(
   now: Date | number,
 ): number {
   return card.timersRunningSince.reduce((sum, since) => sum + runningSecs(since, now), clean(card.trackedSecs));
+}
+
+// Keadaan timer satu orang di satu task (v0.6, docs/plans/timer-jeda.md):
+// - "idle": belum pernah ada segmen timer (manual: false) miliknya;
+// - "running": ada segmennya yang berjalan;
+// - "paused": punya segmen timer yang sudah berhenti dan tidak ada yang berjalan.
+export type TimerState = "idle" | "running" | "paused";
+
+export type PersonTimer = {
+  state: TimerState;
+  // Segmen berjalan yang paling baru dimulai; null kalau tidak berjalan.
+  running: TimeEntry | null;
+  // Semua catatannya yang sudah berhenti, termasuk catatan manual.
+  closedSecs: number;
+  // closedSecs ditambah semua segmen yang berjalan sampai `now`.
+  totalSecs: number;
+};
+
+// `entries` adalah catatan yang belum dihapus (TaskDetail.timeEntries).
+export function personTimer(entries: readonly TimeEntry[], publicKey: string, now: Date | number): PersonTimer {
+  let closedSecs = 0;
+  let runningSum = 0;
+  let running: TimeEntry | null = null;
+  let hadTimer = false;
+  for (const e of entries) {
+    if (e.person.publicKey !== publicKey) continue;
+    if (e.end === null) {
+      runningSum += runningSecs(e.start, now);
+      if (!running || Date.parse(e.start) > Date.parse(running.start)) running = e;
+      continue;
+    }
+    closedSecs += clean(e.secs);
+    if (!e.manual) hadTimer = true;
+  }
+  const state: TimerState = running ? "running" : hadTimer ? "paused" : "idle";
+  return { state, running, closedSecs, totalSecs: closedSecs + runningSum };
+}
+
+// Timer saya di task ini.
+export function myTimer(task: Pick<TaskDetail, "timeEntries">, me: string, now: Date | number): PersonTimer {
+  return personTimer(task.timeEntries, me, now);
 }
 
 export const MIN_LOG_MINUTES = 1;

@@ -153,6 +153,26 @@ impl TimeData {
     }
 }
 
+/// A running timer segment that a mutation ended: the timer is paused
+/// (docs/plans/timer-jeda.md). Starting the timer again opens a new segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PausedTimer {
+    pub task_id: String,
+    pub entry_id: String,
+    /// End written to the segment (RFC 3339).
+    pub end: String,
+}
+
+/// What [`BoardDoc::start_timer`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartedTimer {
+    /// The running entry on the task.
+    pub entry_id: String,
+    /// Segments of the same person on other tasks of this project that were
+    /// paused in the same change.
+    pub paused: Vec<PausedTimer>,
+}
+
 /// One task as read from the document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TaskData {
@@ -879,14 +899,16 @@ impl BoardDoc {
     /// clamped). Usually writes only this task's rank; when the neighbours'
     /// ranks leave no room (equal ranks after a concurrent move, or a broken
     /// rank) the fewest neighbours that make room are renumbered in the same
-    /// change ([`rank::place`]).
+    /// change ([`rank::place`]). A move into Selesai from another column
+    /// pauses the running timer of `stamp.actor` on the task in the same
+    /// change; the paused segments are returned.
     pub fn move_task(
         &mut self,
         stamp: Stamp<'_>,
         id: &str,
         column: ColumnId,
         index: usize,
-    ) -> AppResult<()> {
+    ) -> AppResult<Vec<PausedTimer>> {
         let cur = self.live_task(id)?;
         let t = self.task_obj(id)?;
         let mut others: Vec<TaskData> = self
@@ -902,7 +924,7 @@ impl BoardDoc {
             current.push(&cur);
             current.sort_by(|a, b| (&a.rank, &a.id).cmp(&(&b.rank, &b.id)));
             if current.iter().position(|x| x.id == id) == Some(index) {
-                return Ok(());
+                return Ok(Vec::new());
             }
         }
 
@@ -911,12 +933,16 @@ impl BoardDoc {
         check_renumber_size(&place)?;
         self.doc.put(&t, "rank", place.rank.as_str()).map_err(am)?;
         self.renumber_tasks(others.iter().map(|x| x.id.as_str()), &place)?;
+        let mut paused = Vec::new();
         if cur.column != column {
             self.doc.put(&t, "column", column.as_str()).map_err(am)?;
             self.log(&t, stamp, kind::MOVED, column.name())?;
+            if column == ColumnId::Done {
+                paused = self.pause_mine(&cur, stamp)?;
+            }
         }
         self.doc.put(&t, "updated_at", stamp.at).map_err(am)?;
-        Ok(())
+        Ok(paused)
     }
 
     /// Writes the neighbour ranks of `place`; `ids` are the tasks `place`
@@ -936,13 +962,17 @@ impl BoardDoc {
     }
 
     /// Marks the task deleted. It stays in the document so that concurrent
-    /// edits from other laptops do not bring back a half task.
-    pub fn delete_task(&mut self, stamp: Stamp<'_>, id: &str) -> AppResult<()> {
-        self.live_task(id)?;
+    /// edits from other laptops do not bring back a half task. The running
+    /// timer of `stamp.actor` on it is paused first, in the same change; the
+    /// paused segments are returned.
+    pub fn delete_task(&mut self, stamp: Stamp<'_>, id: &str) -> AppResult<Vec<PausedTimer>> {
+        let cur = self.live_task(id)?;
+        let paused = self.pause_mine(&cur, stamp)?;
         let t = self.task_obj(id)?;
         self.doc.put(&t, "deleted", true).map_err(am)?;
         self.doc.put(&t, "updated_at", stamp.at).map_err(am)?;
-        self.log(&t, stamp, kind::DELETED, "")
+        self.log(&t, stamp, kind::DELETED, "")?;
+        Ok(paused)
     }
 
     /// Adds a comment; returns its id.
@@ -1130,29 +1160,75 @@ impl BoardDoc {
         self.log(&t, stamp, kind::SUBTASK_DELETED, &cur.title)
     }
 
-    /// Starts the timer of `stamp.actor` on a live task; returns the entry
-    /// id. Timers of the same person still running on other tasks of this
-    /// project are stopped in the same change. When the timer already runs
-    /// here nothing is staged and its entry is returned.
-    pub fn start_timer(&mut self, stamp: Stamp<'_>, task_id: &str) -> AppResult<String> {
+    /// Starts (or resumes) the timer of `stamp.actor` on a live task: opens
+    /// a new segment. Segments of the same person still running on other
+    /// tasks of this project are paused in the same change and returned.
+    /// When the timer already runs here nothing is staged and its entry is
+    /// returned.
+    pub fn start_timer(&mut self, stamp: Stamp<'_>, task_id: &str) -> AppResult<StartedTimer> {
         let task = self.live_task(task_id)?;
         if let Some(e) = task.time.iter().find(|e| e.by == stamp.actor && e.is_running()) {
-            return Ok(e.id.clone());
+            return Ok(StartedTimer {
+                entry_id: e.id.clone(),
+                paused: Vec::new(),
+            });
         }
         check_room_for_entry(&task)?;
+        let mut paused = Vec::new();
         for other in self.tasks()? {
-            if other.id == task_id {
-                continue;
-            }
-            for e in other.time.iter().filter(|e| e.by == stamp.actor && e.is_running()) {
-                self.stop_entry(&other.id, e, stamp, None)?;
+            if other.id != task_id {
+                paused.extend(self.pause_mine(&other, stamp)?);
             }
         }
-        self.new_entry(stamp, task_id, stamp.at, None, "")
+        let entry_id = self.new_entry(stamp, task_id, stamp.at, None, "")?;
+        Ok(StartedTimer { entry_id, paused })
     }
 
-    /// Stops the running timer of `stamp.actor` on the task, with `note`
-    /// (already validated, may be empty).
+    /// Pauses the running segment `entry_id` of `stamp.actor` on a task,
+    /// deleted or not, ending it at `stamp.at`. `None` when it is not a
+    /// running segment of `stamp.actor` (any more). For the timer guard
+    /// (`timer_guard.rs`).
+    pub fn pause_entry(
+        &mut self,
+        stamp: Stamp<'_>,
+        task_id: &str,
+        entry_id: &str,
+    ) -> AppResult<Option<PausedTimer>> {
+        let Some(task) = self.task(task_id)? else {
+            return Ok(None);
+        };
+        let Some(e) = task
+            .time
+            .iter()
+            .find(|e| e.id == entry_id && e.by == stamp.actor && e.is_running())
+        else {
+            return Ok(None);
+        };
+        let end = self.stop_entry(task_id, e, stamp, None)?;
+        Ok(Some(PausedTimer {
+            task_id: task_id.to_owned(),
+            entry_id: entry_id.to_owned(),
+            end,
+        }))
+    }
+
+    /// Pauses every running segment of `stamp.actor` on `task` (as read
+    /// before this change).
+    fn pause_mine(&mut self, task: &TaskData, stamp: Stamp<'_>) -> AppResult<Vec<PausedTimer>> {
+        let mut out = Vec::new();
+        for e in task.time.iter().filter(|e| e.by == stamp.actor && e.is_running()) {
+            let end = self.stop_entry(&task.id, e, stamp, None)?;
+            out.push(PausedTimer {
+                task_id: task.id.clone(),
+                entry_id: e.id.clone(),
+                end,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Pauses the running timer of `stamp.actor` on the task (ends its
+    /// running segment), with `note` (already validated, may be empty).
     pub fn stop_timer(&mut self, stamp: Stamp<'_>, task_id: &str, note: &str) -> AppResult<()> {
         let task = self.live_task(task_id)?;
         let running: Vec<&TimeData> = task
@@ -1162,7 +1238,7 @@ impl BoardDoc {
             .collect();
         if running.is_empty() {
             return Err(AppError::InvalidInput(
-                "Timer Anda di task ini sudah berhenti. Tutup lalu buka lagi task ini untuk melihat catatan terbaru."
+                "Timer Anda di task ini sudah dijeda. Total terbaru tampil setelah task ini dimuat ulang."
                     .into(),
             ));
         }
@@ -1234,11 +1310,12 @@ impl BoardDoc {
         Ok(id)
     }
 
-    /// Ends the running entry `e` of task `task_id` now and logs its length.
-    /// `note` replaces the entry's note when given. When this laptop's clock
-    /// went back while the timer ran, the end is the start (length 0):
-    /// other laptops refuse an end before the start (`rules.rs`).
-    fn stop_entry(&mut self, task_id: &str, e: &TimeData, stamp: Stamp<'_>, note: Option<&str>) -> AppResult<()> {
+    /// Ends the running entry `e` of task `task_id` at `stamp.at` and logs
+    /// its length; returns the end written. `note` replaces the entry's note
+    /// when given. When this laptop's clock went back while the timer ran,
+    /// the end is the start (length 0): other laptops refuse an end before
+    /// the start (`rules.rs`).
+    fn stop_entry(&mut self, task_id: &str, e: &TimeData, stamp: Stamp<'_>, note: Option<&str>) -> AppResult<String> {
         let t = self.task_obj(task_id)?;
         let obj = self.entry_obj(&t, TIME, &e.id).ok_or_else(entry_not_found)?;
         let end = match (timing::parse_time(&e.start), timing::parse_time(stamp.at)) {
@@ -1250,7 +1327,9 @@ impl BoardDoc {
             self.doc.put(&obj, "note", n).map_err(am)?;
         }
         let secs = timing::entry_secs(&e.start, Some(end));
-        self.log(&t, stamp, kind::TIME_LOGGED, &secs.to_string())
+        let end = end.to_owned();
+        self.log(&t, stamp, kind::TIME_LOGGED, &secs.to_string())?;
+        Ok(end)
     }
 
     /// Every map at `key` of `task`, the winning value of a conflict first.
@@ -2535,7 +2614,7 @@ mod tests {
     fn a_clock_that_went_back_ends_the_timer_at_its_start() {
         let mut d = new_doc();
         let x = d.create_task(stamp("t0"), init("x")).unwrap();
-        let e1 = d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap();
+        let e1 = d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap().entry_id;
         d.stop_timer(by("aa", "2026-11-23T07:55:00Z"), &x, "").unwrap();
         let t = d.live_task(&x).unwrap();
         let e = t.time.iter().find(|e| e.id == e1).unwrap();
@@ -2551,7 +2630,7 @@ mod tests {
         let y = d.create_task(stamp("t0"), init("y")).unwrap();
         d.commit(0).unwrap();
 
-        let e1 = d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap();
+        let e1 = d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap().entry_id;
         let e = &d.live_task(&x).unwrap().time[0];
         assert_eq!(e.id, e1);
         assert!(e.is_running() && !e.manual);
@@ -2560,12 +2639,21 @@ mod tests {
         let obj = d.obj(&map, &e1).unwrap();
         assert_eq!(e1, derive_time_id("aa", &nonce(&d, &obj).unwrap()));
         d.commit(0).unwrap();
-        assert_eq!(d.start_timer(by("aa", "2026-11-23T08:10:00Z"), &x).unwrap(), e1);
+        assert_eq!(d.start_timer(by("aa", "2026-11-23T08:10:00Z"), &x).unwrap().entry_id, e1);
         assert_eq!(d.commit(0), None, "already running, nothing staged");
 
         // Someone else's timer on x keeps running when aa moves to y.
-        let other = d.start_timer(by("bb", "2026-11-23T08:05:00Z"), &x).unwrap();
-        let e2 = d.start_timer(by("aa", "2026-11-23T08:30:00Z"), &y).unwrap();
+        let other = d.start_timer(by("bb", "2026-11-23T08:05:00Z"), &x).unwrap().entry_id;
+        let started = d.start_timer(by("aa", "2026-11-23T08:30:00Z"), &y).unwrap();
+        let e2 = started.entry_id;
+        assert_eq!(
+            started.paused,
+            [PausedTimer {
+                task_id: x.clone(),
+                entry_id: e1.clone(),
+                end: "2026-11-23T08:30:00Z".into(),
+            }]
+        );
         let tx = d.live_task(&x).unwrap();
         let first = tx.time.iter().find(|e| e.id == e1).unwrap();
         assert_eq!(first.end.as_deref(), Some("2026-11-23T08:30:00Z"));
@@ -2613,6 +2701,129 @@ mod tests {
         assert!(d.live_task(&x).unwrap().time.iter().all(|e| !e.is_running()));
     }
 
+    /// Running segments of `actor` over every task.
+    fn running_of(d: &BoardDoc, actor: &str) -> Vec<(String, String)> {
+        d.tasks()
+            .unwrap()
+            .into_iter()
+            .flat_map(|t| {
+                t.time
+                    .into_iter()
+                    .filter(|e| e.by == actor && e.is_running())
+                    .map(move |e| (t.id.clone(), e.id))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pause_resume_pause_makes_two_segments_that_add_up() {
+        let mut d = new_doc();
+        let x = d.create_task(stamp("t0"), init("x")).unwrap();
+        d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap();
+        d.stop_timer(by("aa", "2026-11-23T08:30:00Z"), &x, "").unwrap();
+        let again = d.start_timer(by("aa", "2026-11-23T09:00:00Z"), &x).unwrap();
+        assert!(again.paused.is_empty());
+        d.stop_timer(by("aa", "2026-11-23T09:15:00Z"), &x, "").unwrap();
+
+        let t = d.live_task(&x).unwrap();
+        let mine: Vec<&TimeData> = t.time.iter().filter(|e| e.by == "aa").collect();
+        assert_eq!(mine.len(), 2, "one segment per run");
+        assert!(mine.iter().all(|e| !e.manual && e.end.is_some()));
+        let totals = timing::totals_by_person(&t.time);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].secs, 30 * 60 + 15 * 60);
+        assert_eq!(totals[0].running_since, None);
+    }
+
+    #[test]
+    fn one_running_timer_per_person() {
+        let mut d = new_doc();
+        let ids: Vec<String> = ["x", "y", "z"]
+            .iter()
+            .map(|t| d.create_task(stamp("t0"), init(t)).unwrap())
+            .collect();
+        d.start_timer(by("bb", "2026-11-23T07:00:00Z"), &ids[0]).unwrap();
+        let times = ["2026-11-23T08:00:00Z", "2026-11-23T09:00:00Z", "2026-11-23T10:00:00Z"];
+        for (i, (id, at)) in ids.iter().zip(times).enumerate() {
+            let started = d.start_timer(by("aa", at), id).unwrap();
+            assert_eq!(started.paused.len(), usize::from(i > 0));
+            assert_eq!(running_of(&d, "aa"), [(id.clone(), started.entry_id.clone())]);
+        }
+        assert_eq!(running_of(&d, "bb").len(), 1, "someone else's timer is not touched");
+    }
+
+    #[test]
+    fn moving_into_selesai_pauses_my_timer_only() {
+        let mut d = new_doc();
+        let x = d.create_task(stamp("t0"), init("x")).unwrap();
+        let y = d.create_task(stamp("t0"), init("y")).unwrap();
+        let mine = d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap().entry_id;
+        let theirs = d.start_timer(by("bb", "2026-11-23T08:05:00Z"), &x).unwrap().entry_id;
+
+        // Moves that do not enter Selesai keep the timer running.
+        let moved = d.move_task(by("aa", "2026-11-23T08:10:00Z"), &x, ColumnId::Doing, 0).unwrap();
+        assert!(moved.is_empty());
+        let moved = d.move_task(by("aa", "2026-11-23T08:11:00Z"), &x, ColumnId::Todo, 1).unwrap();
+        assert!(moved.is_empty());
+        assert_eq!(running_of(&d, "aa").len(), 1);
+
+        let paused = d.move_task(by("aa", "2026-11-23T09:00:00Z"), &x, ColumnId::Done, 0).unwrap();
+        assert_eq!(
+            paused,
+            [PausedTimer {
+                task_id: x.clone(),
+                entry_id: mine.clone(),
+                end: "2026-11-23T09:00:00Z".into(),
+            }]
+        );
+        let t = d.live_task(&x).unwrap();
+        assert!(!t.time.iter().find(|e| e.id == mine).unwrap().is_running());
+        assert!(t.time.iter().find(|e| e.id == theirs).unwrap().is_running());
+        let kinds: Vec<&str> = t.activity.iter().rev().take(2).map(|a| a.kind.as_str()).collect();
+        assert_eq!(kinds, [kind::TIME_LOGGED, kind::MOVED]);
+        assert_eq!(t.activity.last().unwrap().detail, "3600");
+
+        // A timer started in Selesai keeps running while the task moves
+        // within Selesai.
+        d.start_timer(by("aa", "2026-11-23T09:10:00Z"), &x).unwrap();
+        d.move_task(by("aa", "2026-11-23T09:15:00Z"), &y, ColumnId::Done, 0).unwrap();
+        let moved = d.move_task(by("aa", "2026-11-23T09:20:00Z"), &x, ColumnId::Done, 1).unwrap();
+        assert!(moved.is_empty());
+        assert_eq!(running_of(&d, "aa").len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_task_pauses_my_timer_first() {
+        let mut d = new_doc();
+        let x = d.create_task(stamp("t0"), init("x")).unwrap();
+        let mine = d.start_timer(by("aa", "2026-11-23T08:00:00Z"), &x).unwrap().entry_id;
+        let theirs = d.start_timer(by("bb", "2026-11-23T08:05:00Z"), &x).unwrap().entry_id;
+        let paused = d.delete_task(by("aa", "2026-11-23T08:45:00Z"), &x).unwrap();
+        assert_eq!(paused.len(), 1);
+        assert_eq!(
+            (paused[0].entry_id.as_str(), paused[0].end.as_str()),
+            (mine.as_str(), "2026-11-23T08:45:00Z")
+        );
+        let t = d.task(&x).unwrap().unwrap();
+        assert!(t.deleted);
+        assert!(!t.time.iter().find(|e| e.id == mine).unwrap().is_running());
+        assert!(t.time.iter().find(|e| e.id == theirs).unwrap().is_running());
+        let kinds: Vec<&str> = t.activity.iter().rev().take(2).map(|a| a.kind.as_str()).collect();
+        assert_eq!(kinds, [kind::DELETED, kind::TIME_LOGGED]);
+
+        // The other person's laptop pauses theirs on the deleted task.
+        let p = d
+            .pause_entry(by("bb", "2026-11-23T08:50:00Z"), &x, &theirs)
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.end, "2026-11-23T08:50:00Z");
+        assert!(running_of(&d, "bb").is_empty());
+        // Not running any more, or not theirs: nothing to do.
+        assert_eq!(d.pause_entry(by("bb", "t"), &x, &theirs).unwrap(), None);
+        assert_eq!(d.pause_entry(by("cc", "t"), &x, &mine).unwrap(), None);
+        assert_eq!(d.pause_entry(by("bb", "t"), "nope", &theirs).unwrap(), None);
+    }
+
     #[test]
     fn remote_subtasks_and_entries_of_the_wrong_shape_are_refused() {
         let mut a = new_doc();
@@ -2631,7 +2842,7 @@ mod tests {
         assert!(a.live_task(&id).unwrap().subtasks.is_empty(), "restored");
         // Time entry without `by`.
         let mut b = BoardDoc::load(&a.save(), &B).unwrap();
-        let eid = b.start_timer(Stamp { actor: &b_hex, at: "t" }, &id).unwrap();
+        let eid = b.start_timer(Stamp { actor: &b_hex, at: "t" }, &id).unwrap().entry_id;
         let t = b.task_obj(&id).unwrap();
         let e = b.entry_obj(&t, TIME, &eid).unwrap();
         b.doc.delete(&e, "by").unwrap();

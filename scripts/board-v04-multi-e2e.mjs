@@ -14,6 +14,10 @@
 // dimatikan, A dinyalakan lalu menghapus X dan menambah subtask, B dinyalakan lagi.
 // Hasil akhir harus sama di kedua laptop (hapus menang atas ubah judul).
 //
+// Timer pakai jeda (v0.6): A memulai, menjeda, melanjutkan, dan menjeda lagi; B harus
+// melihat dua segmen A yang berhenti dengan total yang sama. Lalu B menjalankan timer
+// dan A memindah task ke Selesai: penjaga timer di laptop B menjeda timer B.
+//
 // Dialog detail task hanya dibuka lewat [data-open-task="<id>"] untuk screenshot,
 // tanpa mengubah isinya (isi dialog diuji di board-e2e.mjs).
 //
@@ -90,7 +94,23 @@ const secs = (since) => `${Math.round((Date.now() - since) / 1000)} dtk`;
 
 const running = {};
 
+// Saat mesin sibuk, instance yang baru dibuka bisa langsung keluar karena folder
+// webview masih dikunci proses WebView2 lama. Coba lagi sampai tiga kali.
 async function launch(id) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await launchOnce(id);
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      console.log(`Membuka ${id} gagal (${String(err?.message ?? err).slice(0, 120)}), coba lagi.`);
+      await stop(id).catch(() => {});
+      for (let i = 0; i < 30 && webviewsOf(NODES[id].dir) > 0; i++) await sleep(500);
+      await sleep(3000);
+    }
+  }
+}
+
+async function launchOnce(id) {
   const node = NODES[id];
   mkdirSync(node.dir, { recursive: true });
   const log = createWriteStream(join(root, `${id}-stderr.log`), { flags: "a" });
@@ -106,8 +126,10 @@ async function launch(id) {
     stdio: ["ignore", "ignore", "pipe"],
   });
   child.stderr.pipe(log);
+  // Dicatat lebih dulu supaya stop(id) bisa menghentikannya kalau sambungan gagal.
+  running[id] = { child, browser: { close: async () => {} }, page: null, consoleLines: [] };
   let browser;
-  for (let i = 0; i < 80 && !browser; i++) {
+  for (let i = 0; i < 80 && !browser && child.exitCode === null; i++) {
     await sleep(500);
     try {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${node.cdp}`);
@@ -115,7 +137,11 @@ async function launch(id) {
       /* belum siap */
     }
   }
-  if (!browser) throw new Error(`WebView2 ${id} tidak bisa dihubungi lewat CDP`);
+  if (!browser) {
+    throw new Error(
+      `WebView2 ${id} tidak bisa dihubungi lewat CDP${child.exitCode !== null ? ` (mira.exe keluar dengan kode ${child.exitCode})` : ""}`,
+    );
+  }
   let page;
   for (let i = 0; i < 40 && !page; i++) {
     page = browser.contexts().flatMap((c) => c.pages())[0];
@@ -126,10 +152,28 @@ async function launch(id) {
     if (m.type() === "error" || m.type() === "warning") consoleLines.push(`[${m.type()}] ${m.text()}`);
   });
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 60000 });
   await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
   running[id] = { child, browser, page, consoleLines };
   return running[id];
+}
+
+// Jumlah proses msedgewebview2 yang memakai folder data `dir`.
+function webviewsOf(dir) {
+  try {
+    const out = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "(Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { $_.CommandLine -like '*' + $env:MIRA_E2E_DIR + '*' }).Count",
+      ],
+      { encoding: "utf8", env: { ...process.env, MIRA_E2E_DIR: dir } },
+    );
+    return Number(out.trim()) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 async function stop(id) {
@@ -144,6 +188,9 @@ async function stop(id) {
     /* sudah berhenti */
   }
   await sleep(1500);
+  // Proses WebView2 bisa masih memegang folder data beberapa detik setelah taskkill
+  // saat mesin sibuk; instance berikutnya lalu gagal membuat webview. Tunggu sampai lepas.
+  for (let i = 0; i < 30 && webviewsOf(NODES[id].dir) > 0; i++) await sleep(500);
 }
 
 // Memanggil command Tauri di instance `id`. Hasil: { ok, value } atau { ok: false, error }.
@@ -252,7 +299,7 @@ async function goProject(id) {
   await projectNav(p).getByRole("button", { name: new RegExp(PROJECT) }).click({ timeout: SYNC_MS });
   await openBtn(p).waitFor({ timeout: 30000 });
 }
-// Dialog detail task v0.4. Pilihan Tenggat, Label, dan Hentikan timer juga
+// Dialog detail task v0.4. Pilihan Tenggat dan Label juga
 // role=dialog di dalamnya, jadi dialog task dikenali dari tombol Tutup-nya.
 const taskDialog = (p) =>
   p.getByRole("dialog").filter({ has: p.getByRole("button", { name: "Tutup detail task" }) });
@@ -309,7 +356,7 @@ try {
 
   for (const id of Object.keys(NODES)) {
     await page(id).reload();
-    await page(id).waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+    await page(id).waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 60000 });
     await waitShell(id);
     await setTheme(id, "Terang");
   }
@@ -409,13 +456,56 @@ try {
       Array.isArray(seen) && seen.length === 1,
       Array.isArray(seen) ? `${secs(since)}: ${seen.join(", ")}` : seen,
     );
+    // timer-jeda: Jeda = menutup segmen, Lanjutkan = segmen baru. Format data sama dengan v0.5.
     await sleep(2000);
-    const stopped = await must("A", "board_stop_timer", { ...base, note: "Sketsa awal" });
+    const paused1 = await must("A", "board_stop_timer", { ...base, note: null });
     check(
-      "4. A menghentikan timer: tidak ada timer berjalan, catatan A punya waktu akhir",
-      stopped.myRunningEntry === null && stopped.timeEntries.some((e) => e.id === aEntryId && e.end !== null && e.mine),
-      `catatan=${stopped.timeEntries.length}`,
+      "4. A menjeda timer: tidak ada timer berjalan, segmen pertama punya waktu akhir",
+      paused1.myRunningEntry === null && paused1.timeEntries.some((e) => e.id === aEntryId && e.end !== null && e.mine),
+      `catatan=${paused1.timeEntries.length}`,
     );
+    const resumed = await must("A", "board_start_timer", base);
+    check(
+      "4. A melanjutkan timer: segmen baru berjalan",
+      Boolean(resumed.myRunningEntry) && resumed.myRunningEntry !== aEntryId,
+      String(resumed.myRunningEntry),
+    );
+    await sleep(2000);
+    const paused2 = await must("A", "board_stop_timer", { ...base, note: null });
+    const aSegs = paused2.timeEntries.filter((e) => e.mine && !e.manual);
+    const aSum = aSegs.reduce((n, e) => n + e.secs, 0);
+    check(
+      "4. A menjeda lagi: dua segmen A, total A = jumlah kedua segmen",
+      aSegs.length === 2 && aSegs.every((e) => e.end !== null) && secsOf(paused2, pk.A) === aSum && aSum >= 3,
+      `segmen=${aSegs.map((e) => e.secs).join("+")} dtk, total=${secsOf(paused2, pk.A)} dtk`,
+    );
+    const sinceP = Date.now();
+    const bSeesPaused = await settle("B melihat timer A dijeda dengan total yang sama", async () => {
+      const b = await getTask("B");
+      if (!b) return null;
+      const segs = b.timeEntries.filter((e) => e.person.publicKey === pk.A && !e.manual);
+      const t = b.timeTotals.find((x) => x.person.publicKey === pk.A);
+      return segs.length === 2 && segs.every((e) => e.end !== null) && t && t.runningSince === null && t.secs === aSum ? b : null;
+    });
+    check(
+      "4. B melihat A dijeda: dua segmen berhenti, tanpa timer berjalan, total A sama dengan di A",
+      typeof bSeesPaused === "object",
+      typeof bSeesPaused === "object" ? `${secs(sinceP)}: Ayu ${aSum} dtk` : bSeesPaused,
+    );
+    const cardA = await getCard("A");
+    check("4. Kartu di A: myTimerPaused = true, myTimerRunning = false", cardA?.myTimerPaused === true && !cardA?.myTimerRunning);
+    // Di layar B: Per orang menampilkan Ayu dengan tag dijeda.
+    await goProject("B");
+    await openDetail("B");
+    let pausedTag = false;
+    for (let i = 0; i < 20 && !pausedTag; i++) {
+      const t = await taskDialog(page("B")).innerText().catch(() => "");
+      pausedTag = /Ayu[\s\S]{0,40}dijeda/.test(t);
+      if (!pausedTag) await sleep(500);
+    }
+    await shot("B", "timer-jeda-b-melihat-a-dijeda.png");
+    check("4. Layar B: Per orang menampilkan Ayu dengan tag dijeda", pausedTag);
+    await closeDetail("B");
     const logged = await must("B", "board_log_time", { ...base, minutes: 30, note: "Revisi warna" });
     check(
       "4. B mencatat waktu manual 30 menit",
@@ -456,6 +546,13 @@ try {
   // ---------- 5. Durasi status ----------
   await section("5. Durasi status", async () => {
     await must("A", "board_move_task", { projectId, taskId, columnId: "doing", index: 0 });
+    // timer-jeda: B menjalankan timer; A memindah task ke Selesai; laptop B menjedanya.
+    const bStarted = await must("B", "board_start_timer", { projectId, taskId });
+    const bEntry = bStarted.myRunningEntry;
+    await settle("A melihat timer B berjalan", async () => {
+      const a = await getTask("A");
+      return a?.timeTotals.some((t) => t.person.publicKey === pk.B && t.runningSince) ? a : null;
+    });
     await sleep(1500);
     await must("A", "board_move_task", { projectId, taskId, columnId: "done", index: 0 });
     const a = await getTask("A");
@@ -473,6 +570,30 @@ try {
       "5. B: statusTime.currentColumn = done dan cycleSecs sama dengan A",
       typeof b === "object" && b.statusTime.cycleSecs === a?.statusTime?.cycleSecs,
       typeof b === "object" ? `${secs(since)}: cycle A=${a?.statusTime?.cycleSecs}, B=${b.statusTime.cycleSecs}, peringatan jam=${b.statusTime.clockWarning}` : b,
+    );
+    // Penjaga timer di B berjalan tiap 60 detik.
+    const bPaused = await settle(
+      "B menjeda timernya sendiri setelah task masuk Selesai, A melihatnya",
+      async () => {
+        const db = await getTask("B");
+        const da = await getTask("A");
+        const ended = (d) => d?.timeEntries.some((e) => e.id === bEntry && e.end !== null);
+        return db?.myRunningEntry === null && ended(db) && ended(da) ? { db, da } : null;
+      },
+      150000,
+    );
+    check(
+      "5. Timer B dijeda otomatis karena task dipindah ke Selesai oleh A; A dan B sama",
+      typeof bPaused === "object" && totalsKey(bPaused.da) === totalsKey(bPaused.db),
+      typeof bPaused === "object" ? `${secs(since)}` : bPaused,
+    );
+    const viaApi = await call("B", "board_take_timer_notices");
+    const notices = viaApi.ok ? viaApi.value : [];
+    const onScreen = (await page("B").locator("body").innerText().catch(() => "")).includes("dipindah ke Selesai");
+    check(
+      "5. B mendapat pemberitahuan jeda karena Selesai (di layar atau di antrean)",
+      onScreen || notices.some((n) => n.reason === "done" && n.taskId === taskId),
+      `layar=${onScreen}, antrean=${notices.map((n) => n.reason).join(",")}`,
     );
   });
 
@@ -510,6 +631,15 @@ try {
         await sleep(700);
         await shot(id, `v04-02-detail-task-${id.toLowerCase()}-${suffix}.png`);
         check(`7. Dialog detail task terbuka di ${id} (${suffix})`, (await taskDialog(page(id)).count()) === 1);
+        if (suffix === "terang") {
+          const text = await taskDialog(page(id)).innerText().catch(() => "");
+          const noManual = (await taskDialog(page(id)).getByRole("button", { name: "Catat waktu manual" }).count()) === 0;
+          // Task sudah di Selesai: kepala dialog menampilkan "Total Anda", tanpa tag dijeda.
+          check(
+            `7. ${id}: task di Selesai menampilkan Total Anda tanpa tag dijeda, tanpa tombol Catat waktu manual`,
+            text.includes("Total Anda") && !text.includes("dijeda") && noManual,
+          );
+        }
         await closeDetail(id);
       }
     }
@@ -623,7 +753,15 @@ for (const target of toDelete) {
     }
   }
 }
-rmSync(root, { recursive: true, force: true });
+// Sisa kunci WebView2 bisa membuat hapus gagal sesaat; coba beberapa kali.
+for (let i = 0; i < 10; i++) {
+  try {
+    rmSync(root, { recursive: true, force: true });
+    break;
+  } catch {
+    await sleep(1000);
+  }
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} pemeriksaan lulus.`);

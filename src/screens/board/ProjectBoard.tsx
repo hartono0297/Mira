@@ -360,18 +360,12 @@ export function ProjectBoard({
       open: () => onOpenTask(id),
       move: (to) => void move(id, to, true),
       edit: (patch: TaskPatch, done: string) => void changeTask(code, () => boardApi.updateTask(projectId, id, patch), done),
-      timer: (start) => {
-        // Inti Rust menghentikan timer saya di task lain proyek ini saat timer
-        // baru mulai; pengumumannya menyebut task itu.
-        const stopped = start
-          ? (viewRef.current?.columns.flatMap((c) => c.tasks) ?? []).filter((t) => t.id !== id && t.myTimerRunning).map((t) => t.code)
-          : [];
-        const done = !start
-          ? TEKS_MENU.kartu.timerBerhenti(code)
-          : stopped.length > 0
-            ? TEKS_MENU.kartu.timerMulaiGanti(code, stopped)
-            : TEKS_MENU.kartu.timerMulai(code);
-        void changeTask(code, () => (start ? boardApi.startTimer(projectId, id) : boardApi.stopTimer(projectId, id, null)), done);
+      timer: (step) => {
+        // Mulai dan Lanjutkan menjeda timer saya di task lain; jeda itu
+        // diumumkan TimerNotices, jadi di sini hanya task ini yang disebut.
+        const K = TEKS_MENU.kartu;
+        const done = step === "pause" ? K.timerDijeda(code) : step === "resume" ? K.timerLanjut(code) : K.timerMulai(code);
+        void changeTask(code, () => (step === "pause" ? boardApi.stopTimer(projectId, id, null) : boardApi.startTimer(projectId, id)), done);
       },
       copy: () => void copyCode(code),
       // Galat dilempar ke dialog konfirmasi menu, yang menampilkannya.

@@ -75,7 +75,7 @@ const en: Dict<typeof id> = {
     komentarTerkirim: "Comment sent.",
     subtaskBelumTersimpan: "Subtask not saved",
     waktuBelumTersimpan: "Time not saved",
-    timerBelumTersimpan: "Timer not saved",
+    timerBelumTersimpan: "Timer not changed",
     taskBelumTerhapus: "Task not deleted",
     isianMasihAda: "What you typed is still here. Try again.",
     tidakBerizin: "You don't have permission for this",

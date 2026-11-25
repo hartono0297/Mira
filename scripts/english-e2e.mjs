@@ -134,7 +134,7 @@ async function launch() {
   }
   await page.waitForLoadState("domcontentloaded");
   await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
-  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 60000 });
   await rememberKey(page);
   return { child, browser, page, exited };
 }
@@ -448,7 +448,15 @@ for (const target of miraCredentials()) {
     }
   }
 }
-rmSync(dataDir, { recursive: true, force: true });
+// Sisa kunci WebView2 bisa membuat hapus gagal sesaat; coba beberapa kali.
+for (let i = 0; i < 10; i++) {
+  try {
+    rmSync(dataDir, { recursive: true, force: true });
+    break;
+  } catch {
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} pemeriksaan lulus.`);

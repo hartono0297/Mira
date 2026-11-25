@@ -8,8 +8,8 @@ import {
   IconCopy,
   IconFileText,
   IconFlag,
+  IconPlayerPause,
   IconPlayerPlay,
-  IconPlayerStop,
   IconTrash,
   IconUserPlus,
 } from "@tabler/icons-react";
@@ -23,12 +23,16 @@ import { boardMenuItems, submenu, type BoardMenuEntry } from "./useBoardMenu";
 
 const T = TEKS_MENU.kartu;
 
+export type TimerStep = "start" | "pause" | "resume";
+
 export type CardMenuActions = {
   open: () => void;
   move: (to: Place) => void;
   // done = pengumuman setelah berhasil.
   edit: (patch: TaskPatch, done: string) => void;
-  timer: (start: boolean) => void;
+  // start = segmen pertama, pause = tutup segmen yang berjalan, resume = segmen baru
+  // setelah dijeda (docs/plans/timer-jeda.md).
+  timer: (step: TimerStep) => void;
   copy: () => void;
   // Dijalankan dari dialog konfirmasi; galatnya tampil di dialog itu.
   remove: () => Promise<void>;
@@ -143,7 +147,12 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
     { id: "due-other", label: T.tanggalLain, onSelect: actions.open },
   );
 
-  const running = !!task.myTimerRunning;
+  const timerStep: TimerStep = task.myTimerRunning ? "pause" : task.myTimerPaused ? "resume" : "start";
+  const timerItem = {
+    start: { label: T.mulaiTimer, icon: <IconPlayerPlay size={16} /> },
+    pause: { label: T.jedaTimer, icon: <IconPlayerPause size={16} /> },
+    resume: { label: T.lanjutkanTimer, icon: <IconPlayerPlay size={16} /> },
+  }[timerStep];
   // Jumlah catatan waktu tidak ada di kartu; kalau kartu menunjukkan ada waktu, disebut tanpa angka.
   const hasTime = task.trackedSecs > 0 || task.timersRunningSince.length > 0;
 
@@ -156,10 +165,10 @@ export function cardMenuEntries({ view, task, columnId, index, size, actions }: 
     canEdit && submenu({ id: "due", label: T.tenggat, menuLabel: T.tenggatMenu(code), icon: <IconCalendarDue size={16} />, items: dueItems }),
     SEPARATOR,
     canEdit && {
-      id: running ? "timer-stop" : "timer-start",
-      label: running ? T.hentikanTimer : T.mulaiTimer,
-      icon: running ? <IconPlayerStop size={16} /> : <IconPlayerPlay size={16} />,
-      onSelect: () => actions.timer(!running),
+      id: `timer-${timerStep}`,
+      label: timerItem.label,
+      icon: timerItem.icon,
+      onSelect: () => actions.timer(timerStep),
     },
     { id: "copy", label: T.salinKode(code), icon: <IconCopy size={16} />, onSelect: actions.copy },
     SEPARATOR,

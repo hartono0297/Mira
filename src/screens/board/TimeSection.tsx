@@ -13,8 +13,16 @@ import { FieldError } from "../../components/FieldError";
 import { Avatar } from "../../components/Avatar";
 import { COLUMN_NAMES, COLUMN_ORDER, formatDateTime } from "./format";
 import { cycleDone, deleteEntryLabel, historySummary, SAY, startedAt, TW } from "./teksWaktu";
+import { MANUAL_TIME_LOG } from "./timeFeatures";
 import { ForgotTag, useAnnounce, useLocalEscape, type TimeProps } from "./TimerMini";
-import { formatDuration, formatDurationLong, liveStatusSecs, parseMinutes, runningSecs } from "./timeFormat";
+import {
+  formatDuration,
+  formatDurationLong,
+  liveStatusSecs,
+  parseMinutes,
+  personTimer,
+  runningSecs,
+} from "./timeFormat";
 import { useNow } from "./useNow";
 import "./field.css";
 import "./time.css";
@@ -40,6 +48,7 @@ function PersonAvatar({ person }: { person: Person }) {
 }
 
 // Bagian Waktu di detail task: total, per orang, per status, catat manual, riwayat.
+// Catat manual hanya tampil kalau MANUAL_TIME_LOG menyala (timeFeatures.ts).
 export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps) {
   const id = useId();
   const now = useNow(30_000);
@@ -53,6 +62,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
   const [deleting, setDeleting] = useState(false);
   const alive = useRef(true);
   const sectionRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const logBtnRef = useRef<HTMLButtonElement>(null);
   const durRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -67,14 +77,16 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
     };
   }, []);
 
-  // Setelah hapus, fokus ke ringkasan riwayat; kalau riwayat sudah kosong, ke tombol catat.
+  // Setelah hapus, fokus ke ringkasan riwayat; kalau riwayat sudah kosong, ke tombol
+  // catat, atau ke judul bagian kalau catat manual dimatikan.
   useEffect(() => {
     if (!focusAfterDelete.current) return;
     focusAfterDelete.current = false;
-    (summaryRef.current ?? logBtnRef.current)?.focus();
+    (summaryRef.current ?? logBtnRef.current ?? headingRef.current)?.focus();
   });
 
-  const showLog = logOpen && canEdit;
+  const canLog = MANUAL_TIME_LOG && canEdit;
+  const showLog = logOpen && canLog;
   useEffect(() => {
     if (showLog) durRef.current?.focus();
   }, [showLog]);
@@ -148,10 +160,18 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
     }
   }
 
+  const done = task.statusTime.currentColumn === "done";
   const people = task.timeTotals
     .map((t) => ({ ...t, total: t.secs + (t.runningSince ? runningSecs(t.runningSince, now) : 0) }))
     .filter((t) => t.total > 0 || t.runningSince)
-    .sort((a, b) => b.total - a.total || a.person.name.localeCompare(b.person.name));
+    .sort((a, b) => b.total - a.total || a.person.name.localeCompare(b.person.name))
+    // Dijeda: punya segmen timer yang sudah berhenti dan tidak ada yang berjalan.
+    // Orang yang hanya punya catatan manual tidak dapat tag, begitu juga semua orang
+    // saat task di Selesai (timer di sana sudah dijeda otomatis).
+    .map((t) => ({
+      ...t,
+      paused: !done && !t.runningSince && personTimer(task.timeEntries, t.person.publicKey, now).state === "paused",
+    }));
   const total = people.reduce((sum, t) => sum + t.total, 0);
   const st = task.statusTime;
   const statusSecs = liveStatusSecs(st, now);
@@ -236,7 +256,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
         {say}
       </span>
       <div className="td-sec-head">
-        <h3 className="td-sh" id={`${id}-h`}>
+        <h3 className="td-sh" id={`${id}-h`} ref={headingRef} tabIndex={-1}>
           {TW.heading}
         </h3>
         <span className="td-meta">
@@ -245,7 +265,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
             <Dur secs={total} />
           </b>
         </span>
-        {canEdit && (
+        {canLog && (
           <button
             type="button"
             className="btn btn-ghost btn-sm td-link-btn td-log-open"
@@ -342,6 +362,12 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
                   <span className="td-run-tag">
                     <span className="td-run" aria-hidden="true" />
                     {TW.running}
+                  </span>
+                )}
+                {t.paused && (
+                  <span className="td-run-tag td-paused-tag">
+                    <span className="td-pause" aria-hidden="true" />
+                    {TW.pausedTag}
                   </span>
                 )}
                 <span className="v">

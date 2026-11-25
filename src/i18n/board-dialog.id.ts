@@ -77,7 +77,7 @@ const id = {
     komentarTerkirim: "Komentar terkirim.",
     subtaskBelumTersimpan: "Subtask belum tersimpan",
     waktuBelumTersimpan: "Waktu belum tersimpan",
-    timerBelumTersimpan: "Timer belum tersimpan",
+    timerBelumTersimpan: "Timer belum diubah",
     taskBelumTerhapus: "Task belum terhapus",
     isianMasihAda: "Isian Anda masih ada. Coba lagi.",
     tidakBerizin: "Anda tidak punya izin untuk ini",

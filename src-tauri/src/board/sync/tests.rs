@@ -893,9 +893,9 @@ fn run(l: &mut Laptop, project: &str, op: &Op) {
                         &names,
                     )
                 }
-                Op::Move(_, c, pos) => d.move_task(s, &id, column(*c), *pos),
+                Op::Move(_, c, pos) => d.move_task(s, &id, column(*c), *pos).map(|_| ()),
                 Op::Comment(_, t) => d.add_comment(s, &id, &format!("komentar {t}")).map(|_| ()),
-                Op::Delete(_) => d.delete_task(s, &id),
+                Op::Delete(_) => d.delete_task(s, &id).map(|_| ()),
                 Op::Due(_, day) => d.update_task(
                     s,
                     &id,

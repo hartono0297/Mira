@@ -664,7 +664,7 @@ describe("Detail task: subtask, waktu, dan timer", () => {
     expect(screen.queryByText("Subtask belum tersimpan")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Timer gagal" }));
-    expect(await screen.findByText("Timer belum tersimpan")).toBeInTheDocument();
+    expect(await screen.findByText("Timer belum diubah")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Waktu gagal" }));
     expect(await screen.findByText("Waktu belum tersimpan")).toBeInTheDocument();
   });
