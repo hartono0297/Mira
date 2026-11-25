@@ -37,13 +37,24 @@ const MAX_AHEAD: Duration = Duration::seconds(60);
 const ZWJ: char = '\u{200D}';
 const VS16: char = '\u{FE0F}';
 const KEYCAP: char = '\u{20E3}';
+/// Waving black flag, the base of subdivision flags (tag sequences).
+const BLACK_FLAG: char = '\u{1F3F4}';
+const CANCEL_TAG: char = '\u{E007F}';
 
 fn bad_emoji() -> String {
     "emoji tidak sah".into()
 }
 
-/// Field check for `Body::Reaction::emoji` (called from `model`): a Unicode
-/// emoji or an office emote `:nama:`.
+/// Field check for `Body::Reaction::emoji` (called from `model`): one
+/// Unicode emoji or an office emote `:nama:`.
+///
+/// An emoji is one or more elements joined by ZWJ. An element is a keycap
+/// (`[0-9#*]` U+FE0F U+20E3), a pair of regional indicators (a flag), or a
+/// pictographic base followed by an optional U+FE0F and an optional skin
+/// tone; a black flag may instead carry a tag sequence ending in U+E007F.
+/// Anything else (letters of any script, combining marks, other variation
+/// selectors, lone modifiers or tags, several emoji side by side) is
+/// refused, so a chip never shows invisible or arbitrary text.
 pub fn validate_emoji(emoji: &str) -> Result<(), String> {
     if let Some(inner) = emoji.strip_prefix(':') {
         let name = inner.strip_suffix(':').ok_or_else(bad_emoji)?;
@@ -57,22 +68,89 @@ pub fn validate_emoji(emoji: &str) -> Result<(), String> {
     if chars.is_empty() || chars.len() > MAX_EMOJI_CHARS || emoji.len() > MAX_EMOJI_BYTES {
         return Err(bad_emoji());
     }
-    for (i, &c) in chars.iter().enumerate() {
-        if c.is_ascii() {
-            // Only the base of a keycap: `1`, `#` or `*`, then VS16 and U+20E3.
-            let keycap = (c.is_ascii_digit() || c == '#' || c == '*')
-                && chars.get(i + 1) == Some(&VS16)
-                && chars.get(i + 2) == Some(&KEYCAP);
-            if !keycap {
-                return Err(bad_emoji());
-            }
-            continue;
-        }
-        if c.is_whitespace() || c.is_control() || is_hidden(c) {
-            return Err(bad_emoji());
+    let mut i = 0;
+    loop {
+        i = element(&chars, i).ok_or_else(bad_emoji)?;
+        match chars.get(i) {
+            None => return Ok(()),
+            Some(&ZWJ) if i + 1 < chars.len() => i += 1,
+            Some(_) => return Err(bad_emoji()),
         }
     }
-    Ok(())
+}
+
+/// End of the emoji element starting at `i`, or `None` when none starts there.
+fn element(chars: &[char], i: usize) -> Option<usize> {
+    let c = *chars.get(i)?;
+    let at = |k: usize| chars.get(k).copied();
+    if c.is_ascii_digit() || c == '#' || c == '*' {
+        return (at(i + 1) == Some(VS16) && at(i + 2) == Some(KEYCAP)).then_some(i + 3);
+    }
+    if is_regional_indicator(c) {
+        return at(i + 1)
+            .filter(|n| is_regional_indicator(*n))
+            .map(|_| i + 2);
+    }
+    if !is_pictographic(c) {
+        return None;
+    }
+    let mut j = i + 1;
+    if c == BLACK_FLAG && at(j).is_some_and(is_tag_spec) {
+        while at(j).is_some_and(is_tag_spec) {
+            j += 1;
+        }
+        return (at(j) == Some(CANCEL_TAG)).then_some(j + 1);
+    }
+    if at(j) == Some(VS16) {
+        j += 1;
+    }
+    if at(j).is_some_and(is_skin_tone) {
+        j += 1;
+    }
+    Some(j)
+}
+
+fn is_regional_indicator(c: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
+}
+
+fn is_skin_tone(c: char) -> bool {
+    ('\u{1F3FB}'..='\u{1F3FF}').contains(&c)
+}
+
+/// Tag characters spelling a subdivision (before the cancel tag).
+fn is_tag_spec(c: char) -> bool {
+    ('\u{E0020}'..='\u{E007E}').contains(&c)
+}
+
+/// Characters that may start an emoji: the main emoji blocks and the older
+/// symbols that have an emoji form (an approximation of
+/// `Extended_Pictographic`, without a Unicode data crate).
+fn is_pictographic(c: char) -> bool {
+    if is_regional_indicator(c) || is_skin_tone(c) {
+        return false;
+    }
+    matches!(
+        c,
+        '\u{00A9}'
+            | '\u{00AE}'
+            | '\u{203C}'
+            | '\u{2049}'
+            | '\u{2122}'
+            | '\u{2139}'
+            | '\u{2194}'..='\u{21AA}'
+            | '\u{2300}'..='\u{23FF}'
+            | '\u{24C2}'
+            | '\u{25AA}'..='\u{25FE}'
+            | '\u{2600}'..='\u{27BF}'
+            | '\u{2934}'..='\u{2935}'
+            | '\u{2B00}'..='\u{2BFF}'
+            | '\u{3030}'
+            | '\u{303D}'
+            | '\u{3297}'
+            | '\u{3299}'
+            | '\u{1F000}'..='\u{1FAFF}'
+    )
 }
 
 /// Office emote names, like sticker names: `[a-z0-9_]{2,32}`.
@@ -83,43 +161,12 @@ fn is_emote_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// Invisible or direction-changing characters an emoji may not carry.
-/// ZWJ and the tag characters of subdivision flags are allowed.
-fn is_hidden(c: char) -> bool {
-    if c == ZWJ || ('\u{E0020}'..='\u{E007F}').contains(&c) {
-        return false;
-    }
-    matches!(
-        c,
-        // Bidi embedding, override, isolate and marks.
-        '\u{202A}'..='\u{202E}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{200E}'
-            | '\u{200F}'
-            | '\u{061C}'
-            // Other format characters and invisible fillers.
-            | '\u{00AD}'
-            | '\u{034F}'
-            | '\u{115F}'
-            | '\u{1160}'
-            | '\u{17B4}'
-            | '\u{17B5}'
-            | '\u{180B}'..='\u{180E}'
-            | '\u{200B}'
-            | '\u{200C}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{3164}'
-            | '\u{FEFF}'
-            | '\u{FFA0}'
-            | '\u{FFF9}'..='\u{FFFB}'
-            | '\u{E0001}'
-    )
-}
-
 /// May the author make this reaction record? A member of the conversation
 /// at the record's time, like a message (`judge::may_post`), so a locked
-/// Umum channel takes reactions from everyone in it. Refused in a channel
-/// that was archived at the record's time.
+/// Umum channel takes reactions from everyone in it. Like messages, an
+/// archive is not checked here: whether this laptop already has the
+/// `channel_archive` record must not decide what it stores. Reactions made
+/// while archived are hidden when shown ([`reactions_for`]).
 pub(crate) fn judge(ctx: &Ctx, rec: &VerifiedRecord, st: Standing) -> AppResult<Verdict> {
     let Body::Reaction { conv, .. } = rec.body() else {
         return Ok(judge::reject("bad_format", "bukan reaksi"));
@@ -131,35 +178,29 @@ pub(crate) fn judge(ctx: &Ctx, rec: &VerifiedRecord, st: Standing) -> AppResult<
         // Stored purged by `store::apply`.
         return Ok(Verdict::Accept);
     }
-    let verdict = judge::may_post(ctx, &info, rec.author(), rec.at, st)?;
-    if verdict != Verdict::Accept {
-        return Ok(verdict);
-    }
-    if archived_at(ctx, &info, rec.at)? {
-        return Ok(judge::forbidden("channel ini diarsipkan"));
-    }
-    Ok(Verdict::Accept)
+    judge::may_post(ctx, &info, rec.author(), rec.at, st)
 }
 
-/// Whether `info` is archived and its archive (last writer) is not later
-/// than `at`. A reaction made before the archive is still taken when it
-/// arrives afterwards.
-fn archived_at(ctx: &Ctx, info: &ConvInfo, at: OffsetDateTime) -> AppResult<bool> {
-    if !info.archived {
-        return Ok(false);
+/// Since when `conv` is archived (its winning `channel_archive`), or `None`
+/// when it is not. An archived channel without a known time hides all.
+fn archived_since(ctx: &Ctx, conv: &str) -> AppResult<Option<OffsetDateTime>> {
+    if !ctx.conv(conv)?.is_some_and(|i| i.archived) {
+        return Ok(None);
     }
     let since: Option<Option<String>> = ctx
         .conn
         .query_row(
             "SELECT archive_at FROM chat_channels WHERE conv = ?1",
-            [&info.conv],
+            [conv],
             |r| r.get(0),
         )
         .optional()?;
-    Ok(since
-        .flatten()
-        .and_then(|s| parse_time(&s))
-        .is_none_or(|since| since <= at))
+    Ok(Some(
+        since
+            .flatten()
+            .and_then(|s| parse_time(&s))
+            .unwrap_or(OffsetDateTime::UNIX_EPOCH),
+    ))
 }
 
 /// Stores an accepted reaction record and updates `chat_reactions`.
@@ -209,7 +250,7 @@ pub fn apply(
 /// reaction was valid when made.
 pub fn reactions_for(ctx: &Ctx, message_id: &str) -> AppResult<Vec<ReactionView>> {
     let mut stmt = ctx.conn.prepare_cached(
-        "SELECT r.emoji, r.author, r.at FROM chat_reactions r
+        "SELECT r.emoji, r.author, r.at, r.conv FROM chat_reactions r
          JOIN chat_messages m ON m.id = r.message_id AND m.conv = r.conv
          WHERE r.message_id = ?1 AND r.active = 1 AND m.deleted = 0
          ORDER BY r.at, r.author",
@@ -220,14 +261,26 @@ pub fn reactions_for(ctx: &Ctx, message_id: &str) -> AppResult<Vec<ReactionView>
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    // Reactions made while the channel is archived are not shown (judged
+    // from the records here, the same on every laptop that has them).
+    let since = match rows.first() {
+        Some((_, _, _, conv)) => archived_since(ctx, conv)?,
+        None => None,
+    };
     let me = ctx.me();
     // (earliest reaction, chip); rows come oldest first.
     let mut chips: Vec<(String, ReactionView)> = Vec::new();
-    for (emoji, author, at) in rows {
+    for (emoji, author, at, _) in rows {
         if ctx.dir.member(&author).is_none() {
+            continue;
+        }
+        if let Some(since) = since
+            && parse_time(&at).is_none_or(|t| t >= since)
+        {
             continue;
         }
         let idx = match chips.iter().position(|(_, c)| c.emoji == emoji) {

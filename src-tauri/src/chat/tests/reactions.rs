@@ -136,7 +136,6 @@ fn emoji_rules() {
         "\u{FEFF}",
         "\u{3000}",
         "<3",
-        "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
         "::",
         ":k:",
         ":Kopi:",
@@ -148,10 +147,72 @@ fn emoji_rules() {
     ] {
         assert!(validate_emoji(bad).is_err(), "{bad:?} should be refused");
     }
-    // 16 characters is the limit; 64 bytes too.
-    assert!(validate_emoji(&"😀".repeat(16)).is_ok());
-    assert!(validate_emoji(&"😀".repeat(17)).is_err());
+    // One emoji, not several side by side.
+    assert!(validate_emoji("😀😀").is_err());
+    // 16 characters is the limit (here 56 bytes).
+    let joined = |n: usize| format!("👍{}", "\u{200D}👍".repeat(n));
+    assert!(validate_emoji(&format!("{}\u{FE0F}", joined(7))).is_ok());
+    assert!(validate_emoji(&joined(8)).is_err());
     assert!(validate_emoji(&format!(":{}:", "a".repeat(32))).is_ok());
+}
+
+/// Every emoji of the picker (`src/components/emoji/emojiData.ts`, lines
+/// `emoji|nama|name|kata kunci`), as written and with U+FE0F added the way
+/// the picker adds it to a single code point.
+#[test]
+fn every_picker_emoji_passes() {
+    let data = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../src/components/emoji/emojiData.ts"
+    ));
+    let mut n = 0;
+    for line in data.lines() {
+        let parts: Vec<&str> = line.split('|').collect();
+        if parts.len() != 4 || line.trim_start().starts_with("//") {
+            continue;
+        }
+        let e = parts[0].trim();
+        let points: Vec<u32> = e.chars().map(u32::from).collect();
+        assert!(validate_emoji(e).is_ok(), "{e:?} {points:x?}");
+        if points.len() == 1 {
+            let with = format!("{e}\u{FE0F}");
+            assert!(validate_emoji(&with).is_ok(), "{with:?}");
+        }
+        n += 1;
+    }
+    assert!(n >= 390, "read {n} emoji");
+}
+
+#[test]
+fn free_text_and_invisible_characters_are_not_emoji() {
+    for bad in [
+        "中",
+        "ب",
+        "Ａ",
+        "é",
+        "👍\u{0301}\u{0301}",
+        "\u{0301}",
+        "👍\u{FE0E}",
+        "👍\u{FE00}",
+        "👍\u{E0100}",
+        "\u{2800}",
+        "\u{E0067}\u{E007F}",
+        "👍\u{E0067}\u{E007F}",
+        "🏴\u{E0067}\u{E0062}",
+        "\u{1F3FB}",
+        "\u{FE0F}",
+        "\u{200D}👍",
+        "👍\u{200D}",
+        "👍\u{200D}\u{200D}👍",
+        "🇮",
+        "🇮🇩🇮",
+        "\u{20E3}",
+        "1\u{20E3}",
+        "👍中",
+        "中👍",
+    ] {
+        assert!(validate_emoji(bad).is_err(), "{bad:?} should be refused");
+    }
 }
 
 #[test]
@@ -497,17 +558,23 @@ fn archived_channel_refuses_new_reactions() {
         "forbidden"
     );
 
-    // Made while archived: refused. Made before the archive: still taken.
+    // Made while archived (by a laptop that did not know yet): stored like
+    // a message, so every laptop keeps the same records and nothing is
+    // logged, but not shown. Made before the archive: shown.
     let after = sign_as(a, &o.org_id, clock::now() + Duration::seconds(2), reaction(&conv, &m, "❤️", true));
     let got = b.chat_ingest(&a.pk, vec![feature(&after)]);
-    assert_eq!((got.accepted, got.rejected), (0, 1));
-    assert_eq!(b.rejected_codes(), vec!["chat_forbidden"]);
+    assert_eq!((got.accepted, got.rejected), (1, 0));
+    assert!(b.rejected_codes().is_empty());
     let got = b.chat_ingest(&a.pk, vec![feature(&before)]);
     assert_eq!(got.accepted, 1);
     assert_eq!(
         shared(b, &conv, &m),
         vec![("👍".to_owned(), 1, names(&["Sari"]))]
     );
+    // Citra's laptop gets the same records and shows the same.
+    c.chat_ingest(&a.pk, vec![feature(&after), feature(&before)]);
+    assert_eq!(shared(c, &conv, &m), shared(b, &conv, &m));
+    assert!(c.rejected_codes().is_empty());
 }
 
 #[test]
