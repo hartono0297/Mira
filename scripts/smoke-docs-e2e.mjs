@@ -228,7 +228,11 @@ try {
   );
   check("Simpan di Excel membuat versi 2", afterSave.current.number === 2 && afterSave.current.origin === "edited");
   check("Tanda Sedang diedit hilang setelah Excel menutup file", afterSave.editing.length === 0);
-  check("Folder salinan kerja dibersihkan", !existsSync(working));
+  // Mira menghapus baris sesi dulu, baru berhenti mengawasi dan menghapus folder: di disk
+  // yang lambat folder itu bisa masih ada sesaat setelah tanda Sedang diedit hilang.
+  const cleanStart = Date.now();
+  while (existsSync(working) && Date.now() - cleanStart < 10000) await sleep(250);
+  check("Folder salinan kerja dibersihkan", !existsSync(working), `${Date.now() - cleanStart} ms`);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.getByText(/Versi 2/).first().waitFor({ timeout: 10000 });
   await page.screenshot({ path: join(shots, "14-dokumen-versi-baru-terang.png") });
