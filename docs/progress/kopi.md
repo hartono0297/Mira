@@ -104,7 +104,7 @@ Semua pasangan warna baru dicek dengan `check_contrast`, dan semuanya lulus AA d
 | Vitest | Run penuh (`--pool=threads --maxWorkers=2`): 1798 lulus, 1 gagal karena timeout 5 detik (`errors.test.ts` "setiap pesan di tabel masih ada di sumber Rust" butuh 62 detik di mesin sibuk; sendiri dengan `--testTimeout`: 11/11 lulus). `App.test.tsx`, `components.en.test.tsx`, `UpdateContext.test.tsx` gagal dimuat karena `pdfjs-dist/...?url` di luar worktree (junction `node_modules`, sama seperti laporan v04-board); dengan konfigurasi sementara `server.fs.allow` (langsung dihapus): 28/28 lulus. |
 | `scripts/kopi-e2e.mjs` (dua instance, build debug) | 42/42 |
 | `english-e2e.mjs` | 39/39 |
-| `chat-e2e.mjs`, `board-e2e.mjs`, `org-e2e.mjs` | E2E_LAMA |
+| `chat-e2e.mjs` / `board-e2e.mjs` / `org-e2e.mjs` | 39/39, 43/43, 33/33, dengan preload waktu di luar repo (lihat catatan lingkungan). Tanpa preload ketiganya gagal di layar pertama, juga dengan build `main`. |
 
 Isi `kopi-e2e` (A = Ayu superadmin, B = Budi anggota):
 1. A beri kopi ke B dari menu klik kanan pesan. B melihatnya di profil, lengkap dengan alasan dan nama A. Menu di pesan yang sama menjadi "Sudah diberi kopi".
@@ -120,8 +120,11 @@ Screenshot di `docs/progress/screenshots/kopi/`:
 - Dialog dan task: `kopi-dialog-beri-terang.png`, `kopi-task-terima-kasih-terang.png`.
 
 Catatan lingkungan e2e:
-- Build debug di PC ini butuh sekitar 20 detik sebelum WebView2 meninggalkan `about:blank`, dan Playwright kadang memegang target kosong yang lama. `kopi-e2e.mjs` menunggu halaman aplikasi di `/json/list`, lalu menyambung ulang kalau perlu.
+- D: di PC ini adalah HDD yang dipakai bersama tujuh sesi (antrean disk 11 sampai 20, 90 sampai 170 ms per I/O). Data uji wajib di D:, jadi membuat profil WebView2 dan `mira.db` baru butuh 38 sampai 45 detik sebelum halaman aplikasi siap. Selama itu Playwright melihat `about:blank`, dan batas 20 detik di skrip lama habis. Build `main` sama lambatnya, jadi ini bukan akibat Kopi.
+- `kopi-e2e.mjs` menunggu sendiri sampai halaman aplikasi siap. Skrip lama tidak diubah. Ketiganya dijalankan dengan `node --import file:///D:/mira-tmp/kopi/slow-start.mjs`, sebuah preload di luar repo. Preload itu menunggu sampai halaman punya `__TAURI_INTERNALS__` dan sudah berisi teks, mengalikan batas waktu Playwright dengan 4 dan jeda tetap `waitForTimeout` dengan 3, serta mencoba ulang hapus folder yang terkunci (EBUSY). Salinannya ada di folder catatan bersama sesi (`e2e-hdd-preload.mjs`).
+- Tanpa pengali jeda, board-e2e sempat 41/43. Dua pemeriksaan membaca hasil 250 sampai 600 ms setelah aksi; dengan jeda dikali 3 keduanya lulus.
 - `chat-e2e.mjs` tidak memakai `E2E_PORT_OFFSET` (CDP tetap 9342), jadi bisa bentrok dengan instance sesi lain.
+- `cargo test` penuh butuh 48 menit di PC ini.
 - Semua data uji ada di `D:\mira-tmp\kopi` dan dihapus setelah selesai.
 
 ## Untuk penggabung
