@@ -29,6 +29,14 @@ pub struct LabelRef {
     pub name: String,
 }
 
+/// `(division id, name)`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DivisionRefLite {
+    pub id: String,
+    pub name: String,
+}
+
 /// What this laptop's person may do on the Organisasi pages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +87,8 @@ pub struct PersonView {
     pub department_role: Option<TeamRole>,
     /// Active labels, sorted by name. The UI shows at most 3 next to a name.
     pub labels: Vec<LabelRef>,
+    /// Active divisions that are not archived, sorted by name (v0.6).
+    pub divisions: Vec<DivisionRefLite>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -293,6 +303,7 @@ fn person_view(
         } else {
             Vec::new()
         },
+        divisions: super::division_view::person_divisions(state, &m.public_key),
     }
 }
 

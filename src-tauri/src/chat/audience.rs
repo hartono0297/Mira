@@ -201,6 +201,10 @@ pub struct Directory {
     pub teams: HashMap<String, TeamInfo>,
     /// Channels from the membership log: id to (team id, name).
     pub log_channels: HashMap<String, (Option<String>, String)>,
+    /// Divisions by id, deleted ones included (v0.6).
+    pub divisions: HashMap<String, super::division::DivisionInfo>,
+    /// Announcement mode of department channels and division chats.
+    pub announce: super::division::Announce,
 }
 
 impl Directory {
@@ -216,6 +220,8 @@ impl Directory {
             members: HashMap::new(),
             teams: HashMap::new(),
             log_channels: HashMap::new(),
+            divisions: super::division::load_divisions(conn)?,
+            announce: super::division::load_announce(conn)?,
         };
         dir.load_members(conn)?;
         dir.load_teams(conn)?;
@@ -427,6 +433,8 @@ pub enum Scope {
     /// A group (`gr:` conversation), by group id.
     Group(String),
     Direct(String, String),
+    /// The built-in chat of a division (`ch:<division id>`, v0.6).
+    Division(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -707,6 +715,11 @@ impl<'a> Ctx<'a> {
             let name = permissions::UMUM_CHANNEL_NAME.to_owned();
             return Ok(Some(base(Scope::Umum, name, ORG_SCOPE_NAME.into(), false)));
         }
+        // Before any channel: a channel made with a division's id never
+        // takes over its chat.
+        if let Some(info) = self.division_conv(conv, &id) {
+            return Ok(Some(info));
+        }
         if let Some((team, name)) = self.dir.log_channels.get(&id) {
             let name = model::normalize_channel_name(name).unwrap_or_else(|| name.clone());
             return Ok(Some(match team {
@@ -792,6 +805,7 @@ impl<'a> Ctx<'a> {
             Scope::Umum | Scope::Org => self.dir.is_full_member(pk),
             Scope::Team(t) => self.dir.in_team(t, pk),
             Scope::Project(p) => self.in_project(p, pk)?,
+            Scope::Division(d) => self.dir.in_division(d, pk),
             Scope::Group(_) => {
                 self.dir.is_full_member(pk)
                     && self.group(&info.conv)?.is_some_and(|g| g.is_member(pk))
@@ -820,6 +834,7 @@ impl<'a> Ctx<'a> {
             Scope::Project(p) => self.with_project_members(p, |set| {
                 set.map(|s| s.iter().cloned().collect()).unwrap_or_default()
             })?,
+            Scope::Division(d) => self.dir.division_people(d),
             Scope::Group(_) => self
                 .group(&info.conv)?
                 .map(|g| {
@@ -856,6 +871,7 @@ impl<'a> Ctx<'a> {
             // Same as the board's project manager (v0.3): a superadmin only
             // administers a project as one of its members (F-ROLE-11).
             Scope::Project(p) => self.projects.is_manager(self.conn, p, pk)?,
+            Scope::Division(d) => self.dir.is_division_manager(d, pk),
             // Groups have no admin: an owner removes people, nobody deletes
             // other people's messages.
             Scope::Group(_) | Scope::Direct(..) => false,
@@ -883,6 +899,7 @@ impl<'a> Ctx<'a> {
             set.insert(row?);
         }
         set.extend(self.all_group_convs()?);
+        set.extend(self.dir.division_convs());
         let mut out: Vec<String> = set.into_iter().collect();
         out.sort();
         Ok(out)

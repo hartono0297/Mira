@@ -9,7 +9,7 @@ use super::division::{DIVISION_SINCE, DivisionRole, division_blockers, division_
 use super::fold::{OrgState, TeamRole};
 use super::format::channel_name_for;
 use super::op::{Body, Payload};
-use super::query::{LabelRef, PersonRef};
+use super::query::{DivisionRefLite, LabelRef, PersonRef};
 use super::store::display_name_for;
 use crate::error::AppResult;
 use crate::identity;
@@ -25,6 +25,8 @@ pub struct DivisionRefData {
     pub team_id: String,
     pub team_name: String,
     pub archived: bool,
+    /// This person's role there; `None` when it only manages the division.
+    pub role: Option<DivisionRole>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -429,15 +431,7 @@ pub fn dept_overview(
     }
     sort_by_name(&mut projects, |p| (&p.name, &p.id));
 
-    let channel = state
-        .channels
-        .values()
-        .filter(|c| c.team.as_deref() == Some(team_id.as_str()))
-        .min_by(|a, b| {
-            a.created_at
-                .cmp(&b.created_at)
-                .then_with(|| a.id.cmp(&b.id))
-        });
+    let channel = state.department_channel(&team_id);
     let channel = DeptChannelData {
         conv: channel.map_or_else(String::new, |c| format!("ch:{}", c.id)),
         name: channel.map_or_else(|| channel_name_for(&t.name), |c| c.name.clone()),
@@ -499,11 +493,58 @@ pub fn my_divisions(state: &OrgState, me: &str) -> Vec<DivisionRefData> {
                 .map(|t| t.name.clone())
                 .unwrap_or_default(),
             archived: d.archived,
+            role: state.division_role(&d.id, me),
         })
         .collect();
     sort_by_name(&mut out, |d| (&d.name, &d.id));
     out.sort_by_key(|a| a.team_name.to_lowercase());
     out
+}
+
+/// Active (not archived) divisions `pk` counts in, by name, for
+/// `PersonView`.
+pub(super) fn person_divisions(state: &OrgState, pk: &str) -> Vec<DivisionRefLite> {
+    let mut out: Vec<DivisionRefLite> = state
+        .divisions_of(pk)
+        .into_iter()
+        .filter(|(d, _)| !d.archived)
+        .map(|(d, _)| DivisionRefLite {
+            id: d.id.clone(),
+            name: d.name.clone(),
+        })
+        .collect();
+    sort_by_name(&mut out, |d| (&d.name, &d.id));
+    out
+}
+
+/// What a chat conversation id points at: `ch:<live division>` is that
+/// division's chat, `ch:<department channel>` the channel of its live
+/// department. Anything else has no settings.
+pub fn conversation_target(state: &OrgState, conv: &str) -> Option<(String, Option<String>)> {
+    let id = conv.strip_prefix("ch:")?;
+    if let Some(d) = state.live_division(id) {
+        return Some((d.team.clone(), Some(d.id.clone())));
+    }
+    let team = state.channels.get(id)?.team.as_deref()?;
+    state.live_team(team)?;
+    let first = state.department_channel(team)?;
+    (first.id == id).then(|| (team.to_owned(), None))
+}
+
+/// The chat banner of `conv` for `me`; `None` for conversations without
+/// settings.
+pub fn conversation_settings(
+    state: &OrgState,
+    me: &str,
+    conv: &str,
+) -> Option<ConversationSettingsData> {
+    let (team, division) = conversation_target(state, conv)?;
+    Some(conversation_settings_for(
+        state,
+        me,
+        &team,
+        division.as_deref(),
+    ))
 }
 
 /// Pinned note, announcement mode and what `me` may do in the department

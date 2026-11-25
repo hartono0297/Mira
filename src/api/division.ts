@@ -6,7 +6,15 @@ import { localizeError } from "../i18n/errors";
 
 export type DivisionRole = "head" | "member";
 
-export type DivisionRef = { id: string; name: string; teamId: string; teamName: string; archived: boolean };
+export type DivisionRef = {
+  id: string;
+  name: string;
+  teamId: string;
+  teamName: string;
+  archived: boolean;
+  // Peran saya di divisi itu; null kalau saya hanya mengelolanya. Opsional supaya data uji lama tetap sah.
+  role?: DivisionRole | null;
+};
 
 export type DeptMember = {
   publicKey: string;

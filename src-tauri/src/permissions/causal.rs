@@ -24,9 +24,10 @@
 //! Division heads (v0.6) are rights like department admins: relieving a
 //! head, removing a head from the division, archiving the division, moving
 //! a head to another department or out of the department takes them away,
-//! so a head's concurrent division changes are rejected. Two department
-//! admins demoting each other concurrently both lose a right the other
-//! used; neither is a superadmin, so the one first in fold order wins.
+//! so a head's concurrent division changes are rejected. A department
+//! admin may demote only admins appointed after them (fold rule, by the
+//! order key of the appointing op), so two department admins never
+//! demote each other and no cycle between them is left to break.
 //!
 //! Every step depends only on the set of ops, so laptops holding the same
 //! ops reach the same result.
@@ -216,13 +217,11 @@ impl OrgState {
                 ..
             } => {
                 if creator == author {
-                    // A division project needs the author in the division
-                    // (not a revocable right here) or managing it.
+                    // A division project needs a head of the division or a
+                    // manager of it.
                     match division {
-                        Some(d) if self.division_role(d, author).is_none() => {
-                            self.division_alts(author, d, false)
-                        }
-                        _ => Vec::new(),
+                        Some(d) => self.division_alts(author, d, true),
+                        None => Vec::new(),
                     }
                 } else {
                     match team {

@@ -43,16 +43,17 @@ pub use actions::{
 pub use causal::heads;
 pub use division::{
     ChatSettingsState, DIVISION_GATE_CLOSED, DIVISION_SINCE, DivisionMember, DivisionRole,
-    DivisionState, PINNED_MAX_CHARS, add_division_member, clean_pinned_note, create_division,
-    division_blockers, division_gate_open, division_threshold, is_valid_pinned_note,
-    remove_division_member, rename_division, set_chat_settings, set_dept_admin,
-    set_division_archived, set_division_head,
+    DivisionState, PINNED_MAX_CHARS, PINNED_MAX_LINES, add_division_member, clean_pinned_note,
+    create_division, division_blockers, division_gate_open, division_threshold,
+    is_valid_pinned_note, remove_division_member, rename_division, set_chat_settings,
+    set_dept_admin, set_division_archived, set_division_head,
 };
 pub use division_view::{
     ADMIN_HISTORY_MAX, AdminEventData, ChatSettingsData, ConversationSettingsData, DeptChannelData,
     DeptChoiceData, DeptMeData, DeptMemberData, DeptOverviewData, DeptProjectData,
     DivisionMemberData, DivisionRefData, DivisionViewData, GateBlockerData, GateData,
-    MemberDivisionData, conversation_settings_for, dept_overview, my_divisions,
+    MemberDivisionData, conversation_settings, conversation_settings_for, conversation_target,
+    dept_overview, my_divisions,
 };
 pub use fold::{
     AdSettings, ChannelState, DeviceInfo, FoldResult, GuestAccess, InviteState, JoinDecision,

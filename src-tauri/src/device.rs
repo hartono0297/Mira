@@ -8,6 +8,30 @@ use crate::permissions::format::{LAPTOP_NAME_MAX_CHARS, OS_NAME_MAX_CHARS};
 /// Mira version from `Cargo.toml`.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Debug builds only: the Mira version this laptop reports instead of
+/// `APP_VERSION`, so end-to-end tests can play an older laptop.
+#[cfg(debug_assertions)]
+const TEST_APP_VERSION_ENV: &str = "MIRA_TEST_APP_VERSION";
+
+/// A usable `MIRA_TEST_APP_VERSION` value: trimmed, `x.y.z` and valid in
+/// `device_set`.
+#[cfg(debug_assertions)]
+fn parse_test_version(raw: Option<&str>) -> Option<String> {
+    let v = raw?.trim();
+    (crate::permissions::format::is_valid_app_version(v)
+        && crate::permissions::join::parse_app_version(v).is_some())
+    .then(|| v.to_owned())
+}
+
+/// The Mira version this laptop reports in its device profile.
+pub fn reported_version() -> String {
+    #[cfg(debug_assertions)]
+    if let Some(v) = parse_test_version(std::env::var(TEST_APP_VERSION_ENV).ok().as_deref()) {
+        return v;
+    }
+    APP_VERSION.to_owned()
+}
+
 /// Keeps printable characters, trims, cuts to `max` characters; `fallback`
 /// when nothing is left.
 fn clean(s: &str, max: usize, fallback: &str) -> String {
@@ -112,7 +136,7 @@ pub fn current() -> DeviceProfile {
             OS_NAME_MAX_CHARS,
             std::env::consts::OS,
         ),
-        app_version: APP_VERSION.to_owned(),
+        app_version: reported_version(),
     }
 }
 
@@ -129,6 +153,17 @@ mod tests {
         assert!(is_valid_laptop_name(&d.laptop), "{:?}", d.laptop);
         assert!(is_valid_os_name(&d.os), "{:?}", d.os);
         assert!(is_valid_app_version(&d.app_version), "{:?}", d.app_version);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_version_override_parses_only_versions() {
+        assert_eq!(parse_test_version(Some(" 0.5.0 ")), Some("0.5.0".into()));
+        assert_eq!(parse_test_version(Some("0.4.12")), Some("0.4.12".into()));
+        assert_eq!(parse_test_version(None), None);
+        assert_eq!(parse_test_version(Some("")), None);
+        assert_eq!(parse_test_version(Some("lama")), None);
+        assert_eq!(parse_test_version(Some("0.5")), None);
     }
 
     #[test]

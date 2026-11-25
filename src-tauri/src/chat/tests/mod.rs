@@ -1,6 +1,7 @@
 //! Three-laptop tests over `network::feature::testing` (plan section 13).
 
 mod basic;
+mod division;
 mod prop;
 mod rejects;
 mod review;

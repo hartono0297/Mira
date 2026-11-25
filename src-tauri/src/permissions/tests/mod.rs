@@ -2,6 +2,7 @@ mod ad_tests;
 mod causal_tests;
 mod db_tests;
 mod division_tests;
+mod division_wiring_tests;
 mod fold_tests;
 mod join_tests;
 mod op_tests;

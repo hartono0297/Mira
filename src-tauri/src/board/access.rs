@@ -20,6 +20,7 @@
 //! | manage project (rename) | write, and manager |
 //! | manage members | manager (an admin of T need not be a member) |
 //! | create project | admin of T or any superadmin; without department: superadmin or admin of any department |
+//! | create project for division D of T | a head of D (in T), an admin of T or any superadmin; D live and not archived |
 //!
 //! A project that is not registered (`project_create` not received yet, or
 //! made before v0.3 and not registered yet) is readable by nobody: data
@@ -65,6 +66,18 @@ struct Registered {
     creator: String,
     /// Explicit members, guests included.
     members: BTreeSet<String>,
+    /// v0.6: the division the project was made for.
+    division: Option<String>,
+}
+
+/// A live division as the board needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DivisionRights {
+    team: String,
+    archived: bool,
+    /// Heads as recorded; `can_create_division_project` checks they are
+    /// still active members of the team.
+    heads: BTreeSet<String>,
 }
 
 /// Board-relevant membership at one moment.
@@ -78,6 +91,8 @@ pub struct Rights {
     guests: BTreeSet<(String, String, String)>,
     /// Registered projects by id.
     projects: BTreeMap<String, Registered>,
+    /// Divisions that are not deleted, by id.
+    divisions: BTreeMap<String, DivisionRights>,
     /// `false` without an organization.
     has_org: bool,
 }
@@ -144,24 +159,51 @@ impl Rights {
         for row in rows {
             rights.guests.insert(row?);
         }
-        let mut stmt = conn.prepare("SELECT id, team_id, creator FROM projects")?;
+        let mut stmt = conn.prepare("SELECT id, team_id, creator, division_id FROM projects")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, Option<String>>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
             ))
         })?;
         for row in rows {
-            let (id, team, creator) = row?;
+            let (id, team, creator, division) = row?;
             rights.projects.insert(
                 id,
                 Registered {
                     team,
                     creator,
                     members: BTreeSet::new(),
+                    division,
                 },
             );
+        }
+        let mut stmt =
+            conn.prepare("SELECT id, team_id, archived FROM divisions WHERE deleted = 0")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, bool>(2)?))
+        })?;
+        for row in rows {
+            let (id, team, archived) = row?;
+            rights.divisions.insert(
+                id,
+                DivisionRights {
+                    team,
+                    archived,
+                    heads: BTreeSet::new(),
+                },
+            );
+        }
+        let mut stmt =
+            conn.prepare("SELECT division_id, public_key FROM division_members WHERE head = 1")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (division, pk) = row?;
+            if let Some(d) = rights.divisions.get_mut(&division) {
+                d.heads.insert(pk);
+            }
         }
         let mut stmt = conn.prepare("SELECT project_id, public_key FROM project_members")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -217,6 +259,28 @@ impl Rights {
                         team: p.team.clone(),
                         creator: p.creator.clone(),
                         members: p.members.keys().cloned().collect(),
+                        division: p.division.clone(),
+                    },
+                )
+            })
+            .collect();
+        let divisions = state
+            .divisions
+            .values()
+            .filter(|d| !d.deleted)
+            .map(|d| {
+                let heads = d
+                    .members
+                    .iter()
+                    .filter(|(_, m)| m.head)
+                    .map(|(pk, _)| pk.clone())
+                    .collect();
+                (
+                    d.id.clone(),
+                    DivisionRights {
+                        team: d.team.clone(),
+                        archived: d.archived,
+                        heads,
                     },
                 )
             })
@@ -226,6 +290,7 @@ impl Rights {
             teams,
             guests,
             projects,
+            divisions,
             has_org: true,
         }
     }
@@ -352,6 +417,29 @@ impl Rights {
             Some(t) => self.is_superadmin(pk) || self.is_team_admin(t, pk),
             None => self.is_superadmin(pk) || self.is_any_team_admin(pk),
         }
+    }
+
+    /// A project for `division` of `team`: the division is live (its team
+    /// too) and not archived, and `pk` heads it while in the team, is an
+    /// admin of the team or a superadmin. Plain division members may not.
+    pub fn can_create_division_project(&self, pk: &str, team: &str, division: &str) -> bool {
+        if !self.is_active_member(pk) || !self.teams.contains_key(team) {
+            return false;
+        }
+        let Some(d) = self.divisions.get(division) else {
+            return false;
+        };
+        d.team == team
+            && !d.archived
+            && (self.is_superadmin(pk)
+                || self.is_team_admin(team, pk)
+                || (d.heads.contains(pk) && self.in_team(team, pk)))
+    }
+
+    /// The division a registered project was made for (v0.6), when the
+    /// board's row agrees with the log.
+    pub fn registered_division(&self, p: ProjectRef<'_>) -> Option<&str> {
+        self.registered(p)?.division.as_deref()
     }
 
     /// Everyone who may read the project, sorted.

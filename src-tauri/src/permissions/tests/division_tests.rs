@@ -452,7 +452,6 @@ fn creating_renaming_and_archiving_divisions() {
     assert!(!w.state().divisions[&m].archived);
 }
 
-
 #[test]
 fn heads_and_members() {
     let mut w = world();
@@ -794,7 +793,14 @@ fn projects_made_for_a_division() {
         w.citra.clone_actor(),
         w.dedi.clone_actor(),
     );
+    // A plain member of the division may not, like department projects.
     assert_eq!(w.sim.push(&ani, add(&m, &budi)), Ok(()));
+    assert_eq!(
+        w.sim.push(&budi, project(&budi, &it, Some(&m))),
+        Err(R::NotAuthorized)
+    );
+    // Its head may.
+    assert_eq!(w.sim.push(&ani, head(&m, &budi, true)), Ok(()));
     let body = project(&budi, &it, Some(&m));
     let Body::ProjectCreate { project: id, .. } = &body else {
         unreachable!()
@@ -1013,20 +1019,20 @@ fn department_admins_demoting_each_other_leave_one_admin() {
         let by_b = sim.make_with_deps(&budi, sim.lamport + lb, deps, admin_unset(&it, &ani));
         let _ = sim.add(by_a.clone());
         let _ = sim.add(by_b.clone());
-        let (first, second) = if by_a.order_key() < by_b.order_key() {
-            (&by_a, &by_b)
+        // Only the senior admin (Ani, appointed first) may demote the other,
+        // whatever lamports they picked.
+        assert_eq!(sim.outcome(&by_a.id), Ok(()), "{la} {lb}");
+        // Sorting before Ani's demotion, Budi's op is caught by the causal
+        // rule first; after it, by the seniority rule.
+        let expected = if by_b.order_key() < by_a.order_key() {
+            R::ConcurrentWithRevocation
         } else {
-            (&by_b, &by_a)
+            R::NotAuthorized
         };
-        assert_eq!(sim.outcome(&first.id), Ok(()), "{la} {lb}");
-        assert_eq!(
-            sim.outcome(&second.id),
-            Err(R::ConcurrentWithRevocation),
-            "{la} {lb}"
-        );
+        assert_eq!(sim.outcome(&by_b.id), Err(expected), "{la} {lb}");
         let s = sim.state();
         assert_eq!(s.team_admin_count(&it), 1, "{la} {lb}");
-        assert!(s.is_team_manager(first.author(), &it));
+        assert!(s.is_team_manager(&ani.pk, &it));
         assert_order_free(&sim);
         // The same whichever laptop got which op first.
         for _ in 0..3 {
@@ -1414,4 +1420,259 @@ fn department_overview_and_settings_read_models() {
     ] {
         assert!(json.get(key).is_some(), "{key}");
     }
+}
+
+// ----- Security review fixes (commit 8836c9a) ---------------------------------------------
+
+#[test]
+fn a_demoted_junior_admin_cannot_backdate_a_counter_demotion() {
+    let mut w = world();
+    let it = w.it.clone();
+    let (f, ani, budi, citra) = (
+        w.f.clone_actor(),
+        w.ani.clone_actor(),
+        w.budi.clone_actor(),
+        w.citra.clone_actor(),
+    );
+    // Ani (admin by invite) appoints Budi: Ani is senior.
+    assert_eq!(w.sim.push(&ani, admin_set(&it, &budi)), Ok(()));
+    let p_set = w.sim.state().teams[&it].members[&budi.pk].appointed.clone();
+    assert!(p_set.is_some());
+    assert!(
+        w.sim.state().teams[&it].members[&ani.pk].appointed < p_set,
+        "the invite accept appointed Ani first"
+    );
+    // A junior admin may not demote a senior one, even sequentially.
+    assert_eq!(
+        w.sim.push(&budi, admin_unset(&it, &ani)),
+        Err(R::NotAuthorized)
+    );
+    assert_eq!(
+        w.sim.push(
+            &f,
+            Body::ProfileSet {
+                name: "Sari".into()
+            }
+        ),
+        Ok(())
+    );
+
+    let seen = w.sim.lamport;
+    let old_deps = w.sim.heads_below(seen + 1);
+    assert_eq!(w.sim.push(&ani, admin_unset(&it, &budi)), Ok(()));
+    // Budi signs a demotion of Ani that sorts before his own demotion and
+    // claims not to have seen it, then one forward-dated.
+    let back = w
+        .sim
+        .make_with_deps(&budi, seen, w.sim.heads_below(seen), admin_unset(&it, &ani));
+    let fwd = w
+        .sim
+        .make_with_deps(&budi, seen + 5, old_deps, admin_unset(&it, &ani));
+    assert!(back.order_key() < fwd.order_key());
+    assert!(w.sim.add(back).is_err());
+    assert!(w.sim.add(fwd).is_err());
+    let s = w.state();
+    assert_eq!(s.team_role(&it, &ani.pk), Some(p::TeamRole::Admin));
+    assert_eq!(s.team_role(&it, &budi.pk), Some(p::TeamRole::Member));
+    assert_order_free(&w.sim);
+
+    // A superadmin's appointment later than Ani's is junior to her too, and
+    // re-appointing Budi makes him junior again.
+    assert_eq!(w.sim.push(&f, admin_set(&it, &citra)), Ok(()));
+    assert_eq!(
+        w.sim.push(&citra, admin_unset(&it, &ani)),
+        Err(R::NotAuthorized)
+    );
+    assert_eq!(w.sim.push(&ani, admin_set(&it, &budi)), Ok(()));
+    assert_eq!(w.sim.push(&citra, admin_unset(&it, &budi)), Ok(()));
+    // The superadmin rule is unchanged.
+    assert_eq!(w.sim.push(&f, admin_unset(&it, &ani)), Ok(()));
+}
+
+#[test]
+fn division_ids_do_not_depend_on_department_channels() {
+    let base = world();
+    let it = base.it.clone();
+    let (ani, budi) = (base.ani.clone_actor(), base.budi.clone_actor());
+    let id = rand_hex16();
+    let channel = Body::ChannelCreate {
+        channel: id.clone(),
+        team: it.clone(),
+        name: "rahasia".into(),
+    };
+    // Both orders: the channel (team scope, unknown outside IT) first, or
+    // the division first.
+    for channel_first in [true, false] {
+        let mut sim = clone_sim(&base.sim);
+        let l = sim.lamport;
+        let (lc, ld) = if channel_first {
+            (l + 1, l + 2)
+        } else {
+            (l + 2, l + 1)
+        };
+        let deps = sim.heads_below(l + 1);
+        let ch = sim.make_with_deps(&budi, lc, deps.clone(), channel.clone());
+        let div = sim.make_with_deps(&ani, ld, deps, create(&id, &it, "Mobile 2"));
+        sim.ops.push(ch.clone());
+        sim.ops.push(div.clone());
+        let inside = fold(&sim.org, &sim.ops);
+        let outside_ops: Vec<VerifiedOp> =
+            sim.ops.iter().filter(|o| o.id != ch.id).cloned().collect();
+        let outside = fold(&sim.org, &outside_ops);
+        assert_eq!(
+            inside.state.divisions, outside.state.divisions,
+            "{channel_first}"
+        );
+        assert!(inside.state.live_division(&id).is_some(), "{channel_first}");
+        let channel_outcome = inside
+            .outcomes
+            .iter()
+            .find(|(i, _)| *i == ch.id)
+            .map(|(_, o)| *o)
+            .unwrap();
+        if channel_first {
+            assert_eq!(channel_outcome, Ok(()));
+        } else {
+            assert_eq!(channel_outcome, Err(R::IdInUse));
+        }
+    }
+    // Org-scope ids stay taken: a team, a label, another division.
+    let mut w = world();
+    let ani = w.ani.clone_actor();
+    let it = w.it.clone();
+    let m = w.mobile.clone();
+    assert_eq!(w.sim.push(&ani, create(&it, &it, "Sama")), Err(R::IdInUse));
+    assert_eq!(w.sim.push(&ani, create(&m, &it, "Sama")), Err(R::IdInUse));
+    let umum = p::umum_channel_id(&w.sim.org.id);
+    assert_eq!(
+        w.sim.push(&ani, create(&umum, &it, "Sama")),
+        Err(R::IdInUse)
+    );
+}
+
+#[test]
+fn old_set_team_admin_command_waits_for_the_gate() {
+    let mut o = office();
+    let dimas = o.dimas.pk();
+    // Nobody reported a version: a department admin is refused.
+    gate_msg(
+        p::set_team_admin(&mut o.rina.conn, &o.rina.id, &o.desain, &dimas, true, now())
+            .unwrap_err(),
+    );
+    // A superadmin is not.
+    p::set_team_admin(&mut o.andi.conn, &o.andi.id, &o.desain, &dimas, true, now()).unwrap();
+    assert!(o.andi.state().is_team_manager(&dimas, &o.desain));
+    all_on(&mut o, crate::device::APP_VERSION);
+    p::set_team_admin(
+        &mut o.rina.conn,
+        &o.rina.id,
+        &o.desain,
+        &dimas,
+        false,
+        now(),
+    )
+    .unwrap();
+    assert!(!o.rina.state().is_team_manager(&dimas, &o.desain));
+}
+
+#[test]
+fn archived_divisions_and_departments_take_no_changes_from_heads() {
+    let mut w = with_head();
+    let m = w.mobile.clone();
+    let (f, ani, budi, citra) = (
+        w.f.clone_actor(),
+        w.ani.clone_actor(),
+        w.budi.clone_actor(),
+        w.citra.clone_actor(),
+    );
+    let dedi_like = w.sim.join(&w.it.clone(), InviteRole::Member, "Eko");
+    assert_eq!(w.sim.push(&budi, add(&m, &citra)), Ok(()));
+    assert_eq!(w.sim.push(&budi, add(&m, &dedi_like)), Ok(()));
+    assert_eq!(w.sim.push(&ani, archive(&m, true)), Ok(()));
+    // The head may no longer remove anyone; a manager may, people may leave.
+    assert_eq!(w.sim.push(&budi, rm(&m, &citra)), Err(R::DivisionArchived));
+    assert_eq!(w.sim.push(&ani, rm(&m, &citra)), Ok(()));
+    assert_eq!(w.sim.push(&dedi_like, rm(&m, &dedi_like)), Ok(()));
+    assert_eq!(w.sim.push(&budi, add(&m, &citra)), Err(R::DivisionArchived));
+    assert_eq!(
+        w.sim
+            .push(&budi, chat(&w.it.clone(), Some(&m), "Arsip", false)),
+        Err(R::DivisionArchived)
+    );
+    // Managers still rename and restore.
+    assert_eq!(w.sim.push(&ani, rename(&m, "Mobile Lama")), Ok(()));
+    assert_eq!(w.sim.push(&ani, archive(&m, false)), Ok(()));
+
+    // An archived department: no members, head or chat settings.
+    let old = w.sim.team("Lama");
+    let d = rand_hex16();
+    assert_eq!(w.sim.push(&f, create(&d, &old, "Sisa")), Ok(()));
+    assert_eq!(
+        w.sim.push(
+            &f,
+            Body::TeamArchive {
+                team: old.clone(),
+                archived: true
+            }
+        ),
+        Ok(())
+    );
+    assert_eq!(w.sim.push(&f, add(&d, &citra)), Err(R::DepartmentArchived));
+    assert_eq!(
+        w.sim.push(&f, head(&d, &citra, true)),
+        Err(R::DepartmentArchived)
+    );
+    assert_eq!(
+        w.sim.push(&f, chat(&old, Some(&d), "Halo", false)),
+        Err(R::DepartmentArchived)
+    );
+    assert_eq!(
+        w.sim.push(&f, chat(&old, None, "Halo", false)),
+        Err(R::DepartmentArchived)
+    );
+    assert_eq!(w.sim.push(&f, rename(&d, "Sisa Lama")), Ok(()));
+}
+
+#[test]
+fn deleting_a_department_drops_its_chat_settings() {
+    let mut w = world();
+    let (it, hr, m) = (w.it.clone(), w.hr.clone(), w.mobile.clone());
+    let f = w.f.clone_actor();
+    assert_eq!(w.sim.push(&f, chat(&hr, None, "HR", true)), Ok(()));
+    assert_eq!(w.sim.push(&f, chat(&it, Some(&m), "Mobile", true)), Ok(()));
+    assert_eq!(w.sim.push(&f, chat(&it, None, "IT", true)), Ok(()));
+    assert_eq!(
+        w.sim.push(&f, Body::TeamDelete { team: it.clone() }),
+        Ok(())
+    );
+    let s = w.state();
+    assert!(s.chat_settings.keys().all(|(t, _)| *t != it));
+    assert!(s.chat_settings_for(&hr, None).is_some());
+}
+
+#[test]
+fn pinned_notes_refuse_blank_fillers_and_long_line_counts() {
+    for bad in [
+        "a\u{E0041}b",
+        "a\u{E007F}",
+        "a\u{034F}b",
+        "\u{115F}x",
+        "x\u{1160}",
+        "a\u{3164}b",
+        "a\u{FFA0}b",
+    ] {
+        assert!(!p::is_valid_pinned_note(bad), "{bad:?}");
+        assert!(matches!(
+            p::clean_pinned_note(bad),
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+    assert!(p::is_valid_pinned_note("Braille \u{2800} boleh"));
+    let lines = |n: usize| vec!["baris"; n].join("\n");
+    assert!(p::is_valid_pinned_note(&lines(p::PINNED_MAX_LINES)));
+    assert!(!p::is_valid_pinned_note(&lines(p::PINNED_MAX_LINES + 1)));
+    assert!(matches!(
+        p::clean_pinned_note(&lines(21)),
+        Err(AppError::InvalidInput(m)) if m == "Catatan disematkan paling banyak 20 baris."
+    ));
 }

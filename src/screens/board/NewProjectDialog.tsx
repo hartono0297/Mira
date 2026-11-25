@@ -138,16 +138,20 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
 
   const values = options ? [...options.departments.map((d) => d.id), ...(options.allowNoDepartment ? [NONE] : [])] : [];
   // Divisi yang ditawarkan: tidak diarsipkan dan di departemen yang boleh dipilih di sini.
+  // Kepala divisi yang bukan admin departemen hanya mendapat divisi yang ia kepalai.
   const divisions = useMemo(
     () =>
       options
         ? myDivisions
             .filter((d) => !d.archived && options.departments.some((x) => x.id === d.teamId))
+            .filter((d) => !options.divisionOnly || options.divisionOnly.includes(d.id))
             .sort((a, b) => a.teamName.localeCompare(b.teamName, "id") || a.name.localeCompare(b.name, "id"))
         : [],
     [myDivisions, options],
   );
-  const pickedDivision = divisions.find((d) => d.id === divisionPick) ?? null;
+  const divisionOnly = !!options?.divisionOnly;
+  const pickedDivision =
+    divisions.find((d) => d.id === divisionPick) ?? (divisionOnly ? (divisions[0] ?? null) : null);
   // Pilihan yang tidak berlaku lagi (departemen diarsipkan, hak berubah) kembali ke bawaan.
   // Proyek divisi selalu di departemen divisi itu.
   const deptValue = pickedDivision
@@ -156,7 +160,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
       ? deptPick
       : (options?.defaultDepartment ?? values[0] ?? NONE);
   const pickedDept = options?.departments.find((d) => d.id === deptValue) ?? null;
-  const canSubmit = !!options?.canCreate && !busy;
+  const canSubmit = !!options?.canCreate && !busy && (!divisionOnly || !!pickedDivision);
 
   function reset() {
     setName("");
@@ -295,7 +299,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
           aria-describedby={divisionHintId}
           disabled={busy}
         >
-          <option value={NONE}>{D.none}</option>
+          {!divisionOnly && <option value={NONE}>{D.none}</option>}
           {divisions.map((d) => (
             <option key={d.id} value={d.id}>
               {D.option(d.name, d.teamName)}

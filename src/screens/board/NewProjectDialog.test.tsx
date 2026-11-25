@@ -393,6 +393,37 @@ describe("NewProjectDialog: untuk divisi", () => {
     expect(board.createProject).toHaveBeenCalledWith("Aplikasi Kantor", "APK", DESAIN, [], MOBILE);
   });
 
+  it("kepala divisi bukan admin: hanya divisi yang ia kepalai, selalu proyek divisi", async () => {
+    const user = userEvent.setup();
+    org.overview.mockResolvedValue(overview({ publicKey: DIMAS.publicKey }));
+    division.myDivisions.mockResolvedValue([
+      { ...div(MOBILE, "Mobile", DESAIN, "Desain"), role: "head" },
+      { ...div(WEB, "Web", DESAIN, "Desain"), role: "member" },
+    ]);
+    board.createProject.mockResolvedValue(created("Aplikasi Kantor", "APK"));
+    const dlg = renderDialog();
+    const dept = await ready(dlg);
+    const select = await within(dlg).findByRole("combobox", { name: "Untuk divisi" });
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Mobile, Desain"]);
+    expect(select).toHaveValue(MOBILE);
+    expect(
+      within(dept)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Desain"]);
+
+    await user.type(within(dlg).getByLabelText("Nama proyek"), "Aplikasi Kantor");
+    const code = within(dlg).getByLabelText("Kode proyek");
+    await user.clear(code);
+    await user.type(code, "APK");
+    await user.click(within(dlg).getByRole("button", { name: "Buat proyek" }));
+    expect(board.createProject).toHaveBeenCalledWith("Aplikasi Kantor", "APK", DESAIN, [], MOBILE);
+  });
+
   it("superadmin: divisi memindah departemen; departemen lain melepas divisi", async () => {
     const user = userEvent.setup();
     org.overview.mockResolvedValue(overview({ isSuperadmin: true }));

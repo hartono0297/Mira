@@ -11,7 +11,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use super::actions::{author_in, reason_error};
-use super::fold::{OrgState, Outcome, Reason, TeamRole};
+use super::fold::{ChannelState, OrgState, Outcome, Reason, TeamRole};
 use super::format::{is_lower_hex, validate_team_name};
 use super::join::{AdBlocker, ad_blockers_since, join_extras_allowed_since, parse_app_version};
 use super::op::{Body, Scope};
@@ -29,6 +29,8 @@ pub const DIVISION_SINCE: &str = "0.6.0";
 pub const DIVISION_GATE_CLOSED: &str = "Perubahan divisi baru bisa disimpan setelah semua laptop kantor memakai Mira 0.6.0 atau lebih baru.";
 /// Longest pinned note, in characters.
 pub const PINNED_MAX_CHARS: usize = 500;
+/// Most lines in a pinned note.
+pub const PINNED_MAX_LINES: usize = 20;
 
 /// One person recorded in a division.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,13 +86,26 @@ pub struct ChatSettingsState {
 }
 
 /// A pinned note as it may appear in an op: at most 500 characters, no
-/// leading or trailing whitespace, line breaks allowed but no other
-/// control or invisible characters. Empty clears the note.
+/// leading or trailing whitespace, at most 20 lines, line breaks allowed
+/// but no other control or invisible characters (tag characters and blank
+/// Hangul fillers included). Empty clears the note.
 pub fn is_valid_pinned_note(s: &str) -> bool {
     s.trim() == s
         && s.chars().count() <= PINNED_MAX_CHARS
+        && s.split('\n').count() <= PINNED_MAX_LINES
         && s.split('\n')
             .all(|line| !identity::has_forbidden_chars(line))
+        && !s.chars().any(is_blank_filler)
+}
+
+/// Characters that render as nothing but are not caught by
+/// `has_forbidden_chars`: tag characters, the combining grapheme joiner and
+/// the Hangul fillers.
+fn is_blank_filler(c: char) -> bool {
+    matches!(
+        c,
+        '\u{E0000}'..='\u{E007F}' | '\u{034F}' | '\u{115F}' | '\u{1160}' | '\u{3164}' | '\u{FFA0}'
+    )
 }
 
 // ----- Version gate --------------------------------------------------------------
@@ -208,6 +223,19 @@ impl OrgState {
         }
     }
 
+    /// The department channel of `team`: its first channel (by creation
+    /// time, then id). Its settings are those of `(team, None)`.
+    pub fn department_channel(&self, team: &str) -> Option<&ChannelState> {
+        self.channels
+            .values()
+            .filter(|c| c.team.as_deref() == Some(team))
+            .min_by(|a, b| {
+                a.created_at
+                    .cmp(&b.created_at)
+                    .then_with(|| a.id.cmp(&b.id))
+            })
+    }
+
     /// Active admins of a live department.
     pub fn team_admin_count(&self, team: &str) -> usize {
         self.live_team(team).map_or(0, |t| {
@@ -243,11 +271,32 @@ impl OrgState {
             d.deleted = true;
             d.members.clear();
         }
+        self.chat_settings.retain(|(t, _), _| t != team);
+    }
+
+    /// Whether an id is taken by something every laptop knows: a team, a
+    /// label, a division or `#umum`. Channel ids come from team-scoped ops
+    /// that laptops outside the department never receive, so they do not
+    /// count (a `channel_create` with a division's id is refused instead).
+    fn org_id_used(&self, id: &str) -> bool {
+        self.divisions.contains_key(id)
+            || self.teams.contains_key(id)
+            || self.labels.contains_key(id)
+            || id == super::fold::umum_channel_id(&self.org.id)
+    }
+
+    /// `DepartmentArchived` when the division's department is archived.
+    fn require_open_division_team(&self, team: &str) -> Outcome {
+        match self.live_team(team) {
+            Some(t) if t.archived => Err(Reason::DepartmentArchived),
+            _ => Ok(()),
+        }
     }
 
     /// `project_create` with a division: live, in the project's
-    /// department, not archived, and the author is in it, an admin of the
-    /// department or a superadmin.
+    /// department, not archived, and the author heads it, is an admin of
+    /// the department or a superadmin (plain members may not, as with
+    /// department projects).
     pub(super) fn check_project_division(
         &self,
         author: &str,
@@ -261,7 +310,7 @@ impl OrgState {
         if d.archived {
             return Err(Reason::DivisionArchived);
         }
-        if self.division_role(division, author).is_some() || self.is_team_manager(author, &d.team) {
+        if self.is_division_head(division, author) || self.is_team_manager(author, &d.team) {
             Ok(())
         } else {
             Err(Reason::NotAuthorized)
@@ -315,7 +364,7 @@ impl OrgState {
         if !self.is_team_manager(author, team) {
             return Err(Reason::NotAuthorized);
         }
-        if self.used_ids.contains(division) {
+        if self.org_id_used(division) {
             return Err(Reason::IdInUse);
         }
         self.used_ids.insert(division.to_owned());
@@ -393,6 +442,7 @@ impl OrgState {
         if archived {
             return Err(Reason::DivisionArchived);
         }
+        self.require_open_division_team(&team)?;
         self.require_active_non_guest_target(member)?;
         if self.team_role(&team, member).is_none() {
             return Err(Reason::TargetNotInDepartment);
@@ -432,6 +482,7 @@ impl OrgState {
         if archived {
             return Err(Reason::DivisionArchived);
         }
+        self.require_open_division_team(&team)?;
         self.require_active_non_guest_target(member)?;
         if self.team_role(&team, member).is_none() {
             return Err(Reason::TargetNotInDepartment);
@@ -456,19 +507,25 @@ impl OrgState {
         division: &str,
         member: &str,
     ) -> Outcome {
-        let target_head = {
+        let (archived, target_head) = {
             let d = self
                 .live_division(division)
                 .ok_or(Reason::DivisionNotFound)?;
-            d.members.get(member).ok_or(Reason::NotInDivision)?.head
+            let m = d.members.get(member).ok_or(Reason::NotInDivision)?;
+            (d.archived, m.head)
         };
         // A head removes members who are not heads; removing a head takes a
-        // manager of the division (or the head themselves).
+        // manager of the division (or the head themselves). In an archived
+        // division only managers remove others; people may still leave.
+        let manager = self.may_manage_division(author, division);
         let allowed = author == member
-            || self.may_manage_division(author, division)
+            || manager
             || (!target_head && self.is_division_head(division, author));
         if !allowed {
             return Err(Reason::NotAuthorized);
+        }
+        if archived && !manager && author != member {
+            return Err(Reason::DivisionArchived);
         }
         self.division_mut(division)?.members.remove(member);
         Ok(())
@@ -495,6 +552,7 @@ impl OrgState {
                 return Err(Reason::DivisionArchived);
             }
         }
+        self.require_open_division_team(team)?;
         if !self.may_edit_chat_settings(author, team, division) {
             return Err(Reason::NotAuthorized);
         }
@@ -558,6 +616,11 @@ pub fn clean_pinned_note(pinned: &str) -> AppResult<String> {
     if note.chars().count() > PINNED_MAX_CHARS {
         return Err(AppError::InvalidInput(format!(
             "Catatan disematkan paling banyak {PINNED_MAX_CHARS} karakter."
+        )));
+    }
+    if note.split('\n').count() > PINNED_MAX_LINES {
+        return Err(AppError::InvalidInput(format!(
+            "Catatan disematkan paling banyak {PINNED_MAX_LINES} baris."
         )));
     }
     if !is_valid_pinned_note(note) {
@@ -812,6 +875,75 @@ pub(crate) fn check_ou_map_divisions(state: &OrgState, ou_map: &[OuMapping]) -> 
         }
     }
     Ok(())
+}
+
+// ----- AD onboarding -------------------------------------------------------------------
+
+/// The division a member approved with AD data joins: the OUs of `dn` from
+/// innermost outward, the first whose OU row names a live, unarchived
+/// division of `team`.
+pub(crate) fn ad_division_for(state: &OrgState, team: &str, dn: Option<&str>) -> Option<String> {
+    let ous = dn.map(crate::ad::dn::ous).unwrap_or_default();
+    ous.iter().find_map(|ou| {
+        state
+            .ad
+            .ou_map
+            .iter()
+            .filter(|row| row.team == team && crate::ad::dept::same_text(&row.ou, ou))
+            .find_map(|row| row.division.as_deref())
+            .filter(|id| {
+                state
+                    .live_division(id)
+                    .is_some_and(|d| d.team == team && !d.archived)
+            })
+            .map(str::to_owned)
+    })
+}
+
+/// Right after `join_approve` of `request_id`, in the same transaction:
+/// adds the new member to the division its AD claim maps to, while the
+/// division gate is open. Best effort: a failure is logged and the
+/// approval stands.
+pub(crate) fn join_ad_division_in(
+    conn: &Connection,
+    identity: &Identity,
+    request_id: &str,
+    now: OffsetDateTime,
+) {
+    if let Err(err) = add_ad_division_member(conn, identity, request_id, now) {
+        eprintln!(
+            "Mira: anggota baru belum bisa dimasukkan ke divisi dari AD [{}]: {err}",
+            err.code()
+        );
+    }
+}
+
+fn add_ad_division_member(
+    conn: &Connection,
+    identity: &Identity,
+    request_id: &str,
+    now: OffsetDateTime,
+) -> AppResult<()> {
+    let Some(req) = super::join_store::stored_request(conn, request_id)? else {
+        return Ok(());
+    };
+    let Ok(p) = super::join::parse_request_payload(&req.payload) else {
+        return Ok(());
+    };
+    let Some(ad) = &p.ad else {
+        return Ok(());
+    };
+    let state = load_state(conn)?.ok_or_else(not_in_org)?;
+    if !division_gate_open(&state) {
+        return Ok(());
+    }
+    let Some(division) = ad_division_for(&state, &p.team, ad.dn.as_deref()) else {
+        return Ok(());
+    };
+    if state.division_role(&division, &p.member).is_some() {
+        return Ok(());
+    }
+    add_division_member_in(conn, identity, &division, &p.member, now)
 }
 
 // ----- Derived tables ------------------------------------------------------------------

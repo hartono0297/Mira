@@ -101,6 +101,11 @@ pub struct MemberState {
 pub struct TeamMember {
     pub role: TeamRole,
     pub added_at: String,
+    /// Order key `(lamport, author, op id)` of the op that made this person
+    /// an admin of the department; `None` while a plain member. A
+    /// department admin may demote only admins appointed after them
+    /// (v0.6), so two admins can never demote each other.
+    pub appointed: Option<(u64, String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -510,6 +515,11 @@ pub fn fold(org: &Organization, ops: &[VerifiedOp]) -> FoldResult {
     super::causal::fold_ops(org, ops)
 }
 
+/// Fold order key of an op, owned.
+fn op_key(op: &VerifiedOp) -> (u64, String, String) {
+    (op.lamport(), op.author().to_owned(), op.id.clone())
+}
+
 fn verify_sig(public_key: &str, message: &[u8], sig: &str) -> bool {
     let (Ok(pk), Ok(sig)) = (<[u8; 32]>::from_hex(public_key), <[u8; 64]>::from_hex(sig)) else {
         return false;
@@ -890,37 +900,60 @@ impl OrgState {
                     }
                     self.require_no_department(team, member)?;
                 }
+                let appointed = Some(op_key(op));
                 let t = self.live_team_mut(team)?;
                 match t.members.get_mut(member) {
                     Some(tm) if tm.role == TeamRole::Admin => return Err(Reason::AlreadyTeamAdmin),
-                    Some(tm) => tm.role = TeamRole::Admin,
+                    Some(tm) => {
+                        tm.role = TeamRole::Admin;
+                        tm.appointed = appointed;
+                    }
                     None => {
                         t.members.insert(
                             member.clone(),
                             TeamMember {
                                 role: TeamRole::Admin,
                                 added_at: at,
+                                appointed,
                             },
                         );
                     }
                 }
             }
             Body::TeamAdminUnset { team, member } => {
-                // v0.6: an admin of the department may demote its admins,
-                // themselves too unless they are the last one.
+                // v0.6: an admin of the department may demote the admins
+                // appointed after them, and themselves unless they are the
+                // last one. Seniority comes from the appointing op, which
+                // the junior admin cannot choose, so a demoted admin cannot
+                // answer with a backdated demotion of the senior one.
                 let sa = self.is_superadmin(&author);
                 if !sa && self.team_role(team, &author) != Some(TeamRole::Admin) {
                     return Err(Reason::NotAuthorized);
                 }
                 let t = self.live_team_mut(team)?;
-                if t.members.get(member).map(|tm| tm.role) != Some(TeamRole::Admin) {
+                let Some(target) = t
+                    .members
+                    .get(member)
+                    .filter(|tm| tm.role == TeamRole::Admin)
+                else {
                     return Err(Reason::NotTeamAdmin);
+                };
+                if !sa && member != &author {
+                    let mine = t.members.get(&author).and_then(|tm| tm.appointed.as_ref());
+                    let junior = matches!(
+                        (target.appointed.as_ref(), mine),
+                        (Some(theirs), Some(mine)) if theirs > mine
+                    );
+                    if !junior {
+                        return Err(Reason::NotAuthorized);
+                    }
                 }
                 if !sa && member == &author && self.team_admin_count(team) <= 1 {
                     return Err(Reason::LastTeamAdmin);
                 }
                 if let Some(tm) = self.live_team_mut(team)?.members.get_mut(member) {
                     tm.role = TeamRole::Member;
+                    tm.appointed = None;
                 }
             }
             Body::TeamMemberAdd { team, member } => {
@@ -940,6 +973,7 @@ impl OrgState {
                     TeamMember {
                         role: TeamRole::Member,
                         added_at: at,
+                        appointed: None,
                     },
                 );
             }
@@ -1101,7 +1135,7 @@ impl OrgState {
                     return Err(Reason::AlreadyInDepartment);
                 }
                 let inv = inv.clone();
-                self.admit(&inv, member, name, &at);
+                self.admit(&inv, member, name, &at, op_key(op));
                 if let Some(i) = self.invites.get_mut(invite) {
                     i.used_by.push(member.clone());
                 }
@@ -1168,6 +1202,7 @@ impl OrgState {
                     TeamMember {
                         role: TeamRole::Member,
                         added_at: at,
+                        appointed: None,
                     },
                 );
             }
@@ -1219,6 +1254,7 @@ impl OrgState {
                     TeamMember {
                         role: TeamRole::Member,
                         added_at: at.clone(),
+                        appointed: None,
                     },
                 );
                 self.decide(&req, true, author, at);
@@ -1525,7 +1561,14 @@ impl OrgState {
     }
 
     /// Effect of a valid `invite_accept` (plan 1.3).
-    fn admit(&mut self, inv: &InviteState, member: &str, name: &str, at: &str) {
+    fn admit(
+        &mut self,
+        inv: &InviteState,
+        member: &str,
+        name: &str,
+        at: &str,
+        key: (u64, String, String),
+    ) {
         let guest = inv.role == InviteRole::Guest;
         let existing = self.members.get_mut(member);
         match existing {
@@ -1571,15 +1614,21 @@ impl OrgState {
         } else {
             TeamRole::Member
         };
+        let appointed = (role == TeamRole::Admin).then_some(key);
         if let Some(t) = self.teams.get_mut(&inv.team) {
             match t.members.get_mut(member) {
-                Some(tm) => tm.role = tm.role.min(role),
+                Some(tm) if tm.role == TeamRole::Admin => {}
+                Some(tm) => {
+                    tm.role = role;
+                    tm.appointed = appointed;
+                }
                 None => {
                     t.members.insert(
                         member.to_owned(),
                         TeamMember {
                             role,
                             added_at: at.to_owned(),
+                            appointed,
                         },
                     );
                 }

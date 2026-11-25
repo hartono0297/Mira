@@ -1081,6 +1081,7 @@ impl Office {
             team,
             &root.1,
             members,
+            None,
             org_ops::now(),
         )
         .unwrap();
@@ -1096,6 +1097,7 @@ impl Office {
             team,
             &root.1,
             members,
+            None,
             org_ops::now(),
         )
         .unwrap();
@@ -1579,4 +1581,100 @@ fn a_broken_task_from_an_older_version_does_not_freeze_the_board() {
     assert_eq!(lain.subtasks.len(), 1);
     assert!(on_b.iter().find(|t| t.title == "lama").unwrap().subtasks.is_empty());
     view_json(&b, &p.id);
+}
+
+// --- Division projects (v0.6) ---------------------------------------------
+
+/// Every laptop reports this Mira, so the division gate is open.
+fn report_versions(o: &mut Office, laptops: &mut [&mut Laptop]) {
+    let profile = p::DeviceProfile {
+        laptop: "LAPTOP-01".into(),
+        os: "Windows 11".into(),
+        app_version: crate::device::APP_VERSION.into(),
+    };
+    p::ensure_device_op(&mut o.ani.conn, &o.ani.id, &profile, org_ops::now()).unwrap();
+    for l in laptops.iter_mut() {
+        o.tell(l);
+        p::ensure_device_op(&mut l.conn, &l.id, &profile, org_ops::now()).unwrap();
+        let (to, from) = (o.ani.pk(), l.pk());
+        org_ops::sync(&l.conn, &mut o.ani.conn, &to, &from);
+    }
+    for l in laptops.iter_mut() {
+        o.tell(l);
+    }
+}
+
+fn create_for(team: &str, division: Option<&str>) -> BoardAction {
+    BoardAction::CreateProject {
+        team_id: Some(team.to_owned()),
+        division_id: division.map(str::to_owned),
+    }
+}
+
+#[test]
+fn a_division_head_creates_a_division_project_that_members_accept() {
+    let mut o = office();
+    let desain = o.desain.clone();
+    let mut budi = o.hire("Budi", &desain);
+    let mut citra = o.hire("Citra", &desain);
+    report_versions(&mut o, &mut [&mut budi, &mut citra]);
+    let now = org_ops::now();
+    let mobile = p::create_division(&mut o.ani.conn, &o.ani.id, &desain, "Mobile", now).unwrap();
+    p::set_division_head(&mut o.ani.conn, &o.ani.id, &mobile, &budi.pk(), true, now).unwrap();
+    p::add_division_member(&mut o.ani.conn, &o.ani.id, &mobile, &citra.pk(), now).unwrap();
+    o.tell(&mut budi);
+    o.tell(&mut citra);
+
+    // Budi heads Mobile without being a department admin: a project for
+    // Mobile only. Citra, a plain member, may not.
+    let policy = LocalRolePolicy;
+    assert!(policy.check(&budi.conn, &budi.pk(), &create_for(&desain, Some(&mobile))).is_ok());
+    assert!(policy.check(&budi.conn, &budi.pk(), &create_for(&desain, None)).is_err());
+    assert!(policy.check(&citra.conn, &citra.pk(), &create_for(&desain, Some(&mobile))).is_err());
+    assert!(policy.check(&budi.conn, &budi.pk(), &create_for(&o.lain, Some(&mobile))).is_err());
+    let err = store::create_division_project(
+        &mut citra.conn,
+        &citra.id,
+        "Coba",
+        "COBA",
+        &desain,
+        &[],
+        &mobile,
+    )
+    .map(|_| ())
+    .unwrap_err();
+    assert_eq!(err.code(), "forbidden", "the fold refuses plain members too");
+
+    let made = store::create_division_project(
+        &mut budi.conn,
+        &budi.id,
+        "Aplikasi",
+        "APP",
+        &desain,
+        &[citra.pk()],
+        &mobile,
+    )
+    .unwrap();
+    let pid = made.value.id.clone();
+    let dir = LocalMembers::new(&budi.id);
+    let summary = Ctx {
+        conn: &budi.conn,
+        me: budi.id.public_key_hex(),
+        policy: &LocalRolePolicy,
+        dir: &dir,
+    }
+    .summary(&made.value)
+    .unwrap();
+    assert_eq!(summary.division_id.as_deref(), Some(mobile.as_str()));
+    assert_eq!(summary.division_name.as_deref(), Some("Mobile"));
+    let json = serde_json::to_value(&summary).unwrap();
+    assert_eq!(json["divisionId"], mobile.as_str());
+
+    // Citra's laptop learns the project from the log, then accepts the
+    // board made by the head.
+    let (to, from) = (citra.pk(), budi.pk());
+    org_ops::sync(&budi.conn, &mut citra.conn, &to, &from);
+    let r = send(&budi, &mut citra, &pid);
+    assert_eq!((r.applied, r.held, r.rejected), (1, 0, 0), "{r:?}");
+    assert_eq!(store::project(&citra.conn, &pid).unwrap().name, "Aplikasi");
 }

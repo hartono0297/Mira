@@ -1,9 +1,11 @@
 // Siapa boleh membuat proyek dan di departemen mana (kontrak v0.3 bagian 4,
 // `Rights::can_create_project`): superadmin di departemen terbuka mana pun atau
 // tanpa departemen; admin departemen di departemennya sendiri atau tanpa
-// departemen. Yang lain tidak. Inti Rust tetap memeriksa izinnya.
+// departemen. Kepala divisi (sejak v0.6) hanya proyek untuk divisinya, di departemen
+// divisi itu. Yang lain tidak. Inti Rust tetap memeriksa izinnya.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toAppError, type AppError } from "../../api";
+import { divisionApi, type DivisionRef } from "../../api/division";
 import { orgApi, subscribeOrg, type DepartmentView, type OrgOverview, type PersonView } from "../../api/org";
 
 export type CreateOptions = {
@@ -14,9 +16,16 @@ export type CreateOptions = {
   allowNoDepartment: boolean;
   // Pilihan bawaan: departemen saya kalau boleh, lalu departemen pertama, lalu tanpa departemen.
   defaultDepartment: string | null;
+  // Bukan null: orang ini hanya boleh membuat proyek untuk divisi-divisi ini (kepala divisi).
+  divisionOnly: string[] | null;
 };
 
-export function createOptions(overview: OrgOverview, people: PersonView[], departments: DepartmentView[]): CreateOptions {
+export function createOptions(
+  overview: OrgOverview,
+  people: PersonView[],
+  departments: DepartmentView[],
+  divisions: DivisionRef[] = [],
+): CreateOptions {
   const me = overview.publicKey;
   const mine = people.find((p) => p.publicKey === me);
   const open = departments
@@ -25,6 +34,7 @@ export function createOptions(overview: OrgOverview, people: PersonView[], depar
     .sort((a, b) => a.name.localeCompare(b.name, "id"));
   let allowed: { id: string; name: string }[] = [];
   let allowNoDepartment = false;
+  let divisionOnly: string[] | null = null;
   if (!mine || overview.isGuest || mine.isGuest) {
     allowed = [];
   } else if (overview.isSuperadmin) {
@@ -33,6 +43,12 @@ export function createOptions(overview: OrgOverview, people: PersonView[], depar
   } else if (mine.departmentRole === "admin" && mine.departmentId) {
     allowed = open.filter((d) => d.id === mine.departmentId);
     allowNoDepartment = true;
+  } else {
+    const headed = divisions.filter((d) => d.role === "head" && !d.archived && open.some((o) => o.id === d.teamId));
+    if (headed.length > 0) {
+      allowed = open.filter((o) => headed.some((d) => d.teamId === o.id));
+      divisionOnly = headed.map((d) => d.id);
+    }
   }
   const canCreate = allowed.length > 0 || allowNoDepartment;
   const own = allowed.find((d) => d.id === overview.departmentId);
@@ -42,10 +58,16 @@ export function createOptions(overview: OrgOverview, people: PersonView[], depar
     departments: allowed,
     allowNoDepartment,
     defaultDepartment: own?.id ?? allowed[0]?.id ?? null,
+    divisionOnly,
   };
 }
 
-export type OrgData = { overview: OrgOverview; people: PersonView[]; departments: DepartmentView[] };
+export type OrgData = {
+  overview: OrgOverview;
+  people: PersonView[];
+  departments: DepartmentView[];
+  divisions?: DivisionRef[];
+};
 
 export type CreateOptionsState =
   | { status: "loading" }
@@ -59,13 +81,18 @@ export function useCreateOptions(enabled = true): CreateOptionsState & { reload:
   const seq = useRef(0);
   const reload = useCallback(() => {
     const mine = ++seq.current;
-    Promise.all([orgApi.overview(), orgApi.people(), orgApi.departments()])
-      .then(([overview, people, departments]) => {
+    // Divisi yang gagal dibaca sama dengan tidak ada divisi: hak lain tetap berlaku.
+    const divisions = divisionApi
+      .myDivisions()
+      .then((list) => (Array.isArray(list) ? list : []))
+      .catch((): DivisionRef[] => []);
+    Promise.all([orgApi.overview(), orgApi.people(), orgApi.departments(), divisions])
+      .then(([overview, people, departments, divisions]) => {
         if (mine !== seq.current) return;
         setState({
           status: "ready",
-          options: createOptions(overview, people, departments),
-          data: { overview, people, departments },
+          options: createOptions(overview, people, departments, divisions),
+          data: { overview, people, departments, divisions },
         });
       })
       .catch((err) => {

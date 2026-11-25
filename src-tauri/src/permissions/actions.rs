@@ -306,15 +306,9 @@ pub fn set_team_admin(
     admin: bool,
     now: OffsetDateTime,
 ) -> AppResult<()> {
-    check_team_id(team)?;
-    check_member_key(member)?;
-    let (team, member) = (team.to_owned(), member.to_owned());
-    let body = if admin {
-        Body::TeamAdminSet { team, member }
-    } else {
-        Body::TeamAdminUnset { team, member }
-    };
-    author_one(conn, identity, body, now)
+    // Same path as "Departemen saya": a department admin (not a
+    // superadmin) changes admins only once the v0.6 gate is open.
+    super::division::set_dept_admin(conn, identity, team, member, admin, now)
 }
 
 pub fn add_superadmin(

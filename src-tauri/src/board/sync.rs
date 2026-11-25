@@ -445,12 +445,23 @@ pub fn import_project(
             );
             continue;
         }
-        let create = BoardAction::CreateProject {
-            team_id: meta.team_id.clone(),
-        };
         if rights.is_none() {
             rights = Some(Rights::load(&tx)?);
         }
+        // A division project (v0.6) may come from a head of the division;
+        // the log says which division the project was made for.
+        let division_id = rights.as_ref().and_then(|r| {
+            r.registered_division(ProjectRef {
+                id: project_id,
+                team_id: meta.team_id.as_deref(),
+                created_by: &creator,
+            })
+            .map(str::to_owned)
+        });
+        let create = BoardAction::CreateProject {
+            team_id: meta.team_id.clone(),
+            division_id,
+        };
         let writes_now = |pk: &str| {
             rights.as_ref().is_some_and(|r| {
                 r.can_write(

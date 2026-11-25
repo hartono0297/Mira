@@ -513,6 +513,8 @@ fn notifications(ctx: &Ctx, fx: &mut Effects) -> AppResult<()> {
         let sender = ctx.dir.name(&m.author);
         let title = if info.is_project_chat() {
             format!("{sender} {at} {}", project_label(&info.scope_name, lang))
+        } else if let Some(title) = super::division::notification_title(&info, &sender, at) {
+            title
         } else if info.is_channel() {
             format!("{sender} {at} #{}", info.name)
         } else if info.is_group() {

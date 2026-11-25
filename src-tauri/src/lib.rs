@@ -11,6 +11,7 @@ pub mod clock;
 pub mod commands;
 pub mod db;
 pub mod device;
+pub mod division_commands;
 pub mod documents;
 pub mod error;
 pub mod firewall;
@@ -213,6 +214,17 @@ pub fn run() {
             org_ad_commands::org_join_ad_check,
             org_ad_commands::org_other_offices,
             org_screen::org_fingerprint,
+            division_commands::dept_overview,
+            division_commands::my_divisions,
+            division_commands::conversation_settings,
+            division_commands::division_create,
+            division_commands::division_rename,
+            division_commands::division_archive,
+            division_commands::division_set_head,
+            division_commands::division_add_member,
+            division_commands::division_remove_member,
+            division_commands::dept_set_admin,
+            division_commands::chat_settings_set,
             join_commands::join_device,
             join_commands::join_search,
             join_commands::join_connect_address,
