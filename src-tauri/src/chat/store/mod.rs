@@ -270,6 +270,7 @@ fn channel_delete(ctx: &Ctx, conv: &str, fx: &mut Effects) -> AppResult<()> {
     )?;
     conn.execute("DELETE FROM chat_messages WHERE conv = ?1", [conv])?;
     conn.execute("DELETE FROM chat_receipts WHERE conv = ?1", [conv])?;
+    conn.execute("DELETE FROM chat_reactions WHERE conv = ?1", [conv])?;
     release_files(conn, conv, &hashes, fx)?;
     ctx.forget(conv);
     Ok(())

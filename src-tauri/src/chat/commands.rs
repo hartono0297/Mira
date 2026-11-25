@@ -373,6 +373,15 @@ pub async fn chat_sticker_pick(
     app: AppHandle,
     rt: State<'_, ChatRuntime>,
 ) -> AppResult<Option<PickedSticker>> {
+    // Debug builds only: end-to-end tests cannot drive the Windows dialog,
+    // so `MIRA_E2E_PICK` names the file the dialog "returns" every time (the
+    // test rewrites that file between uploads). Release builds ignore it.
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("MIRA_E2E_PICK").filter(|p| !p.is_empty()) {
+        let path = PathBuf::from(path);
+        rt.remember_picked(std::slice::from_ref(&path));
+        return run(&rt, move |c| c.inspect_picked(&path)).await.map(Some);
+    }
     let picked = tauri::async_runtime::spawn_blocking(move || {
         let lang = UiLang::current(&app.state::<MiraState>());
         app.dialog()
