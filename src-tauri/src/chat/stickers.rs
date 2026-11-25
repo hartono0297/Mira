@@ -18,7 +18,7 @@
 //! 512 KB. Its image is shown as a sticker only after its bytes pass
 //! `sticker_file::inspect` (cached per hash in `chat_sticker_checks`).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 use std::path::Path;
 
@@ -426,6 +426,15 @@ fn let_go(conn: &Connection, hash: &str, fx: &mut Effects) -> AppResult<()> {
 
 /// May the author make this `sticker_set` record? Superadmins only, judged
 /// like `channel_lock`: a superadmin now, or at the record's time.
+///
+/// Known risk, kept on purpose so every laptop reaches the same verdict:
+/// `at` is chosen by the author, so a former superadmin can backdate a
+/// record to a time they still held the role. Such a record can add,
+/// change, hide or delete office stickers, and a backdated new sticker wins
+/// a `:nama:` clash (the owner is the smallest `(created_at,
+/// created_record)`). Images still pass `sticker_file::inspect`, and the
+/// catalog never serves a conversation's file (`fetch::land_fetch_convs`,
+/// `sync::plain_allowed`).
 pub(crate) fn judge(ctx: &Ctx, rec: &VerifiedRecord, st: Standing) -> AppResult<Verdict> {
     let author = rec.author();
     if (st == Standing::Active && ctx.dir.is_superadmin(author))
@@ -622,10 +631,10 @@ pub fn apply(
         let_go(conn, &old.hash, fx)?;
     }
     // The image is fetched like a small attachment unless chat holds it
-    // already (uploaded here, or fetched before). A blob that is here but
-    // untracked (documents, signing) is dropped from the queue by the
-    // fetcher and never served for the catalog.
-    if after.state != StickerState::Deleted && !tracked(conn, &after.hash)? {
+    // already (uploaded here, or fetched before) or wants it for a message.
+    // A blob that is here but untracked (documents, signing) is dropped from
+    // the queue by the fetcher and never served for the catalog.
+    if after.state != StickerState::Deleted && may_queue_image(conn, &after.hash)? {
         let mut prefer = vec![rec.author().to_owned()];
         if let Some(p) = from.filter(|p| *p != rec.author()) {
             prefer.push(p.to_owned());
@@ -636,12 +645,95 @@ pub fn apply(
     Ok(())
 }
 
-fn tracked(conn: &Connection, hash: &str) -> AppResult<bool> {
-    Ok(conn.query_row(
+/// Whether the catalog may queue the image `hash` for itself: chat does not
+/// hold it yet, it is not queued already (maybe for a conversation), and no
+/// message here carries it. Otherwise the conversation's own download
+/// brings it, and it is never marked for the catalog
+/// (`fetch::OFFICE_STICKERS` must not ride on a chat pribadi or group file).
+fn may_queue_image(conn: &Connection, hash: &str) -> AppResult<bool> {
+    let tracked: bool = conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM chat_blobs WHERE hash = ?1)",
         [hash],
         |r| r.get(0),
-    )?)
+    )?;
+    Ok(!tracked
+        && fetch::queue_state(conn, hash, FetchKind::Plain)?.is_none()
+        && !fetch::message_carries(conn, hash)?)
+}
+
+/// Setting with the last time the catalog queued a missing office image
+/// again, per hash (JSON object), so a sticker whose image nobody has is not
+/// retried every time the catalog opens.
+const REQUEUE_SETTING: &str = "chat.sticker_requeue";
+/// Shortest wait between two such tries.
+const REQUEUE_EVERY: time::Duration = time::Duration::hours(1);
+
+struct RequeueTries {
+    at: BTreeMap<String, String>,
+    changed: bool,
+}
+
+impl RequeueTries {
+    /// Tries of the stickers in `rows` (others are forgotten).
+    fn load(conn: &Connection, rows: &[OfficeRow]) -> AppResult<Self> {
+        let mut at: BTreeMap<String, String> = crate::settings::get(conn, REQUEUE_SETTING)?
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
+        let before = at.len();
+        at.retain(|h, _| rows.iter().any(|r| r.hash == *h));
+        let changed = at.len() != before;
+        Ok(Self { at, changed })
+    }
+
+    fn due(&self, hash: &str, now: OffsetDateTime) -> bool {
+        self.at
+            .get(hash)
+            .and_then(|t| parse_time(t))
+            .is_none_or(|t| t > now || now - t >= REQUEUE_EVERY)
+    }
+
+    fn mark(&mut self, hash: &str, now: OffsetDateTime) {
+        self.at.insert(hash.to_owned(), format_time(now));
+        self.changed = true;
+    }
+
+    fn save(&self, conn: &Connection) -> AppResult<()> {
+        if self.changed {
+            let json = serde_json::to_string(&self.at).unwrap_or_else(|_| "{}".into());
+            crate::settings::set(conn, REQUEUE_SETTING, &json)?;
+        }
+        Ok(())
+    }
+}
+
+/// Whether chat may use blob `hash` as a sticker image here: chat put it in
+/// the store itself (fetched or uploaded), or this laptop's person picked
+/// these bytes (an own message attachment, an own or office sticker upload).
+/// A blob that was already here for documents or signing (a signature
+/// image, say) is never offered or sent as a sticker.
+fn sticker_usable(conn: &Connection, hash: &str) -> AppResult<bool> {
+    let preexisting: Option<bool> = conn
+        .query_row(
+            "SELECT preexisting != 0 FROM chat_blobs WHERE hash = ?1 AND kind = 'plain'",
+            [hash],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(match preexisting {
+        None => false,
+        Some(false) => true,
+        Some(true) => fetch::blob_convs(conn, hash)?.iter().any(|c| c.own),
+    })
+}
+
+fn require_usable(conn: &Connection, hash: &str) -> AppResult<()> {
+    if sticker_usable(conn, hash)? {
+        Ok(())
+    } else {
+        Err(invalid(
+            "Gambar ini sama persis dengan file lain di laptop ini, jadi tidak bisa dipakai sebagai sticker.",
+        ))
+    }
 }
 
 /// Now, or one second after the sticker's latest record when the clock is
@@ -783,11 +875,13 @@ impl ChatSync {
             require_member(ctx)?;
             let manage = require_superadmin(ctx).is_ok();
             let rows = office_rows(ctx.conn)?;
-            let now = format_time(clock::now());
+            let now = clock::now();
+            let mut tries = RequeueTries::load(ctx.conn, &rows)?;
             let mut office = Vec::new();
             for r in &rows {
-                let ready = BlobHash::parse(&r.hash).is_ok_and(|h| self.blobs.contains(&h));
-                if !ready && fetch::queue_state(ctx.conn, &r.hash, FetchKind::Plain)?.is_none() {
+                let present = BlobHash::parse(&r.hash).is_ok_and(|h| self.blobs.contains(&h));
+                let ready = present && sticker_usable(ctx.conn, &r.hash)?;
+                if !present && may_queue_image(ctx.conn, &r.hash)? && tries.due(&r.hash, now) {
                     let author: Option<String> = ctx
                         .conn
                         .query_row(
@@ -797,7 +891,8 @@ impl ChatSync {
                         )
                         .optional()?;
                     let prefer: Vec<String> = author.into_iter().collect();
-                    queue_image(ctx.conn, &r.hash, r.size, &prefer, &now)?;
+                    queue_image(ctx.conn, &r.hash, r.size, &prefer, &format_time(now))?;
+                    tries.mark(&r.hash, now);
                     fx.queued = true;
                 }
                 let taken = r.name_taken(&rows);
@@ -806,6 +901,7 @@ impl ChatSync {
                 }
                 office.push(r.view(ready, taken));
             }
+            tries.save(ctx.conn)?;
             let mut stmt = ctx.conn.prepare(&format!(
                 "SELECT {MY_COLS} FROM chat_my_stickers ORDER BY added_at DESC, rowid DESC"
             ))?;
@@ -829,13 +925,17 @@ impl ChatSync {
         let blob = BlobHash::parse(hash)?;
         self.with_ctx(|ctx, _, _| {
             require_member(ctx)?;
-            let allowed = ctx.conn.query_row(
+            let office: bool = ctx.conn.query_row(
                 "SELECT EXISTS (SELECT 1 FROM chat_office_stickers
-                                WHERE hash = ?1 AND state IN ('active', 'hidden'))
-                     OR EXISTS (SELECT 1 FROM chat_my_stickers WHERE hash = ?1)",
+                                WHERE hash = ?1 AND state IN ('active', 'hidden'))",
                 [hash],
-                |r| r.get::<_, bool>(0),
-            )? || in_readable_sticker_message(ctx, hash)?;
+                |r| r.get(0),
+            )?;
+            // An office sticker naming a blob that is here for documents or
+            // signing does not make it a sticker image.
+            let allowed = (office && sticker_usable(ctx.conn, hash)?)
+                || is_saved(ctx.conn, hash)?
+                || in_readable_sticker_message(ctx, hash)?;
             if !allowed {
                 return Err(AppError::Forbidden(
                     "Gambar ini bukan sticker yang bisa kamu lihat.".into(),
@@ -897,6 +997,9 @@ impl ChatSync {
             let now = format_time(clock::now());
             let stored =
                 fetch::put_tracked_bytes(ctx.conn, &self.blobs, &bytes, FetchKind::Plain, &now)?;
+            // Picked by this laptop's person: usable even when the same
+            // bytes were already here for documents or signing.
+            fetch::add_blob_conv(ctx.conn, &hash, fetch::MY_STICKERS, true)?;
             remember(ctx.conn, &hash, Ok(&info), &now)?;
             let row = MyRow {
                 id: model::random_hex32(),
@@ -936,6 +1039,7 @@ impl ChatSync {
                 return Ok(old.view());
             }
             require_good(ctx.conn, &self.blobs, &f.hash, &f.mime)?;
+            require_usable(ctx.conn, &f.hash)?;
             let now = format_time(clock::now());
             // Fetched by chat already; an untracked blob stays preexisting.
             fetch::track(ctx.conn, &f.hash, FetchKind::Plain, true, &now)?;
@@ -963,6 +1067,7 @@ impl ChatSync {
             })?;
             ctx.conn
                 .execute("DELETE FROM chat_my_stickers WHERE id = ?1", [id])?;
+            fetch::forget_conv(ctx.conn, &row.hash, fetch::MY_STICKERS)?;
             if fetch::release(ctx.conn, &row.hash)? {
                 fx.drop_blobs.push(row.hash);
             }
@@ -1094,6 +1199,7 @@ impl ChatSync {
                 }
             };
             require_good(ctx.conn, blobs, &hash, &mime)?;
+            require_usable(ctx.conn, &hash)?;
             let file = FileRef {
                 name: sticker_file_name(&name, &mime).ok_or_else(failed_check)?,
                 hash,

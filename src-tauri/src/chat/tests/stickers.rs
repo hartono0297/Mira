@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use super::super::testutil::{Laptop, Office, Who, run_fetches};
+use super::super::testutil::{Laptop, Office, Who, pull, run_fetches};
 use super::super::view::{MessageView, OfficeStickerState, StickerCatalog, StickerSource};
 use super::{feature, messages, sign_as};
 use crate::blobs::BlobHash;
@@ -594,8 +594,16 @@ fn office_images_are_served_to_members_but_not_a_blob_already_here() {
     assert!(served(a, c, &hash));
     o.sync_all();
     assert_eq!(run_fetches(b, &[a]), 0, "already here");
-    assert!(catalog(b).office[0].ready);
     assert!(!served(b, c, &hash), "preexisting blob is not served");
+    // Not chat's own copy: not offered as a sticker, not sendable, not shown.
+    assert!(!catalog(b).office[0].ready);
+    let id = catalog(b).office[0].id.clone();
+    let err = b
+        .chat
+        .send_sticker(&o.umum(), StickerSource::Office { id }, None)
+        .unwrap_err();
+    assert!(err.to_string().contains("sama persis"), "{err}");
+    assert!(b.chat.sticker_image(&hash).is_err());
     // A removed member gets nothing.
     o.remove_member(&c.pk, "2026-06-01T00:00:00Z");
     assert!(!served(a, c, &hash));
@@ -611,4 +619,95 @@ fn sticker_records_replayed_keep_one_row() {
     let got = b.chat_ingest(&a.pk, recs);
     assert_eq!(got.accepted, 0, "already known");
     assert_eq!(b.count("SELECT count(*) FROM chat_office_stickers"), 1);
+}
+
+/// A forged `sticker_set` naming the hash of a file in Budi and Citra's chat
+/// pribadi, made by a superadmin outside it.
+fn dm_lure(o: &Office) -> (String, String, crate::network::feature::FeatureRecord) {
+    let (a, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
+    let dm = b.chat.open_dm(&c.pk).unwrap().id;
+    let bytes = png(6, 11);
+    let path = write_file(c, "foto.png", &bytes);
+    c.chat.send(&dm, "", None, vec![], vec![path]).unwrap();
+    let lure = sign_as(
+        a,
+        &o.org_id,
+        ago(5),
+        set_body(&model::random_hex32(), "curian", StickerState::Active, &bytes),
+    );
+    (dm, BlobHash::of_bytes(&bytes).to_string(), feature(&lure))
+}
+
+#[test]
+fn office_sticker_naming_a_dm_file_queued_first_is_not_served_to_others() {
+    let o = office();
+    let (a, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
+    let (_dm, hash, lure) = dm_lure(&o);
+    pull(c, b);
+    assert_eq!(b.chat_ingest(&a.pk, vec![lure]).accepted, 1);
+    assert!(run_fetches(b, &[c]) >= 1);
+    assert!(has_blob(b, &hash));
+    assert!(served(b, c, &hash), "the chat pribadi still works");
+    assert!(!served(b, a, &hash), "not to someone outside the chat pribadi");
+}
+
+#[test]
+fn office_sticker_naming_a_dm_file_that_comes_later_is_not_served_to_others() {
+    let o = office();
+    let (a, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
+    let (_dm, hash, lure) = dm_lure(&o);
+    assert_eq!(b.chat_ingest(&a.pk, vec![lure]).accepted, 1);
+    pull(c, b);
+    assert!(run_fetches(b, &[c]) >= 1);
+    assert!(has_blob(b, &hash));
+    assert!(served(b, c, &hash));
+    assert!(!served(b, a, &hash));
+}
+
+#[test]
+fn preexisting_message_image_cannot_be_saved_but_an_own_upload_can() {
+    let o = office();
+    let (b, c) = (&o.l[1], &o.l[2]);
+    let bytes = png(4, 120);
+    // Citra's laptop holds the same bytes for documents or signing.
+    c.chat.blobs.put_bytes(&bytes).unwrap();
+    let path = write_file(b, "hore.png", &bytes);
+    let mine = b.chat.my_sticker_add(&path, "hore", &[]).unwrap();
+    let sent = b
+        .chat
+        .send_sticker(&o.umum(), StickerSource::Mine { id: mine.id }, None)
+        .unwrap();
+    o.sync_all();
+    let err = c.chat.my_sticker_save(&sent.id).unwrap_err();
+    assert!(err.to_string().contains("sama persis"), "{err}");
+    // Picking the file herself is her own choice: allowed and sendable.
+    let path = write_file(c, "hore.png", &bytes);
+    let own = c.chat.my_sticker_add(&path, "hore", &[]).unwrap();
+    c.chat
+        .send_sticker(&o.umum(), StickerSource::Mine { id: own.id }, None)
+        .unwrap();
+}
+
+#[test]
+fn missing_office_image_is_queued_again_at_most_hourly() {
+    let o = office();
+    let (a, b) = (&o.l[0], &o.l[1]);
+    // Nobody has this image.
+    let lure = sign_as(
+        a,
+        &o.org_id,
+        ago(5),
+        set_body(&model::random_hex32(), "hilang", StickerState::Active, &png(2, 77)),
+    );
+    b.chat_ingest(&a.pk, vec![feature(&lure)]);
+    let queued = || b.count("SELECT count(*) FROM chat_fetch_queue");
+    assert_eq!(queued(), 1);
+    let drop_queue = || b.with_conn(|c| c.execute("DELETE FROM chat_fetch_queue", []).unwrap());
+    drop_queue();
+    catalog(b);
+    assert_eq!(queued(), 1, "queued again once");
+    drop_queue();
+    catalog(b);
+    catalog(b);
+    assert_eq!(queued(), 0, "not again within the hour");
 }

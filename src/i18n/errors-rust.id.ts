@@ -378,6 +378,8 @@ const id = {
       fileCorrupt: "File sticker rusak atau tidak bisa dibaca.",
       fileTooWide: "Ukuran gambar sticker paling besar 1024 x 1024 piksel.",
       fileFrames: "Sticker bergerak paling banyak 120 frame.",
+      filePixels: "Sticker bergerak terlalu besar. Kecilkan gambarnya atau kurangi jumlah frame (paling banyak 32 juta piksel untuk semua frame).",
+      sameAsOtherFile: "Gambar ini sama persis dengan file lain di laptop ini, jadi tidak bisa dipakai sebagai sticker.",
     },
     sign: {
       fileNotAvailable: "File ini belum bisa diunduh: tidak ada laptop rekan tersambung yang menyimpannya. Pastikan laptop pengirim atau penanda tangan menyala dan tersambung, lalu coba lagi.",

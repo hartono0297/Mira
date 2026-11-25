@@ -616,10 +616,11 @@ impl ChatSync {
     ///   before chat touched it (documents, signing) is served only where this
     ///   laptop attached it to its own message.
     /// - v0.5.1: an office sticker image to any active member, when this
-    ///   laptop downloaded it for the catalog or uploaded it itself
-    ///   (`fetch::OFFICE_STICKERS`) and an office sticker that is not deleted
-    ///   still uses it. A blob that was already here when the sticker record
-    ///   came is not served this way.
+    ///   laptop uploaded it as an office sticker, or downloaded it for the
+    ///   catalog alone and holds it for no conversation
+    ///   (`fetch::OFFICE_STICKERS`), and an office sticker that is not
+    ///   deleted still uses it. A blob that was already here when the sticker
+    ///   record came is not served this way.
     ///
     /// A message or sticker record naming a hash is never enough on its own.
     fn blob_allowed(&self, peer: &str, hash: &str) -> AppResult<Option<PathBuf>> {
@@ -658,14 +659,22 @@ impl ChatSync {
 }
 
 fn plain_allowed(ctx: &Ctx, peer: &str, hash: &str, preexisting: bool) -> AppResult<bool> {
-    for held in fetch::blob_convs(ctx.conn, hash)? {
+    let all = fetch::blob_convs(ctx.conn, hash)?;
+    // Held for a conversation too: the conversation rules decide alone.
+    let only_catalog = all.iter().all(|c| fetch::is_sticker_hold(&c.conv));
+    for held in &all {
         if preexisting && !held.own {
             continue;
         }
         if held.conv == fetch::OFFICE_STICKERS {
-            if super::stickers::office_uses(ctx.conn, hash)? {
+            // Uploaded here as an office sticker, or fetched for the catalog
+            // alone (never riding on a chat pribadi or group file).
+            if (held.own || only_catalog) && super::stickers::office_uses(ctx.conn, hash)? {
                 return Ok(true);
             }
+            continue;
+        }
+        if fetch::is_sticker_hold(&held.conv) {
             continue;
         }
         // A message there must still carry the file (for a preexisting blob,

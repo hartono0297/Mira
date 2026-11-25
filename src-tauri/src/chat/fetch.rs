@@ -132,6 +132,25 @@ pub fn unqueue(conn: &Connection, hash: &str, kind: FetchKind) -> AppResult<()> 
 /// a conversation, so conversation rules skip it.
 pub const OFFICE_STICKERS: &str = "sticker:office";
 
+/// Pseudo conversation in `chat_blobs.convs` (always `own`): this laptop's
+/// person picked these bytes as one of their own stickers (v0.5.1). Never
+/// served by it; it only says chat may use a preexisting blob as a sticker.
+pub const MY_STICKERS: &str = "sticker:mine";
+
+/// One of the sticker pseudo conversations above.
+pub fn is_sticker_hold(conv: &str) -> bool {
+    conv == OFFICE_STICKERS || conv == MY_STICKERS
+}
+
+/// Whether a message on this laptop (deleted or not) carries `hash`.
+pub fn message_carries(conn: &Connection, hash: &str) -> AppResult<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM chat_files WHERE hash = ?1)",
+        [hash],
+        |r| r.get(0),
+    )?)
+}
+
 /// One conversation a plain blob is held for (`chat_blobs.convs`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobConv {
@@ -214,8 +233,19 @@ pub fn queue_for_conv(conn: &Connection, hash: &str, conv: &str) -> AppResult<()
 
 /// A plain download landed (and is tracked): the conversations it was queued
 /// for become the conversations the blob is held for. Call before `unqueue`.
+///
+/// The office catalog ([`OFFICE_STICKERS`]) only holds bytes fetched for it
+/// alone: when the job was also for a conversation, or a message here
+/// carries the file, a peer may have sent it under that conversation's
+/// rules, so it is not marked for the catalog (and never served to every
+/// member).
 pub fn land_fetch_convs(conn: &Connection, hash: &str) -> AppResult<()> {
-    for conv in queued_convs(conn, hash)? {
+    let convs = queued_convs(conn, hash)?;
+    let shared = convs.iter().any(|c| !is_sticker_hold(c)) || message_carries(conn, hash)?;
+    for conv in convs {
+        if conv == OFFICE_STICKERS && shared {
+            continue;
+        }
         add_blob_conv(conn, hash, &conv, false)?;
     }
     Ok(())

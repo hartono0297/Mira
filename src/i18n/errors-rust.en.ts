@@ -375,6 +375,8 @@ const en: Dict<typeof id> = {
       fileCorrupt: "The sticker file is damaged or can't be read.",
       fileTooWide: "A sticker image can be at most 1024 x 1024 pixels.",
       fileFrames: "An animated sticker can have at most 120 frames.",
+      filePixels: "This animated sticker is too large. Make the image smaller or use fewer frames (at most 32 million pixels across all frames).",
+      sameAsOtherFile: "This image is identical to another file on this laptop, so it can't be used as a sticker.",
     },
     sign: {
       fileNotAvailable: "This file can't be downloaded yet: no connected colleague's laptop has it. Make sure the sender's or a signer's laptop is on and connected, then try again.",
