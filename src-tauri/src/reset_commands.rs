@@ -81,11 +81,17 @@ pub async fn reset_removed_laptop(
     // A command may have started the network again with the old key while
     // the reset waited for the core lock.
     net.shutdown().await;
-    if let Err(err) = net.get(&state, &app).await {
-        eprintln!(
-            "Mira: jaringan belum berjalan setelah reset [{}]: {err}",
-            err.code()
-        );
+    // The old UDP socket can take a moment to be released (a fixed
+    // `MIRA_PORT` then fails with "address in use"): retry for a few seconds.
+    for attempt in 0..10 {
+        match net.get(&state, &app).await {
+            Ok(_) => break,
+            Err(err) if attempt == 9 => eprintln!(
+                "Mira: jaringan belum berjalan setelah reset [{}]: {err}",
+                err.code()
+            ),
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+        }
     }
     let _ = app.emit(EVENT_DIRECTORY, ());
     let _ = app.emit(EVENT_NETWORK, ());

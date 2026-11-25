@@ -98,6 +98,7 @@ const LBL = {
     resultHeading: /^(Kantor Anda ditemukan|Kantor ditemukan|Beberapa kantor ditemukan|Kantor belum ditemukan)/,
     waitingHeading: /^Menunggu persetujuan$/,
     sendRequest: "Kirim permintaan",
+    searchAgain: "Cari lagi",
   },
   en: {
     mainMenu: "Main menu",
@@ -200,7 +201,7 @@ async function launch(id, { env = {} } = {}) {
   });
   const exited = new Promise((r) => child.once("exit", r));
   let browser;
-  for (let i = 0; i < 60 && !browser; i++) {
+  for (let i = 0; i < 180 && !browser; i++) { // sampai 90 dtk: PC uji bisa sangat sibuk
     await sleep(500);
     try {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${node.cdp}`);
@@ -217,13 +218,26 @@ async function launch(id, { env = {} } = {}) {
     throw new Error(`WebView2 ${id} tidak bisa dihubungi lewat CDP (port ${node.cdp})`);
   }
   let page;
-  for (let i = 0; i < 40 && !page; i++) {
+  for (let i = 0; i < 120 && !page; i++) {
     page = browser.contexts().flatMap((c) => c.pages())[0];
     if (!page) await sleep(250);
   }
   await page.waitForLoadState("domcontentloaded");
   await page.setViewportSize({ width: 1280, height: 900 }).catch(() => {});
-  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+  // PC uji bisa sangat sibuk: tunggu lebih lama, dan hentikan proses ini kalau gagal
+  // supaya tidak tertinggal di latar belakang.
+  try {
+    await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 60000 });
+  } catch (e) {
+    const url = page.url();
+    await browser.close().catch(() => {});
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      /* sudah berhenti */
+    }
+    throw new Error(`WebView2 ${id} tidak memuat Mira dalam 60 dtk (${url}): ${e.message}`);
+  }
   running[id] = { child, browser, page, exited };
   lang[id] = "id";
   await rememberKey(id);
@@ -234,6 +248,7 @@ async function launch(id, { env = {} } = {}) {
 async function stop(id) {
   const app = running[id];
   if (!app) return;
+  await rememberKey(id); // kunci laptop uji ini dihapus di akhir
   delete running[id];
   await app.browser.close().catch(() => {});
   try {
@@ -464,7 +479,18 @@ async function requestToJoin(id) {
   const page = pg(id);
   await passName(page, NAME[id]);
   await passFirewall(page);
-  const h = await waitHeading(id, LBL.id.resultHeading, 40000);
+  let h = await waitHeading(id, LBL.id.resultHeading, 40000);
+  // Pencarian bisa kosong di PC yang sibuk: "Cari lagi" sampai tiga kali. Pesan galat
+  // di layar dicatat supaya masalah jaringan terlihat di log.
+  for (let i = 0; i < 3 && /^Kantor belum ditemukan/.test(h); i++) {
+    const err = (await bodyText(id)).split("\n").filter((l) => /tidak bisa|error|gagal/i.test(l)).join(" | ");
+    note(`${id} belum menemukan kantor (percobaan ${i + 1})${err ? `: ${err}` : ""}`);
+    if (i === 0) await snap(id, 90, "kantor-belum-ditemukan");
+    await sleep(10000);
+    await page.getByRole("button", { name: LBL.id.searchAgain }).click({ timeout: 10000 });
+    await sleep(1500);
+    h = await waitHeading(id, LBL.id.resultHeading, 40000);
+  }
   if (/^Beberapa/.test(h)) {
     note(`${id} melihat beberapa kantor (mungkin ada Mira lain di PC ini), ${ORG} dipilih`);
     await page.getByRole("radio", { name: new RegExp("^" + ORG) }).check();
@@ -757,6 +783,8 @@ let cleaned = false;
 async function cleanup() {
   if (cleaned) return;
   cleaned = true;
+  // Kunci laptop uji yang dikenal (stop() juga mencatat kunci terakhir tiap laptop).
+  for (const k of Object.values(pk)) if (k) ourKeys.add(k.toLowerCase());
   for (const id of Object.keys(running)) await stop(id);
   for (const target of miraCredentials()) {
     if (credentialsBefore.has(target)) continue;

@@ -145,7 +145,8 @@ const TXT = {
     primary: (d) => `Kantor utama untuk ${d}`,
     headingMine: "Kantor Anda ditemukan", // kantor dipakai langsung karena domainnya sama
     deptFromAccount: (d) => `Dari akun Windows Anda: ${d}`,
-    deptMissing: (d) => `Departemen Anda di akun Windows (${d}) belum ada di Mira`,
+    // 0.5.1: teks dan data-testid baris ini berubah (onb-ad-skipped, data-reason=unmatched).
+    deptMissing: (d) => `Departemen Anda di akun Windows (${d}) belum dicocokkan admin dengan departemen di Mira`,
     boxTitle: "Yang dilihat admin",
     partial: "Sebagian data akun Windows tidak terbaca",
     newOfficeAdLabel: "Domain Active Directory (opsional)",
@@ -801,8 +802,8 @@ async function main() {
     await toOffices("N3");
     await sleep(3000); // beri waktu usulan departemen
     check("4.2 N3: departemen tidak terpilih otomatis", (await selectedTeam("N3")) === "");
-    const cap = await tidText("N3", TID.deptCaption);
-    check("4.3 N3: tertulis \"Departemen Anda di akun Windows (Gudang) belum ada di Mira\"", has(cap, TXT.id.deptMissing(DEPT.warehouse)), cap);
+    const cap = await tidText("N3", TID.skipped);
+    check("4.3 N3: tertulis \"Departemen Anda di akun Windows (Gudang) belum dicocokkan admin\"", has(cap, TXT.id.deptMissing(DEPT.warehouse)), cap);
     await snap("N3", "onboarding-departemen-belum-ada");
     await teamSelect("N3").selectOption({ label: DEPT.design });
     const code = await sendRequest("N3");

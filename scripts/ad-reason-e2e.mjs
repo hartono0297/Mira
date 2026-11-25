@@ -228,7 +228,7 @@ async function launch(id, { env = {} } = {}) {
   });
   const exited = new Promise((r) => child.once("exit", r));
   let browser;
-  for (let i = 0; i < 60 && !browser; i++) {
+  for (let i = 0; i < 180 && !browser; i++) { // sampai 90 dtk: PC uji bisa sangat sibuk
     await sleep(500);
     try {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${node.cdp}`);
@@ -245,13 +245,26 @@ async function launch(id, { env = {} } = {}) {
     throw new Error(`WebView2 ${id} tidak bisa dihubungi lewat CDP (port ${node.cdp})`);
   }
   let page;
-  for (let i = 0; i < 40 && !page; i++) {
+  for (let i = 0; i < 120 && !page; i++) {
     page = browser.contexts().flatMap((c) => c.pages())[0];
     if (!page) await sleep(250);
   }
   await page.waitForLoadState("domcontentloaded");
   await page.setViewportSize({ width: 1280, height: 900 }).catch(() => {});
-  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+  // PC uji bisa sangat sibuk: tunggu lebih lama, dan hentikan proses ini kalau gagal
+  // supaya tidak tertinggal di latar belakang.
+  try {
+    await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 60000 });
+  } catch (e) {
+    const url = page.url();
+    await browser.close().catch(() => {});
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      /* sudah berhenti */
+    }
+    throw new Error(`WebView2 ${id} tidak memuat Mira dalam 60 dtk (${url}): ${e.message}`);
+  }
   running[id] = { child, browser, page, exited };
   lang[id] = "id";
   await rememberKey(id);
@@ -261,6 +274,7 @@ async function launch(id, { env = {} } = {}) {
 async function stop(id) {
   const app = running[id];
   if (!app) return;
+  await rememberKey(id); // kunci laptop uji ini dihapus di akhir
   delete running[id];
   await app.browser.close().catch(() => {});
   try {

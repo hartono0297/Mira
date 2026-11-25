@@ -5,7 +5,7 @@
 //! Every call takes the core lock briefly; nothing here awaits.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as AsyncMutex;
@@ -113,8 +113,10 @@ pub struct MiraBackend {
     state: MiraState,
     /// The network using this backend, once started, so a join accepted
     /// here is pushed to the other members right away instead of on the
-    /// next periodic sync.
-    net: OnceLock<Network>,
+    /// next periodic sync. Cleared on shutdown: the network holds this
+    /// backend, so keeping it here would keep the network (and its UDP
+    /// socket) alive after `AppNet::shutdown`.
+    net: std::sync::Mutex<Option<Network>>,
     /// Test override of `extras` in `join_info` answers. `None`:
     /// `JOIN_INFO_EXTRAS_AD` or `JOIN_INFO_EXTRAS` when every member runs a
     /// recent enough Mira (`permissions::join::join_ad_allowed`,
@@ -147,7 +149,7 @@ impl MiraBackend {
     pub fn new(state: MiraState) -> Self {
         Self {
             state,
-            net: OnceLock::new(),
+            net: std::sync::Mutex::new(None),
             join_extras: None,
             legacy_advert: legacy_advert_from_env(),
         }
@@ -169,7 +171,20 @@ impl MiraBackend {
     }
 
     pub fn attach(&self, net: Network) {
-        let _ = self.net.set(net);
+        if let Ok(mut slot) = self.net.lock() {
+            *slot = Some(net);
+        }
+    }
+
+    /// Drops the network handle (see `net`).
+    pub fn detach(&self) {
+        if let Ok(mut slot) = self.net.lock() {
+            *slot = None;
+        }
+    }
+
+    fn network(&self) -> Option<Network> {
+        self.net.lock().ok().and_then(|slot| slot.clone())
     }
 }
 
@@ -334,7 +349,7 @@ impl SyncBackend for MiraBackend {
             .map(|data| {
                 // Tell the other members about the newcomer now, so they
                 // accept its connection instead of refusing it as unknown.
-                if let Some(net) = self.net.get() {
+                if let Some(net) = self.network() {
                     net.refresh();
                 }
                 JoinAccepted {
@@ -540,6 +555,8 @@ impl SyncBackend for MiraBackend {
 #[derive(Clone, Default)]
 pub struct AppNet {
     inner: Arc<AsyncMutex<Option<Network>>>,
+    /// Backend of the running network, detached on shutdown.
+    backend: Arc<std::sync::Mutex<Option<Arc<MiraBackend>>>>,
     /// The managed feature hub; the network sets its link on it.
     features: Arc<FeatureHub>,
 }
@@ -548,6 +565,7 @@ impl AppNet {
     pub fn new(features: Arc<FeatureHub>) -> Self {
         Self {
             inner: Arc::default(),
+            backend: Arc::default(),
             features,
         }
     }
@@ -598,6 +616,9 @@ impl AppNet {
             .await
             .map_err(|e| AppError::Network(format!("Jaringan Mira tidak bisa dimulai: {e}")))?;
         backend.attach(net.clone());
+        if let Ok(mut slot) = self.backend.lock() {
+            *slot = Some(backend);
+        }
         *guard = Some(net.clone());
         Ok(net)
     }
@@ -609,6 +630,9 @@ impl AppNet {
 
     pub async fn shutdown(&self) {
         if let Some(net) = self.inner.lock().await.take() {
+            if let Some(backend) = self.backend.lock().ok().and_then(|mut b| b.take()) {
+                backend.detach();
+            }
             net.shutdown().await;
         }
     }

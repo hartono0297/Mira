@@ -75,7 +75,7 @@ async fn start_net_with_extras(
     hub.register(Arc::new(JoinFeature::new(state.clone())));
     Network::start_with_features(
         NetConfig {
-            identity_secret,
+            identity_secret: identity_secret.clone(),
             public_key,
             port: Some(0),
             mdns_enabled: false,
@@ -1325,4 +1325,52 @@ async fn removing_a_suspended_member_is_a_permanent_removal() {
     assert!(!a.net.is_linked(&b.pk) && !c.net.is_linked(&b.pk));
     assert_eq!(b.membership(), Membership::Removed);
     shutdown(&[&a, &b, &c]).await;
+}
+
+/// 0.5.1 reset: a network whose backend was attached and then detached
+/// releases its UDP port on shutdown, so a new network can bind the same
+/// port (a fixed `MIRA_PORT`) right after.
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_after_detach_frees_the_port() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let state = MiraState::new(
+        Ok(dir.path().to_path_buf()),
+        Box::new(MemoryKeyStore::new()),
+    );
+    let (identity_secret, public_key) = state
+        .with_core(|c| Ok((c.identity.secret_bytes(), c.identity.public_key_hex().to_owned())))
+        .expect("identity");
+    let start = |port: Option<u16>, backend: Arc<MiraBackend>| {
+        let cfg = NetConfig {
+            identity_secret: identity_secret.clone(),
+            public_key: public_key.clone(),
+            port,
+            mdns_enabled: false,
+        };
+        async move {
+            Network::start_with_features(cfg, backend, Arc::new(|_| {}), Arc::new(FeatureHub::default()))
+                .await
+        }
+    };
+    let backend = Arc::new(MiraBackend::new(state.clone()));
+    let net = start(Some(0), backend.clone()).await.expect("network starts");
+    backend.attach(net.clone());
+    let port = net.status().listen_port.expect("listening");
+    backend.detach();
+    net.shutdown().await;
+    drop(net);
+    drop(backend);
+    let mut again = None;
+    for _ in 0..20 {
+        match start(Some(port), Arc::new(MiraBackend::new(state.clone()))).await {
+            Ok(n) => {
+                again = Some(n);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(250)).await,
+        }
+    }
+    let again = again.expect("the same port can be bound again after shutdown");
+    assert_eq!(again.status().listen_port, Some(port));
+    again.shutdown().await;
 }
