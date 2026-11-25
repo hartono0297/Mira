@@ -23,6 +23,8 @@ pub const GATED_KINDS: &[&str] = &["reaction", "sticker_set"];
 
 /// `major.minor.patch` of `s` at compile time (stops at the first character
 /// that is not a digit or a dot, like `-beta`). Missing parts count as 0.
+/// Only used by the release-build check below and the tests.
+#[cfg_attr(debug_assertions, allow(dead_code))]
 const fn const_version(s: &str) -> (u32, u32, u32) {
     let b = s.as_bytes();
     let mut parts = [0u32; 3];
@@ -42,6 +44,7 @@ const fn const_version(s: &str) -> (u32, u32, u32) {
     (parts[0], parts[1], parts[2])
 }
 
+#[cfg_attr(debug_assertions, allow(dead_code))]
 const fn version_lt(a: (u32, u32, u32), b: (u32, u32, u32)) -> bool {
     a.0 < b.0 || (a.0 == b.0 && (a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)))
 }

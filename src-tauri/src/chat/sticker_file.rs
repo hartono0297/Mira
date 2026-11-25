@@ -17,6 +17,14 @@
 //!   Data cut inside any block is `Corrupt`.
 //! - WebP: the RIFF size may be smaller than the file (the tail is ignored)
 //!   but never larger. A missing pad byte at the very end is tolerated.
+//!
+//! Decoder memory: a small file can declare huge frames (a 1x1 GIF canvas
+//! with a 65535x65535 frame compresses to a few hundred bytes), and the
+//! WebView would allocate for them. So every frame must be non-empty and lie
+//! inside the canvas: GIF image descriptors, APNG `fcTL` and WebP `ANMF`.
+//! A frame outside the canvas is `Corrupt` (the file contradicts its own
+//! header), not `TooWide`, which is about the canvas the person sees. On top
+//! of that, canvas pixels times frames is capped by `MAX_STICKER_PIXELS`.
 
 /// Largest sticker file.
 pub const MAX_STICKER_BYTES: u64 = 512 * 1024;
@@ -24,6 +32,9 @@ pub const MAX_STICKER_BYTES: u64 = 512 * 1024;
 pub const MAX_STICKER_SIDE: u32 = 1024;
 /// Most frames in an animated sticker (GIF, APNG, animated WebP).
 pub const MAX_STICKER_FRAMES: u32 = 120;
+/// Most pixels over all frames (width x height x frames), so decoding one
+/// sticker stays around 128 MB of RGBA at worst.
+pub const MAX_STICKER_PIXELS: u64 = 32_000_000;
 
 /// What a valid sticker file is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +61,8 @@ pub enum StickerFileError {
     Corrupt,
     TooWide,
     TooManyFrames,
+    /// Width x height x frames over `MAX_STICKER_PIXELS`.
+    TooManyPixels,
 }
 
 impl StickerFileError {
@@ -61,6 +74,9 @@ impl StickerFileError {
             StickerFileError::Corrupt => "File sticker rusak atau tidak bisa dibaca.",
             StickerFileError::TooWide => "Ukuran gambar sticker paling besar 1024 x 1024 piksel.",
             StickerFileError::TooManyFrames => "Sticker bergerak paling banyak 120 frame.",
+            StickerFileError::TooManyPixels => {
+                "Sticker bergerak terlalu besar. Kecilkan gambarnya atau kurangi jumlah frame (paling banyak 32 juta piksel untuk semua frame)."
+            }
         }
     }
 }
@@ -90,6 +106,11 @@ pub fn inspect(bytes: &[u8]) -> Result<StickerInfo, StickerFileError> {
     }
     if image.frames > MAX_STICKER_FRAMES {
         return Err(StickerFileError::TooManyFrames);
+    }
+    // Each factor is bounded above, so the product fits in u64.
+    let pixels = u64::from(image.width) * u64::from(image.height) * u64::from(image.frames);
+    if pixels > MAX_STICKER_PIXELS {
+        return Err(StickerFileError::TooManyPixels);
     }
     Ok(StickerInfo { mime, ext, width: image.width, height: image.height, frames: image.frames })
 }
@@ -138,11 +159,25 @@ fn le_u24(bytes: &[u8], at: usize) -> Result<u32, StickerFileError> {
     Ok(u32::from_le_bytes([a, b, c, 0]))
 }
 
+/// A frame of `width` x `height` at (`x`, `y`) must be non-empty and lie
+/// inside a canvas of `canvas_w` x `canvas_h`.
+fn frame_fits(
+    (x, y, width, height): (u32, u32, u32, u32),
+    (canvas_w, canvas_h): (u32, u32),
+) -> Result<(), StickerFileError> {
+    let fits = |at: u32, len: u32, limit: u32| u64::from(at) + u64::from(len) <= u64::from(limit);
+    if width == 0 || height == 0 || !fits(x, width, canvas_w) || !fits(y, height, canvas_h) {
+        return Err(CORRUPT);
+    }
+    Ok(())
+}
+
 /// PNG and APNG: walk the chunk list after the signature.
 fn parse_png(bytes: &[u8]) -> Result<Image, StickerFileError> {
     let mut pos = PNG_SIGNATURE.len();
     let mut size: Option<(u32, u32)> = None;
     let mut frames: Option<u32> = None;
+    let mut frame_controls: u32 = 0;
     let mut seen_idat = false;
     while pos < bytes.len() {
         let len = be_u32(bytes, pos)?;
@@ -165,6 +200,16 @@ fn parse_png(bytes: &[u8]) -> Result<Image, StickerFileError> {
                 }
                 frames = Some(be_u32(data, 0)?);
             }
+            (b"fcTL", Some(canvas)) => {
+                // Sequence, width, height, x offset, y offset, delays,
+                // dispose and blend ops.
+                if len != 26 {
+                    return Err(CORRUPT);
+                }
+                let frame = (be_u32(data, 12)?, be_u32(data, 16)?, be_u32(data, 4)?, be_u32(data, 8)?);
+                frame_fits(frame, canvas)?;
+                frame_controls = frame_controls.saturating_add(1);
+            }
             (b"IDAT", Some(_)) => seen_idat = true,
             (b"IEND", Some(_)) => break,
             _ => {}
@@ -173,6 +218,12 @@ fn parse_png(bytes: &[u8]) -> Result<Image, StickerFileError> {
     }
     let (width, height) = size.ok_or(CORRUPT)?;
     if !seen_idat {
+        return Err(CORRUPT);
+    }
+    // Without acTL the file is a still PNG and decoders ignore fcTL. With
+    // it, more frame controls than declared frames is inconsistent; a
+    // declared count over the limit is refused later as TooManyFrames.
+    if frames.is_some_and(|n| frame_controls > n) {
         return Err(CORRUPT);
     }
     Ok(Image { width, height, frames: frames.unwrap_or(1) })
@@ -226,6 +277,10 @@ fn parse_gif(bytes: &[u8]) -> Result<Image, StickerFileError> {
             }
             0x2C => {
                 // Separator, left, top, width, height (u16 each), flags.
+                let field = |n: usize| -> Result<u32, StickerFileError> {
+                    Ok(u32::from(le_u16(bytes, offset(pos, 1 + 2 * n)?)?))
+                };
+                frame_fits((field(0)?, field(1)?, field(2)?, field(3)?), (width, height))?;
                 let flags = byte(bytes, offset(pos, 9)?)?;
                 pos = offset(offset(pos, 10)?, gif_color_table_len(flags))?;
                 // LZW minimum code size, then image data sub-blocks.
@@ -295,9 +350,21 @@ fn parse_webp(bytes: &[u8]) -> Result<Image, StickerFileError> {
             let mut anmf: u32 = 0;
             let mut has_image = false;
             while pos < body.len() {
-                let (kind, _, next) = riff_chunk(body, pos)?;
+                let (kind, chunk, next) = riff_chunk(body, pos)?;
                 match &kind {
-                    b"ANMF" => anmf = anmf.saturating_add(1),
+                    b"ANMF" => {
+                        // X and Y are stored halved; width and height minus one.
+                        let frame = (
+                            le_u24(chunk, 0)? * 2,
+                            le_u24(chunk, 3)? * 2,
+                            le_u24(chunk, 6)? + 1,
+                            le_u24(chunk, 9)? + 1,
+                        );
+                        // Duration and flags complete the 16-byte header.
+                        slice(chunk, 12, 4)?;
+                        frame_fits(frame, (width, height))?;
+                        anmf = anmf.saturating_add(1);
+                    }
                     b"VP8 " | b"VP8L" => has_image = true,
                     _ => {}
                 }
@@ -353,15 +420,50 @@ mod tests {
         png_chunk(b"IHDR", &data)
     }
 
+    fn actl(frames: u32) -> Vec<u8> {
+        let mut data = frames.to_be_bytes().to_vec();
+        data.extend_from_slice(&0u32.to_be_bytes());
+        png_chunk(b"acTL", &data)
+    }
+
+    fn fctl(width: u32, height: u32, x: u32, y: u32) -> Vec<u8> {
+        let mut data = 0u32.to_be_bytes().to_vec();
+        for v in [width, height, x, y] {
+            data.extend_from_slice(&v.to_be_bytes());
+        }
+        // Delay 1/10 s, dispose none, blend source.
+        data.extend_from_slice(&[0, 1, 0, 10, 0, 0]);
+        png_chunk(b"fcTL", &data)
+    }
+
+    /// With `frames`, an APNG whose every frame covers the whole image: one
+    /// fcTL before IDAT and the rest after it.
     fn png_with(width: u32, height: u32, frames: Option<u32>, idat_len: usize) -> Vec<u8> {
         let mut out = PNG_SIG.to_vec();
         out.extend(ihdr(width, height));
         if let Some(n) = frames {
-            let mut actl = n.to_be_bytes().to_vec();
-            actl.extend_from_slice(&0u32.to_be_bytes());
-            out.extend(png_chunk(b"acTL", &actl));
+            out.extend(actl(n));
+            if n > 0 {
+                out.extend(fctl(width, height, 0, 0));
+            }
         }
         out.extend(png_chunk(b"IDAT", &vec![0x78; idat_len]));
+        for _ in 1..frames.unwrap_or(0) {
+            out.extend(fctl(width, height, 0, 0));
+            out.extend(png_chunk(b"fdAT", &[0, 0, 0, 0, 0x78]));
+        }
+        out.extend(png_chunk(b"IEND", &[]));
+        out
+    }
+
+    /// APNG of 4x4 with two frames, the second one given by `second`.
+    fn apng_second_frame(second: Vec<u8>) -> Vec<u8> {
+        let mut out = PNG_SIG.to_vec();
+        out.extend(ihdr(4, 4));
+        out.extend(actl(2));
+        out.extend(fctl(4, 4, 0, 0));
+        out.extend(png_chunk(b"IDAT", &[1, 2, 3]));
+        out.extend(second);
         out.extend(png_chunk(b"IEND", &[]));
         out
     }
@@ -456,10 +558,28 @@ mod tests {
     }
 
     fn anmf_chunk() -> Vec<u8> {
-        // Frame x, y, width-1, height-1 (24 bits each), duration, flags.
-        let mut data = vec![0; 16];
-        data.extend(vp8l_chunk(1, 1));
+        anmf_chunk_at(0, 0, 1, 1)
+    }
+
+    /// `x` and `y` are stored halved, as the format does.
+    fn anmf_chunk_at(x: u32, y: u32, width: u32, height: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        for v in [x / 2, y / 2, width - 1, height - 1] {
+            data.extend_from_slice(&v.to_le_bytes()[..3]);
+        }
+        // Duration (24 bits) and flags.
+        data.extend_from_slice(&[100, 0, 0, 0]);
+        data.extend(vp8l_chunk(width.min(1024), height.min(1024)));
         riff_chunk(b"ANMF", &data)
+    }
+
+    fn webp_with_frames(width: u32, height: u32, frames: Vec<Vec<u8>>) -> Vec<u8> {
+        let mut chunks = vec![
+            vp8x_chunk(0x02, width, height),
+            riff_chunk(b"ANIM", &[0, 0, 0, 0, 0, 0]),
+        ];
+        chunks.extend(frames);
+        riff(&chunks)
     }
 
     fn webp_lossy(width: u16, height: u16) -> Vec<u8> {
@@ -621,15 +741,125 @@ mod tests {
     fn gif_canvas_is_what_counts() {
         // The frame inside is 1x1; the canvas is too wide.
         assert_eq!(inspect(&gif(2000, 1, 1)), Err(StickerFileError::TooWide));
-        // A frame larger than the canvas is fine.
-        let mut bytes = gif_head(4, 4);
+        // A frame wider than the canvas is refused.
         let mut frame = gif_frame();
         // Frame width sits at 8 (control extension) + 5 in the frame bytes.
-        frame[13] = 0xFF;
-        frame[14] = 0x0F;
+        frame[13] = 0x05;
+        assert_eq!(inspect(&gif_with_frame(4, 4, frame)), Err(StickerFileError::Corrupt));
+    }
+
+    /// GIF of `width` x `height` holding one frame given as raw bytes.
+    fn gif_with_frame(width: u16, height: u16, frame: Vec<u8>) -> Vec<u8> {
+        let mut bytes = gif_head(width, height);
         bytes.extend(frame);
         bytes.push(0x3B);
-        assert_eq!(inspect(&bytes), Ok(info("image/gif", "gif", 4, 4, 1)));
+        bytes
+    }
+
+    /// Image descriptor plus a tiny data stream, for a frame at `left`,
+    /// `top` of `w` x `h`.
+    fn gif_frame_at(left: u16, top: u16, w: u16, h: u16) -> Vec<u8> {
+        let mut out = vec![0x2C];
+        for v in [left, top, w, h] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&[0x00, 0x02, 0x02, 0x44, 0x01, 0x00]);
+        out
+    }
+
+    #[test]
+    fn gif_giant_frame_in_tiny_canvas_is_refused() {
+        // 1x1 canvas, 65535x65535 frame: a decoder would allocate gigabytes.
+        let bytes = gif_with_frame(1, 1, gif_frame_at(0, 0, 0xFFFF, 0xFFFF));
+        assert!(bytes.len() < 100);
+        assert_eq!(inspect(&bytes), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn gif_frame_must_fit_the_canvas() {
+        let fits = |l, t, w, h| inspect(&gif_with_frame(4, 3, gif_frame_at(l, t, w, h)));
+        assert!(fits(0, 0, 4, 3).is_ok());
+        assert!(fits(3, 2, 1, 1).is_ok());
+        assert_eq!(fits(4, 0, 1, 1), Err(StickerFileError::Corrupt));
+        assert_eq!(fits(0, 3, 1, 1), Err(StickerFileError::Corrupt));
+        assert_eq!(fits(1, 0, 4, 1), Err(StickerFileError::Corrupt));
+        assert_eq!(fits(0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF), Err(StickerFileError::Corrupt));
+        assert_eq!(fits(0, 0, 0, 1), Err(StickerFileError::Corrupt));
+        assert_eq!(fits(0, 0, 1, 0), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn gif_any_bad_frame_refuses_the_file() {
+        let mut bytes = gif_head(4, 4);
+        bytes.extend(gif_frame());
+        bytes.extend(gif_frame_at(0, 0, 5, 5));
+        bytes.push(0x3B);
+        assert_eq!(inspect(&bytes), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn apng_frames_must_fit_the_image() {
+        assert!(inspect(&apng_second_frame(fctl(2, 2, 2, 2))).is_ok());
+        assert_eq!(inspect(&apng_second_frame(fctl(5, 1, 0, 0))), Err(StickerFileError::Corrupt));
+        assert_eq!(inspect(&apng_second_frame(fctl(1, 5, 0, 0))), Err(StickerFileError::Corrupt));
+        assert_eq!(inspect(&apng_second_frame(fctl(2, 2, 3, 0))), Err(StickerFileError::Corrupt));
+        assert_eq!(inspect(&apng_second_frame(fctl(2, 2, 0, 3))), Err(StickerFileError::Corrupt));
+        assert_eq!(inspect(&apng_second_frame(fctl(0, 2, 0, 0))), Err(StickerFileError::Corrupt));
+        assert_eq!(inspect(&apng_second_frame(fctl(2, 0, 0, 0))), Err(StickerFileError::Corrupt));
+        let overflow = fctl(2, 2, u32::MAX, u32::MAX);
+        assert_eq!(inspect(&apng_second_frame(overflow)), Err(StickerFileError::Corrupt));
+        let giant = fctl(0x7FFF_FFFF, 0x7FFF_FFFF, 0, 0);
+        assert_eq!(inspect(&apng_second_frame(giant)), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn apng_fctl_must_be_whole() {
+        let short = png_chunk(b"fcTL", &[0; 20]);
+        assert_eq!(inspect(&apng_second_frame(short)), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn apng_more_fctl_than_actl_frames_is_corrupt() {
+        let mut extra = fctl(4, 4, 0, 0);
+        extra.extend(fctl(4, 4, 0, 0));
+        assert_eq!(inspect(&apng_second_frame(extra)), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn webp_frames_must_fit_the_canvas() {
+        let one = |frame| inspect(&webp_with_frames(8, 6, vec![frame]));
+        assert!(one(anmf_chunk_at(0, 0, 8, 6)).is_ok());
+        assert!(one(anmf_chunk_at(6, 4, 2, 2)).is_ok());
+        assert_eq!(one(anmf_chunk_at(0, 0, 9, 1)), Err(StickerFileError::Corrupt));
+        assert_eq!(one(anmf_chunk_at(0, 0, 1, 7)), Err(StickerFileError::Corrupt));
+        assert_eq!(one(anmf_chunk_at(8, 0, 1, 1)), Err(StickerFileError::Corrupt));
+        assert_eq!(one(anmf_chunk_at(0, 6, 1, 1)), Err(StickerFileError::Corrupt));
+        let giant = anmf_chunk_at(0, 0, 1 << 24, 1 << 24);
+        assert_eq!(one(giant), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn webp_anmf_header_must_be_whole() {
+        let short = riff_chunk(b"ANMF", &[0; 10]);
+        assert_eq!(inspect(&webp_with_frames(8, 6, vec![short])), Err(StickerFileError::Corrupt));
+    }
+
+    #[test]
+    fn pixel_budget_over_all_frames() {
+        // 1024 * 1024 * 30 = 31.4 million pixels: allowed.
+        assert_eq!(inspect(&apng(1024, 1024, 30)).map(|i| i.frames), Ok(30));
+        // 1024 * 1024 * 31 = 32.5 million: over the budget.
+        assert_eq!(inspect(&apng(1024, 1024, 31)), Err(StickerFileError::TooManyPixels));
+        assert_eq!(
+            inspect(&webp_animated(1024, 1024, 31)),
+            Err(StickerFileError::TooManyPixels)
+        );
+        // 1000 * 1000 * 32 is exactly the budget.
+        assert_eq!(inspect(&gif(1000, 1000, 32)).map(|i| i.frames), Ok(32));
+        assert_eq!(inspect(&gif(1000, 1000, 33)), Err(StickerFileError::TooManyPixels));
+        // A still image at the largest side is far below it.
+        assert!(inspect(&png(1024, 1024)).is_ok());
+        assert!(StickerFileError::TooManyPixels.message().contains("32 juta"));
     }
 
     #[test]
