@@ -615,8 +615,13 @@ impl ChatSync {
     ///   while a message there still carries it. A blob that was in the store
     ///   before chat touched it (documents, signing) is served only where this
     ///   laptop attached it to its own message.
+    /// - v0.5.1: an office sticker image to any active member, when this
+    ///   laptop downloaded it for the catalog or uploaded it itself
+    ///   (`fetch::OFFICE_STICKERS`) and an office sticker that is not deleted
+    ///   still uses it. A blob that was already here when the sticker record
+    ///   came is not served this way.
     ///
-    /// A message naming a hash is never enough on its own.
+    /// A message or sticker record naming a hash is never enough on its own.
     fn blob_allowed(&self, peer: &str, hash: &str) -> AppResult<Option<PathBuf>> {
         let Ok(parsed) = BlobHash::parse(hash) else {
             return Ok(None);
@@ -655,6 +660,12 @@ impl ChatSync {
 fn plain_allowed(ctx: &Ctx, peer: &str, hash: &str, preexisting: bool) -> AppResult<bool> {
     for held in fetch::blob_convs(ctx.conn, hash)? {
         if preexisting && !held.own {
+            continue;
+        }
+        if held.conv == fetch::OFFICE_STICKERS {
+            if super::stickers::office_uses(ctx.conn, hash)? {
+                return Ok(true);
+            }
             continue;
         }
         // A message there must still carry the file (for a preexisting blob,

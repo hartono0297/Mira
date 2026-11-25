@@ -263,16 +263,21 @@ impl ChatSync {
     }
 }
 
-/// A plain file still referenced by a message, or a cipher file of a live
-/// envelope.
+/// A plain file still referenced by a message or by an office sticker that
+/// is not deleted, or a cipher file of a live envelope.
 fn still_needed(conn: &Connection, job: &FetchJob) -> AppResult<bool> {
     let n: i64 = match job.kind {
-        FetchKind::Plain => conn.query_row(
-            "SELECT count(*) FROM chat_files f JOIN chat_messages m ON m.id = f.message_id
-             WHERE f.hash = ?1 AND m.deleted = 0",
-            params![job.hash],
-            |r| r.get(0),
-        )?,
+        FetchKind::Plain => {
+            if super::stickers::office_uses(conn, &job.hash)? {
+                return Ok(true);
+            }
+            conn.query_row(
+                "SELECT count(*) FROM chat_files f JOIN chat_messages m ON m.id = f.message_id
+                 WHERE f.hash = ?1 AND m.deleted = 0",
+                params![job.hash],
+                |r| r.get(0),
+            )?
+        }
         FetchKind::Cipher => i64::from(fetch::live_envelope_lists(conn, &job.hash)?),
     };
     Ok(n > 0)

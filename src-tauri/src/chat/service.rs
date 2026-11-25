@@ -146,6 +146,67 @@ fn attach(ctx: &Ctx, blobs: &BlobStore, p: &Picked, conv: &str, now: &str) -> Ap
     })
 }
 
+/// Records a file already in the blob store as attached by this laptop to
+/// its message in `conv`. A blob chat did not put there itself stays marked
+/// preexisting (`fetch::track` keeps the first entry).
+fn attach_stored(
+    ctx: &Ctx,
+    blobs: &BlobStore,
+    f: &FileRef,
+    conv: &str,
+    now: &str,
+) -> AppResult<()> {
+    if !blobs.contains(&BlobHash::parse(&f.hash)?) {
+        return Err(AppError::NotFound(
+            "File belum ada di laptop ini. Unduh dulu.".into(),
+        ));
+    }
+    fetch::track(ctx.conn, &f.hash, FetchKind::Plain, true, now)?;
+    fetch::add_blob_conv(ctx.conn, &f.hash, conv, true)
+}
+
+/// A checked message about to be signed.
+struct Outgoing {
+    text: String,
+    reply_to: Option<String>,
+    mentions: Vec<String>,
+    files: Vec<FileRef>,
+}
+
+/// Signs and stores the message, seals envelopes for audience members who
+/// are not connected, and returns the message as the screen shows it.
+#[allow(clippy::too_many_arguments)]
+fn deliver(
+    ctx: &Ctx,
+    identity: &Identity,
+    blobs: &BlobStore,
+    fx: &mut Effects,
+    info: &super::audience::ConvInfo,
+    audience: Vec<String>,
+    out: Outgoing,
+    connected: &[String],
+    now: time::OffsetDateTime,
+) -> AppResult<MessageView> {
+    let body = Body::Message {
+        conv: info.conv.clone(),
+        text: out.text,
+        reply_to: out.reply_to,
+        mentions: out.mentions,
+        files: out.files.clone(),
+    };
+    let rec = store::create(ctx, identity, body, now, fx)?;
+    let me = ctx.me().to_owned();
+    let offline: Vec<String> = audience
+        .into_iter()
+        .filter(|p| *p != me && !connected.contains(p))
+        .collect();
+    make_envelopes(ctx, identity, blobs, &rec, &out.files, &offline, fx)?;
+    let row = read::message_row(ctx.conn, &rec.id)?
+        .ok_or_else(|| AppError::Internal("Pesan baru tidak tersimpan.".into()))?;
+    let facts = read::conv_facts(ctx, info)?;
+    read::message_view(ctx, blobs, &facts, &row)
+}
+
 /// Checks that this laptop may send `text` with `files` files to `conv`.
 /// Returns the conversation and the cleaned text.
 fn check_send(
@@ -333,24 +394,46 @@ impl ChatSync {
                 .iter()
                 .map(|p| attach(ctx, &self.blobs, p, conv, &now_s))
                 .collect::<AppResult<Vec<_>>>()?;
-            let body = Body::Message {
-                conv: conv.to_owned(),
+            let out = Outgoing {
                 text,
                 reply_to,
                 mentions: picked,
-                files: refs.clone(),
+                files: refs,
             };
-            let rec = store::create(ctx, identity, body, now, fx)?;
-            let me = ctx.me().to_owned();
-            let offline: Vec<String> = audience
-                .into_iter()
-                .filter(|p| *p != me && !connected.contains(p))
-                .collect();
-            make_envelopes(ctx, identity, &self.blobs, &rec, &refs, &offline, fx)?;
-            let row = read::message_row(ctx.conn, &rec.id)?
-                .ok_or_else(|| AppError::Internal("Pesan baru tidak tersimpan.".into()))?;
-            let facts = read::conv_facts(ctx, &info)?;
-            read::message_view(ctx, &self.blobs, &facts, &row)
+            deliver(ctx, identity, &self.blobs, fx, &info, audience, out, &connected, now)
+        })
+    }
+
+    /// Sends a message whose files are already in the blob store (a sticker,
+    /// v0.5.1). `make` runs inside the transaction and returns the text and
+    /// the files; from there on it is the same as [`ChatSync::send`]:
+    /// envelopes for offline audience members, `chat_blobs` marked `own`,
+    /// automatic copies on the other laptops.
+    pub(crate) fn send_stored(
+        &self,
+        conv: &str,
+        reply_to: Option<String>,
+        make: impl FnOnce(&Ctx, &BlobStore) -> AppResult<(String, Vec<FileRef>)>,
+    ) -> AppResult<MessageView> {
+        let connected = self.hooks.connected_peers();
+        self.with_ctx(|ctx, identity, fx| {
+            require_member(ctx)?;
+            readable(ctx, conv)?;
+            let (text, files) = make(ctx, &self.blobs)?;
+            let (info, text) = check_send(ctx, conv, &text, files.len(), reply_to.as_deref())?;
+            let audience = ctx.audience(&info)?;
+            let now = clock::now();
+            let now_s = format_time(now);
+            for f in &files {
+                attach_stored(ctx, &self.blobs, f, conv, &now_s)?;
+            }
+            let out = Outgoing {
+                text,
+                reply_to,
+                mentions: Vec::new(),
+                files,
+            };
+            deliver(ctx, identity, &self.blobs, fx, &info, audience, out, &connected, now)
         })
     }
 
