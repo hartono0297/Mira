@@ -83,12 +83,17 @@ impl PickSlot {
     }
 
     /// The bytes under `token`; `PHOTO_TOKEN` when unknown, used or expired.
+    /// An expired pick is dropped here, so its bytes do not stay in memory.
     pub fn get(&self, token: &str, now: Instant) -> AppResult<Arc<Vec<u8>>> {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if guard
+            .as_ref()
+            .is_some_and(|p| now.saturating_duration_since(p.at) > PICK_TTL)
+        {
+            *guard = None;
+        }
         match guard.as_ref() {
-            Some(p) if p.token == token && now.saturating_duration_since(p.at) <= PICK_TTL => {
-                Ok(p.bytes.clone())
-            }
+            Some(p) if p.token == token => Ok(p.bytes.clone()),
             _ => Err(AppError::InvalidInput(PHOTO_TOKEN.into())),
         }
     }
@@ -155,6 +160,15 @@ impl ProfileRuntime {
     fn spawn_fetcher(&self) {
         let this = self.clone();
         tauri::async_runtime::spawn(async move {
+            if let Ok(profile) = this.profile() {
+                let swept = tauri::async_runtime::spawn_blocking(move || profile.sweep()).await;
+                if let Ok(Err(err)) = swept {
+                    eprintln!(
+                        "Mira: sisa foto profil belum bisa dibersihkan [{}]: {err}",
+                        err.code()
+                    );
+                }
+            }
             loop {
                 this.fetch_round().await;
                 let _ = tokio::time::timeout(FETCH_INTERVAL, this.wake.notified()).await;
@@ -237,8 +251,22 @@ mod tests {
                 .to_string(),
             PHOTO_TOKEN
         );
+        // Expired means gone, even when asked again with an earlier time.
+        assert!(slot.inner.lock().unwrap().is_none());
+        assert!(slot.get(&token, t0).is_err());
+
+        let token = slot.put(vec![4], t0);
         slot.consume(&token);
         assert!(slot.get(&token, t0).is_err());
+    }
+
+    #[test]
+    fn an_expired_pick_is_dropped_when_any_token_is_checked() {
+        let slot = PickSlot::default();
+        let t0 = Instant::now();
+        slot.put(vec![1, 2, 3], t0);
+        assert!(slot.get("other", t0 + PICK_TTL + Duration::from_secs(1)).is_err());
+        assert!(slot.inner.lock().unwrap().is_none());
     }
 
     #[test]

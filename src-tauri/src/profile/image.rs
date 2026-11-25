@@ -25,8 +25,8 @@ use crate::error::{AppError, AppResult};
 
 /// Shortest accepted side of a source image and of a crop box.
 const MIN_SIDE: u32 = 16;
-/// Decoder allocation budget. 40 M pixels of 16-bit RGBA is 320 MB.
-const MAX_DECODE_BYTES: u64 = 512 * 1024 * 1024;
+/// Decoder allocation budget. 24 M pixels of 16-bit RGBA is 192 MB.
+const MAX_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 const PREVIEW_QUALITY: u8 = 85;
 const PHOTO_QUALITY_START: u8 = 88;
 const PHOTO_QUALITY_MIN: u8 = 50;
@@ -147,7 +147,8 @@ fn decode_bounded(mut decoder: impl ImageDecoder, limits: Limits) -> AppResult<D
 
 /// Walks the JPEG marker structure and reports whether an EOI marker closes
 /// the main image. Segments are skipped by length, so an EOI inside an EXIF
-/// thumbnail does not count, and data appended after EOI is allowed.
+/// thumbnail does not count, and data appended after EOI is allowed. Used
+/// for files the person picks; photos from colleagues get `jpeg_is_plain`.
 fn jpeg_has_end(bytes: &[u8]) -> bool {
     let mut i = 2;
     loop {
@@ -178,6 +179,91 @@ fn jpeg_has_end(bytes: &[u8]) -> bool {
         if marker == 0xDA {
             // Entropy coded data ends at the first marker that is neither a
             // stuffed zero nor a restart marker.
+            loop {
+                match bytes.get(i) {
+                    None => return false,
+                    Some(0xFF) => match bytes.get(i + 1) {
+                        None => return false,
+                        Some(0x00 | 0xD0..=0xD7) => i += 2,
+                        Some(0xFF) => i += 1,
+                        Some(_) => break,
+                    },
+                    Some(_) => i += 1,
+                }
+            }
+        }
+    }
+}
+
+/// Length of an APP0 JFIF payload without a thumbnail: identifier, version,
+/// units, two densities and two zero thumbnail sides.
+const JFIF_PAYLOAD_LEN: usize = 14;
+
+/// Strict structure check for a photo from a colleague. Only the segments a
+/// plain baseline or progressive JPEG needs are allowed: SOI, one APP0 JFIF
+/// without thumbnail right after SOI, DQT, one SOF0 or SOF2 before the first
+/// scan, DHT, DRI, SOS with its entropy coded data and restart markers, and
+/// EOI as the very last bytes. APP1..APP15, COM, any other marker and bytes
+/// after EOI are refused, so a shared photo cannot carry metadata or hidden
+/// data, and less of the decoder is reachable.
+fn jpeg_is_plain(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return false;
+    }
+    let mut i = 2;
+    let mut frames = 0;
+    let mut scans = 0;
+    loop {
+        if bytes.get(i) != Some(&0xFF) {
+            return false;
+        }
+        let Some(&marker) = bytes.get(i + 1) else {
+            return false;
+        };
+        let at_start = i == 2;
+        i += 2;
+        match marker {
+            0xD9 => return i == bytes.len() && scans > 0,
+            0xE0 | 0xDB | 0xC0 | 0xC2 | 0xC4 | 0xDD | 0xDA => {}
+            _ => return false,
+        }
+        let Some(len) = bytes.get(i..i + 2) else {
+            return false;
+        };
+        let len = usize::from(u16::from_be_bytes([len[0], len[1]]));
+        let Some(payload) = len
+            .checked_sub(2)
+            .and_then(|n| bytes.get(i + 2..i + 2 + n))
+        else {
+            return false;
+        };
+        match marker {
+            0xE0 => {
+                let plain_jfif = payload.len() == JFIF_PAYLOAD_LEN
+                    && payload.starts_with(b"JFIF\0")
+                    && payload[12..] == [0, 0];
+                if !at_start || !plain_jfif {
+                    return false;
+                }
+            }
+            0xC0 | 0xC2 => {
+                frames += 1;
+                if frames > 1 || scans > 0 {
+                    return false;
+                }
+            }
+            0xDA => {
+                if frames == 0 {
+                    return false;
+                }
+                scans += 1;
+            }
+            _ => {}
+        }
+        i += len;
+        if marker == 0xDA {
+            // Entropy coded data ends at the first marker that is neither a
+            // stuffed zero nor a restart marker; fill bytes may precede it.
             loop {
                 match bytes.get(i) {
                     None => return false,
@@ -284,14 +370,14 @@ pub fn crop_to_photo(src: &SourceImage, crop: Crop) -> AppResult<Vec<u8>> {
     }
 }
 
-/// Checks a photo received from a peer or read from storage: JPEG magic,
-/// at most MAX_PHOTO_BYTES, complete, exactly PHOTO_SIZE square and fully
-/// decodable under tight limits.
+/// Checks a photo received from a peer or made here: JPEG magic, at most
+/// MAX_PHOTO_BYTES, only the segments `jpeg_is_plain` allows, exactly
+/// PHOTO_SIZE square and fully decodable under tight limits.
 pub fn is_valid_photo(bytes: &[u8]) -> bool {
     if bytes.len() as u64 > MAX_PHOTO_BYTES || !bytes.starts_with(JPEG_MAGIC) {
         return false;
     }
-    if !jpeg_has_end(bytes) {
+    if !jpeg_is_plain(bytes) {
         return false;
     }
     let Ok(mut decoder) = JpegDecoder::new(Cursor::new(bytes)) else {
@@ -592,8 +678,9 @@ mod tests {
         // 9000x9000 RGBA would need about 324 MB; only the header is read.
         assert_eq!(load_err(&fake_png_header(9000, 9000)), PHOTO_DIMENSIONS);
         assert_eq!(load_err(&fake_png_header(100, 9000)), PHOTO_DIMENSIONS);
-        // 7000x7000 fits each side but exceeds the pixel budget.
+        // 7000x7000 and 5000x5000 fit each side but exceed the pixel budget.
         assert_eq!(load_err(&fake_png_header(7000, 7000)), PHOTO_DIMENSIONS);
+        assert_eq!(load_err(&fake_png_header(5000, 5000)), PHOTO_DIMENSIONS);
         assert_eq!(
             load_err(&encode_png_rgb(&gradient(15, 40))),
             PHOTO_DIMENSIONS
@@ -759,6 +846,103 @@ mod tests {
         assert!(!is_valid_photo(&photo[..photo.len() / 2]));
         assert!(!is_valid_photo(&[0xFF, 0xD8, 0xFF]));
         assert!(!is_valid_photo(&[]));
+    }
+
+    /// `jpeg` with a segment `marker` + `payload` inserted after APP0.
+    fn with_segment(jpeg: &[u8], marker: u8, payload: &[u8]) -> Vec<u8> {
+        assert_eq!(&jpeg[2..4], &[0xFF, 0xE0]);
+        let app0_end = 4 + usize::from(u16::from_be_bytes([jpeg[4], jpeg[5]]));
+        let mut out = jpeg[..app0_end].to_vec();
+        out.extend_from_slice(&[0xFF, marker]);
+        out.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        out.extend_from_slice(payload);
+        out.extend_from_slice(&jpeg[app0_end..]);
+        out
+    }
+
+    fn photo_256() -> Vec<u8> {
+        let src = load_source(&encode_png_rgb(&gradient(300, 300))).unwrap();
+        crop_to_photo(
+            &src,
+            Crop {
+                x: 0,
+                y: 0,
+                size: 300,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn own_photos_pass_the_strict_structure_check() {
+        let photo = photo_256();
+        assert!(jpeg_is_plain(&photo));
+        assert!(is_valid_photo(&photo));
+        // Any plain 256x256 JPEG from this encoder, also at other qualities.
+        for q in [50, 75, 95] {
+            assert!(is_valid_photo(&encode_jpeg(&gradient(256, 256), q)), "{q}");
+        }
+    }
+
+    #[test]
+    fn photos_with_extra_segments_or_trailing_data_are_refused() {
+        let photo = photo_256();
+        let mut exif = b"Exif\0\0".to_vec();
+        exif.extend_from_slice(SECRET);
+        let mut icc = b"ICC_PROFILE\0\x01\x01".to_vec();
+        icc.extend_from_slice(&[0; 32]);
+        let refused = [
+            ("APP1 Exif", with_segment(&photo, 0xE1, &exif)),
+            ("APP2 ICC", with_segment(&photo, 0xE2, &icc)),
+            ("APP13", with_segment(&photo, 0xED, b"Photoshop 3.0\0")),
+            (
+                "APP14 Adobe",
+                with_segment(&photo, 0xEE, b"Adobe\0\x64\0\0\0\0\x01"),
+            ),
+            ("COM", with_segment(&photo, 0xFE, SECRET)),
+            (
+                "SOF1",
+                with_segment(&photo, 0xC1, &[8, 0, 16, 0, 16, 1, 1, 0x11, 0]),
+            ),
+            ("after EOI", [photo.as_slice(), SECRET].concat()),
+            ("zero after EOI", [photo.as_slice(), &[0u8][..]].concat()),
+            ("second EOI", [photo.as_slice(), &[0xFFu8, 0xD9][..]].concat()),
+        ];
+        for (what, bytes) in &refused {
+            assert!(!jpeg_is_plain(bytes), "{what}");
+            assert!(!is_valid_photo(bytes), "{what}");
+        }
+        // JFIF APP0 carrying a 1x1 thumbnail.
+        assert_eq!(&photo[6..11], b"JFIF\0");
+        let mut app0 = photo[6..20].to_vec();
+        app0[12] = 1;
+        app0[13] = 1;
+        app0.extend_from_slice(&[1, 2, 3]);
+        let mut thumb = photo[..4].to_vec();
+        thumb.extend_from_slice(&((app0.len() + 2) as u16).to_be_bytes());
+        thumb.extend_from_slice(&app0);
+        thumb.extend_from_slice(&photo[20..]);
+        assert!(!is_valid_photo(&thumb));
+        // Without the JFIF segment it still passes; JFIF after SOF0 does not.
+        let bare = [&photo[..2], &photo[20..]].concat();
+        assert!(jpeg_is_plain(&bare));
+        let seg_len = 2 + usize::from(u16::from_be_bytes([photo[22], photo[23]]));
+        assert_eq!(&photo[20..22], &[0xFF, 0xC0]);
+        let late = [
+            &photo[..2],
+            &photo[20..20 + seg_len],
+            &photo[2..20],
+            &photo[20 + seg_len..],
+        ]
+        .concat();
+        assert!(!jpeg_is_plain(&late));
+    }
+
+    #[test]
+    fn picked_files_may_have_metadata_and_trailing_data() {
+        let jpeg = [jpeg_with_exif(&gradient(40, 30)).as_slice(), &b"trailer"[..]].concat();
+        let src = load_source(&jpeg).unwrap();
+        assert_eq!((src.width(), src.height()), (30, 40));
     }
 
     #[test]

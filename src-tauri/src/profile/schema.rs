@@ -1,14 +1,18 @@
 //! SQLite tables for profile photos (docs/plans/foto-profil.md, section 2.4).
 //! Appended as one entry at the end of `db::migrations::MIGRATIONS`.
 //!
-//! `profile_records` keeps every accepted record, also the ones a newer
-//! record of the same owner replaced, so `unknown_ids` never asks for them
-//! again. Only the winning record per owner (and `remove` records of active
-//! superadmins) is offered to colleagues.
+//! `profile_records` holds only live records: the winning `set`/`clear` per
+//! owner (at most one, enforced by `profile_records_current`, so this table
+//! doubles as the per-owner summary of the effective state) and the `remove`
+//! records. A record that lost to a newer one of the same owner is deleted
+//! and only its id stays in `profile_seen`, so `unknown_ids` never asks for
+//! it again but its body costs nothing and it is never offered.
 //!
 //! `profile_fetch` is local to this laptop: photos to download, with the
-//! retry state. `bad = 1` marks bytes that failed `is_valid_photo`; that hash
-//! is never tried again.
+//! retry state. `bad = 1` marks a hash whose bytes failed `is_valid_photo`,
+//! or that is being checked right now (set before decoding, so a decoder
+//! crash is not repeated after a restart); that hash is never tried again
+//! and the row is kept for good.
 
 pub const PROFILE_SCHEMA: &str = r#"
 CREATE TABLE profile_records (
@@ -23,7 +27,12 @@ CREATE TABLE profile_records (
     body        TEXT NOT NULL,
     received_at TEXT NOT NULL
 ) STRICT;
-CREATE INDEX profile_records_owner ON profile_records (owner, kind);
+CREATE UNIQUE INDEX profile_records_current ON profile_records (owner) WHERE kind <> 'remove';
+CREATE INDEX profile_records_photo ON profile_records (photo, kind);
+
+CREATE TABLE profile_seen (
+    id TEXT PRIMARY KEY CHECK (length(id) = 64)
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE profile_fetch (
     hash        TEXT PRIMARY KEY CHECK (length(hash) = 64),

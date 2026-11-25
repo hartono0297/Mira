@@ -4,6 +4,7 @@
 //! `chat::testutil`.
 
 use std::collections::BTreeMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -11,8 +12,10 @@ use rusqlite::{Connection, params};
 
 use super::record::{self, OwnerState, ProfileRecord, RecordKind};
 use super::store;
-use super::sync::{ProfileHooks, ProfileSync};
-use super::{MAX_PHOTO_BYTES, PHOTO_NO_ORG, PHOTO_NOT_ADMIN, PHOTO_NOT_MEMBER};
+use super::sync::{ProfileHooks, ProfileSync, TMP_DIR};
+use super::{
+    MAX_PHOTO_BYTES, PHOTO_NO_ORG, PHOTO_NOT_ADMIN, PHOTO_NOT_MEMBER, PHOTO_SEQ_LIMIT,
+};
 use crate::blobs::BlobHash;
 use crate::chat::audience::Directory;
 use crate::identity::{self, Identity, MemoryKeyStore};
@@ -132,6 +135,18 @@ impl Laptop {
             c.query_row("SELECT count(*) FROM profile_records", [], |r| r.get(0))
                 .unwrap()
         })
+    }
+
+    /// Ids of records that lost and are kept as tombstones.
+    fn seen_count(&self) -> i64 {
+        self.with_conn(|c| {
+            c.query_row("SELECT count(*) FROM profile_seen", [], |r| r.get(0))
+                .unwrap()
+        })
+    }
+
+    fn is_bad(&self, hash: &str) -> bool {
+        self.with_conn(|c| store::is_bad(c, hash).unwrap())
     }
 
     /// Stored record bodies, oldest first.
@@ -328,13 +343,13 @@ fn migration_creates_the_tables() {
     let n: i64 = l.with_conn(|c| {
         c.query_row(
             "SELECT count(*) FROM sqlite_master WHERE type = 'table'
-             AND name IN ('profile_records', 'profile_fetch')",
+             AND name IN ('profile_records', 'profile_seen', 'profile_fetch')",
             [],
             |r| r.get(0),
         )
         .unwrap()
     });
-    assert_eq!(n, 2);
+    assert_eq!(n, 3);
 }
 
 #[test]
@@ -404,10 +419,12 @@ fn latest_record_wins_whatever_order_the_laptops_see_them_in() {
     ]);
     let (a, b, c, d, e) = (&o.l[0], &o.l[1], &o.l[2], &o.l[3], &o.l[4]);
     let h1 = b.set(1);
+    let first = b.records();
     o.sync(&[1, 0]);
     fetch(a, &[b]);
     assert!(a.has_blob(&h1));
     let h2 = b.set(2);
+    let second = b.records();
     assert_eq!(b.latest_seq(), 2);
     // B's old photo is not kept on B.
     assert!(!b.has_blob(&h1));
@@ -427,9 +444,10 @@ fn latest_record_wins_whatever_order_the_laptops_see_them_in() {
     for l in [a, b, c] {
         assert_eq!(l.shown(), vec![(b.pk.clone(), h2.clone())], "{}", l.name);
     }
+    // Only the winning record is stored in full.
+    assert_eq!(a.record_count(), 1);
     // D and E get both records in opposite orders: same result.
-    let recs = a.records();
-    assert_eq!(recs.len(), 2);
+    let recs = [first[0].clone(), second[0].clone()];
     d.sync.ingest(&a.pk, vec![recs[0].clone()]).unwrap();
     d.sync.ingest(&a.pk, vec![recs[1].clone()]).unwrap();
     e.sync.ingest(&a.pk, vec![recs[1].clone()]).unwrap();
@@ -792,8 +810,10 @@ fn bad_downloads_are_never_retried_and_failures_back_off() {
     s.sync.peer_connected(&b.pk);
     assert!(s.sync.fetch_jobs().unwrap().is_empty());
     assert!(s.shown().is_empty());
-    // C, unaffected, fetches normally.
+    assert!(s.is_bad(&h));
+    // C, unaffected, fetches normally, and a photo that passes leaves no mark.
     assert_eq!(fetch(c, &[b]), 1);
+    assert!(!c.is_bad(&h));
     assert_eq!(store::retry_delay(0), time::Duration::seconds(60));
     assert_eq!(store::retry_delay(1), time::Duration::seconds(120));
     assert_eq!(store::retry_delay(50), time::Duration::hours(1));
@@ -806,4 +826,225 @@ fn a_removed_laptop_cannot_change_its_photo() {
     o.remove_member(&b.pk);
     assert_eq!(b.sync.set_photo(&photo(1)).unwrap_err().code(), "removed");
     assert_eq!(b.sync.clear_photo().unwrap_err().code(), "removed");
+}
+
+#[test]
+fn records_that_lost_are_kept_as_ids_only() {
+    let o = Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member)]);
+    let (s, b) = (&o.l[0], &o.l[1]);
+    b.set(1);
+    let first = b.records();
+    b.set(2);
+    b.sync.clear_photo().unwrap();
+    let h3 = b.set(3);
+    assert_eq!(b.record_count(), 1);
+    assert_eq!(b.seen_count(), 3);
+    // Known, so never asked for again, but never offered or sent.
+    let old_id = first[0].id.clone();
+    assert!(b.sync.unknown_ids(std::slice::from_ref(&old_id)).unwrap().is_empty());
+    assert_eq!(b.sync.record_ids_for(&s.pk).unwrap().len(), 1);
+    assert!(b.sync.records_for(&s.pk, &[old_id]).unwrap().is_empty());
+    o.sync_all();
+    assert_eq!(s.record_count(), 1);
+    assert_eq!(s.seen_count(), 0);
+    // An old record arriving late is remembered by its id only.
+    let late = s.sync.ingest(&b.pk, first.clone()).unwrap();
+    assert_eq!((late.accepted, late.changed), (1, false));
+    assert_eq!(s.record_count(), 1);
+    assert_eq!(s.seen_count(), 1);
+    assert_eq!(s.wanted(&b.pk), Some(h3));
+    let again = s.sync.ingest(&b.pk, first).unwrap();
+    assert_eq!((again.accepted, again.rejected), (0, 0));
+}
+
+#[test]
+fn a_flood_of_records_keeps_one_per_owner() {
+    let o = Office::new(&[
+        ("Sari", Who::Superadmin),
+        ("Budi", Who::Member),
+        ("Citra", Who::Member),
+    ]);
+    let (s, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
+    let hash = |n: u64| hash_of(&n.to_be_bytes());
+    let set = |by: &Laptop, n: u64| {
+        sign(
+            by,
+            raw(
+                &o.org_id,
+                RecordKind::Set,
+                &by.pk,
+                &by.pk,
+                Some(&hash(n)),
+                Some(100),
+                n,
+            ),
+        )
+    };
+    let mut batch: Vec<FeatureRecord> = (100..=200).chain(1..100).map(|n| set(b, n)).collect();
+    batch.push(set(c, 7));
+    let out = s.sync.ingest(&b.pk, batch).unwrap();
+    assert_eq!((out.accepted, out.rejected), (201, 0));
+    assert!(out.changed);
+    assert_eq!(s.record_count(), 2);
+    assert_eq!(s.seen_count(), 199);
+    assert_eq!(s.wanted(&b.pk), Some(hash(200)));
+    assert_eq!(s.wanted(&c.pk), Some(hash(7)));
+    // Only the winners' photos are queued.
+    let mut queued: Vec<String> = s
+        .sync
+        .fetch_jobs()
+        .unwrap()
+        .into_iter()
+        .map(|j| j.hash)
+        .collect();
+    queued.sort();
+    let mut expected = vec![hash(200), hash(7)];
+    expected.sort();
+    assert_eq!(queued, expected);
+    // The next batch is compared with the stored winner.
+    let out = s.sync.ingest(&b.pk, vec![set(b, 201), set(b, 250), set(b, 150)]).unwrap();
+    assert_eq!(out.accepted, 2);
+    assert_eq!(s.wanted(&b.pk), Some(hash(250)));
+    assert_eq!(s.record_count(), 2);
+    assert_eq!(s.seen_count(), 201);
+}
+
+#[test]
+fn a_decoder_crash_on_a_photo_is_not_repeated_after_a_restart() {
+    let o = Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member)]);
+    let (s, b) = (&o.l[0], &o.l[1]);
+    let h = b.set(1);
+    o.sync_all();
+    let job = s.sync.fetch_jobs().unwrap().remove(0);
+    let tmp = s.tmp.path().join("crash.part");
+    testing::copy_blob(&b.sync, &s.pk, &h, MAX_PHOTO_BYTES, &tmp).unwrap();
+    let crashed = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        s.sync.fetch_done_with(&job, &tmp, |_: &[u8]| -> bool {
+            // The mark is committed before the decoder runs.
+            assert!(s.is_bad(&h));
+            panic!("decoder crash")
+        })
+    }));
+    assert!(crashed.is_err());
+    // After a restart the hash is neither downloaded nor decoded again.
+    let restarted = ProfileSync::new(s.state.clone(), Arc::new(Hooks::default())).unwrap();
+    restarted.peer_connected(&b.pk);
+    assert!(restarted.fetch_jobs().unwrap().is_empty());
+    assert!(restarted.photos().unwrap().is_empty());
+    // The mark survives the hash being dropped and named again.
+    b.sync.clear_photo().unwrap();
+    o.sync_all();
+    assert!(s.is_bad(&h));
+    b.set(1);
+    o.sync_all();
+    assert!(restarted.fetch_jobs().unwrap().is_empty());
+}
+
+#[test]
+fn a_removed_photo_stays_hidden_when_someone_else_sets_the_same_bytes() {
+    let o = Office::new(&[
+        ("Sari", Who::Superadmin),
+        ("Budi", Who::Member),
+        ("Citra", Who::Member),
+    ]);
+    let (s, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
+    let h1 = b.set(1);
+    o.sync_all();
+    o.fetch_all();
+    s.sync.admin_remove(&b.pk).unwrap();
+    o.sync_all();
+    // C publishes the removed photo as their own.
+    assert_eq!(c.set(1), h1);
+    o.sync_all();
+    o.fetch_all();
+    for l in &o.l {
+        assert!(l.shown().is_empty(), "{}", l.name);
+        assert!(l.sync.photo_data(&h1).is_err(), "{}", l.name);
+        let peer = if l.pk == s.pk { &b.pk } else { &s.pk };
+        assert!(l.sync.blob_path_for(peer, &h1).is_none(), "{}", l.name);
+    }
+    let mine = c.sync.my_photo().unwrap();
+    assert_eq!(mine.hash, None);
+    assert!(mine.removed_by_admin);
+    assert!(!s.has_blob(&h1));
+    assert!(c.has_blob(&h1), "the owner keeps their own latest photo");
+    // Removing C's copy too changes nothing: the hash is already hidden.
+    let before = s.record_count();
+    s.sync.admin_remove(&c.pk).unwrap();
+    assert_eq!(s.record_count(), before);
+    // The original owner can still show another photo.
+    let h2 = b.set(2);
+    o.sync_all();
+    o.fetch_all();
+    for l in &o.l {
+        assert_eq!(l.shown(), vec![(b.pk.clone(), h2.clone())], "{}", l.name);
+    }
+}
+
+#[test]
+fn sweep_deletes_leftover_downloads_and_photos_nobody_refers_to() {
+    let o = Office::new(&[
+        ("Sari", Who::Superadmin),
+        ("Budi", Who::Member),
+        ("Citra", Who::Member),
+    ]);
+    let (s, b, c) = (&o.l[0], &o.l[1], &o.l[2]);
+    let h1 = b.set(1);
+    let h2 = c.set(2);
+    o.sync_all();
+    o.fetch_all();
+    assert!(b.has_blob(&h2));
+    s.sync.admin_remove(&b.pk).unwrap();
+    o.sync_all();
+    // A photo nothing names, and downloads a crash left behind.
+    let orphan = b.sync.blobs().put_bytes(&photo(9)).unwrap().hash;
+    let tmp = b.tmp.path().join(TMP_DIR);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("x-1.part"), b"half").unwrap();
+    std::fs::write(tmp.join("note.txt"), b"other").unwrap();
+    // A write looks only at the photos it changed: the orphan stays.
+    let h3 = c.set(3);
+    o.sync_all();
+    assert!(!b.has_blob(&h2), "C's replaced photo is deleted");
+    assert!(b.sync.blobs().contains(&orphan));
+    o.fetch_all();
+    b.sync.sweep().unwrap();
+    assert!(!b.sync.blobs().contains(&orphan));
+    assert!(b.has_blob(&h1), "own latest photo stays, removed or not");
+    assert!(b.has_blob(&h3), "a photo someone shows stays");
+    assert!(!tmp.join("x-1.part").exists());
+    assert!(tmp.join("note.txt").exists());
+    // Without an organization nothing is deleted.
+    let lone = Laptop::new("Sendiri");
+    let kept = lone.sync.blobs().put_bytes(&photo(4)).unwrap().hash;
+    lone.sync.sweep().unwrap();
+    assert!(lone.sync.blobs().contains(&kept));
+}
+
+#[test]
+fn seq_at_the_limit_gives_a_clear_error_and_leaves_no_photo_behind() {
+    let o = Office::new(&[("Sari", Who::Superadmin), ("Budi", Who::Member)]);
+    let (s, b) = (&o.l[0], &o.l[1]);
+    let top = sign(
+        b,
+        raw(
+            &o.org_id,
+            RecordKind::Clear,
+            &b.pk,
+            &b.pk,
+            None,
+            None,
+            record::MAX_SEQ,
+        ),
+    );
+    b.sync.ingest(&s.pk, vec![top]).unwrap();
+    assert_eq!(b.latest_seq(), record::MAX_SEQ);
+    let err = b.sync.set_photo(&photo(1)).unwrap_err();
+    assert_eq!(err.to_string(), PHOTO_SEQ_LIMIT);
+    assert!(
+        !b.has_blob(&hash_of(&photo(1))),
+        "bytes stored before the failure are deleted"
+    );
+    assert_eq!(b.sync.clear_photo().unwrap_err().to_string(), PHOTO_SEQ_LIMIT);
+    assert_eq!(b.record_count(), 1);
 }

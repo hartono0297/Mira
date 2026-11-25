@@ -412,6 +412,7 @@ const id = {
       notMember: "Orang ini bukan anggota organisasi.",
       noOrg: "Foto profil baru bisa dipakai setelah laptop ini membuat atau bergabung dengan organisasi.",
       notFound: "Foto tidak ditemukan.",
+      seqLimit: "Foto profil sudah terlalu sering diganti dan tidak bisa diubah lagi dari laptop ini.",
     },
   },
   patterns: {

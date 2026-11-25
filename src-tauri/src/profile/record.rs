@@ -6,7 +6,7 @@
 //! re-encodes what it read and refuses any body that differs, so one record
 //! has exactly one body and one id.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -297,29 +297,31 @@ pub struct OwnerState {
     pub latest: Option<String>,
     /// The photo the owner's latest record sets, with its size, removed or not.
     pub set: Option<(String, u64)>,
-    /// `set`'s photo unless an active superadmin removed it: the photo
+    /// `set`'s photo unless an active superadmin removed that hash: the photo
     /// colleagues should show and fetch.
     pub wanted: Option<String>,
     /// `wanted` when the photo is on this laptop: the photo shown here.
     pub photo: Option<String>,
     /// The latest record sets a photo that an active superadmin removed.
     pub removed_by_admin: bool,
-    /// Ids of `remove` records for this owner by active superadmins.
+    /// Ids of `remove` records naming this owner by active superadmins.
     pub removes: Vec<String>,
 }
 
 /// Effective state per owner (pure). The latest owner record is the maximum
 /// `(seq, at, id)` among `set`/`clear` signed by the owner; a `remove` counts
-/// only while its author is an active superadmin now. `local` says whether a
-/// photo is on this laptop (only photos that passed `is_valid_photo` are
-/// stored, so presence is enough).
+/// only while its author is an active superadmin now, and then hides its
+/// hash for every owner (so nobody can show a removed photo by setting the
+/// same bytes). `local` says whether a photo is on this laptop (only photos
+/// that passed `is_valid_photo` are stored, so presence is enough).
 pub fn effective(
     records: &[RecordRow],
     dir: &Directory,
     local: &dyn Fn(&str) -> bool,
 ) -> BTreeMap<String, OwnerState> {
     let mut latest: BTreeMap<&str, &RecordRow> = BTreeMap::new();
-    let mut removed: BTreeMap<&str, Vec<&RecordRow>> = BTreeMap::new();
+    let mut removes: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut removed: BTreeSet<&str> = BTreeSet::new();
     for r in records {
         match r.kind {
             RecordKind::Set | RecordKind::Clear if r.author == r.owner => {
@@ -332,7 +334,10 @@ pub fn effective(
                 }
             }
             RecordKind::Remove if dir.is_superadmin(&r.author) => {
-                removed.entry(&r.owner).or_default().push(r);
+                removes.entry(&r.owner).or_default().push(r.id.clone());
+                if let Some(hash) = &r.photo {
+                    removed.insert(hash);
+                }
             }
             _ => {}
         }
@@ -347,16 +352,15 @@ pub fn effective(
             st.set = Some((hash.clone(), rec.size.unwrap_or(0)));
         }
     }
-    for (owner, list) in &removed {
-        let st = out.entry((*owner).to_owned()).or_default();
-        let mut ids: Vec<String> = list.iter().map(|r| r.id.clone()).collect();
+    for (owner, mut ids) in removes {
         ids.sort();
-        st.removes = ids;
-        if let Some((hash, _)) = &st.set {
-            st.removed_by_admin = list.iter().any(|r| r.photo.as_deref() == Some(hash));
-        }
+        out.entry(owner.to_owned()).or_default().removes = ids;
     }
     for st in out.values_mut() {
+        st.removed_by_admin = st
+            .set
+            .as_ref()
+            .is_some_and(|(h, _)| removed.contains(h.as_str()));
         st.wanted = st
             .set
             .as_ref()
@@ -710,5 +714,39 @@ mod tests {
         let st = &effective(&rows, &d, &all)[pa];
         assert_eq!(st.photo, Some(hash(2)));
         assert!(!st.removed_by_admin);
+    }
+
+    #[test]
+    fn a_removed_hash_is_hidden_for_every_owner() {
+        let a = identity();
+        let b = identity();
+        let sa = identity();
+        let (pa, pb) = (a.public_key_hex(), b.public_key_hex());
+        let all = |_: &str| true;
+        let d = dir(&[
+            (pa, true, false),
+            (pb, true, false),
+            (sa.public_key_hex(), true, true),
+        ]);
+        let rm = ProfileRecord::sign_new(&sa, RecordKind::Remove, ORG, pa, Some(&hash(1)), None, 0, AT)
+            .unwrap();
+        // B publishes A's removed photo as their own: hidden too.
+        let rows = vec![
+            row(&set(&a, &hash(1), 1, AT)),
+            row(&set(&b, &hash(1), 1, AT)),
+            row(&rm),
+        ];
+        let states = effective(&rows, &d, &all);
+        for owner in [pa, pb] {
+            let st = &states[owner];
+            assert_eq!(st.wanted, None);
+            assert_eq!(st.photo, None);
+            assert!(st.removed_by_admin);
+        }
+        assert_eq!(states[pa].removes.len(), 1);
+        assert!(states[pb].removes.is_empty());
+        // B can still show another photo.
+        let rows = vec![row(&set(&b, &hash(2), 2, AT)), row(&rm)];
+        assert_eq!(effective(&rows, &d, &all)[pb].photo, Some(hash(2)));
     }
 }

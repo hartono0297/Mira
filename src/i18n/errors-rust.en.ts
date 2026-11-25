@@ -409,6 +409,7 @@ const en: Dict<typeof id> = {
       notMember: "This person isn't an organization member.",
       noOrg: "Profile photos work once this laptop creates or joins an organization.",
       notFound: "Photo not found.",
+      seqLimit: "The profile photo has been changed too many times and can't be changed again from this laptop.",
     },
   },
   patterns: {

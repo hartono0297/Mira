@@ -36,7 +36,7 @@ pub const MAX_PHOTO_BYTES: u64 = 128 * 1024;   // batas keras foto akhir dan und
 pub const TARGET_PHOTO_BYTES: usize = 100 * 1024; // sasaran encoder
 pub const MAX_SOURCE_BYTES: u64 = 20 * 1024 * 1024; // file yang dipilih
 pub const MAX_SOURCE_SIDE: u32 = 8000;         // sisi terpanjang file sumber
-pub const MAX_SOURCE_PIXELS: u64 = 40_000_000;
+pub const MAX_SOURCE_PIXELS: u64 = 24_000_000; // puncak memori dekode tetap kecil
 pub const PREVIEW_SIDE: u32 = 1024;            // sisi terpanjang pratinjau untuk pemotong
 ```
 
@@ -75,8 +75,12 @@ pub struct Crop { pub x: u32, pub y: u32, pub size: u32 }
 /// Kotak dijepit ke dalam gambar; size < 16 atau di luar gambar: InvalidInput.
 pub fn crop_to_photo(src: &SourceImage, crop: Crop) -> AppResult<Vec<u8>>;
 
-/// Foto yang diterima dari rekan atau dibaca dari penyimpanan: JPEG (magic FF D8 FF),
-/// <= MAX_PHOTO_BYTES, terdekode dengan Limits, tepat PHOTO_SIZE x PHOTO_SIZE.
+/// Foto yang diterima dari rekan atau dibuat di sini: JPEG (magic FF D8 FF),
+/// <= MAX_PHOTO_BYTES, struktur ketat (hanya SOI, APP0 JFIF tanpa thumbnail tepat
+/// setelah SOI, DQT, satu SOF0/SOF2, DHT, DRI, SOS + data entropi dan RSTn, EOI
+/// sebagai byte terakhir; APP1..APP15, COM, penanda lain, dan byte setelah EOI
+/// ditolak), terdekode dengan Limits, tepat PHOTO_SIZE x PHOTO_SIZE.
+/// File pilihan pengguna (`load_source`) tetap boleh punya metadata dan data setelah EOI.
 pub fn is_valid_photo(bytes: &[u8]) -> bool;
 ```
 
@@ -108,9 +112,10 @@ pub struct ProfileRecord {
 - Validasi terhadap organisasi saat ingest (`check_against(dir)`): `org` sama dengan organisasi laptop ini; `owner` tercatat di tabel `members` (status apa pun); untuk `set`/`clear` `author == owner`; untuk `remove` `author` adalah superadmin aktif dan `author != owner` boleh.
 - Status efektif per pemilik (`effective(records, dir)`, fungsi murni yang dites):
   - record pemilik terbaru = maks `(seq, at, id)` di antara `set`/`clear` dengan `author == owner`;
-  - foto tampil kalau record terbaru `set`, hash-nya tidak ada di record `remove` untuk pemilik itu yang penulisnya *saat ini* superadmin aktif, dan blob ada lokal serta lolos `is_valid_photo`;
+  - foto tampil kalau record terbaru `set`, hash-nya tidak ada di record `remove` mana pun (untuk pemilik siapa saja) yang penulisnya *saat ini* superadmin aktif, dan blob ada lokal (hanya byte yang lolos `is_valid_photo` yang disimpan);
+  - penghapusan superadmin berlaku per hash untuk semua pemilik: anggota lain yang menerbitkan `set` dengan hash yang sudah dihapus tetap tidak menampilkannya. Pemilik asli tetap bisa memasang foto lain (hash lain);
   - `removed_by_admin = true` kalau record terbaru `set` tapi hash-nya dihapus superadmin.
-- `seq` baru = maks seq pemilik yang diketahui laptop ini + 1.
+- `seq` baru = maks seq pemilik yang diketahui laptop ini + 1. Kalau melewati `MAX_SEQ` (i64::MAX): `PHOTO_SEQ_LIMIT`.
 
 ### 2.4 Tabel (`profile/schema.rs`, migrasi berikutnya, v10)
 
@@ -127,7 +132,12 @@ CREATE TABLE profile_records (
     body        TEXT NOT NULL,
     received_at TEXT NOT NULL
 ) STRICT;
-CREATE INDEX profile_records_owner ON profile_records (owner, kind);
+CREATE UNIQUE INDEX profile_records_current ON profile_records (owner) WHERE kind <> 'remove';
+CREATE INDEX profile_records_photo ON profile_records (photo, kind);
+
+CREATE TABLE profile_seen (
+    id TEXT PRIMARY KEY CHECK (length(id) = 64)
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE profile_fetch (
     hash        TEXT PRIMARY KEY CHECK (length(hash) = 64),
@@ -135,13 +145,17 @@ CREATE TABLE profile_fetch (
     size        INTEGER NOT NULL,
     attempts    INTEGER NOT NULL DEFAULT 0,
     next_try_at TEXT,
-    bad         INTEGER NOT NULL DEFAULT 0  -- 1: bytes tidak lolos is_valid_photo, jangan coba lagi
+    bad         INTEGER NOT NULL DEFAULT 0  -- 1: bytes tidak lolos is_valid_photo atau sedang diperiksa; jangan coba lagi
 ) STRICT;
 ```
 
+`profile_records` hanya berisi record hidup: record `set`/`clear` pemenang per pemilik (paling banyak satu, dijaga `profile_records_current`, jadi tabel ini sekaligus ringkasan status efektif per pemilik) dan record `remove`. Record yang kalah dihapus dan hanya id-nya disimpan di `profile_seen` (tombstone): tetap dikenali `unknown_ids`, tidak ditawarkan, tidak disimpan body-nya. Kueri per hash (`photo_data`, `blob_path_for`, status pemilik) memakai indeks `profile_records_photo` dan `profile_records_current`, bukan memindai tabel.
+
+Baris `profile_fetch` dengan `bad = 1` tidak pernah dihapus, supaya hash yang gagal (atau membuat dekoder crash) tidak diunduh dan didekode lagi.
+
 Ditambahkan di `db/migrations.rs` sebagai satu baris `crate::profile::schema::PROFILE_SCHEMA` setelah `V9_ORG_V03`. Sesi lain mungkin juga menambah migrasi v10; session utama yang mengurutkan saat menggabung.
 
-Foto disimpan di `BlobStore::open(<data_dir>/profile-photos)`, terpisah dari blob chat dan dokumen supaya foto lama aman dihapus. Foto yang tidak lagi jadi foto efektif siapa pun (dan bukan foto `set` terbaru milik laptop ini) dihapus setelah ingest atau ganti foto.
+Foto disimpan di `BlobStore::open(<data_dir>/profile-photos)`, terpisah dari blob chat dan dokumen supaya foto lama aman dihapus. Setelah ingest atau ganti foto, hanya hash yang berubah di transaksi itu yang diperiksa: kalau tidak lagi jadi foto efektif siapa pun (dan bukan foto `set` terbaru milik laptop ini) dihapus. Saat runtime mulai, `sweep()` menghapus `<data_dir>/profile-tmp/*.part` dan file di `profile-photos` yang tidak dirujuk foto efektif atau `set` terbaru milik sendiri. Kalau `set_photo` gagal setelah byte disimpan, byte itu dihapus lagi (kecuali sudah ada sebelumnya).
 
 ### 2.5 Sinkron (`profile/sync.rs`)
 
@@ -150,10 +164,11 @@ Foto disimpan di `BlobStore::open(<data_dir>/profile-photos)`, terpisah dari blo
 - `record_ids_for(peer)`: kosong kalau peer bukan anggota aktif; selain itu id record pemilik terbaru setiap pemilik, plus record `remove` dari superadmin aktif. Record lama yang sudah kalah tetap di tabel (supaya `unknown_ids` tidak meminta ulang) tapi tidak ditawarkan.
 - `unknown_ids`: id yang tidak ada di `profile_records`.
 - `records_for(peer, ids)`: saring ulang dengan aturan yang sama.
-- `ingest`: `parse` + `check_against`, simpan, abaikan duplikat. Record ditolak dicatat lewat log yang sama dengan chat/board (lihat `log_rejection` di network). Kalau foto efektif berubah: `changed = true`, antrekan unduhan hash yang belum ada.
+- `ingest`: `parse` + `check_against`, simpan, abaikan duplikat. Dari record pemilik dalam satu batch hanya yang terbaru per pemilik diproses penuh; sisanya langsung jadi tombstone. Record ditolak dicatat lewat log yang sama dengan chat/board (lihat `log_rejection` di network). Kalau foto efektif berubah: `changed = true`, antrekan unduhan hash yang belum ada.
 - `peer_connected`: reset jeda antrean dan bangunkan fetcher.
 - `blob_path_for(peer, hash)`: peer anggota aktif, bukan diri sendiri, hash adalah foto efektif seseorang (tidak dihapus superadmin), dan ada lokal. Laptop mana pun yang memegangnya boleh menyajikan, jadi B yang offline bisa menyusul dari C.
-- Fetcher seperti `chat/runtime.rs`: `hub.fetch_blob(hash, MAX_PHOTO_BYTES, vec![owner], tmp)` ke `<data_dir>/profile-tmp/`, lalu `is_valid_photo`; gagal validasi: `bad = 1`. Jeda naik per percobaan, interval dasar 60 detik.
+- Fetcher seperti `chat/runtime.rs`: `hub.fetch_blob(hash, MAX_PHOTO_BYTES, vec![owner], tmp)` ke `<data_dir>/profile-tmp/`, lalu `is_valid_photo`. Sebelum dekode, baris antrean ditandai `bad = 1` dan di-commit (build release memakai `panic = "abort"`, jadi dekoder yang crash tidak boleh diulang setelah restart); lolos validasi: foto disimpan dan baris dihapus; gagal: `bad = 1` tetap. Jeda naik per percobaan, interval dasar 60 detik.
+- `photo_data` tidak mendekode ulang: hanya byte yang sudah lolos `is_valid_photo` yang ada di penyimpanan, jadi cukup cek ukuran dan hash.
 - Setelah perubahan lokal: `hub.notify_changed("profile")` dan event `mira://feature` `{ topic: "profile" }`.
 
 ### 2.6 Perintah Tauri (`profile/commands.rs`)
@@ -177,7 +192,7 @@ pub struct PickedPhoto {
 }
 
 profile_photos() -> Vec<PhotoEntry>                 // foto efektif yang ada lokal
-profile_photo_data(hash: String) -> String          // base64 JPEG; hanya hash foto efektif, cek is_valid_photo
+profile_photo_data(hash: String) -> String          // base64 JPEG; hanya hash foto efektif, cek ukuran dan hash
 profile_my_photo() -> MyPhoto
 profile_pick_photo() -> Option<PickedPhoto>         // dialog file Rust, filter png/jpg/jpeg/webp; None kalau batal
 profile_set_photo(token: String, crop: Crop) -> PhotoEntry
@@ -189,7 +204,7 @@ Dialog memakai pola `chat_pick_files` (judul dialog lewat `ui_lang`: tambahkan `
 
 Kait uji e2e: hanya di build debug (`#[cfg(debug_assertions)]`), kalau env `MIRA_E2E_PICK_PHOTO` berisi path file, `profile_pick_photo` memakai file itu tanpa membuka dialog Windows (dialog native tidak bisa diotomasi). Build release tidak punya kait ini.
 
-Token: `ProfileRuntime` hanya menyimpan satu token terakhir (byte asli file, bukan gambar terdekode, supaya memori kecil); `profile_set_photo` mendekode ulang.
+Token: `ProfileRuntime` hanya menyimpan satu token terakhir (byte asli file, bukan gambar terdekode, supaya memori kecil); `profile_set_photo` mendekode ulang. Token yang kedaluwarsa dikosongkan begitu diperiksa.
 
 ### 2.7 Registrasi (`lib.rs`)
 
@@ -208,6 +223,7 @@ Token: `ProfileRuntime` hanya menyimpan satu token terakhir (byte asli file, buk
 - `PHOTO_NOT_MEMBER`: "Orang ini bukan anggota organisasi."
 - `PHOTO_NO_ORG`: "Foto profil baru bisa dipakai setelah laptop ini membuat atau bergabung dengan organisasi."
 - `PHOTO_NOT_FOUND`: "Foto tidak ditemukan."
+- `PHOTO_SEQ_LIMIT`: "Foto profil sudah terlalu sering diganti dan tidak bisa diubah lagi dari laptop ini."
 
 Konstanta ini di `profile/mod.rs` sebagai `pub const`. Terjemahan Inggrisnya masuk `src/i18n/errors-rust.id.ts`/`.en.ts` sebagai grup `profile` di akhir.
 

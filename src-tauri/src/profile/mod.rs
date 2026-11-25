@@ -30,7 +30,7 @@ pub const MAX_SOURCE_BYTES: u64 = 20 * 1024 * 1024;
 /// Longest side of a picked image.
 pub const MAX_SOURCE_SIDE: u32 = 8000;
 /// Most pixels in a picked image.
-pub const MAX_SOURCE_PIXELS: u64 = 40_000_000;
+pub const MAX_SOURCE_PIXELS: u64 = 24_000_000;
 /// Longest side of the preview shown in the crop dialog.
 pub const PREVIEW_SIDE: u32 = 1024;
 
@@ -46,3 +46,5 @@ pub const PHOTO_NOT_ADMIN: &str = "Hanya superadmin yang bisa menghapus foto pro
 pub const PHOTO_NOT_MEMBER: &str = "Orang ini bukan anggota organisasi.";
 pub const PHOTO_NO_ORG: &str = "Foto profil baru bisa dipakai setelah laptop ini membuat atau bergabung dengan organisasi.";
 pub const PHOTO_NOT_FOUND: &str = "Foto tidak ditemukan.";
+pub const PHOTO_SEQ_LIMIT: &str =
+    "Foto profil sudah terlalu sering diganti dan tidak bisa diubah lagi dari laptop ini.";
