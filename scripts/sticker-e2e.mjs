@@ -118,12 +118,11 @@ const UI = {
   mySave: ["Simpan sticker", "Save sticker"],
   // Reaksi di pesan (chat-reaction)
   reactionBar: ["Reaksi untuk pesan", "Reactions to message from"],
-  quickReact: ["Reaksi", "React"], // "Reaksi 👍"
-  addReaction: ["Tambah reaksi ke pesan", "Add reaction to message"],
+  addReaction: ["Beri reaksi ke pesan", "React to message from"], // tombol "+" di bilah chip
   reactionPicker: ["Pilih reaksi untuk pesan", "Choose a reaction for message", "Pilih emoji", "Choose an emoji"],
   // Menu pesan (chat-menu)
   msgMenu: ["Aksi untuk pesan", "Actions for message"],
-  menuReact: ["Beri reaksi", "Add reaction"],
+  menuReact: ["Beri reaksi", "React"],
   menuSaveSticker: ["Simpan sticker", "Save sticker"],
   menuDelete: ["Hapus pesan", "Delete message"],
   deleteConfirm: ["Hapus pesan", "Delete message"], // chat.message.deleteConfirm
@@ -137,7 +136,6 @@ const UI = {
   orgKeywords: ["Kata kunci (boleh kosong)", "Keywords (optional)"],
   orgSubmit: ["Tambah sticker", "Add sticker"],
   orgStickerList: ["Sticker di paket", "Stickers in pack"],
-  youSuffix: ["(Anda)", "(you)"], // chat-text.youSuffix
 };
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -178,16 +176,16 @@ const SEL = {
   labels: (scope) => scope.locator(".nwl-labels .lab:not(.lab-more)"),
   labelsMore: (scope) => scope.locator(".nwl-labels .lab-more"),
 
-  // Reaksi (src/screens/chat/ReactionBar.tsx, MessageItem.tsx)
-  reactionBar: (msg) =>
-    msg
-      .getByRole("group", { name: startsAny(UI.reactionBar) })
-      .or(msg.getByRole("list", { name: startsAny(UI.reactionBar) }))
-      .first(),
-  // Nama chip: "👍 2. Budi Uji, Citra Uji." atau "👍 2, termasuk Anda. ..."
-  chip: (msg, emoji) => SEL.reactionBar(msg).getByRole("button", { name: new RegExp(`^${emojiRe(emoji)}\\s+\\d+`) }),
-  quickReact: (msg, emoji) =>
-    msg.getByRole("button", { name: new RegExp(`${startsAny(UI.quickReact).source} ${emojiRe(emoji)}$`) }),
+  // Reaksi (src/screens/chat/ReactionBar.tsx, MessageItem.tsx). Chip: <ul class="rx-bar"
+  // aria-label="Reaksi untuk pesan ..."> berisi button.rx-chip[data-rx-emoji] dengan
+  // span.rx-count dan aria-pressed untuk reaksi saya. Nama aksesibelnya memakai nama emoji
+  // ("jempol 2. ..."), jadi chip dicari lewat data-rx-emoji.
+  reactionBar: (msg) => msg.getByRole("list", { name: startsAny(UI.reactionBar) }),
+  chips: (msg) => msg.locator("ul.rx-bar button.rx-chip[data-rx-emoji]"),
+  chip: (msg, emoji) => msg.locator(`ul.rx-bar button.rx-chip[data-rx-emoji="${emoji}"]`),
+  // Reaksi cepat di bilah aksi (toolbar "Reaksi cepat untuk pesan ..."): tombol
+  // "Beri reaksi jempol" yang berisi karakter emojinya.
+  quickReact: (msg, emoji) => msg.locator(".rx-quick .rx-quick-btn").filter({ hasText: emoji }),
   addReactionBtn: (msg) => msg.getByRole("button", { name: startsAny(UI.addReaction) }),
   reactionPicker: (p) => p.getByRole("dialog", { name: startsAny(UI.reactionPicker) }),
 
@@ -432,11 +430,16 @@ async function apiReaction(id, conv, messageId, emoji) {
 }
 // Keadaan chip reaksi di layar: { count, mine } (count 0 kalau chip tidak ada).
 async function chipState(msg, emoji) {
-  const chip = SEL.chip(msg, emoji);
-  if (!(await chip.count())) return { count: 0, mine: false };
-  const label = (await chip.first().getAttribute("aria-label")) ?? (await chip.first().innerText());
-  const m = label.match(/(\d+)/);
-  return { count: m ? Number(m[1]) : NaN, mine: (await chip.first().getAttribute("aria-pressed")) === "true", label };
+  if (!(await msg.count())) return { count: 0, mine: false };
+  const all = await SEL.chips(msg).evaluateAll((els) =>
+    els.map((el) => ({
+      emoji: el.dataset.rxEmoji ?? "",
+      count: Number(el.querySelector(".rx-count")?.textContent ?? "NaN"),
+      mine: el.getAttribute("aria-pressed") === "true",
+      label: el.getAttribute("aria-label") ?? "",
+    })),
+  );
+  return all.find((c) => noVs(c.emoji) === noVs(emoji)) ?? { count: 0, mine: false };
 }
 // Menunggu chip `emoji` di pesan `text` di laptop `id` menunjukkan `want`.
 function waitChip(id, text, emoji, want, timeoutMs = SYNC_MS) {
@@ -450,18 +453,10 @@ function waitChip(id, text, emoji, want, timeoutMs = SYNC_MS) {
   );
 }
 // Reaksi lewat tombol reaksi cepat: arahkan mouse ke pesan, lalu klik tombolnya.
-// Kalau tombolnya tersembunyi di balik "Tambah reaksi", tombol itu dibuka dulu.
 async function reactQuick(msg, emoji) {
   await msg.scrollIntoViewIfNeeded().catch(() => {});
   await msg.hover();
-  let btn = SEL.quickReact(msg, emoji);
-  if (!(await btn.count())) {
-    const opener = SEL.addReactionBtn(msg);
-    if (await opener.count()) {
-      await opener.first().click();
-      btn = SEL.quickReact(msg.page(), emoji);
-    }
-  }
+  const btn = SEL.quickReact(msg, emoji);
   if (!(await btn.count())) return { ok: false, how: "tombol reaksi cepat tidak ditemukan" };
   try {
     await btn.first().click({ timeout: 4000 });
@@ -793,10 +788,11 @@ try {
       const head = SEL.msgHead(SEL.message(page("B"), TEXT.label));
       const s = await labelState(head);
       const text = await head.innerText();
-      return allLabels(s) && UI.youSuffix.some((y) => text.includes(y)) ? { ...s, text } : null;
+      // Pesan sendiri tertulis "Anda" ("You"), tetap dengan label profil.
+      return allLabels(s) && /(^|\W)(Anda|You)(\W|$)/.test(text) ? { ...s, text } : null;
     }, 60000);
     check(
-      "2. Pesan B di laptop B sendiri: nama dengan (Anda) dan kelima label",
+      "2. Pesan B di laptop B sendiri: penulis Anda dan kelima label",
       typeof own === "object",
       typeof own === "object" ? own.text.replace(/\s+/g, " ").slice(0, 120) : own,
     );
@@ -1096,13 +1092,20 @@ try {
       await pa.keyboard.press("Enter");
     }
     const value = await input.inputValue();
-    const closed = !(await dlg.isVisible().catch(() => false));
-    const back = await pa.evaluate(() => document.activeElement?.getAttribute("role") === "combobox");
+    // Pemilih di kolom pesan sengaja tetap terbuka setelah memilih (closeOnPick false di Composer).
+    const stillOpen = await dlg.isVisible().catch(() => false);
     check(
-      "8. Ketik jempol lalu Enter: 👍 masuk ke kolom pesan dan pemilih tertutup",
-      value.includes(EMOJI.thumbs) && closed,
-      `kolom=${JSON.stringify(value)}, tertutup=${closed}, fokus kembali ke kolom pesan=${back}`,
+      "8. Ketik jempol lalu Enter: 👍 masuk ke kolom pesan",
+      value.includes(EMOJI.thumbs),
+      `kolom=${JSON.stringify(value)}, pemilih masih terbuka=${stillOpen}`,
     );
+    if (stillOpen) {
+      await pa.keyboard.press("Escape");
+      await sleep(200);
+      const closed = !(await dlg.isVisible().catch(() => false));
+      const back = await pa.evaluate(() => document.activeElement?.getAttribute("role") === "combobox");
+      check("8. Esc menutup pemilih emoji, fokus kembali ke kolom pesan", closed && back, `tertutup=${closed}, fokus di kolom pesan=${back}`);
+    }
     await input.fill("");
   }
 
