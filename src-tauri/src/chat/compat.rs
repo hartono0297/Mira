@@ -21,6 +21,44 @@ pub const CHAT_STICKER_SINCE: &str = "0.5.1";
 /// Record kinds only sent to laptops at or above [`sticker_threshold`].
 pub const GATED_KINDS: &[&str] = &["reaction", "sticker_set"];
 
+/// `major.minor.patch` of `s` at compile time (stops at the first character
+/// that is not a digit or a dot, like `-beta`). Missing parts count as 0.
+const fn const_version(s: &str) -> (u32, u32, u32) {
+    let b = s.as_bytes();
+    let mut parts = [0u32; 3];
+    let mut part = 0;
+    let mut i = 0;
+    while i < b.len() && part < 3 {
+        let c = b[i];
+        if c == b'.' {
+            part += 1;
+        } else if c.is_ascii_digit() {
+            parts[part] = parts[part] * 10 + (c - b'0') as u32;
+        } else {
+            break;
+        }
+        i += 1;
+    }
+    (parts[0], parts[1], parts[2])
+}
+
+const fn version_lt(a: (u32, u32, u32), b: (u32, u32, u32)) -> bool {
+    a.0 < b.0 || (a.0 == b.0 && (a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)))
+}
+
+/// A release build numbered below [`CHAT_STICKER_SINCE`] would open the gate
+/// to every laptop of that version (the `min` rule), including ones that
+/// shipped without reactions and stickers. Refuse to build it: bump the
+/// version in `Cargo.toml` and `tauri.conf.json` to 0.5.1 or later first.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(
+    !version_lt(
+        const_version(env!("CARGO_PKG_VERSION")),
+        const_version(CHAT_STICKER_SINCE)
+    ),
+    "Reaksi dan sticker (chat/compat.rs) butuh versi rilis 0.5.1 atau lebih: naikkan versi di Cargo.toml dan tauri.conf.json."
+);
+
 /// The version a peer must report to receive [`GATED_KINDS`].
 pub fn sticker_threshold() -> (u32, u32, u32) {
     let since = parse_app_version(CHAT_STICKER_SINCE).unwrap_or((0, 5, 1));
@@ -58,6 +96,18 @@ mod tests {
         assert!(version_understands(Some("0.5.1"), t));
         assert!(version_understands(Some("0.6.0"), t));
         assert!(version_understands(Some("1.0.0-beta"), t));
+    }
+
+    #[test]
+    fn const_version_matches_runtime_parser() {
+        for v in ["0.5.0", "0.5.1", "1.2.3", "0.10.20", "1.0.0-beta", "2"] {
+            let runtime = parse_app_version(v).unwrap_or((2, 0, 0));
+            assert_eq!(const_version(v), runtime, "{v}");
+        }
+        assert!(version_lt((0, 5, 0), (0, 5, 1)));
+        assert!(!version_lt((0, 5, 1), (0, 5, 1)));
+        assert!(!version_lt((0, 6, 0), (0, 5, 1)));
+        assert!(version_lt((0, 4, 9), (0, 5, 0)));
     }
 
     #[test]
