@@ -29,7 +29,10 @@ export function MyDepartmentMembers({ dept }: { dept: DeptCtx }) {
   const showActs = ov.canManageDept && !ov.archived;
   const gated = showActs && !ov.gate.open && !ov.me.isSuperadmin;
   const gateId = "md-members-gate";
+  const lastId = "md-members-last";
   const members = [...ov.members].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  // Admin terakhir tidak bisa melepas dirinya sendiri (Rust: last_team_admin); superadmin bisa.
+  const lastAdmin = !ov.me.isSuperadmin && ov.members.filter((m) => m.isAdmin).length <= 1;
 
   function setAdmin(m: DeptMember, admin: boolean) {
     void page.act(
@@ -63,6 +66,10 @@ export function MyDepartmentMembers({ dept }: { dept: DeptCtx }) {
             const role = roleOf(m);
             const online = m.isMe || m.online;
             const pending = page.pending === `md:admin:${m.publicKey}`;
+            const lockedSelf = m.isMe && m.isAdmin && lastAdmin;
+            const describedBy =
+              [gated && dept.gateHint ? gateId : null, lockedSelf ? lastId : null].filter(Boolean).join(" ") ||
+              undefined;
             return (
               <li key={m.publicKey} className="row">
                 <div className="row-main">
@@ -89,15 +96,20 @@ export function MyDepartmentMembers({ dept }: { dept: DeptCtx }) {
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
-                      disabled={busy || gated}
+                      disabled={busy || gated || lockedSelf}
                       aria-busy={pending || undefined}
                       aria-label={m.isAdmin ? T.removeAdminAria(m.displayName) : T.makeAdminAria(m.displayName)}
-                      aria-describedby={gated && dept.gateHint ? gateId : undefined}
+                      aria-describedby={describedBy}
                       onClick={() => (m.isAdmin ? setDemoting(m) : setAdmin(m, true))}
                     >
                       {m.isAdmin ? T.removeAdmin : T.makeAdmin}
                     </button>
                   </div>
+                )}
+                {showActs && lockedSelf && (
+                  <p id={lastId} className="hint md-row-note">
+                    {T.lastAdminNote}
+                  </p>
                 )}
               </li>
             );

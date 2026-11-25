@@ -53,7 +53,8 @@ const id = {
     confirmBody:
       "Orang ini tetap di departemen, tetapi tidak bisa lagi menyetujui permintaan bergabung, membuat kode undangan, atau mengatur divisi.",
     confirmBodySelf:
-      "Anda tetap di departemen, tetapi tidak bisa lagi mengatur departemen ini. Kalau Anda admin terakhir, angkat admin lain dulu.",
+      "Anda tetap di departemen, tetapi tidak bisa lagi mengatur departemen ini.",
+    lastAdminNote: "Anda admin terakhir departemen ini. Jadikan orang lain admin dulu, baru lepaskan peran ini.",
     confirm: "Lepas admin",
     confirming: "Melepas...",
   },

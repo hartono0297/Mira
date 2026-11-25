@@ -54,7 +54,8 @@ const en: Dict<typeof id> = {
     confirmBody:
       "This person stays in the department but can no longer approve join requests, create invite codes, or manage divisions.",
     confirmBodySelf:
-      "You stay in the department but can no longer manage it. If you're the last admin, appoint another admin first.",
+      "You stay in the department but can no longer manage it.",
+    lastAdminNote: "You're the last admin of this department. Make someone else an admin first, then give up this role.",
     confirm: "Remove admin",
     confirming: "Removing...",
   },

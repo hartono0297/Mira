@@ -102,7 +102,7 @@ export function MyDepartmentPanel({ page, ctx, onOpenChat, onOpenProject }: Prop
   const headOnly = !ov.canManageDept && ov.me.headOf.length > 0;
 
   return (
-    <div className="md">
+    <div className="md-panel">
       <div className="md-top">
         {ov.choices.length > 1 ? (
           <div className="md-picker">

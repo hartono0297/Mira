@@ -330,8 +330,35 @@ describe("Departemen saya: admin departemen", () => {
     );
   });
 
-  it("admin terakhir melepas dirinya: dikonfirmasi dulu, lalu pesan Rust tampil", async () => {
+  it("admin terakhir: Lepas admin untuk dirinya nonaktif dengan penjelasan", async () => {
+    setup();
+    await openTab();
+    const btn = screen.getByRole("button", { name: "Lepas admin, Penguji" });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAccessibleDescription(
+      "Anda admin terakhir departemen ini. Jadikan orang lain admin dulu, baru lepaskan peran ini.",
+    );
+  });
+
+  it("superadmin yang juga admin terakhir tetap bisa melepas dirinya", async () => {
+    const base = deptOverview();
     setup({
+      dept: {
+        ...base,
+        me: { ...base.me, isSuperadmin: true },
+        members: base.members.map((m) => (m.publicKey === ME ? { ...m, isSuperadmin: true } : m)),
+      },
+    });
+    await openTab();
+    expect(screen.getByRole("button", { name: "Lepas admin, Penguji" })).toBeEnabled();
+    expect(screen.queryByText(/Anda admin terakhir/)).not.toBeInTheDocument();
+  });
+
+  it("melepas diri sendiri: dikonfirmasi dulu, lalu pesan Rust tampil kalau ditolak", async () => {
+    // Masih ada admin lain di layar, tetapi Rust menolak (misalnya admin lain baru dilepas di laptop lain).
+    const base = deptOverview();
+    setup({
+      dept: { ...base, members: base.members.map((m) => (m.publicKey === PK_B ? { ...m, isAdmin: true } : m)) },
       extra: {
         dept_set_admin: rustError("forbidden", "Departemen harus punya minimal satu admin. Angkat admin lain dulu."),
       },

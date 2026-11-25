@@ -110,9 +110,12 @@ describe("Departemen saya dalam bahasa Inggris", () => {
 
   it("aksi pengelola dan dialog dalam bahasa Inggris; pesan admin terakhir diterjemahkan", async () => {
     const user = userEvent.setup();
-    setup(deptOverview(), {
-      dept_set_admin: rustError("forbidden", "Departemen harus punya minimal satu admin. Angkat admin lain dulu."),
-    });
+    // Citra ikut admin, jadi Penguji bukan admin terakhir di layar; Rust tetap menolak.
+    const base = deptOverview();
+    setup(
+      { ...base, members: base.members.map((m) => (m.displayName === "Citra" ? { ...m, isAdmin: true } : m)) },
+      { dept_set_admin: rustError("forbidden", "Departemen harus punya minimal satu admin. Angkat admin lain dulu.") },
+    );
     await user.click(await screen.findByRole("button", { name: "My department" }));
     await screen.findByRole("heading", { name: "Department members" });
     expect(screen.getByRole("button", { name: "Make admin, Bayu" })).toBeInTheDocument();
@@ -135,6 +138,19 @@ describe("Departemen saya dalam bahasa Inggris", () => {
     expect(
       await screen.findByText("The department must have at least one admin. Appoint another admin first."),
     ).toBeInTheDocument();
+    expect(indonesian()).toEqual([]);
+  });
+
+  it("admin terakhir: penjelasan dalam bahasa Inggris dan tombolnya nonaktif", async () => {
+    const user = userEvent.setup();
+    setup(deptOverview());
+    await user.click(await screen.findByRole("button", { name: "My department" }));
+    await screen.findByRole("heading", { name: "Department members" });
+    const btn = screen.getByRole("button", { name: "Remove admin, Penguji" });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAccessibleDescription(
+      "You're the last admin of this department. Make someone else an admin first, then give up this role.",
+    );
     expect(indonesian()).toEqual([]);
   });
 });

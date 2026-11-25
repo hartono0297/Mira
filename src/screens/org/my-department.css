@@ -6,7 +6,8 @@
    di atas card 7,19:1 dan 7,77:1, garis border-strong di atas card 3,05:1 dan
    3,76:1, cincin fokus di atas card 5,2:1 dan 6,45:1. */
 
-.md {
+/* Bukan ".md": kelas itu sudah dipakai catatan rilis (updates.css). */
+.md-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -95,6 +96,21 @@
 .md-input:disabled {
   cursor: not-allowed;
   opacity: 0.75;
+}
+
+/* Tombol bergaris yang nonaktif (gerbang versi, admin terakhir). Dengan opacity global saja
+   tombol ini nyaris sama dengan yang aktif; garis tipis dan teks text-sec (5,86:1 di card
+   terang, 7,61:1 gelap) membuatnya jelas nonaktif tetapi tetap terbaca. */
+.md-panel .btn-ghost:disabled:not([aria-busy="true"]) {
+  opacity: 1;
+  color: var(--text-sec);
+  border-color: var(--border);
+}
+
+/* Penjelasan satu baris di bawah orang dalam daftar anggota. */
+.md-row-note {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .md-textarea {
