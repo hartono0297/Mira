@@ -143,12 +143,18 @@ describe("Departemen saya: admin departemen", () => {
       "Kode undangan",
       "Proyek departemen",
       "Channel departemen",
-      "Riwayat admin",
     ]) {
       expect(screen.getByRole("heading", { name, level: 2 })).toBeInTheDocument();
     }
+    // Nama departemen di atas tab juga judul.
+    expect(screen.getByRole("heading", { name: "Desain", level: 2 })).toBeInTheDocument();
+    // Divisi di atas Anggota departemen; Riwayat admin dilipat dengan jumlahnya.
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf("Divisi")).toBeLessThan(headings.indexOf("Anggota departemen"));
+    const history = screen.getByText("Riwayat admin (2)").closest("details");
+    expect(history).not.toHaveAttribute("open");
     expect(screen.getByRole("button", { name: "Buat divisi" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Jadikan Bayu admin departemen" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Jadikan admin, Bayu" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ganti nama divisi Mobile" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Arsipkan divisi Mobile" })).toBeInTheDocument();
     // Peran tampil sebagai teks, status online dengan teks juga.
@@ -173,7 +179,7 @@ describe("Departemen saya: admin departemen", () => {
     await user.type(screen.getByLabelText("Nama divisi baru"), "  Backend ");
     await user.click(screen.getByRole("button", { name: "Buat divisi" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("division_create", { teamId: TEAM_1, name: "Backend" }));
-    expect(await screen.findByText("Divisi Backend dibuat. Chatnya ada di bagian Departemen di Chat.")).toBeInTheDocument();
+    expect(await screen.findByText("Divisi Backend dibuat. Chatnya ada di Chat, bagian Departemen.")).toBeInTheDocument();
   });
 
   it("nama divisi terlalu pendek ditolak sebelum dikirim", async () => {
@@ -195,10 +201,34 @@ describe("Departemen saya: admin departemen", () => {
     await user.type(input, "Frontend");
     await user.click(screen.getByRole("button", { name: "Simpan" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("division_rename", { divisionId: DIV_2, name: "Frontend" }));
+    // Baris edit tertutup: fokus kembali ke tombol Ganti nama, tidak jatuh ke body.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ganti nama divisi Web" })).toHaveFocus());
   });
 
-  it("Arsipkan lewat konfirmasi, Pulihkan langsung", async () => {
+  it("Escape menutup baris ganti nama dan fokus kembali ke tombolnya", async () => {
     setup();
+    const user = await openTab();
+    await user.click(screen.getByRole("button", { name: "Ganti nama divisi Mobile" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByLabelText("Nama baru untuk divisi Mobile")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ganti nama divisi Mobile" })).toHaveFocus();
+    expect(invoke).not.toHaveBeenCalledWith("division_rename", expect.anything());
+  });
+
+  it("Arsipkan lewat konfirmasi, lalu fokus pindah ke bagian Diarsipkan; Pulihkan langsung ke kartunya", async () => {
+    let data = deptOverview();
+    setup({
+      extra: {
+        dept_overview: () => data,
+        division_archive: (args: { divisionId: string; archived: boolean }) => {
+          data = {
+            ...data,
+            divisions: data.divisions.map((d) => (d.id === args.divisionId ? { ...d, archived: args.archived } : d)),
+          };
+          return null;
+        },
+      },
+    });
     const user = await openTab();
     await user.click(screen.getByRole("button", { name: "Arsipkan divisi Web" }));
     const dialog = await screen.findByRole("dialog", { name: "Arsipkan divisi Web?" });
@@ -207,22 +237,38 @@ describe("Departemen saya: admin departemen", () => {
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("division_archive", { divisionId: DIV_2, archived: true }),
     );
+    expect(await screen.findByText("Divisi Web diarsipkan.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Diarsipkan (2)").closest("summary")).toHaveFocus());
 
-    await user.click(screen.getByText("Diarsipkan (1)"));
+    await user.click(screen.getByText("Diarsipkan (2)"));
     await user.click(screen.getByRole("button", { name: "Pulihkan divisi Lama" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("division_archive", { divisionId: DIV_3, archived: false }),
     );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ganti nama divisi Lama" })).toHaveFocus());
+    expect(card("Lama")).not.toHaveClass("md-div-archived");
+  });
+
+  it("error saat mengarsipkan tampil di dalam dialog yang tetap terbuka", async () => {
+    setup({ extra: { division_archive: rustError("forbidden", "Anda tidak boleh mengarsipkan divisi ini.") } });
+    const user = await openTab();
+    await user.click(screen.getByRole("button", { name: "Arsipkan divisi Web" }));
+    const dialog = await screen.findByRole("dialog", { name: "Arsipkan divisi Web?" });
+    await user.click(within(dialog).getByRole("button", { name: "Arsipkan Web" }));
+    expect(await within(dialog).findByText("Anda tidak boleh mengarsipkan divisi ini.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Arsipkan divisi Web?" })).toBeInTheDocument();
   });
 
   it("tunjuk dan lepas kepala divisi memanggil division_set_head", async () => {
     setup();
     const user = await openTab();
-    await user.click(screen.getByRole("button", { name: "Jadikan Bayu kepala divisi Mobile" }));
+    await user.click(screen.getByRole("button", { name: "Jadikan kepala, Bayu, divisi Mobile" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("division_set_head", { divisionId: DIV_1, publicKey: PK_B, head: true }),
     );
-    await user.click(await screen.findByRole("button", { name: "Lepas Citra dari kepala divisi Mobile" }));
+    const demote = await screen.findByRole("button", { name: "Jadikan anggota, Citra, divisi Mobile" });
+    expect(demote).toHaveTextContent("Jadikan anggota");
+    await user.click(demote);
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("division_set_head", { divisionId: DIV_1, publicKey: PK_C, head: false }),
     );
@@ -254,10 +300,31 @@ describe("Departemen saya: admin departemen", () => {
     expect(await screen.findByText("Bayu dikeluarkan dari divisi Mobile.")).toBeInTheDocument();
   });
 
+  it("setelah Keluarkan, fokus pindah ke judul kartu divisi", async () => {
+    let data = deptOverview();
+    setup({
+      extra: {
+        dept_overview: () => data,
+        division_remove_member: (args: { divisionId: string; publicKey: string }) => {
+          data = {
+            ...data,
+            divisions: data.divisions.map((d) =>
+              d.id === args.divisionId ? { ...d, members: d.members.filter((m) => m.publicKey !== args.publicKey) } : d,
+            ),
+          };
+          return null;
+        },
+      },
+    });
+    const user = await openTab();
+    await user.click(screen.getByRole("button", { name: "Keluarkan Bayu dari divisi Mobile" }));
+    await waitFor(() => expect(within(card("Mobile")).getByRole("heading", { name: "Mobile" })).toHaveFocus());
+  });
+
   it("Jadikan admin memanggil dept_set_admin", async () => {
     setup();
     const user = await openTab();
-    await user.click(screen.getByRole("button", { name: "Jadikan Bayu admin departemen" }));
+    await user.click(screen.getByRole("button", { name: "Jadikan admin, Bayu" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("dept_set_admin", { teamId: TEAM_1, publicKey: PK_B, admin: true }),
     );
@@ -270,7 +337,7 @@ describe("Departemen saya: admin departemen", () => {
       },
     });
     const user = await openTab();
-    await user.click(screen.getByRole("button", { name: "Lepas Penguji dari admin departemen" }));
+    await user.click(screen.getByRole("button", { name: "Lepas admin, Penguji" }));
     const dialog = await screen.findByRole("dialog", { name: "Lepas diri Anda dari admin departemen?" });
     await user.click(within(dialog).getByRole("button", { name: "Lepas admin" }));
     await waitFor(() =>
@@ -290,7 +357,7 @@ describe("Departemen saya: admin departemen", () => {
     expect(within(section).getByText("Hanya admin departemen dan superadmin yang bisa menulis.")).toBeInTheDocument();
     await user.type(within(section).getByLabelText("Catatan disematkan"), "Rapat Senin jam 9");
     expect(within(section).getByText("17 dari 500 karakter")).toBeInTheDocument();
-    await user.click(within(section).getByRole("switch", { name: "Mode pengumuman" }));
+    await user.click(within(section).getByRole("checkbox", { name: "Mode pengumuman" }));
     await user.click(save);
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("chat_settings_set", {
@@ -319,6 +386,61 @@ describe("Departemen saya: admin departemen", () => {
     expect(within(section).getByRole("button", { name: "Simpan pengaturan chat" })).toBeDisabled();
   });
 
+  it("catatan lebih dari 20 baris tidak bisa disimpan; tab dan CRLF dirapikan sebelum dikirim", async () => {
+    setup();
+    const user = await openTab();
+    const section = screen.getByRole("region", { name: "Channel departemen" });
+    expect(
+      within(section).getByText("Paling banyak 500 karakter dan 20 baris. Kosongkan untuk menghapus catatan."),
+    ).toBeInTheDocument();
+    const box = within(section).getByLabelText("Catatan disematkan");
+    await user.click(box);
+    await user.paste(Array.from({ length: 21 }, (_, i) => `baris ${i + 1}`).join("\n"));
+    expect(within(section).getByText("Catatan paling banyak 20 baris. Kurangi barisnya dulu.")).toBeInTheDocument();
+    expect(box).toHaveAttribute("aria-invalid", "true");
+    const save = within(section).getByRole("button", { name: "Simpan pengaturan chat" });
+    expect(save).toBeDisabled();
+    await user.clear(box);
+    await user.paste("Rapat\tSenin\r\njam 9");
+    await user.click(save);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("chat_settings_set", {
+        teamId: TEAM_1,
+        divisionId: null,
+        pinned: "Rapat Senin\njam 9",
+        announce: false,
+      }),
+    );
+  });
+
+  it("menyimpan pengaturan chat tidak memasang ulang formulir", async () => {
+    let data = deptOverview();
+    setup({
+      extra: {
+        dept_overview: () => data,
+        chat_settings_set: (args: { pinned: string; announce: boolean }) => {
+          data = {
+            ...data,
+            channel: {
+              ...data.channel,
+              settings: { pinned: args.pinned, announce: args.announce, setAt: "2026-11-25T03:00:00Z", setByName: "Penguji" },
+            },
+          };
+          return null;
+        },
+      },
+    });
+    const user = await openTab();
+    const section = screen.getByRole("region", { name: "Channel departemen" });
+    const box = within(section).getByLabelText("Catatan disematkan");
+    await user.type(box, "  Rapat Senin  ");
+    await user.click(within(section).getByRole("button", { name: "Simpan pengaturan chat" }));
+    await waitFor(() => expect(within(section).getByText(/^Terakhir diubah Penguji/)).toBeInTheDocument());
+    // Elemen yang sama, isinya kembali ke nilai tersimpan (sudah dirapikan).
+    expect(within(section).getByLabelText("Catatan disematkan")).toBe(box);
+    expect(box).toHaveValue("Rapat Senin");
+  });
+
   it("pengaturan chat divisi memakai id divisi", async () => {
     setup();
     const user = await openTab();
@@ -327,7 +449,7 @@ describe("Departemen saya: admin departemen", () => {
     expect(
       within(mobile).getByText("Hanya kepala divisi, admin departemen, dan superadmin yang bisa menulis."),
     ).toBeInTheDocument();
-    await user.click(within(mobile).getByRole("switch", { name: "Mode pengumuman" }));
+    await user.click(within(mobile).getByRole("checkbox", { name: "Mode pengumuman" }));
     await user.click(within(mobile).getByRole("button", { name: "Simpan pengaturan chat" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("chat_settings_set", {
@@ -348,7 +470,7 @@ describe("Departemen saya: admin departemen", () => {
     expect(onOpenChat).toHaveBeenCalledWith(`ch:${DIV_1}`);
     await user.click(screen.getByRole("button", { name: "Buka chat # desain" }));
     expect(onOpenChat).toHaveBeenLastCalledWith(`c${TEAM_1.slice(1)}`);
-    await user.click(screen.getByRole("button", { name: "Buka proyek Aplikasi Kasir di Board" }));
+    await user.click(screen.getByRole("button", { name: "Buka di Board, proyek Aplikasi Kasir" }));
     expect(onOpenProject).toHaveBeenCalledWith("p".repeat(32));
   });
 
@@ -356,7 +478,7 @@ describe("Departemen saya: admin departemen", () => {
     setup();
     await openTab();
     expect(screen.queryByRole("button", { name: /Buka chat/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /di Board/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Buka di Board/ })).not.toBeInTheDocument();
   });
 
   it("pemilih departemen memuat departemen pilihan", async () => {
@@ -400,11 +522,11 @@ describe("Departemen saya: kepala divisi", () => {
     await openTab();
     expect(screen.getByText(/Anda kepala divisi di departemen ini/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Buat divisi" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /admin departemen$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Jadikan|Lepas) admin/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Ganti nama divisi/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Arsipkan divisi/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /kepala divisi/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Riwayat admin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Jadikan (kepala|anggota)/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Riwayat admin/)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Permintaan bergabung" })).not.toBeInTheDocument();
 
     const mobile = card("Mobile");
@@ -418,6 +540,24 @@ describe("Departemen saya: kepala divisi", () => {
     const channel = screen.getByRole("region", { name: "Channel departemen" });
     expect(within(channel).queryByRole("button", { name: "Simpan pengaturan chat" })).not.toBeInTheDocument();
     expect(within(channel).getByText("Belum ada catatan disematkan.")).toBeInTheDocument();
+  });
+
+  it("keluar dari divisi sendiri lewat konfirmasi", async () => {
+    setup({ ov: memberOverview(), dir: plainDir, dept: headOverview() });
+    const user = await openTab();
+    await user.click(within(card("Mobile")).getByRole("button", { name: "Keluar dari divisi Mobile" }));
+    const dialog = await screen.findByRole("dialog", { name: "Keluar dari divisi Mobile?" });
+    expect(
+      within(dialog).getByText(
+        "Anda tidak lagi menjadi anggota Mobile dan tidak lagi menerima chatnya. Untuk kembali, minta admin departemen menambahkan Anda.",
+      ),
+    ).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("division_remove_member", expect.anything());
+    await user.click(within(dialog).getByRole("button", { name: "Keluar dari divisi" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("division_remove_member", { divisionId: DIV_1, publicKey: PK_C }),
+    );
+    expect(await screen.findByText("Anda keluar dari divisi Mobile.")).toBeInTheDocument();
   });
 });
 
@@ -441,12 +581,30 @@ describe("Departemen saya: gerbang versi", () => {
     expect(screen.getByText("Dewi, versi belum dilaporkan")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Buat divisi" })).toBeDisabled();
     expect(screen.getByLabelText("Nama divisi baru")).toBeDisabled();
-    expect(screen.getByText("Bisa diubah setelah semua laptop di atas memperbarui Mira.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Ganti nama divisi/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Jadikan Bayu admin departemen" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Keluarkan/ })).not.toBeInTheDocument();
+    const hint = "Bisa diubah setelah semua laptop kantor memakai Mira 0.6.0.";
+    expect(screen.getAllByText(hint).length).toBeGreaterThan(0);
+    // Tombol tetap tampil tetapi nonaktif, dengan penjelasan yang dibacakan bersamanya.
+    const rename = screen.getByRole("button", { name: "Ganti nama divisi Mobile" });
+    expect(rename).toBeDisabled();
+    expect(rename).toHaveAccessibleDescription(hint);
+    const admin = screen.getByRole("button", { name: "Jadikan admin, Bayu" });
+    expect(admin).toBeDisabled();
+    expect(admin).toHaveAccessibleDescription(hint);
+    expect(screen.getByRole("button", { name: "Keluarkan Bayu dari divisi Mobile" })).toBeDisabled();
     const channel = screen.getByRole("region", { name: "Channel departemen" });
     expect(within(channel).getByLabelText("Catatan disematkan")).toBeDisabled();
+    expect(within(channel).getByRole("button", { name: "Simpan pengaturan chat" })).toHaveAccessibleDescription(hint);
+  });
+
+  it("tertutup tanpa daftar laptop: penjelasan tanpa menyebut laptop di atas", async () => {
+    setup({ dept: deptOverview({ gate: { open: false, since: "0.6.0", blockers: [] } }) });
+    await openTab();
+    expect(
+      screen.getByText(
+        "Sampai semua laptop kantor diperbarui, divisi, kepala divisi, pengaturan chat, dan pengangkatan admin oleh admin departemen belum bisa disimpan.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Laptop berikut/)).not.toBeInTheDocument();
   });
 
   it("tertutup: superadmin tetap bisa mengangkat admin (op lama)", async () => {
@@ -459,7 +617,7 @@ describe("Departemen saya: gerbang versi", () => {
       }),
     });
     await openTab();
-    expect(screen.getByRole("button", { name: "Jadikan Bayu admin departemen" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Jadikan admin, Bayu" })).toBeEnabled();
   });
 });
 

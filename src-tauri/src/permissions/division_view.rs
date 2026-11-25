@@ -508,9 +508,10 @@ pub(super) fn person_divisions(state: &OrgState, pk: &str) -> Vec<DivisionRefLit
         .divisions_of(pk)
         .into_iter()
         .filter(|(d, _)| !d.archived)
-        .map(|(d, _)| DivisionRefLite {
+        .map(|(d, role)| DivisionRefLite {
             id: d.id.clone(),
             name: d.name.clone(),
+            role,
         })
         .collect();
     sort_by_name(&mut out, |d| (&d.name, &d.id));
@@ -567,7 +568,7 @@ pub fn conversation_settings_for(
         pinned,
         announce,
         can_write: !archived && (!announce || manager),
-        can_edit: state.may_edit_chat_settings(me, team, division),
+        can_edit: division_gate_open(state) && state.may_edit_chat_settings(me, team, division),
         team_id: team.to_owned(),
         division_id: division.map(str::to_owned),
     }

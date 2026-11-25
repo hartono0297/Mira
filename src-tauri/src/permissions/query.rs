@@ -29,12 +29,13 @@ pub struct LabelRef {
     pub name: String,
 }
 
-/// `(division id, name)`.
+/// `(division id, name, role)`; `role` is `"head"` or `"member"`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DivisionRefLite {
     pub id: String,
     pub name: String,
+    pub role: super::division::DivisionRole,
 }
 
 /// What this laptop's person may do on the Organisasi pages.

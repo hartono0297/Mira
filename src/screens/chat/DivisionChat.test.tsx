@@ -199,6 +199,31 @@ describe("PinnedNote", () => {
     expect(within(dialog).getByText("Catatan paling panjang 500 karakter.")).toBeInTheDocument();
   });
 
+  it("catatan lebih dari 20 baris ditolak sebelum dikirim", async () => {
+    const user = userEvent.setup();
+    division.conversationSettings.mockResolvedValue(settings({ canEdit: true, pinned: "" }));
+    render(<PinnedNote summary={MOBILE} />);
+    await user.click(await screen.findByRole("button", { name: "Sematkan catatan" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("Paling banyak 500 karakter dan 20 baris. Kosongkan untuk menghapus catatan."),
+    ).toBeInTheDocument();
+    const note = within(dialog).getByRole("textbox", { name: "Catatan disematkan" });
+    await user.click(note);
+    await user.paste(Array.from({ length: 21 }, (_, i) => `baris ${i + 1}`).join("\n"));
+    await user.click(within(dialog).getByRole("button", { name: "Simpan" }));
+    expect(division.setChatSettings).not.toHaveBeenCalled();
+    expect(note).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByText("Catatan paling banyak 20 baris.")).toBeInTheDocument();
+  });
+
+  it("tanpa hak ubah (misalnya gerbang versi tertutup), tombol Sematkan catatan tidak tampil", async () => {
+    division.conversationSettings.mockResolvedValue(settings({ canEdit: false, pinned: "Rapat jam 9" }));
+    render(<PinnedNote summary={MOBILE} />);
+    expect(await screen.findByText("Rapat jam 9")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sematkan catatan|Ubah/ })).not.toBeInTheDocument();
+  });
+
   it("gagal simpan menampilkan pesan di dialog", async () => {
     const user = userEvent.setup();
     division.conversationSettings.mockResolvedValue(settings({ canEdit: true }));

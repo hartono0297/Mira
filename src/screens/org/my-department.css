@@ -78,7 +78,7 @@
   padding: 8px 12px;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  background: var(--bg);
+  background: var(--card);
   font-size: 15px;
 }
 
@@ -259,13 +259,13 @@
   font-weight: 700;
 }
 
-.md-switch {
+.md-check {
   display: flex;
   align-items: flex-start;
   gap: 10px;
 }
 
-.md-switch input {
+.md-check input {
   flex: none;
   width: 18px;
   height: 18px;
@@ -274,13 +274,13 @@
   cursor: pointer;
 }
 
-.md-switch label {
+.md-check label {
   font-weight: 700;
   cursor: pointer;
 }
 
-.md-fields:disabled .md-switch input,
-.md-fields:disabled .md-switch label {
+.md-fields:disabled .md-check input,
+.md-fields:disabled .md-check label {
   cursor: not-allowed;
 }
 

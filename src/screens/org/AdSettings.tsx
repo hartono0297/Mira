@@ -445,7 +445,7 @@ export function AdSettings({ page, departments }: { page: OrgPage; departments: 
                                 id={divId}
                                 className="ad-set-input"
                                 value={r.division}
-                                disabled={divChoices.length === 1 && !r.division}
+                                disabled={divLive.loading || (divChoices.length === 1 && !r.division)}
                                 onChange={(e) => setDivision(i, e.target.value)}
                               >
                                 {divChoices}

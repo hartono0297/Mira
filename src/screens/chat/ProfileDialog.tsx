@@ -8,7 +8,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { initials } from "../../components/initials";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { PROFILE } from "../../i18n/chat-dialogs";
-import { deptWithDivisions } from "../org/divisionText";
+import { deptWithDivisions, DIVISION_SEPARATOR } from "../org/divisionText";
 import { useChatActions } from "./ChatActions";
 import "./profile.css";
 
@@ -159,7 +159,7 @@ function ProfileBody({ person, onOpenChange }: { person: Person; onOpenChange: (
               <dt>{PROFILE.department}</dt>
               <dd>
                 {deptWithDivisions(p.departmentName, p.divisions) ?? PROFILE.noDepartment}
-                {p.departmentName && p.departmentRole === "admin" && `, ${PROFILE.deptAdmin}`}
+                {p.departmentName && p.departmentRole === "admin" && `${DIVISION_SEPARATOR}${PROFILE.deptAdmin}`}
               </dd>
             </div>
           )}

@@ -89,17 +89,21 @@ describe("Departemen saya dalam bahasa Inggris", () => {
     );
     await user.click(await screen.findByRole("button", { name: "My department" }));
     expect(await screen.findByRole("heading", { name: "Department members", level: 2 })).toBeInTheDocument();
-    for (const name of ["Divisions", "Join requests", "Invite codes", "Department projects", "Department channel", "Admin history"]) {
+    for (const name of ["Divisions", "Join requests", "Invite codes", "Department projects", "Department channel"]) {
       expect(screen.getByRole("heading", { name, level: 2 })).toBeInTheDocument();
     }
     expect(screen.getByText("Division changes are waiting for every laptop to run Mira 0.6.0")).toBeInTheDocument();
     expect(screen.getByText("Dewi, version not reported")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open the Mobile division chat" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open project Aplikasi Kasir in the Board" })).toBeInTheDocument();
-    expect(screen.getByText("Only department admins and superadmins can write.")).toBeInTheDocument();
+    expect(screen.getByText("Admin history (2)")).toBeInTheDocument();
+    expect(screen.getAllByText("You can change this once every laptop in the office runs Mira 0.6.0.").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Open chat, Mobile division" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open chat, # desain" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open on the Board, Aplikasi Kasir" })).toBeInTheDocument();
+    expect(screen.getByText("Only department admins and superadmins can post.")).toBeInTheDocument();
     expect(screen.getByText("Rejected")).toBeInTheDocument();
     await user.click(screen.getByText("Archived (1)"));
     await user.click(screen.getAllByText("Division chat")[0]);
+    await user.click(screen.getByText("Admin history (2)"));
     // Data uji (nama divisi, proyek) memakai kata yang bukan kata Indonesia di daftar.
     expect(indonesian()).toEqual([]);
   });
@@ -111,8 +115,9 @@ describe("Departemen saya dalam bahasa Inggris", () => {
     });
     await user.click(await screen.findByRole("button", { name: "My department" }));
     await screen.findByRole("heading", { name: "Department members" });
-    expect(screen.getByRole("button", { name: "Make Bayu a department admin" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Make Bayu head of Mobile" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make admin, Bayu" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make head, Bayu, Mobile" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make member, Citra, Mobile" })).toHaveTextContent("Make member");
     expect(screen.getByLabelText("New division name")).toBeInTheDocument();
     expect(screen.getByText("Divisions: Mobile (head)")).toBeInTheDocument();
 
@@ -121,7 +126,7 @@ describe("Departemen saya dalam bahasa Inggris", () => {
     expect(indonesian()).toEqual([]);
     await user.click(within(archive).getByRole("button", { name: "Cancel" }));
 
-    await user.click(screen.getByRole("button", { name: "Remove Penguji as department admin" }));
+    await user.click(screen.getByRole("button", { name: "Remove admin, Penguji" }));
     const dialog = await screen.findByRole("dialog", { name: "Remove yourself as department admin?" });
     await user.click(within(dialog).getByRole("button", { name: "Remove admin" }));
     await waitFor(() =>

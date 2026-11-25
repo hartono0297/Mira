@@ -8,7 +8,7 @@ import { NameWithLabels } from "../../components/NameWithLabels";
 import { getLang } from "../../i18n/core";
 import { ORG_TEXT } from "../../i18n/org";
 import type { OrgPage } from "./context";
-import { deptWithDivisions } from "./divisionText";
+import { deptWithDivisions, DIVISION_SEPARATOR } from "./divisionText";
 import { useOrgLive } from "./useOrgLive";
 import "./users.css";
 
@@ -145,7 +145,12 @@ export function PeoplePanel({ page }: { page: OrgPage }) {
                         {p.isGuest
                           ? ORG_TEXT.people.guest
                           : (deptWithDivisions(p.departmentName, p.divisions) ?? ORG_TEXT.people.noDepartment)}
-                        {!p.isGuest && <>, {roleText(p).toLocaleLowerCase("id")}</>}
+                        {!p.isGuest && (
+                          <>
+                            {DIVISION_SEPARATOR}
+                            {roleText(p).toLocaleLowerCase("id")}
+                          </>
+                        )}
                       </span>
                     </div>
                   </li>

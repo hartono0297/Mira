@@ -1,18 +1,89 @@
 import { IconAlertCircle, IconChevronRight, IconMessage } from "@tabler/icons-react";
-import { useId, useState, type FormEvent } from "react";
-import { divisionApi, type DivisionView } from "../../api/division";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { divisionApi, type DeptOverview, type DivisionView } from "../../api/division";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { ErrorAlert } from "../../components/ErrorAlert";
 import { DIVISION_TEXT } from "../../i18n/org-division";
 import { ChatSettingsForm } from "./MyDepartmentChatSettings";
-import { validDivisionName, type DeptCtx } from "./myDepartmentShared";
+import { useConfirmAction, validDivisionName, type DeptCtx } from "./myDepartmentShared";
+
+// Ke mana fokus pindah setelah sebuah aksi, begitu data baru menunjukkan hasilnya.
+// Tombol yang ditekan sering hilang bersama barisnya, jadi fokus tidak boleh jatuh ke body.
+type FocusRequest = {
+  target: "rename" | "heading" | "archived";
+  divisionId: string;
+  ready: (ov: DeptOverview) => boolean;
+};
+
+const always = () => true;
+
+function divisionIn(ov: DeptOverview, id: string): DivisionView | undefined {
+  return ov.divisions.find((d) => d.id === id);
+}
 
 export function MyDepartmentDivisions({ dept }: { dept: DeptCtx }) {
   const T = DIVISION_TEXT.divisions;
-  const { ov } = dept;
+  const { ov, page } = dept;
   const [archiving, setArchiving] = useState<DivisionView | null>(null);
+  const [leaving, setLeaving] = useState<DivisionView | null>(null);
+  const [focus, setFocus] = useState<FocusRequest | null>(null);
+  const archiveAction = useConfirmAction(page);
+  const leaveAction = useConfirmAction(page);
+  const renameButtons = useRef(new Map<string, HTMLButtonElement>());
+  const headings = useRef(new Map<string, HTMLElement>());
+  const archivedSummary = useRef<HTMLElement | null>(null);
   const canCreate = ov.canManageDept && !ov.archived;
   const active = ov.divisions.filter((d) => !d.archived);
   const archived = ov.divisions.filter((d) => d.archived);
+
+  useEffect(() => {
+    if (!focus || !focus.ready(ov)) return;
+    const el =
+      focus.target === "archived"
+        ? archivedSummary.current
+        : focus.target === "rename"
+          ? renameButtons.current.get(focus.divisionId)
+          : headings.current.get(focus.divisionId);
+    el?.focus();
+    setFocus(null);
+  }, [focus, ov]);
+
+  const register = {
+    rename: (id: string) => (el: HTMLButtonElement | null) => {
+      if (el) renameButtons.current.set(id, el);
+      else renameButtons.current.delete(id);
+    },
+    heading: (id: string) => (el: HTMLElement | null) => {
+      if (el) headings.current.set(id, el);
+      else headings.current.delete(id);
+    },
+  };
+
+  function list(items: DivisionView[]) {
+    return (
+      <ul className="md-div-list">
+        {items.map((d) => (
+          <li key={d.id}>
+            <DivisionCard
+              dept={dept}
+              division={d}
+              renameRef={register.rename(d.id)}
+              headingRef={register.heading(d.id)}
+              onFocus={setFocus}
+              onArchive={(target) => {
+                archiveAction.clear();
+                setArchiving(target);
+              }}
+              onLeave={(target) => {
+                leaveAction.clear();
+                setLeaving(target);
+              }}
+            />
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   return (
     <section className="set-section md-block" aria-labelledby="md-divisions-title">
@@ -30,54 +101,90 @@ export function MyDepartmentDivisions({ dept }: { dept: DeptCtx }) {
           <p>{canCreate ? T.emptyManage : T.emptyView}</p>
         </div>
       ) : (
-        <ul className="md-div-list">
-          {active.map((d) => (
-            <li key={d.id}>
-              <DivisionCard dept={dept} division={d} onArchive={setArchiving} />
-            </li>
-          ))}
-        </ul>
+        list(active)
       )}
 
       {archived.length > 0 && (
         <details className="org-fold">
-          <summary>
+          <summary ref={archivedSummary}>
             <IconChevronRight size={16} className="org-fold-chev" aria-hidden="true" />
             {T.archivedFold(archived.length)}
           </summary>
-          <ul className="md-div-list">
-            {archived.map((d) => (
-              <li key={d.id}>
-                <DivisionCard dept={dept} division={d} onArchive={setArchiving} />
-              </li>
-            ))}
-          </ul>
+          {list(archived)}
         </details>
       )}
 
-      <ConfirmDialog
-        open={archiving !== null}
-        onOpenChange={(open) => {
-          if (!open) setArchiving(null);
-        }}
-        title={T.archiveTitle(archiving?.name ?? "")}
-        confirmLabel={T.archiveConfirm(archiving?.name ?? "")}
-        busyLabel={T.archiving}
-        busy={false}
-        onConfirm={() => {
-          const target = archiving;
-          setArchiving(null);
-          if (!target) return;
-          void dept.page.act(
-            `md:archive:${target.id}`,
-            () => divisionApi.setDivisionArchived(target.id, true),
-            T.archived(target.name),
-            T.archiveFail,
-          );
-        }}
-      >
-        <p>{T.archiveBody}</p>
-      </ConfirmDialog>
+      {archiving && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setArchiving(null);
+          }}
+          title={T.archiveTitle(archiving.name)}
+          confirmLabel={T.archiveConfirm(archiving.name)}
+          busyLabel={T.archiving}
+          busy={archiveAction.busy}
+          danger={false}
+          error={
+            archiveAction.error && (
+              <ErrorAlert title={T.archiveFail}>
+                <p>{archiveAction.error.message}</p>
+              </ErrorAlert>
+            )
+          }
+          onConfirm={async () => {
+            const target = archiving;
+            const ok = await archiveAction.run(() => divisionApi.setDivisionArchived(target.id, true), T.archived(target.name));
+            if (!ok) return;
+            // Tombol Arsipkan hilang bersama kartunya: fokus pindah ke bagian Diarsipkan.
+            setFocus({
+              target: "archived",
+              divisionId: target.id,
+              ready: (next) => divisionIn(next, target.id)?.archived === true,
+            });
+            setArchiving(null);
+          }}
+        >
+          <p>{T.archiveBody}</p>
+        </ConfirmDialog>
+      )}
+
+      {leaving && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setLeaving(null);
+          }}
+          title={T.leaveTitle(leaving.name)}
+          confirmLabel={T.leaveConfirm}
+          busyLabel={T.leaving}
+          busy={leaveAction.busy}
+          error={
+            leaveAction.error && (
+              <ErrorAlert title={T.leaveFail}>
+                <p>{leaveAction.error.message}</p>
+              </ErrorAlert>
+            )
+          }
+          onConfirm={async () => {
+            const target = leaving;
+            const me = ov.me.publicKey;
+            const ok = await leaveAction.run(
+              () => divisionApi.removeDivisionMember(target.id, me),
+              T.left(target.name),
+            );
+            if (!ok) return;
+            setFocus({
+              target: "heading",
+              divisionId: target.id,
+              ready: (next) => !divisionIn(next, target.id)?.members.some((m) => m.publicKey === me),
+            });
+            setLeaving(null);
+          }}
+        >
+          <p>{T.leaveBody(leaving.name)}</p>
+        </ConfirmDialog>
+      )}
     </section>
   );
 }
@@ -124,7 +231,13 @@ function CreateDivision({ dept }: { dept: DeptCtx }) {
           aria-describedby={`${uid}-rule`}
           onChange={(e) => setName(e.target.value)}
         />
-        <button type="submit" className="btn" disabled={off || dept.busy} aria-busy={creating || undefined}>
+        <button
+          type="submit"
+          className="btn"
+          disabled={off || dept.busy}
+          aria-busy={creating || undefined}
+          aria-describedby={`${uid}-rule`}
+        >
           {creating ? T.creating : T.create}
         </button>
       </div>
@@ -135,7 +248,7 @@ function CreateDivision({ dept }: { dept: DeptCtx }) {
         </p>
       ) : (
         <p id={`${uid}-rule`} className="hint">
-          {off ? DIVISION_TEXT.gate.disabled : T.nameRule}
+          {dept.gateHint ?? T.nameRule}
         </p>
       )}
     </form>
@@ -145,19 +258,27 @@ function CreateDivision({ dept }: { dept: DeptCtx }) {
 type CardProps = {
   dept: DeptCtx;
   division: DivisionView;
+  renameRef: (el: HTMLButtonElement | null) => void;
+  headingRef: (el: HTMLElement | null) => void;
+  onFocus: (request: FocusRequest) => void;
   onArchive: (d: DivisionView) => void;
+  onLeave: (d: DivisionView) => void;
 };
 
-function DivisionCard({ dept, division: d, onArchive }: CardProps) {
+function DivisionCard({ dept, division: d, renameRef, headingRef, onFocus, onArchive, onLeave }: CardProps) {
   const T = DIVISION_TEXT.divisions;
-  const { page, ov, busy, canWrite } = dept;
+  const { page, ov, busy, canWrite, gateHint } = dept;
   const uid = useId();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(d.name);
   const [tried, setTried] = useState(false);
   const [pick, setPick] = useState("");
-  const manage = d.canManage && canWrite;
-  const editMembers = d.canEditMembers && canWrite && !d.archived;
+  // Departemen yang diarsipkan hanya dibaca: tombolnya tidak ditampilkan. Gerbang versi yang
+  // tertutup hanya menonaktifkan tombol, dengan penjelasan di kartu.
+  const live = !ov.archived;
+  const off = !canWrite;
+  const manage = d.canManage && live;
+  const editMembers = d.canEditMembers && live && !d.archived;
   const heads = d.members.filter((m) => m.role === "head");
   const plain = d.members.filter((m) => m.role !== "head");
   const people = [...heads, ...plain];
@@ -167,6 +288,28 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
   const renameInvalid = tried && !validDivisionName(draft);
   const titleId = `${uid}-title`;
+  const gateId = `${uid}-gate`;
+  const gateDesc = off && gateHint ? gateId : undefined;
+
+  function rowActions(publicKey: string, head: boolean) {
+    const self = publicKey === ov.me.publicKey;
+    // Kepala divisi hanya mengeluarkan anggota biasa atau dirinya sendiri; Rust memeriksa ulang.
+    const canRemove = live && (self || (d.canEditMembers && (d.canManage || !head)));
+    const canHead = manage && !d.archived;
+    return { self, canRemove, canHead };
+  }
+  const anyAction =
+    manage ||
+    editMembers ||
+    people.some((m) => {
+      const a = rowActions(m.publicKey, m.role === "head");
+      return a.canHead || a.canRemove;
+    });
+
+  function closeEdit() {
+    setEditing(false);
+    onFocus({ target: "rename", divisionId: d.id, ready: always });
+  }
 
   async function rename(e: FormEvent) {
     e.preventDefault();
@@ -174,7 +317,7 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
     const clean = draft.trim();
     if (!validDivisionName(clean) || busy) return;
     if (clean === d.name) {
-      setEditing(false);
+      closeEdit();
       return;
     }
     const ok = await page.act(
@@ -183,7 +326,24 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
       T.renamed(d.name, clean),
       T.renameFail,
     );
-    if (ok) setEditing(false);
+    if (ok) closeEdit();
+  }
+
+  async function restore() {
+    const ok = await page.act(
+      `md:archive:${d.id}`,
+      () => divisionApi.setDivisionArchived(d.id, false),
+      T.restored(d.name),
+      T.restoreFail,
+    );
+    // Tombol Pulihkan hilang bersama kartunya: fokus pindah ke kartu yang dipulihkan.
+    if (ok) {
+      onFocus({
+        target: "rename",
+        divisionId: d.id,
+        ready: (next) => divisionIn(next, d.id)?.archived === false,
+      });
+    }
   }
 
   async function add(e: FormEvent) {
@@ -199,22 +359,37 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
     if (ok) setPick("");
   }
 
-  function setHead(pk: string, name: string, head: boolean) {
-    void page.act(
+  async function setHead(pk: string, name: string, head: boolean) {
+    const ok = await page.act(
       `md:head:${d.id}:${pk}`,
       () => divisionApi.setDivisionHead(d.id, pk, head),
       head ? T.madeHead(name, d.name) : T.removedHead(name, d.name),
       head ? T.makeHeadFail : T.removeHeadFail,
     );
+    // Baris yang dijadikan anggota pindah ke bawah kepala; fokus ke judul kartu supaya tidak hilang.
+    if (ok && !head) {
+      onFocus({
+        target: "heading",
+        divisionId: d.id,
+        ready: (next) => divisionIn(next, d.id)?.members.find((m) => m.publicKey === pk)?.role !== "head",
+      });
+    }
   }
 
-  function remove(pk: string, name: string, self: boolean) {
-    void page.act(
+  async function remove(pk: string, name: string) {
+    const ok = await page.act(
       `md:remove:${d.id}:${pk}`,
       () => divisionApi.removeDivisionMember(d.id, pk),
-      self ? T.left(d.name) : T.removed(name, d.name),
-      self ? T.leaveFail : T.removeFail,
+      T.removed(name, d.name),
+      T.removeFail,
     );
+    if (ok) {
+      onFocus({
+        target: "heading",
+        divisionId: d.id,
+        ready: (next) => !divisionIn(next, d.id)?.members.some((m) => m.publicKey === pk),
+      });
+    }
   }
 
   return (
@@ -238,7 +413,7 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
                     e.preventDefault();
-                    setEditing(false);
+                    closeEdit();
                   }
                 }}
               />
@@ -250,7 +425,7 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
               >
                 {page.pending === `md:rename:${d.id}` ? T.saving : T.save}
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={closeEdit}>
                 {T.cancel}
               </button>
             </div>
@@ -265,7 +440,7 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
           </form>
         ) : (
           <div className="md-div-title">
-            <h3 id={titleId} className="md-div-name">
+            <h3 id={titleId} ref={headingRef} className="md-div-name" tabIndex={-1}>
               {d.name}
             </h3>
             {d.archived && <span className="chip">{T.archivedChip}</span>}
@@ -287,10 +462,12 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
             )}
             {manage && (
               <button
+                ref={renameRef}
                 type="button"
                 className="btn btn-ghost btn-sm"
-                disabled={busy}
+                disabled={busy || off}
                 aria-label={T.renameAria(d.name)}
+                aria-describedby={gateDesc}
                 onClick={() => {
                   setDraft(d.name);
                   setTried(false);
@@ -305,17 +482,11 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
-                  disabled={busy}
+                  disabled={busy || off}
                   aria-busy={page.pending === `md:archive:${d.id}` || undefined}
                   aria-label={T.restoreAria(d.name)}
-                  onClick={() =>
-                    void page.act(
-                      `md:archive:${d.id}`,
-                      () => divisionApi.setDivisionArchived(d.id, false),
-                      T.restored(d.name),
-                      T.restoreFail,
-                    )
-                  }
+                  aria-describedby={gateDesc}
+                  onClick={() => void restore()}
                 >
                   {T.restore}
                 </button>
@@ -323,8 +494,9 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
-                  disabled={busy}
+                  disabled={busy || off}
                   aria-label={T.archiveAria(d.name)}
+                  aria-describedby={gateDesc}
                   onClick={() => onArchive(d)}
                 >
                   {T.archive}
@@ -335,6 +507,11 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
       </div>
 
       {d.archived && <p className="hint">{T.archivedNote}</p>}
+      {gateDesc && anyAction && (
+        <p id={gateId} className="hint">
+          {gateHint}
+        </p>
+      )}
 
       {people.length === 0 ? (
         <p className="hint">{T.nobody}</p>
@@ -342,10 +519,7 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
         <ul className="md-people">
           {people.map((m) => {
             const head = m.role === "head";
-            const self = m.publicKey === ov.me.publicKey;
-            // Kepala divisi hanya mengeluarkan anggota biasa atau dirinya sendiri; Rust memeriksa ulang.
-            const canRemove = canWrite && (self || (d.canEditMembers && (d.canManage || !head)));
-            const canHead = manage && !d.archived;
+            const { self, canRemove, canHead } = rowActions(m.publicKey, head);
             return (
               <li key={m.publicKey} className="md-person">
                 <span className="md-person-name">
@@ -359,22 +533,26 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
-                        disabled={busy}
+                        disabled={busy || off}
+                        aria-busy={page.pending === `md:head:${d.id}:${m.publicKey}` || undefined}
                         aria-label={
-                          head ? T.removeHeadAria(m.displayName, d.name) : T.makeHeadAria(m.displayName, d.name)
+                          head ? T.makeMemberAria(m.displayName, d.name) : T.makeHeadAria(m.displayName, d.name)
                         }
-                        onClick={() => setHead(m.publicKey, m.displayName, !head)}
+                        aria-describedby={gateDesc}
+                        onClick={() => void setHead(m.publicKey, m.displayName, !head)}
                       >
-                        {head ? T.removeHead : T.makeHead}
+                        {head ? T.makeMember : T.makeHead}
                       </button>
                     )}
                     {canRemove && (
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
-                        disabled={busy}
+                        disabled={busy || off}
+                        aria-busy={page.pending === `md:remove:${d.id}:${m.publicKey}` || undefined}
                         aria-label={self ? T.leaveAria(d.name) : T.removeAria(m.displayName, d.name)}
-                        onClick={() => remove(m.publicKey, m.displayName, self)}
+                        aria-describedby={gateDesc}
+                        onClick={() => (self ? onLeave(d) : void remove(m.publicKey, m.displayName))}
                       >
                         {self ? T.leave : T.remove}
                       </button>
@@ -400,6 +578,8 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
                 id={`${uid}-add`}
                 className="md-input md-select"
                 value={pick}
+                disabled={off}
+                aria-describedby={gateDesc}
                 onChange={(e) => setPick(e.target.value)}
               >
                 <option value="">{T.addPick}</option>
@@ -412,7 +592,7 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
               <button
                 type="submit"
                 className="btn btn-ghost"
-                disabled={busy || pick === ""}
+                disabled={busy || off || pick === ""}
                 aria-busy={page.pending === `md:add:${d.id}` || undefined}
               >
                 {page.pending === `md:add:${d.id}` ? T.adding : T.add}
@@ -428,12 +608,11 @@ function DivisionCard({ dept, division: d, onArchive }: CardProps) {
             {T.chatTitle}
           </summary>
           <ChatSettingsForm
-            key={d.settings.setAt ?? "none"}
             dept={dept}
             name={d.name}
             divisionId={d.id}
             settings={d.settings}
-            canEdit={!d.archived}
+            canEdit={!d.archived && live}
           />
         </details>
       )}

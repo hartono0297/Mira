@@ -89,7 +89,7 @@ describe("Organisasi dalam bahasa Inggris", () => {
     renderInLang(() => <OrgScreen state={state} onRefresh={vi.fn()} />, "en");
 
     expect(await screen.findByRole("heading", { name: "Organization members" })).toBeInTheDocument();
-    expect(await screen.findByText("Keuangan, member")).toBeInTheDocument();
+    expect(await screen.findByText("Keuangan · member")).toBeInTheDocument();
     expect(screen.getByText("Penguji")).toBeInTheDocument();
     expect(screen.getByText(/\(you\)/)).toBeInTheDocument();
 

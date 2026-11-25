@@ -2,6 +2,7 @@ import { IconAlertTriangle, IconMessage } from "@tabler/icons-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { divisionApi, type DeptOverview } from "../../api/division";
 import { ErrorAlert } from "../../components/ErrorAlert";
+import { useLang } from "../../i18n/core";
 import { DIVISION_TEXT } from "../../i18n/org-division";
 import type { OrgCtx, OrgPage } from "./context";
 import { InvitesPanel } from "./InvitesPanel";
@@ -35,6 +36,7 @@ function validOverview(data: unknown): DeptOverview | null {
 export function MyDepartmentPanel({ page, ctx, onOpenChat, onOpenProject }: Props) {
   const T = DIVISION_TEXT;
   const uid = useId();
+  const lang = useLang();
   // null: departemen bawaan dari inti Rust (departemen sendiri atau yang pertama dikelola).
   const [teamId, setTeamId] = useState<string | null>(null);
   const teamRef = useRef(teamId);
@@ -61,10 +63,12 @@ export function MyDepartmentPanel({ page, ctx, onOpenChat, onOpenProject }: Prop
             ov,
             busy: page.pending !== null,
             canWrite: ov.gate.open && !ov.archived,
+            gateHint: ov.gate.open || ov.archived ? null : T.gate.disabled(ov.gate.since),
             onOpenChat,
           }
         : null,
-    [ov, page, onOpenChat],
+    // lang: teks gateHint ikut berganti saat bahasa diganti.
+    [ov, page, onOpenChat, lang],
   );
 
   if (!ov || !dept) {
@@ -119,7 +123,7 @@ export function MyDepartmentPanel({ page, ctx, onOpenChat, onOpenProject }: Prop
             </select>
           </div>
         ) : (
-          <p className="md-team">{ov.teamName}</p>
+          <h2 className="md-team">{ov.teamName}</h2>
         )}
         {switching && (
           <p className="hint" role="status">
@@ -135,15 +139,19 @@ export function MyDepartmentPanel({ page, ctx, onOpenChat, onOpenProject }: Prop
           <IconAlertTriangle size={18} aria-hidden="true" />
           <div>
             <strong>{T.gate.title(ov.gate.since)}</strong>
-            <p>{T.gate.body}</p>
-            {blockers.length > 0 && (
-              <ul className="md-blockers">
-                {blockers.map((b) => (
-                  <li key={b.publicKey}>
-                    {b.appVersion ? T.gate.blocker(b.name, b.appVersion) : T.gate.blockerUnreported(b.name)}
-                  </li>
-                ))}
-              </ul>
+            {blockers.length > 0 ? (
+              <>
+                <p>{T.gate.body}</p>
+                <ul className="md-blockers">
+                  {blockers.map((b) => (
+                    <li key={b.publicKey}>
+                      {b.appVersion ? T.gate.blocker(b.name, b.appVersion) : T.gate.blockerUnreported(b.name)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p>{T.gate.bodyNoList}</p>
             )}
           </div>
         </div>
@@ -152,8 +160,8 @@ export function MyDepartmentPanel({ page, ctx, onOpenChat, onOpenProject }: Prop
       {ov.archived && <p className="notice-plain">{T.archivedDept}</p>}
       {headOnly && <p className="hint md-intro">{T.headIntro}</p>}
 
-      <MyDepartmentMembers dept={dept} />
       <MyDepartmentDivisions dept={dept} />
+      <MyDepartmentMembers dept={dept} />
 
       {ov.canManageDept && (
         <div className="md-block">
@@ -189,7 +197,7 @@ export function MyDepartmentPanel({ page, ctx, onOpenChat, onOpenProject }: Prop
           )}
         </div>
         <ChatSettingsForm
-          key={`${ov.teamId}:${ov.channel.settings.setAt ?? "none"}`}
+          key={ov.teamId}
           dept={dept}
           name={T.chat.channelName(ov.channel.name)}
           divisionId={null}

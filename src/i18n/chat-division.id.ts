@@ -20,9 +20,11 @@ const id = {
     descTeam: "Berlaku untuk channel departemen ini. Semua anggota departemen melihat catatannya di atas chat.",
     descDivision: "Berlaku untuk chat divisi ini. Semua anggota divisi melihat catatannya di atas chat.",
     note: "Catatan disematkan",
-    noteHint: "Kosongkan untuk menghapus catatan. Baris baru tetap seperti yang Anda tulis.",
+    noteHint: (max: number, lines: number) =>
+      `Paling banyak ${max} karakter dan ${lines} baris. Kosongkan untuk menghapus catatan.`,
     count: (used: number, max: number) => `${used} dari ${max} karakter`,
     tooLong: (max: number) => `Catatan paling panjang ${max} karakter.`,
+    tooManyLines: (max: number) => `Catatan paling banyak ${max} baris.`,
     announce: "Mode pengumuman",
     announceTeam: "Hanya admin departemen dan superadmin yang bisa menulis.",
     announceDivision: "Hanya kepala divisi, admin departemen, dan superadmin yang bisa menulis.",

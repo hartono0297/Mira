@@ -20,9 +20,11 @@ const en: Dict<typeof id> = {
     descTeam: "Applies to this department channel. Everyone in the department sees the note above the chat.",
     descDivision: "Applies to this division chat. Everyone in the division sees the note above the chat.",
     note: "Pinned note",
-    noteHint: "Leave it empty to remove the note. Line breaks stay as you type them.",
+    noteHint: (max: number, lines: number) =>
+      `Up to ${max} characters and ${lines} lines. Leave it empty to remove the note.`,
     count: (used: number, max: number) => `${used} of ${max} characters`,
     tooLong: (max: number) => `The note can be at most ${max} characters.`,
+    tooManyLines: (max: number) => `The note can be at most ${max} lines.`,
     announce: "Announcement mode",
     announceTeam: "Only department admins and superadmins can post.",
     announceDivision: "Only division heads, department admins, and superadmins can post.",

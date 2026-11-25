@@ -413,6 +413,7 @@ const en: Dict<typeof id> = {
   },
   patterns: {
     pinnedMax: (max: string) => `The pinned note can be at most ${max} characters.`,
+    pinnedLines: (max: string) => `The pinned note can have at most ${max} lines.`,
     ouDivisionMissing: (ou: string) => `The division for OU "${ou}" wasn't found in that department.`,
     dbError: (detail: string) => `Mira couldn't read or write its local database. Details: ${detail}`,
     dbNewer: (current: string, latest: string) => `The local database was created by a newer Mira version (schema ${current}; this version only knows up to ${latest}). Update Mira first.`,

@@ -6,23 +6,7 @@ import { ErrorAlert } from "../../components/ErrorAlert";
 import { CHAT_DIVISION } from "../../i18n/chat-division";
 import { InlineError } from "./NewGroupDialog";
 import "./division.css";
-
-// Batas inti Rust (chat_settings_set): paling banyak 500 karakter.
-export const PINNED_MAX = 500;
-
-// Catatan seperti yang diterima inti: baris baru boleh, karakter kendali lain dibuang (tab jadi
-// spasi), tanpa spasi di awal dan akhir.
-export function normalizePinned(value: string): string {
-  return value
-    .replace(/\r\n?/g, "\n")
-    .replace(/\t/g, " ")
-    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, "")
-    .trim();
-}
-
-export function pinnedLength(value: string): number {
-  return [...normalizePinned(value)].length;
-}
+import { normalizePinned, PINNED_MAX, PINNED_MAX_LINES, pinnedLength, pinnedProblem } from "./pinnedRules";
 
 type Props = {
   open: boolean;
@@ -51,13 +35,14 @@ export function ChatSettingsDialog({ open, onOpenChange, settings, onSaved }: Pr
   }, [open, settings.pinned, settings.announce]);
 
   const used = pinnedLength(note);
-  const tooLong = used > PINNED_MAX;
+  const problem = pinnedProblem(note);
+  const tooLong = problem === "chars";
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
     setTried(true);
-    if (tooLong) return;
+    if (problem) return;
     const pinned = normalizePinned(note);
     // Tidak ada yang berubah: inti akan menolaknya sebagai perubahan kosong, jadi cukup ditutup.
     if (pinned === settings.pinned && announce === settings.announce) {
@@ -77,7 +62,7 @@ export function ChatSettingsDialog({ open, onOpenChange, settings, onSaved }: Pr
     }
   }
 
-  const noteError = tried && tooLong ? T.tooLong(PINNED_MAX) : null;
+  const noteError = !tried || !problem ? null : problem === "chars" ? T.tooLong(PINNED_MAX) : T.tooManyLines(PINNED_MAX_LINES);
 
   return (
     <Dialog
@@ -104,7 +89,7 @@ export function ChatSettingsDialog({ open, onOpenChange, settings, onSaved }: Pr
           />
           <div className="pin-form-meta">
             <p id={`${ids}-hint`} className="hint">
-              {T.noteHint}
+              {T.noteHint(PINNED_MAX, PINNED_MAX_LINES)}
             </p>
             <p id={`${ids}-count`} className={tooLong ? "hint pin-form-over" : "hint"}>
               {T.count(used, PINNED_MAX)}

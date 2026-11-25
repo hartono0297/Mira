@@ -468,7 +468,7 @@ describe("NewProjectDialog: untuk divisi", () => {
     division.myDivisions.mockResolvedValue([div(MOBILE, "Mobile", DESAIN, "Design")]);
     renderInLang(() => <NewProjectDialog open onOpenChange={vi.fn()} onCreated={vi.fn()} />, "en");
     const dlg = screen.getByRole("dialog", { name: "New project" });
-    const select = await within(dlg).findByRole("combobox", { name: "For division" });
+    const select = await within(dlg).findByRole("combobox", { name: "Division" });
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Not a division project",
       "Mobile, Design",
@@ -478,7 +478,7 @@ describe("NewProjectDialog: untuk divisi", () => {
     expect(select).toHaveAccessibleDescription("Members of the Mobile division join the project automatically.");
     expect(
       within(dlg).getByText(
-        "Nobody else selected yet: this project will have the Mobile division members and you, as its manager.",
+        "Nobody else selected yet: this project will have the Mobile division members and you as its manager.",
       ),
     ).toBeInTheDocument();
   });

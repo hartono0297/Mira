@@ -78,7 +78,7 @@ describe("ProfileDialog", () => {
     // Semua label tampil, tidak diringkas menjadi "+1".
     for (const label of ["Arsitek", "Senior", "K3", "Penguji mutu"]) expect(within(dlg).getByText(label)).toBeInTheDocument();
     expect(factOf(dlg, PROFILE.role)).toHaveTextContent(/^Anggota$/);
-    expect(factOf(dlg, PROFILE.department)).toHaveTextContent(/^Drafting, admin departemen$/);
+    expect(factOf(dlg, PROFILE.department)).toHaveTextContent(/^Drafting · admin departemen$/);
     expect(factOf(dlg, PROFILE.fingerprint)).toHaveTextContent(PROFILE.fingerprintNote("Sari Uji"));
     expect(org.people).toHaveBeenCalledTimes(1);
   });

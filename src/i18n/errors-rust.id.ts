@@ -417,6 +417,7 @@ const id = {
   },
   patterns: {
     pinnedMax: (max: string) => `Catatan disematkan paling banyak ${max} karakter.`,
+    pinnedLines: (max: string) => `Catatan disematkan paling banyak ${max} baris.`,
     ouDivisionMissing: (ou: string) => `Divisi untuk OU "${ou}" tidak ditemukan di departemen itu.`,
     dbError: (detail: string) => `Database lokal Mira tidak bisa dibaca atau ditulis. Detail: ${detail}`,
     dbNewer: (current: string, latest: string) => `Database lokal dibuat oleh versi Mira yang lebih baru (skema ${current}, versi ini hanya mengenal sampai ${latest}). Perbarui Mira dulu.`,

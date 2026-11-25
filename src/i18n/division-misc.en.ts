@@ -3,13 +3,13 @@ import type id from "./division-misc.id";
 
 const en: Dict<typeof id> = {
   newProject: {
-    label: "For division",
+    label: "Division",
     none: "Not a division project",
     option: (division: string, department: string) => `${division}, ${department}`,
     hint: "Optional. If you pick one, the project's department follows that division.",
     picked: (division: string) => `Members of the ${division} division join the project automatically.`,
     summaryNone: (division: string) =>
-      `Nobody else selected yet: this project will have the ${division} division members and you, as its manager.`,
+      `Nobody else selected yet: this project will have the ${division} division members and you as its manager.`,
     summaryPicked: (picked: string, division: string) =>
       `${picked}, plus the ${division} division members and you as the manager.`,
   },

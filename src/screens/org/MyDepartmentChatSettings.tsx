@@ -1,9 +1,10 @@
 import { IconAlertCircle } from "@tabler/icons-react";
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { divisionApi, type ChatSettingsView } from "../../api/division";
 import { formatDateTime } from "../../api/format";
 import { DIVISION_TEXT } from "../../i18n/org-division";
-import { charCount, PINNED_MAX, validPinned, type DeptCtx } from "./myDepartmentShared";
+import { normalizePinned, PINNED_MAX, PINNED_MAX_LINES, pinnedLength, pinnedProblem } from "../chat/pinnedRules";
+import type { DeptCtx } from "./myDepartmentShared";
 
 type Props = {
   dept: DeptCtx;
@@ -15,21 +16,26 @@ type Props = {
 };
 
 // Catatan disematkan dan mode pengumuman untuk channel departemen atau chat divisi.
-// Komponen ini diberi key dari setAt, jadi isian kembali ke nilai tersimpan setelah disimpan.
 export function ChatSettingsForm({ dept, name, divisionId, settings, canEdit }: Props) {
   const T = DIVISION_TEXT.chat;
   const { page, ov } = dept;
   const uid = useId();
   const [pinned, setPinned] = useState(settings.pinned);
   const [announce, setAnnounce] = useState(settings.announce);
+  // Setelah disimpan (di sini atau di laptop lain), isian kembali ke nilai tersimpan.
+  // Formulir tidak dipasang ulang, jadi fokus tetap di tempatnya.
+  useEffect(() => {
+    setPinned(settings.pinned);
+    setAnnounce(settings.announce);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.setAt]);
   const announceText = divisionId === null ? T.announceDept : T.announceDivision;
   const key = `md:chat:${divisionId ?? "dept"}`;
   const saving = page.pending === key;
-  const count = charCount(pinned);
-  const tooLong = count > PINNED_MAX;
-  const badChars = !validPinned(pinned);
-  const error = tooLong ? T.tooLong(PINNED_MAX) : badChars ? T.badChars : null;
-  const changed = pinned.trim() !== settings.pinned || announce !== settings.announce;
+  const count = pinnedLength(pinned);
+  const problem = pinnedProblem(pinned);
+  const error = problem === "chars" ? T.tooLong(PINNED_MAX) : problem === "lines" ? T.tooManyLines(PINNED_MAX_LINES) : null;
+  const changed = normalizePinned(pinned) !== settings.pinned || announce !== settings.announce;
   const last =
     settings.setAt && settings.setByName ? T.lastSet(settings.setByName, formatDateTime(settings.setAt)) : null;
 
@@ -56,13 +62,14 @@ export function ChatSettingsForm({ dept, name, divisionId, settings, canEdit }: 
     if (error || !changed || dept.busy || !dept.canWrite) return;
     void page.act(
       key,
-      () => divisionApi.setChatSettings(ov.teamId, divisionId, pinned.trim(), announce),
+      () => divisionApi.setChatSettings(ov.teamId, divisionId, normalizePinned(pinned), announce),
       T.saved(name),
       T.saveFail,
     );
   }
 
   const off = !dept.canWrite;
+  const gateId = `${uid}-gate`;
   return (
     <form className="md-chat" onSubmit={submit} noValidate>
       <fieldset className="md-fields" disabled={off}>
@@ -80,9 +87,9 @@ export function ChatSettingsForm({ dept, name, divisionId, settings, canEdit }: 
           />
           <div className="md-field-foot">
             <span id={`${uid}-hint`} className="hint">
-              {T.pinnedHint}
+              {T.pinnedHint(PINNED_MAX, PINNED_MAX_LINES)}
             </span>
-            <span id={`${uid}-count`} className={tooLong ? "md-count md-count-over" : "md-count"}>
+            <span id={`${uid}-count`} className={problem === "chars" ? "md-count md-count-over" : "md-count"}>
               {T.counter(count, PINNED_MAX)}
             </span>
           </div>
@@ -93,11 +100,10 @@ export function ChatSettingsForm({ dept, name, divisionId, settings, canEdit }: 
             </p>
           )}
         </div>
-        <div className="md-switch">
+        <div className="md-check">
           <input
             id={`${uid}-announce`}
             type="checkbox"
-            role="switch"
             checked={announce}
             aria-describedby={`${uid}-announce-desc`}
             onChange={(e) => setAnnounce(e.target.checked)}
@@ -116,10 +122,17 @@ export function ChatSettingsForm({ dept, name, divisionId, settings, canEdit }: 
           className="btn btn-ghost"
           disabled={off || dept.busy || !changed || !!error}
           aria-busy={saving || undefined}
+          aria-describedby={dept.gateHint ? gateId : undefined}
         >
           {saving ? T.saving : T.save}
         </button>
-        {last && <span className="hint">{last}</span>}
+        {dept.gateHint ? (
+          <span id={gateId} className="hint">
+            {dept.gateHint}
+          </span>
+        ) : (
+          last && <span className="hint">{last}</span>
+        )}
       </div>
     </form>
   );

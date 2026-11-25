@@ -125,12 +125,12 @@ const TXT = {
       createDivision: "Buat divisi",
       addLabel: (d) => `Tambah orang ke divisi ${d}`,
       add: "Tambahkan",
-      makeHead: (n, d) => `Jadikan ${n} kepala divisi ${d}`,
+      makeHead: (n, d) => `Jadikan kepala, ${n}, divisi ${d}`,
       renameAria: (d) => `Ganti nama divisi ${d}`,
       archiveAria: (d) => `Arsipkan divisi ${d}`,
       archiveConfirm: (d) => `Arsipkan ${d}`,
-      makeAdmin: (n) => `Jadikan ${n} admin departemen`,
-      removeAdmin: (n) => `Lepas ${n} dari admin departemen`,
+      makeAdmin: (n) => `Jadikan admin, ${n}`,
+      removeAdmin: (n) => `Lepas admin, ${n}`,
       confirmRemoveAdmin: "Lepas admin",
       removeAdminFail: "Admin departemen belum dilepas",
       pinned: "Catatan disematkan",
@@ -156,7 +156,7 @@ const TXT = {
     newProjectBtn: /^(New project|Create the first project)$/,
     newProjectTitle: "New project",
     projectName: "Project name",
-    forDivision: "For division",
+    forDivision: "Division",
     divisionOption: (d, t) => `${d}, ${t}`,
     md: { membersTitle: "Department members" },
   },
@@ -771,7 +771,7 @@ async function step5() {
     async () => {
       const sec = mdChannel("B");
       await sec.getByLabel(TXT.id.md.pinned, { exact: true }).fill(NOTE_IT);
-      await sec.getByRole("switch", { name: TXT.id.md.announce }).check();
+      await sec.getByRole("checkbox", { name: TXT.id.md.announce }).check();
       await sec.getByRole("button", { name: TXT.id.md.saveChat, exact: true }).click();
       await waitFor("pengaturan IT tersimpan", async () => {
         const s = (await deptOv("B")).channel.settings;
@@ -970,6 +970,8 @@ async function step7() {
     return made && removed ? h : null;
   }, 30000);
   check("7.4 dept_overview B: riwayat admin memuat angkat dan lepas Dodi oleh Budi", okv(hist), why(hist));
+  // Riwayat admin dilipat (details tertutup): buka dulu supaya isinya ikut innerText.
+  await soft(mdHistory("B").locator("details").evaluate((d) => { d.open = true; }));
   const histText = await soft(mdHistory("B").innerText({ timeout: 10000 }), "");
   check(
     "7.5 Bagian Riwayat admin di layar B menampilkan kedua kejadian",

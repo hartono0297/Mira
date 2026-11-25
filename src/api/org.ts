@@ -47,8 +47,9 @@ export type PersonView = {
   departmentRole: TeamRole | null;
   // Label aktif, urut nama. Tampilkan paling banyak 3 di samping nama.
   labels: LabelRef[];
-  // Divisi aktif (tidak diarsipkan) orang ini, sejak v0.6. Opsional supaya data lama tetap sah.
-  divisions?: { id: string; name: string }[];
+  // Divisi aktif (tidak diarsipkan) orang ini, sejak v0.6. Opsional supaya data lama tetap sah;
+  // role belum dikirim inti sebelum pemeriksaan v0.6 ini.
+  divisions?: { id: string; name: string; role?: "head" | "member" }[];
 };
 
 export type DeviceView = { laptop: string; os: string; appVersion: string; reportedAt: string };

@@ -25,7 +25,10 @@ export function MyDepartmentMembers({ dept }: { dept: DeptCtx }) {
   const { ov, page, busy } = dept;
   const [demoting, setDemoting] = useState<DeptMember | null>(null);
   // Mengangkat admin oleh admin departemen ikut gerbang versi; superadmin memakai op lama.
-  const canAct = ov.canManageDept && !ov.archived && (ov.gate.open || ov.me.isSuperadmin);
+  // Selama gerbang tertutup tombolnya tetap tampil, nonaktif, dengan penjelasan di atas daftar.
+  const showActs = ov.canManageDept && !ov.archived;
+  const gated = showActs && !ov.gate.open && !ov.me.isSuperadmin;
+  const gateId = "md-members-gate";
   const members = [...ov.members].sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   function setAdmin(m: DeptMember, admin: boolean) {
@@ -45,6 +48,11 @@ export function MyDepartmentMembers({ dept }: { dept: DeptCtx }) {
         </h2>
         <span className="hint md-count-line">{T.count(members.length)}</span>
       </div>
+      {gated && dept.gateHint && (
+        <p id={gateId} className="hint">
+          {dept.gateHint}
+        </p>
+      )}
       {members.length === 0 ? (
         <div className="org-empty">
           <p>{T.empty}</p>
@@ -75,30 +83,20 @@ export function MyDepartmentMembers({ dept }: { dept: DeptCtx }) {
                   <span className={online ? "md-dot" : "md-dot md-dot-off"} aria-hidden="true" />
                   {m.isMe ? T.thisLaptop : online ? T.online : T.offline}
                 </span>
-                {canAct && (
+                {showActs && (
                   <div className="row-actions">
-                    {m.isAdmin ? (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        disabled={busy}
-                        aria-label={T.removeAdminAria(m.displayName)}
-                        onClick={() => setDemoting(m)}
-                      >
-                        {T.removeAdmin}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        disabled={busy}
-                        aria-busy={pending || undefined}
-                        aria-label={T.makeAdminAria(m.displayName)}
-                        onClick={() => setAdmin(m, true)}
-                      >
-                        {T.makeAdmin}
-                      </button>
-                    )}
+                    {/* Satu tombol yang berganti label, supaya fokus tetap di tempat setelah peran berubah. */}
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      disabled={busy || gated}
+                      aria-busy={pending || undefined}
+                      aria-label={m.isAdmin ? T.removeAdminAria(m.displayName) : T.makeAdminAria(m.displayName)}
+                      aria-describedby={gated && dept.gateHint ? gateId : undefined}
+                      onClick={() => (m.isAdmin ? setDemoting(m) : setAdmin(m, true))}
+                    >
+                      {m.isAdmin ? T.removeAdmin : T.makeAdmin}
+                    </button>
                   </div>
                 )}
               </li>
