@@ -416,7 +416,12 @@ try {
     await page.waitForTimeout(250);
   }
   await column(page, "To do").getByLabel(/Judul task baru/).press("Escape");
-  const todo = await cardTitles(page, "To do");
+  // Saat PC sibuk, kartu terakhir bisa tiba sedikit lebih lambat dari 250 ms.
+  let todo = await cardTitles(page, "To do");
+  for (let i = 0; i < 20 && !titles.every((t) => todo.includes(t)); i++) {
+    await page.waitForTimeout(250);
+    todo = await cardTitles(page, "To do");
+  }
   check("Empat task dibuat di To do", titles.every((t) => todo.includes(t)), todo.join(" | "));
 
   // Pindah dengan keyboard: Alt+Panah kanan.
@@ -479,8 +484,19 @@ try {
   await dlg.getByRole("textbox", { name: "Tulis komentar" }).fill("Draft kontrak sudah saya baca sampai pasal 5.");
   await dlg.getByRole("button", { name: "Kirim", exact: true }).click();
   await page.waitForTimeout(600);
-  const dlgText = await dlg.innerText();
-  const savedReview = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+  // Saat PC sibuk, komentar dan simpanan terakhir bisa tiba lebih lambat: tunggu sampai 5 detik.
+  let dlgText = await dlg.innerText();
+  let savedReview = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+  for (
+    let i = 0;
+    i < 20 &&
+    !(dlgText.includes("pasal 5") && savedReview.comments.length === 1 && savedReview.labels.includes("kontrak") && savedReview.priority === "high");
+    i++
+  ) {
+    await page.waitForTimeout(250);
+    dlgText = await dlg.innerText();
+    savedReview = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+  }
   const propNames = {
     assignee: await prop(dlg, "Penanggung jawab").innerText().catch(() => ""),
     priority: (await prop(dlg, "Prioritas Tinggi").count()) === 1,

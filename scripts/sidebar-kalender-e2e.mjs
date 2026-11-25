@@ -289,8 +289,11 @@ async function launch(node, { mdns = false } = {}) {
   child.stderr.pipe(log);
   const exited = new Promise((r) => child.once("exit", r));
   let browser;
-  for (let i = 0; i < 80 && !browser; i++) {
+  let gone = false;
+  exited.then(() => (gone = true));
+  for (let i = 0; i < 240 && !browser; i++) {
     await sleep(500);
+    if (gone) throw new Error(`mira.exe ${node.id} berhenti sebelum WebView2 siap (lihat ${node.id}-stderr.log)`);
     try {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${node.cdp}`);
     } catch {
@@ -305,31 +308,29 @@ async function launch(node, { mdns = false } = {}) {
   const app = { node, child, browser, page: null, exited, ipc: [] };
   running.add(app);
   try {
-    // WebView2 mulai di about:blank lalu pindah ke http://tauri.localhost/. Saat
-    // build lain sedang berjalan, start dingin bisa lebih dari 20 detik; halaman
-    // yang masih about:blank setelah 30 detik dimuat ulang sekali.
-    const deadline = Date.now() + 90000;
-    let reloaded = false;
+    // WebView2 mulai di about:blank lalu pindah sendiri ke http://tauri.localhost/.
+    // Saat PC sibuk (build atau uji lain berjalan) itu bisa lebih dari satu menit;
+    // memuat ulang about:blank tidak mempercepatnya, jadi cukup ditunggu.
+    // __TAURI_INTERNALS__ juga disuntikkan ke about:blank, tetapi IPC dari sana
+    // ditolak ("Origin header is not a valid URL"), jadi yang ditunggu adalah
+    // location.href halaman aplikasi.
     const started = Date.now();
+    const deadline = started + 150000;
     while (!app.page) {
-      if (Date.now() > deadline) throw new Error(`halaman Mira ${node.id} tidak siap dalam 90 detik`);
+      if (Date.now() > deadline) throw new Error(`halaman Mira ${node.id} tidak siap dalam 150 detik`);
       for (const p of browser.contexts().flatMap((c) => c.pages())) {
-        // __TAURI_INTERNALS__ juga disuntikkan ke about:blank, tetapi IPC dari sana
-        // ditolak ("Origin header is not a valid URL"); tunggu halaman aplikasi.
-        const ready =
-          p.url() !== "about:blank" && (await p.evaluate(() => "__TAURI_INTERNALS__" in window).catch(() => false));
+        const ready = await p
+          .evaluate(() => location.protocol.startsWith("http") && location.hostname !== "" && "__TAURI_INTERNALS__" in window)
+          .catch(() => false);
         if (ready) {
           app.page = p;
           break;
         }
-        if (!reloaded && Date.now() - started > 30000 && p.url() === "about:blank") {
-          reloaded = true;
-          note(`${node.id}: halaman masih about:blank setelah 30 detik, dimuat ulang`);
-          await p.reload().catch(() => {});
-        }
       }
       if (!app.page) await sleep(500);
     }
+    const waited = Math.round((Date.now() - started) / 1000);
+    if (waited > 20) note(`${node.id}: halaman aplikasi siap setelah ${waited} dtk menunggu`);
     watchIpc(app);
     await app.page.waitForLoadState("domcontentloaded");
     await app.page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
@@ -361,7 +362,47 @@ async function stop(app) {
   }
   const done = await Promise.race([app.exited.then(() => true), sleep(10000).then(() => false)]);
   if (!done) killTree(app.child);
-  await sleep(1500);
+  await waitWebviewGone(app.node.dir);
+  await sleep(500);
+}
+
+// Proses msedgewebview2.exe milik instance ini: command line-nya memuat folder
+// data instance (--user-data-dir=<MIRA_DATA_DIR>\webview). Mereka bisa hidup
+// beberapa detik setelah mira.exe berhenti dan tetap mengunci profil WebView2;
+// Mira yang dijalankan ulang di folder yang sama lalu gagal membuat webview
+// (0x800700AA "The requested resource is in use").
+function webviewPids(dir) {
+  try {
+    const out = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like '*${dir.replace(/'/g, "''")}*' } | ForEach-Object { $_.ProcessId }`,
+      ],
+      { encoding: "utf8", timeout: 20000 },
+    );
+    return out.split(/\s+/).filter(Boolean).map(Number);
+  } catch {
+    return [];
+  }
+}
+
+async function waitWebviewGone(dir) {
+  for (let i = 0; i < 20; i++) {
+    if (webviewPids(dir).length === 0) return;
+    await sleep(500);
+  }
+  const left = webviewPids(dir);
+  for (const pid of left) {
+    try {
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      /* sudah berhenti */
+    }
+  }
+  if (left.length) note(`${left.length} proses WebView2 milik ${dir} ditutup paksa`);
+  await sleep(1000);
 }
 
 // Di Windows, Tauri 2 mengirim IPC lewat fetch ke http://ipc.localhost/<command>,
@@ -1435,6 +1476,11 @@ try {
   else note("SK_E2E_GUEST=0: fase Tamu dilewati");
 } catch (err) {
   check("Skrip berjalan tanpa error", false, errText(err));
+  // Uji lain yang menghapus semua kredensial baru (bukan hanya miliknya) bisa
+  // menghapus kunci laptop uji ini di tengah jalan; Mira lalu gagal key_mismatch.
+  const present = miraCredentials();
+  const gone = [...ourKeys].filter((k) => !present.has(`device-key-${k}.id.mira.desktop`));
+  if (gone.length) note(`kunci laptop uji ${gone.map((k) => `${keyOwner[k]}:${k.slice(0, 12)}`).join(", ")} sudah tidak ada di Credential Manager (dihapus proses lain?)`);
   for (const app of running) if (app.page) await shot(app.page, `gagal-${app.node.id.toLowerCase()}.png`);
 }
 
