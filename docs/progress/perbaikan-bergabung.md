@@ -53,7 +53,21 @@ Dua masalah dari pemakaian v0.5.0 di kantor:
 
 ## Hasil verifikasi
 
-(diisi setelah tes dan e2e)
+Windows 11, build debug. PC sedang dibebani build dan tes beberapa sesi lain, jadi semua angka waktu jauh lebih lambat dari biasanya.
+
+- `cargo test --lib`: **1277 lulus**, 0 gagal, 7 diabaikan (yang diabaikan sudah ada sebelumnya). Di antaranya:
+  - `permissions/tests/suspend_tests.rs`: nonaktif, aktif lagi, keluar dari nonaktif, izin superadmin dan admin departemen (termasuk admin tidak bisa mengangkat penonaktifan superadmin), superadmin terakhir, cuplikan dikembalikan sebagian, op lama `member_remove` tetap permanen, kasus bersamaan (nonaktif vs aktif lagi, aktif lagi vs keluar, dua superadmin saling menonaktifkan, op orang nonaktif bersamaan dengan penonaktifan), `may_receive`/`op_ids_for` untuk peer nonaktif, gerbang versi, `ad_outdated`, petunjuk `previously_removed`, daftar Pengguna untuk admin departemen.
+  - Jaringan (`network/tests.rs`, `feature_tests.rs`, `net_backend_tests.rs`): laptop nonaktif menerima op org tapi tidak op tim, tidak muncul sebagai rekan, tidak menerima record fitur atau blob ke arah mana pun, menerima op penonaktifan lewat push dan penutupan `SUSPENDED`, kembali penuh setelah diaktifkan lagi tanpa restart; dua laptop nonaktif tidak saling memantul; op buatan laptop nonaktif tidak disimpan; laju sinkron balik dibatasi; `check_membership` satu per satu; DB nyata tiga laptop; port terlepas setelah shutdown.
+  - Reset (`reset_commands`, `paths`, `state`): hanya untuk keluar permanen, kunci lama terhapus dari keystore uji, folder data bersih, bahasa dan tema tetap, kunci baru, gagal di tengah tidak mengubah apa pun, reset yang terputus dikembalikan saat Mira dibuka.
+- `cargo clippy --all-targets -- -D warnings`: bersih.
+- `npx tsc --noEmit`: bersih. `npx vitest run`: 125 berkas, 1828 tes lulus (12 berkas besar dijalankan ulang satu per satu karena worker vitest tidak sempat mulai di PC yang sibuk; semuanya lulus).
+- E2E, satu per satu, build debug b9644c2, `suspend-e2e` diulang dengan e8702aa (regresi memakai salinan sementara dengan batas waktu peluncuran lebih panjang karena PC lambat; isi uji tidak diubah):
+  - `suspend-e2e.mjs` (baru): **52/52** pada build e8702aa: nonaktifkan lewat Pengguna, layar nonaktif tanpa restart, "Periksa lagi", tidak ada pesan atau task yang sampai selama nonaktif, aktifkan lagi tanpa restart lalu pesan dan task sampai, keluarkan permanen, reset (kunci baru, kunci lama terhapus dari Credential Manager, data lama terhapus, bahasa dan tema tetap), minta bergabung lagi dengan petunjuk "pernah dikeluarkan", disetujui, aktif. Pada build b9644c2 hasilnya 46/47: bergabung lagi setelah reset gagal karena port jaringan lama belum dilepas (lihat di bawah).
+  - `ad-reason-e2e.mjs` (baru): **32/32**.
+  - `ad-e2e.mjs` **97/97** (satu pengecekan diganti ke teks alasan baru "belum dicocokkan admin"), `join-e2e.mjs` **43/43**, `org-e2e.mjs` **33/33**, `e2e-multi.mjs` **25/25**, `english-e2e.mjs` **38/38**, `chat-e2e.mjs` **39/39**, `sync-e2e.mjs` **37/37**.
+- Screenshot: `docs/progress/screenshots/perbaikan-bergabung/pb01` sampai `pb17` (nonaktif dan dikeluarkan, terang/gelap, Indonesia/Inggris, dialog, Pengguna) dan `pb21` sampai `pb29` (alasan AD, tawaran domain, cocokkan OU).
+
+**Bug yang ditemukan e2e:** setelah "Reset dan mulai dari awal", jaringan tidak bisa mulai lagi di port yang sama ("Port UDP 47962 tidak bisa dipakai"). Penyebabnya siklus referensi: backend jaringan menyimpan `Network` di `OnceLock`, dan `Network` memegang backend, jadi socket UDP tidak pernah dilepas setelah shutdown. Kini backend melepas `Network` saat shutdown, reset mencoba memulai jaringan lagi beberapa kali, dan tes `shutdown_after_detach_frees_the_port` memastikan port yang sama bisa dipakai lagi. Di rilis (tanpa `MIRA_PORT`) dampaknya satu port terbuang per reset.
 
 ## Batasan
 
@@ -63,6 +77,7 @@ Dua masalah dari pemakaian v0.5.0 di kantor:
 - **Laptop yang belum pernah diterima** tapi menyimpan catatan kantor melihat layar keluar dengan Reset yang ditolak. Ini hanya terjadi kalau op penerimaan laptop itu sendiri ditolak di fold-nya, dan pesan penolakannya menjelaskan.
 - **Fitur yang membaca tabel `members`** mengembalikan galat `removed` (bukan `suspended`) ke laptop nonaktif; layar nonaktif tetap tampil karena ditentukan dari keanggotaan.
 - LDAP sungguhan tetap belum pernah dijalankan; semua skenario AD memakai `MIRA_FAKE_AD`.
+- **Skrip e2e lama dan Credential Manager.** Skrip lama (org, e2e-multi, join, english, chat, sync) membersihkan dengan menghapus setiap `device-key-*` yang dibuat setelah skrip mulai. Kalau beberapa sesi menjalankan e2e bersamaan, skrip itu bisa menghapus kunci uji sesi lain (ini yang dua kali membuat `sync-e2e` gagal di sini). Peluncuran yang gagal juga meninggalkan kunci uji: saat laporan ini ditulis ada sekitar 62 entri `device-key-*`, sebagian besar dari uji berbagai sesi. Saya hanya menghapus kunci dari peluncuran diagnostik saya sendiri; sisanya tidak bisa dibedakan dari kunci Mira yang terpasang, jadi dibiarkan. Dua skrip baru mencatat sendiri kunci yang mereka buat dan hanya menghapus kunci itu.
 
 ## Catatan penggabungan
 
