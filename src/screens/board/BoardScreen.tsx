@@ -14,6 +14,7 @@ import { ProjectBoard, type ProjectBoardHandle } from "./ProjectBoard";
 import { TaskDetail } from "./TaskDetail";
 import { TEKS_LAYAR } from "./teks";
 import { TEKS_MENU } from "./teksMenu";
+import { TimerNotices } from "./TimerNotices";
 import { boardMenuItems, useBoardMenu } from "./useBoardMenu";
 import { useBoardLive } from "./useBoardLive";
 import "./board.css";
@@ -346,6 +347,7 @@ export function BoardScreen() {
       </nav>
 
       <div className="bd-main">
+        <TimerNotices />
         <div className="sr-only" role="status">
           {lostShown
             ? leftSelf

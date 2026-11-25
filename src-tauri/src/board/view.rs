@@ -115,6 +115,7 @@ impl Ctx<'_> {
             can_edit,
             can_delete,
             my_timer_running: t.time.iter().any(|e| e.by == self.me && e.is_running()),
+            my_timer_paused: my_timer_paused(t, self.me),
         }
     }
 
@@ -297,5 +298,72 @@ impl Ctx<'_> {
             (due(a), &a.project_code, an).cmp(&(due(b), &b.project_code, bn))
         });
         Ok(out.into_iter().map(|(t, _)| t).collect())
+    }
+}
+
+/// `TaskCard::my_timer_paused`: `me` has at least one stopped timer segment
+/// (not manual, not deleted) on the task and none running.
+pub fn my_timer_paused(t: &TaskData, me: &str) -> bool {
+    let mine = || t.time.iter().filter(|e| e.by == me && !e.deleted);
+    mine().any(|e| e.end.is_some() && !e.manual) && !mine().any(|e| e.end.is_none())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::board::doc::TimeData;
+
+    fn entry(by: &str, end: Option<&str>, manual: bool, deleted: bool) -> TimeData {
+        TimeData {
+            id: format!("{by}{end:?}{manual}{deleted}"),
+            by: by.into(),
+            start: "2026-11-23T08:00:00Z".into(),
+            end: end.map(str::to_owned),
+            manual,
+            note: String::new(),
+            deleted,
+        }
+    }
+
+    fn task(time: Vec<TimeData>) -> TaskData {
+        TaskData {
+            id: "t".into(),
+            number: 1,
+            title: "x".into(),
+            description: String::new(),
+            column: ColumnId::Doing,
+            rank: "m".into(),
+            assignee: None,
+            due: None,
+            priority: Default::default(),
+            labels: Vec::new(),
+            created_by: "aa".into(),
+            created_at: "t0".into(),
+            updated_at: "t0".into(),
+            deleted: false,
+            comments: Vec::new(),
+            activity: Vec::new(),
+            subtasks: Vec::new(),
+            time,
+        }
+    }
+
+    #[test]
+    fn paused_means_a_stopped_timer_segment_and_none_running() {
+        let end = Some("2026-11-23T09:00:00Z");
+        let cases = [
+            (vec![], false),
+            (vec![entry("aa", end, false, false)], true),
+            (vec![entry("aa", end, false, false), entry("aa", None, false, false)], false),
+            (vec![entry("aa", end, true, false)], false),
+            (vec![entry("aa", end, false, true)], false),
+            (vec![entry("bb", end, false, false)], false),
+            // A deleted running segment does not count as running.
+            (vec![entry("aa", end, false, false), entry("aa", None, false, true)], true),
+            (vec![entry("aa", end, true, false), entry("aa", end, false, false)], true),
+        ];
+        for (i, (time, want)) in cases.into_iter().enumerate() {
+            assert_eq!(my_timer_paused(&task(time), "aa"), want, "kasus {i}");
+        }
     }
 }

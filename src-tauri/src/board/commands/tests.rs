@@ -751,3 +751,131 @@ fn cards_carry_the_viewers_delete_right_and_running_timer() {
     let t = &mine[0].task;
     assert!(t.can_edit && !t.can_delete && !t.my_timer_running);
 }
+
+/// Two projects with one task each, for the timer pause tests.
+fn two_projects(state: &MiraState) -> ((String, String), (String, String)) {
+    crate::commands::organization(state, "CV Maju Jaya").unwrap();
+    let mut out = Vec::new();
+    for (name, code) in [("Situs Web", "WEB"), ("Internal", "INT")] {
+        let p = create_project(state, &NoopSync, name, code, None).unwrap();
+        let input: NewTask =
+            serde_json::from_value(serde_json::json!({ "title": format!("Tugas {code}") })).unwrap();
+        let t = create_task(state, &NoopSync, &p.id, input).unwrap();
+        out.push((p.id, t.card.id));
+    }
+    let q = out.pop().unwrap();
+    let p = out.pop().unwrap();
+    (p, q)
+}
+
+#[test]
+fn starting_a_timer_pauses_mine_in_another_project_and_queues_a_notice() {
+    let (_t, state) = app();
+    let ((p, pt), (q, qt)) = two_projects(&state);
+    let hook = Recorder::default();
+    let runtime = BoardRuntime::default();
+
+    let (dq, notices) = start_timer_with_notices(&state, &hook, &q, &qt).unwrap();
+    assert!(notices.is_empty());
+    assert!(dq.card.my_timer_running && !dq.card.my_timer_paused);
+    assert_eq!(hook.count(), 1);
+
+    let (dp, notices) = start_timer_with_notices(&state, &hook, &p, &pt).unwrap();
+    assert!(dp.card.my_timer_running);
+    assert_eq!(hook.count(), 3, "one change in P and one in Q");
+    assert_eq!(notices.len(), 1);
+    let n = &notices[0];
+    assert_eq!(n.reason, TimerPauseReason::Switched);
+    assert_eq!((n.project_id.as_str(), n.task_id.as_str()), (q.as_str(), qt.as_str()));
+    assert_eq!((n.code.as_str(), n.title.as_str()), ("INT-1", "Tugas INT"));
+    assert_eq!(n.started_code.as_deref(), Some("WEB-1"));
+
+    let dq = get_task(&state, &q, &qt).unwrap();
+    assert!(!dq.card.my_timer_running && dq.card.my_timer_paused);
+    assert_eq!(dq.time_entries[0].end.as_deref(), Some(n.at.as_str()));
+    assert_eq!(dq.time_entries[0].end, dp.time_entries[0].start.clone().into());
+    let json = serde_json::to_value(&dq).unwrap();
+    assert_eq!(json["myTimerPaused"], true);
+    assert_eq!(serde_json::to_string(&dq).unwrap().matches("\"myTimerPaused\"").count(), 1);
+
+    // The queue hands everything out once.
+    runtime.notices.push(notices.clone());
+    runtime.notices.push(Vec::new());
+    let json = serde_json::to_value(&notices[0]).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "reason": "switched",
+            "projectId": q,
+            "taskId": qt,
+            "code": "INT-1",
+            "title": "Tugas INT",
+            "at": n.at,
+            "startedCode": "WEB-1",
+        })
+    );
+    assert_eq!(take_timer_notices(&runtime), notices);
+    assert!(take_timer_notices(&runtime).is_empty());
+
+    // Resuming in Q pauses P the same way.
+    let (_, notices) = start_timer_with_notices(&state, &hook, &q, &qt).unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!((notices[0].task_id.as_str(), notices[0].started_code.as_deref()), (pt.as_str(), Some("INT-1")));
+    let dq = get_task(&state, &q, &qt).unwrap();
+    assert_eq!(dq.time_entries.len(), 2, "a second segment");
+    // Every stored change verifies.
+    for pid in [&p, &q] {
+        for sc in state.with_core(|c| store::stored_changes(&c.db, pid)).unwrap() {
+            crate::board::sign::verify_change(&sc).unwrap();
+        }
+    }
+}
+
+#[test]
+fn moving_to_selesai_or_deleting_pauses_my_timer_with_a_notice() {
+    let (_t, state) = app();
+    let ((p, pt), (_, _)) = two_projects(&state);
+    let input: NewTask = serde_json::from_value(serde_json::json!({ "title": "Dua" })).unwrap();
+    let other = create_task(&state, &NoopSync, &p, input).unwrap().card.id;
+
+    start_timer(&state, &NoopSync, &p, &pt).unwrap();
+    let (_, notices) = move_task_with_notices(&state, &NoopSync, &p, &pt, ColumnId::Doing, 0).unwrap();
+    assert!(notices.is_empty());
+    let (board, notices) = move_task_with_notices(&state, &NoopSync, &p, &pt, ColumnId::Done, 0).unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].reason, TimerPauseReason::Done);
+    assert_eq!(notices[0].code, "WEB-1");
+    assert_eq!(notices[0].started_code, None);
+    let card = &board.columns[2].tasks[0];
+    assert!(!card.my_timer_running && card.my_timer_paused);
+    assert_eq!(serde_json::to_value(&notices[0]).unwrap()["startedCode"], serde_json::Value::Null);
+
+    start_timer(&state, &NoopSync, &p, &other).unwrap();
+    let notices = delete_task_with_notices(&state, &NoopSync, &p, &other).unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].reason, TimerPauseReason::Deleted);
+    assert_eq!((notices[0].code.as_str(), notices[0].title.as_str()), ("WEB-2", "Dua"));
+    // Without a running timer nothing is queued.
+    let input: NewTask = serde_json::from_value(serde_json::json!({ "title": "Tiga" })).unwrap();
+    let third = create_task(&state, &NoopSync, &p, input).unwrap().card.id;
+    assert!(delete_task_with_notices(&state, &NoopSync, &p, &third).unwrap().is_empty());
+}
+
+#[test]
+fn the_notice_queue_keeps_the_newest() {
+    let q = TimerNotices::default();
+    let notice = |i: usize| TimerNotice {
+        reason: TimerPauseReason::Idle,
+        project_id: "p".into(),
+        task_id: format!("t{i}"),
+        code: format!("P-{i}"),
+        title: "x".into(),
+        at: "2026-11-24T08:00:00Z".into(),
+        started_code: None,
+    };
+    q.push((0..MAX_TIMER_NOTICES + 5).map(notice).collect());
+    let all = q.take();
+    assert_eq!(all.len(), MAX_TIMER_NOTICES);
+    assert_eq!(all[0].task_id, "t5");
+    assert!(q.take().is_empty());
+}

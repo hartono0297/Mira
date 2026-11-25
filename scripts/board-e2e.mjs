@@ -5,10 +5,11 @@
 // pindahkan task dengan keyboard (Alt+Panah dan menu Pindahkan) dan dengan
 // seret mouse dari To do ke Dikerjakan ke Selesai, isi detail task lewat dialog
 // v0.4 (deskripsi, penanggung jawab dan prioritas lewat menu, tenggat dan label
-// lewat pilihan kecil, komentar), tambah dan centang subtask, mulai lalu hentikan
-// timer, tambah subtask kedua lewat IPC lalu cek progres "1/2" di kartu, hapus
+// lewat pilihan kecil, komentar), tambah dan centang subtask, mulai, jeda, lanjutkan
+// dan jeda lagi timer, tambah subtask kedua lewat IPC lalu cek progres "1/2" di kartu, hapus
 // task terpisah lewat menu Lainnya, lihat Task saya, ambil screenshot terang dan
-// gelap, restart, dan pastikan semuanya tetap tersimpan.
+// gelap, restart, dan pastikan semuanya tetap tersimpan. Di akhir: jeda otomatis
+// saat memulai timer di proyek lain dan saat task dipindah ke Selesai.
 //
 // Setelah restart: menu klik kanan board (v0.4) dengan klik kanan sungguhan
 // (page.mouse tombol kanan lewat CDP): Task baru dari menu kolom, Pindahkan ke
@@ -108,7 +109,20 @@ async function launch({ emulateViewport = true } = {}) {
   return { child, browser, page };
 }
 
-async function stop({ child, browser }) {
+// Kunci laptop uji milik skrip ini. Di akhir hanya kunci ini yang dihapus dari
+// Credential Manager, bukan kredensial baru milik uji lain yang jalan bersamaan.
+const ourKeys = new Set();
+async function rememberKey(page) {
+  try {
+    const st = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke("get_app_state"));
+    if (st?.identity?.publicKey) ourKeys.add(st.identity.publicKey.toLowerCase());
+  } catch {
+    /* belum ada identitas */
+  }
+}
+
+async function stop({ child, browser, page }) {
+  if (page) await rememberKey(page);
   await browser.close().catch(() => {});
   try {
     execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
@@ -116,6 +130,28 @@ async function stop({ child, browser }) {
     /* sudah berhenti */
   }
   await new Promise((r) => setTimeout(r, 1500));
+  // Proses WebView2 bisa masih memegang folder data uji beberapa detik setelah
+  // taskkill saat mesin sibuk, dan instance berikutnya lalu gagal membuat webview
+  // ("The requested resource is in use"). Tunggu sampai tidak ada lagi.
+  for (let i = 0; i < 30 && webviewsOf(dataDir) > 0; i++) await new Promise((r) => setTimeout(r, 500));
+}
+
+// Jumlah proses msedgewebview2 yang memakai folder data uji ini.
+function webviewsOf(dir) {
+  try {
+    const out = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "(Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { $_.CommandLine -like '*' + $env:MIRA_E2E_DIR + '*' }).Count",
+      ],
+      { encoding: "utf8", env: { ...process.env, MIRA_E2E_DIR: dir } },
+    );
+    return Number(out.trim()) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // Memanggil command Tauri dari halaman. Hasil: { ok, value } atau { ok: false, error }.
@@ -153,7 +189,7 @@ async function openProject(page) {
   await page.getByRole("button", { name: "Task baru" }).waitFor();
 }
 
-// Dialog detail task v0.4. Pilihan Tenggat, Label, dan Hentikan timer juga
+// Dialog detail task v0.4. Pilihan Tenggat dan Label juga
 // role=dialog di dalamnya, jadi dialog task dikenali dari tombol Tutup-nya.
 const taskDialog = (page) =>
   page.getByRole("dialog").filter({ has: page.getByRole("button", { name: "Tutup detail task" }) });
@@ -416,7 +452,12 @@ try {
     await page.waitForTimeout(250);
   }
   await column(page, "To do").getByLabel(/Judul task baru/).press("Escape");
-  const todo = await cardTitles(page, "To do");
+  // Saat mesin sibuk kartu terakhir bisa tampil sesaat setelah Escape.
+  let todo = await cardTitles(page, "To do");
+  for (let i = 0; i < 20 && !titles.every((t) => todo.includes(t)); i++) {
+    await page.waitForTimeout(250);
+    todo = await cardTitles(page, "To do");
+  }
   check("Empat task dibuat di To do", titles.every((t) => todo.includes(t)), todo.join(" | "));
 
   // Pindah dengan keyboard: Alt+Panah kanan.
@@ -479,8 +520,22 @@ try {
   await dlg.getByRole("textbox", { name: "Tulis komentar" }).fill("Draft kontrak sudah saya baca sampai pasal 5.");
   await dlg.getByRole("button", { name: "Kirim", exact: true }).click();
   await page.waitForTimeout(600);
-  const dlgText = await dlg.innerText();
-  const savedReview = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+  // Saat mesin sibuk simpan dan komentar bisa sampai sedikit lebih lambat: tunggu sampai 5 detik.
+  const detailOk = (text, t) =>
+    text.includes("pasal 5") &&
+    t.description === DESC &&
+    t.assignee?.publicKey === me &&
+    t.due === isoDate(1) &&
+    t.priority === "high" &&
+    t.labels.includes("kontrak") &&
+    t.comments.length === 1;
+  let dlgText = await dlg.innerText();
+  let savedReview = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+  for (let i = 0; i < 20 && !detailOk(dlgText, savedReview); i++) {
+    await page.waitForTimeout(250);
+    dlgText = await dlg.innerText();
+    savedReview = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+  }
   const propNames = {
     assignee: await prop(dlg, "Penanggung jawab").innerText().catch(() => ""),
     priority: (await prop(dlg, "Prioritas Tinggi").count()) === 1,
@@ -489,14 +544,11 @@ try {
   };
   check(
     "Detail task menyimpan deskripsi, penanggung jawab, tenggat, prioritas, label, komentar",
-    dlgText.includes("pasal 5") &&
-      savedReview.description === DESC &&
-      savedReview.assignee?.publicKey === me &&
-      savedReview.due === isoDate(1) &&
-      savedReview.priority === "high" &&
-      savedReview.labels.includes("kontrak") &&
-      savedReview.comments.length === 1,
+    detailOk(dlgText, savedReview),
     JSON.stringify({
+      description: savedReview.description === DESC,
+      assignee: savedReview.assignee?.publicKey === me,
+      commentShown: dlgText.includes("pasal 5"),
       due: savedReview.due,
       priority: savedReview.priority,
       labels: savedReview.labels,
@@ -510,8 +562,8 @@ try {
   );
   await page.screenshot({ path: join(shots, "t3-04-detail-task-terang.png") });
 
-  // v0.4 lewat dialog: satu subtask ditambah lalu dicentang, timer dimulai lalu
-  // dihentikan tanpa catatan. Subtask kedua lewat IPC, lalu kartu menampilkan "1/2".
+  // v0.4 lewat dialog: satu subtask ditambah lalu dicentang, timer dimulai, dijeda,
+  // dilanjutkan, lalu dijeda lagi. Subtask kedua lewat IPC, lalu kartu menampilkan "1/2".
   try {
     const base = { projectId: proj.id, taskId: reviewId };
     await dlg.getByRole("button", { name: "Tambah subtask" }).click();
@@ -529,18 +581,28 @@ try {
     const progress = await dlg.getByRole("progressbar", { name: "Subtask selesai" }).getAttribute("aria-valuetext").catch(() => "");
     check("v0.4: subtask ditambah lewat Tambah subtask + Enter lalu dicentang", subChecked, progress ?? "");
 
+    // timer-jeda: Mulai timer, Jeda (tampil Dijeda dengan Lanjutkan), Lanjutkan, lalu Jeda lagi.
     await dlg.getByRole("button", { name: "Mulai timer" }).click();
-    const stopBtn = dlg.getByRole("button", { name: "Hentikan timer", exact: true });
-    await stopBtn.waitFor({ timeout: 5000 });
+    const pauseBtn = dlg.getByRole("button", { name: "Jeda", exact: true });
+    await pauseBtn.waitFor({ timeout: 5000 });
     const started = await must(page, "board_get_task", base);
     await page.waitForTimeout(1200);
-    await stopBtn.click();
-    const stopDlg = dlg.getByRole("dialog", { name: "Hentikan timer" });
-    await stopDlg.getByRole("button", { name: "Hentikan tanpa catatan" }).click();
-    await dlg.getByRole("button", { name: "Mulai timer" }).waitFor({ timeout: 5000 });
+    await pauseBtn.click();
+    const resumeBtn = dlg.getByRole("button", { name: "Lanjutkan", exact: true });
+    await resumeBtn.waitFor({ timeout: 5000 });
+    const pausedShown = (await dlg.innerText()).includes("Dijeda");
     check(
-      "v0.4: tombol Mulai timer menjalankan timer, Hentikan tanpa catatan menghentikannya",
-      Boolean(started.myRunningEntry) && (await stopDlg.count()) === 0,
+      "timer-jeda: Mulai timer menjalankan timer, Jeda menjedanya dan menampilkan Dijeda dengan tombol Lanjutkan",
+      Boolean(started.myRunningEntry) && pausedShown,
+    );
+    await resumeBtn.click();
+    await pauseBtn.waitFor({ timeout: 5000 });
+    await page.waitForTimeout(1200);
+    await pauseBtn.click();
+    await resumeBtn.waitFor({ timeout: 5000 });
+    check(
+      "timer-jeda: tombol Catat waktu manual tidak ada di dialog",
+      (await dlg.getByRole("button", { name: "Catat waktu manual" }).count()) === 0,
     );
     await page.screenshot({ path: join(shots, "v04-dialog-terang.png") });
     await closeTaskDialog(page);
@@ -548,13 +610,14 @@ try {
     await must(page, "board_add_subtask", { ...base, title: "Cek lampiran teknis", assignee: null });
     const d = await must(page, "board_get_task", base);
     check(
-      "v0.4: dua subtask (satu selesai) dan satu catatan timer yang sudah berhenti tersimpan",
+      "v0.4: dua subtask (satu selesai) dan dua segmen timer yang sudah dijeda tersimpan",
       d.subtaskTotal === 2 &&
         d.subtaskDone === 1 &&
         d.subtasks.some((s) => s.title === "Cek pasal pembayaran" && s.done) &&
         d.myRunningEntry === null &&
-        d.timeEntries.length === 1 &&
-        d.timeEntries[0].end !== null,
+        d.timeEntries.length === 2 &&
+        d.timeEntries.every((e) => e.end !== null && !e.manual && e.mine) &&
+        d.trackedSecs >= 2,
       `${d.subtaskDone}/${d.subtaskTotal}, catatan=${d.timeEntries.length}, ${d.trackedSecs} dtk`,
     );
     // Buka lagi board: pindah ke Task saya lalu kembali ke proyek, supaya board dimuat ulang.
@@ -575,7 +638,7 @@ try {
     );
     await page.screenshot({ path: join(shots, "t3-12-kartu-subtask-terang.png") });
   } catch (err) {
-    check("v0.4: subtask dan timer lewat dialog, progres di kartu", false, String(err?.message ?? err).slice(0, 300));
+    check("v0.4: subtask dan timer (jeda) lewat dialog, progres di kartu", false, String(err?.message ?? err).slice(0, 300));
     if ((await taskDialog(page).count()) > 0) await closeTaskDialog(page).catch(() => {});
   }
 
@@ -1054,6 +1117,40 @@ try {
     await closeTaskDialog(page);
   });
 
+  // timer-jeda: satu timer berjalan per orang di semua proyek, dan task yang
+  // dipindah ke Selesai menjeda timernya. Pemberitahuan tampil di layar board.
+  try {
+    const proj2 = await must(page, "board_create_project", { name: "Proyek uji jeda", code: "PJ", teamId: null, members: null });
+    const other = await must(page, "board_create_task", { projectId: proj2.id, input: { columnId: "todo", title: "Task uji jeda" } });
+    await must(page, "board_start_timer", { projectId: proj.id, taskId: reviewId });
+    await page.waitForTimeout(1100);
+    await must(page, "board_start_timer", { projectId: proj2.id, taskId: other.id });
+    const review = await must(page, "board_get_task", { projectId: proj.id, taskId: reviewId });
+    const switched = page.getByText(new RegExp(`dijeda karena Anda memulai timer di ${other.code}`));
+    const switchedShown = await switched.first().waitFor({ timeout: 8000 }).then(() => true, () => false);
+    check(
+      "timer-jeda: memulai timer di proyek lain menjeda timer di PA dan pemberitahuannya tampil",
+      review.myRunningEntry === null && review.timeEntries.filter((e) => !e.manual).length === 3 && switchedShown,
+      `segmen=${review.timeEntries.length}, berjalan=${review.myRunningEntry}`,
+    );
+    await page.waitForTimeout(1100);
+    await must(page, "board_move_task", { projectId: proj2.id, taskId: other.id, columnId: "done", index: 0 });
+    const o = await must(page, "board_get_task", { projectId: proj2.id, taskId: other.id });
+    const doneShown = await page
+      .getByText(/dijeda karena task itu dipindah ke Selesai/)
+      .first()
+      .waitFor({ timeout: 8000 })
+      .then(() => true, () => false);
+    check(
+      "timer-jeda: memindah task ke Selesai menjeda timernya dan pemberitahuannya tampil",
+      o.myRunningEntry === null && o.timeEntries.length === 1 && o.timeEntries[0].end !== null && doneShown,
+      `berjalan=${o.myRunningEntry}, catatan=${o.timeEntries.length}`,
+    );
+    await page.screenshot({ path: join(shots, "timer-jeda-pemberitahuan-terang.png") });
+  } catch (err) {
+    check("timer-jeda: jeda otomatis lintas proyek dan saat Selesai", false, String(err?.message ?? err).slice(0, 300));
+  }
+
   await stop(app);
   app = null;
 } catch (err) {
@@ -1066,6 +1163,11 @@ try {
 
 for (const target of miraCredentials()) {
   if (!credentialsBefore.has(target)) {
+    const key = target.slice("device-key-".length, "device-key-".length + 64);
+    if (!ourKeys.has(key)) {
+      console.log(`Kredensial baru bukan milik uji ini, dibiarkan: ${target}`);
+      continue;
+    }
     try {
       execFileSync("cmdkey", [`/delete:${target}`], { stdio: "ignore" });
     } catch {
@@ -1081,7 +1183,15 @@ try {
 } catch {
   /* tidak ada log */
 }
-rmSync(dataDir, { recursive: true, force: true });
+// Sisa kunci WebView2 bisa membuat hapus gagal sesaat; coba beberapa kali.
+for (let i = 0; i < 10; i++) {
+  try {
+    rmSync(dataDir, { recursive: true, force: true });
+    break;
+  } catch {
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} pemeriksaan lulus.`);

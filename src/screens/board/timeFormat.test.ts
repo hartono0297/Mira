@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StatusTime } from "../../api/board";
+import type { StatusTime, TimeEntry } from "../../api/board";
 import { TEKS } from "./teks";
 import {
   cardTrackedSecs,
@@ -7,7 +7,9 @@ import {
   formatDuration,
   formatDurationLong,
   liveStatusSecs,
+  myTimer,
   parseMinutes,
+  personTimer,
   runningSecs,
 } from "./timeFormat";
 
@@ -167,5 +169,81 @@ describe("parseMinutes", () => {
     ["1,5m", TEKS.waktu.isian.tidakDikenali],
   ])("%j ditolak", (input, reason) => {
     expect(parseMinutes(input)).toEqual({ minutes: null, reason });
+  });
+});
+
+describe("personTimer dan myTimer", () => {
+  const ME = "a".repeat(64);
+  const OTHER = "b".repeat(64);
+  const me = { publicKey: ME, name: "Penguji Satu" };
+  const other = { publicKey: OTHER, name: "Sari Uji" };
+
+  function seg(id: string, startAgo: number, endAgo: number | null, extra: Partial<TimeEntry> = {}): TimeEntry {
+    return {
+      id,
+      person: me,
+      start: ago(startAgo),
+      end: endAgo === null ? null : ago(endAgo),
+      manual: false,
+      note: "",
+      secs: endAgo === null ? 0 : startAgo - endAgo,
+      mine: true,
+      ...extra,
+    };
+  }
+
+  it("tanpa catatan: idle, total 0", () => {
+    expect(personTimer([], ME, NOW)).toEqual({ state: "idle", running: null, closedSecs: 0, totalSecs: 0 });
+  });
+
+  it("hanya catatan manual: tetap idle, tapi total menghitungnya", () => {
+    const t = personTimer([seg("m", 7200, 3600, { manual: true })], ME, NOW);
+    expect(t.state).toBe("idle");
+    expect(t.totalSecs).toBe(3600);
+  });
+
+  it("segmen timer berhenti tanpa yang berjalan: paused, total semua segmen termasuk manual", () => {
+    const entries = [seg("b", 3000, 1200), seg("a", 9000, 7200), seg("m", 20000, 19400, { manual: true })];
+    const t = personTimer(entries, ME, NOW);
+    expect(t.state).toBe("paused");
+    expect(t.running).toBeNull();
+    expect(t.closedSecs).toBe(1800 + 1800 + 600);
+    expect(t.totalSecs).toBe(4200);
+  });
+
+  it("segmen berjalan: running, total ditambah segmen berjalan sampai now", () => {
+    const run = seg("r", 600, null);
+    const t = personTimer([run, seg("a", 9000, 7200)], ME, NOW);
+    expect(t.state).toBe("running");
+    expect(t.running).toBe(run);
+    expect(t.closedSecs).toBe(1800);
+    expect(t.totalSecs).toBe(2400);
+    // now bertambah 1 menit.
+    expect(personTimer([run], ME, NOW.getTime() + 60_000).totalSecs).toBe(660);
+  });
+
+  it("dua segmen berjalan: keduanya dihitung, running = yang paling baru dimulai", () => {
+    const old = seg("old", 3600, null);
+    const fresh = seg("new", 300, null);
+    const t = personTimer([old, fresh], ME, NOW);
+    expect(t.running).toBe(fresh);
+    expect(t.totalSecs).toBe(3900);
+  });
+
+  it("catatan orang lain tidak dihitung", () => {
+    const entries = [seg("o", 600, null, { person: other, mine: false }), seg("o2", 9000, 7200, { person: other })];
+    expect(personTimer(entries, ME, NOW).state).toBe("idle");
+    expect(personTimer(entries, OTHER, NOW)).toMatchObject({ state: "running", closedSecs: 1800, totalSecs: 2400 });
+  });
+
+  it("detik yang tidak masuk akal dibersihkan", () => {
+    const t = personTimer([seg("x", 100, 50, { secs: Number.NaN }), seg("y", 100, 50, { secs: -5 })], ME, NOW);
+    expect(t).toMatchObject({ state: "paused", totalSecs: 0 });
+  });
+
+  it("myTimer memakai timeEntries task untuk orang `me`", () => {
+    const task = { timeEntries: [seg("a", 9000, 7200), seg("o", 600, null, { person: other })] };
+    expect(myTimer(task, ME, NOW)).toMatchObject({ state: "paused", totalSecs: 1800 });
+    expect(myTimer(task, OTHER, NOW)).toMatchObject({ state: "running", totalSecs: 600 });
   });
 });

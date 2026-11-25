@@ -14,7 +14,7 @@ const en: Dict<typeof id> = {
     never: "never",
     nobody: "No time logged yet.",
     notDone: "Not done yet",
-    forgot: "Forgot to stop it?",
+    forgot: "Forgot to pause it?",
     manual: "manual",
 
     clockNote:
@@ -23,14 +23,12 @@ const en: Dict<typeof id> = {
     // Timer
     timerGroup: "Your timer",
     start: "Start timer",
-    startHint: "This stops any timer of yours still running on another task in this project.",
-    stop: "Stop timer",
-    stopDialog: "Stop timer",
-    stopAt: "Stop at",
-    stopNoteLabel: "Note for this session (optional)",
-    stopHint: "Enter saves and stops the timer. Escape closes this box and the timer keeps running.",
-    stopWithNote: "Save and stop",
-    stopWithoutNote: "Stop without a note",
+    pause: "Pause",
+    resume: "Resume",
+    paused: "Paused",
+    pausedTag: "paused",
+    yourTotal: "Your total",
+    startHint: "If your timer is running on another task, it will be paused.",
     notePlaceholder: "What you worked on",
 
     // Catat manual
@@ -47,7 +45,8 @@ const en: Dict<typeof id> = {
   },
   kalimat: {
     runningSinceSr: (when: string) => `Your timer has been running since ${when}.`,
-    stopTitleSr: (when: string) => `Stop the timer running since ${when}.`,
+    earlierSr: (long: string) => `Logged earlier: ${long}.`,
+    pausedSr: (long: string) => `Paused, your total on this task is ${long}.`,
     cycleDone: (short: string) => `Done in ${short} since it was created`,
     historySummary: (n: number) => `Time entry history (${n})`,
     // "Delete entry 1 hour 30 minutes, 23 Nov, 09:12".
@@ -56,10 +55,21 @@ const en: Dict<typeof id> = {
   },
   say: {
     started: "Timer running.",
-    stopped: (long: string) => `Timer stopped. ${long} logged.`,
-    stoppedPlain: "Timer stopped.",
+    resumed: "Timer running again.",
+    paused: (long: string) => `Timer paused. Your total on this task is ${long}.`,
     logged: (long: string) => `Logged ${long}.`,
     deleted: "Time entry deleted.",
+  },
+  notice: {
+    region: "Timer paused automatically",
+    dismiss: "Dismiss notice",
+    dismissAll: "Dismiss all",
+    switched: (code: string, title: string, startedCode: string) =>
+      `Your timer on ${code} (${title}) is paused because you started a timer on ${startedCode}.`,
+    done: (code: string, title: string) => `Your timer on ${code} (${title}) is paused because the task moved to Done.`,
+    deleted: (code: string, title: string) => `Your timer on ${code} (${title}) is paused because the task was deleted.`,
+    idle: (code: string, title: string, time: string) =>
+      `Your timer on ${code} (${title}) was paused at ${time}, when Mira was last active. Time after that isn't counted.`,
   },
 };
 

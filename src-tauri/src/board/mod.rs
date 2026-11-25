@@ -5,7 +5,8 @@
 //! document snapshot and the task index in one SQLite transaction (`store`).
 //! Permission checks (`policy`), the assignee list (`assignees`) and network
 //! sync (`sync`) are traits so later stages can swap them. `commands` holds
-//! the Tauri commands; `reminder` the deadline reminders.
+//! the Tauri commands; `reminder` the deadline reminders; `timer_guard` the
+//! automatic timer pauses.
 
 pub mod access;
 pub mod assignees;
@@ -24,6 +25,7 @@ pub mod schema;
 pub mod sign;
 pub mod store;
 pub mod sync;
+pub mod timer_guard;
 pub mod timing;
 pub mod view;
 

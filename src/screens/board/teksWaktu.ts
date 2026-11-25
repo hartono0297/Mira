@@ -13,8 +13,12 @@ export function runningSinceSr(when: string): string {
   return K.runningSinceSr(when);
 }
 
-export function stopTitleSr(when: string): string {
-  return K.stopTitleSr(when);
+export function earlierSr(long: string): string {
+  return K.earlierSr(long);
+}
+
+export function pausedSr(long: string): string {
+  return K.pausedSr(long);
 }
 
 export function cycleDone(short: string): string {
@@ -35,3 +39,6 @@ export function startedAt(when: string): string {
 }
 
 export const SAY = defineText(id.say, en.say);
+
+// Pemberitahuan jeda otomatis (TimerNotice).
+export const TN = defineText(id.notice, en.notice);

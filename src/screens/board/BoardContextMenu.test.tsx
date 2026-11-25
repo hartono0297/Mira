@@ -430,17 +430,62 @@ describe("Menu klik kanan kartu: aksi", () => {
     expect(onOpenTask).toHaveBeenCalledWith(taskId(1));
   });
 
-  it("Mulai timer saya dan Hentikan timer saya menurut myTimerRunning", async () => {
+  it("Mulai timer saya dan Jeda timer saya menurut myTimerRunning", async () => {
     current = withCard(2, { myTimerRunning: true, timersRunningSince: ["2026-11-24T02:00:00Z"] });
     await renderBoard();
-    fireEvent.click(item(openCardMenu(3), "Mulai timer saya"));
+    const menu = openCardMenu(3);
+    expect(within(menu).queryByRole("menuitem", { name: /Jeda timer|Lanjutkan timer/ })).not.toBeInTheDocument();
+    fireEvent.click(item(menu, "Mulai timer saya"));
     await waitFor(() => expect(board.startTimer).toHaveBeenCalledWith(P1, taskId(3)));
-    // Inti Rust menghentikan timer saya di PA-2; pengumumannya menyebut itu.
-    expect(await screen.findByText("Timer Anda di PA-3 berjalan. Timer di PA-2 dihentikan.")).toBeInTheDocument();
+    // Inti Rust menjeda timer saya di PA-2; itu diumumkan TimerNotices, bukan di sini.
+    expect(await screen.findByText("Timer Anda di PA-3 berjalan.")).toBeInTheDocument();
+    expect(screen.queryByText(/PA-2 dijeda/)).not.toBeInTheDocument();
 
-    fireEvent.click(item(openCardMenu(2), "Hentikan timer saya"));
+    const running = openCardMenu(2);
+    expect(item(running, "Jeda timer saya")).toHaveAttribute("data-menu-item", "timer-pause");
+    expect(within(running).queryByRole("menuitem", { name: "Mulai timer saya" })).not.toBeInTheDocument();
+    fireEvent.click(item(running, "Jeda timer saya"));
     await waitFor(() => expect(board.stopTimer).toHaveBeenCalledWith(P1, taskId(2), null));
-    expect(await screen.findByText("Timer Anda di PA-2 berhenti.")).toBeInTheDocument();
+    expect(board.startTimer).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Timer Anda di PA-2 dijeda.")).toBeInTheDocument();
+  });
+
+  it("Lanjutkan timer saya untuk timer yang dijeda: memanggil startTimer", async () => {
+    current = withCard(1, { myTimerPaused: true, trackedSecs: 600 });
+    await renderBoard();
+    const menu = openCardMenu(1);
+    expect(item(menu, "Lanjutkan timer saya")).toHaveAttribute("data-menu-item", "timer-resume");
+    expect(within(menu).queryByRole("menuitem", { name: /Mulai timer|Jeda timer/ })).not.toBeInTheDocument();
+    fireEvent.click(item(menu, "Lanjutkan timer saya"));
+    await waitFor(() => expect(board.startTimer).toHaveBeenCalledWith(P1, taskId(1)));
+    expect(board.stopTimer).not.toHaveBeenCalled();
+    expect(await screen.findByText("Timer Anda di PA-1 berjalan lagi.")).toBeInTheDocument();
+  });
+
+  it("Lanjutkan timer saya saat timer lain berjalan: hanya task ini yang diumumkan", async () => {
+    current = withCard(1, { myTimerPaused: true, trackedSecs: 600 });
+    current = withCard(2, { myTimerRunning: true });
+    current = withCard(3, { myTimerRunning: true });
+    await renderBoard();
+    fireEvent.click(item(openCardMenu(1), "Lanjutkan timer saya"));
+    await waitFor(() => expect(board.startTimer).toHaveBeenCalledWith(P1, taskId(1)));
+    expect(await screen.findByText("Timer Anda di PA-1 berjalan lagi.")).toBeInTheDocument();
+    expect(screen.queryByText(/dijeda/)).not.toBeInTheDocument();
+  });
+
+  it("timer berjalan menang atas myTimerPaused: menu menawarkan Jeda", async () => {
+    current = withCard(1, { myTimerRunning: true, myTimerPaused: true });
+    await renderBoard();
+    const menu = openCardMenu(1);
+    expect(item(menu, "Jeda timer saya")).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Lanjutkan timer saya" })).not.toBeInTheDocument();
+  });
+
+  it("menu kartu tidak punya pilihan catat waktu manual", async () => {
+    current = withCard(1, { myTimerPaused: true });
+    await renderBoard();
+    const menu = openCardMenu(1);
+    expect(within(menu).queryByRole("menuitem", { name: /manual|Catat waktu/i })).not.toBeInTheDocument();
   });
 
   it("Mulai timer saya tanpa timer lain yang berjalan: pengumuman tanpa catatan", async () => {

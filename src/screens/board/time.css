@@ -19,6 +19,21 @@
   background: var(--online);
 }
 
+/* Tanda dijeda: dua batang tegak, bentuk yang sama dengan ikon tombol Jeda, jadi
+   keadaan dan aksinya memakai satu simbol. Netral (--text-sec), dibedakan dari
+   titik berjalan lewat bentuk, bukan hanya warna. --text-sec di atas --bg:
+   6,11:1 terang dan 8,46:1 gelap (lolos 3:1 non-teks dan 4,5:1 teks).
+   Selalu didampingi teks ("Dijeda", "dijeda", atau teks pembaca layar). */
+.td-mini .td-pause,
+.td-waktu .td-pause {
+  flex: none;
+  box-sizing: border-box;
+  width: 8px;
+  height: 9px;
+  border-left: 3px solid currentColor;
+  border-right: 3px solid currentColor;
+}
+
 .td-mini .td-row-end,
 .td-waktu .td-row-end {
   display: flex;
@@ -51,43 +66,25 @@
   letter-spacing: 0.01em;
 }
 
-.td-mini-anchor {
-  position: relative;
-}
-
-/* Satu-satunya elemen terangkat di kepala dialog, jadi memakai bayangan. */
-.td-stop-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 5;
-  width: min(300px, calc(100vw - 48px));
-  padding: 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--text);
-  box-shadow: 0 8px 24px var(--scrim);
-}
-
-.td-stop-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.td-stop-title {
-  margin: 0;
-  font-size: 14px;
+/* Dijeda atau Total Anda: label tenang (--text-sec) dan total saya dengan bobot yang
+   sama seperti jam berjalan (--text), supaya angkanya tetap jadi titik fokus.
+   --text-sec di atas --bg 6,11 / 8,46; --text di atas --bg 16,04 / 14,96. */
+.td-mini-sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
   font-weight: 700;
+  color: var(--text-sec);
+  white-space: nowrap;
 }
 
-.td-stop-clock {
+.td-mini-sum b {
+  margin-left: 2px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
-}
-
-.td-stop-form .hint {
-  margin: 0;
 }
 
 /* ---------- Bagian Waktu ---------- */
@@ -161,13 +158,12 @@
   border-color: var(--text-sec);
 }
 
-/* Isian berbingkai di form catat waktu dan kotak catatan timer. .td-box (field.css)
+/* Isian berbingkai di form catat waktu. .td-box (field.css)
    memberi garis --border-strong, sorotan --field-hover dengan garis --text-sec, dan
    cincin fokus; di sini hanya ukurannya, supaya tidak bergantung pada urutan muat
    task.css (.td-input) dan field.css. Sudut 6px sama dengan kolom berbingkai lain,
    lebih kecil dari tombol (10px) supaya nilai dan tombol mudah dibedakan. */
-.td-waktu .td-input.td-box,
-.td-stop-form .td-input.td-box {
+.td-waktu .td-input.td-box {
   display: block;
   min-height: 34px;
   padding: 4px 8px;
@@ -280,6 +276,15 @@
   font-weight: 700;
   color: var(--text-sec);
   white-space: nowrap;
+}
+
+/* Judul bagian bisa menerima fokus lewat kode (tabIndex -1): tujuan fokus setelah
+   catatan terakhir dihapus saat catat manual dimatikan. Cincin --focus di atas --bg:
+   5,42 terang / 7,18 gelap. */
+.td-waktu .td-sh:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .td-waktu .td-cycle {
@@ -411,7 +416,6 @@
   .td-mini .btn,
   .td-waktu .btn,
   .td-waktu .td-input.td-box,
-  .td-stop-form .td-input.td-box,
   .td-entries summary {
     min-height: 44px;
   }

@@ -2,12 +2,6 @@ import type { Dict } from "./core";
 import { plural } from "./core";
 import type id from "./board-menu.id";
 
-function list(items: readonly string[]): string {
-  const o = Array.from(items);
-  if (o.length <= 1) return o[0] ?? "";
-  return `${o.slice(0, -1).join(", ")} and ${o[o.length - 1]}`;
-}
-
 const en: Dict<typeof id> = {
   kembali: "Back",
 
@@ -41,7 +35,8 @@ const en: Dict<typeof id> = {
     hapusTenggat: "Clear due date",
     belumAdaTenggat: "No due date yet",
     mulaiTimer: "Start my timer",
-    hentikanTimer: "Stop my timer",
+    jedaTimer: "Pause my timer",
+    lanjutkanTimer: "Resume my timer",
     salinKode: (code: string) => `Copy code ${code}`,
     hapus: "Delete task",
     hapusIsi: (title: string, subtasks: number, comments: number, waktu: boolean) => {
@@ -67,9 +62,8 @@ const en: Dict<typeof id> = {
     tenggatDiubah: (code: string, label: string) => `Due date of ${code}: ${label}.`,
     tenggatDihapus: (code: string) => `Due date of ${code} cleared.`,
     timerMulai: (code: string) => `Your timer on ${code} is running.`,
-    timerMulaiGanti: (code: string, others: readonly string[]) =>
-      `Your timer on ${code} is running. The ${plural(Array.from(others).length, "timer", "timers")} on ${list(others)} stopped.`,
-    timerBerhenti: (code: string) => `Your timer on ${code} stopped.`,
+    timerLanjut: (code: string) => `Your timer on ${code} is running again.`,
+    timerDijeda: (code: string) => `Your timer on ${code} is paused.`,
     gagal: (code: string) => `${code} not changed`,
   },
 

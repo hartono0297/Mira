@@ -127,12 +127,15 @@ pub fn run() {
                 state.clone(),
                 std::sync::Arc::new(board::reminder::TauriNotifier::new(app.handle().clone())),
             );
-            app.manage(board::commands::BoardRuntime {
-                hook: std::sync::Arc::new(board::feature::BoardSyncNotifier::new(
+            let board_runtime = board::commands::BoardRuntime::new(std::sync::Arc::new(
+                board::feature::BoardSyncNotifier::new(
                     std::sync::Arc::new(reminders),
                     app.handle().clone(),
-                )),
-            });
+                ),
+            ));
+            // Automatic timer pauses (docs/plans/timer-jeda.md).
+            board::timer_guard::spawn(state.clone(), board_runtime.clone(), app.handle().clone());
+            app.manage(board_runtime);
             app.manage(state);
             board::feature::register(app.handle());
             // Document library: managed even when the data folder is missing
@@ -244,6 +247,7 @@ pub fn run() {
             board::commands::board_delete_subtask,
             board::commands::board_start_timer,
             board::commands::board_stop_timer,
+            board::commands::board_take_timer_notices,
             board::commands::board_log_time,
             board::commands::board_delete_time_entry,
             board::commands::board_my_tasks,

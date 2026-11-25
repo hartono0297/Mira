@@ -261,7 +261,7 @@ const id = {
       entryNotFound: "Catatan waktu tidak ditemukan. Mungkin sudah dihapus. Tutup lalu buka lagi task ini.",
       docNoProject: "Dokumen proyek tidak lengkap: data proyek tidak ada.",
       subtaskChurn: "Task ini sudah terlalu sering ditambah dan dihapus subtask-nya. Buat task baru untuk lanjutan pekerjaan ini.",
-      timerStopped: "Timer Anda di task ini sudah berhenti. Tutup lalu buka lagi task ini untuk melihat catatan terbaru.",
+      timerStopped: "Timer Anda di task ini sudah dijeda. Total terbaru tampil setelah task ini dimuat ulang.",
       clockUnreadable: "Jam laptop ini tidak terbaca. Periksa pengaturan tanggal dan jam Windows, lalu coba lagi.",
       deleteOwnEntry: "Anda hanya bisa menghapus catatan waktu Anda sendiri. Minta pemiliknya menghapus catatan itu.",
       docNoTasks: "Dokumen proyek tidak lengkap: daftar task tidak ada.",

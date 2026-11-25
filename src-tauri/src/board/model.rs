@@ -157,6 +157,40 @@ pub struct TaskCard {
     pub can_delete: bool,
     /// The viewer has a running timer on this task.
     pub my_timer_running: bool,
+    /// The viewer's timer on this task is paused: at least one stopped timer
+    /// segment of theirs (not manual, not deleted) and none running.
+    pub my_timer_paused: bool,
+}
+
+/// Why the core paused the viewer's timer on its own
+/// (docs/plans/timer-jeda.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TimerPauseReason {
+    /// The viewer started the timer on another task.
+    Switched,
+    /// The task moved to Selesai.
+    Done,
+    /// The task was deleted.
+    Deleted,
+    /// Mira was closed or the laptop slept: paused at the last time Mira
+    /// was seen running.
+    Idle,
+}
+
+/// One automatic pause, queued for the UI (`board_take_timer_notices`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimerNotice {
+    pub reason: TimerPauseReason,
+    pub project_id: String,
+    pub task_id: String,
+    pub code: String,
+    pub title: String,
+    /// End of the paused segment (RFC 3339).
+    pub at: String,
+    /// For `switched`: code of the task whose timer was started.
+    pub started_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

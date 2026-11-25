@@ -37,7 +37,8 @@ const id = {
     hapusTenggat: "Hapus tenggat",
     belumAdaTenggat: "Belum ada tenggat",
     mulaiTimer: "Mulai timer saya",
-    hentikanTimer: "Hentikan timer saya",
+    jedaTimer: "Jeda timer saya",
+    lanjutkanTimer: "Lanjutkan timer saya",
     salinKode: (code: string) => `Salin kode ${code}`,
     hapus: "Hapus task",
     // Isi konfirmasi hapus dari menu kartu. Sama dengan teksDialog.hapusIsi,
@@ -70,12 +71,9 @@ const id = {
     tenggatDiubah: (code: string, label: string) => `Tenggat ${code}: ${label}.`,
     tenggatDihapus: (code: string) => `Tenggat ${code} dihapus.`,
     timerMulai: (code: string) => `Timer Anda di ${code} berjalan.`,
-    // Inti Rust menghentikan timer saya di task lain proyek ini saat timer baru mulai.
-    timerMulaiGanti: (code: string, others: readonly string[]) => {
-      const o = Array.from(others);
-      return `Timer Anda di ${code} berjalan. Timer di ${o.length > 1 ? `${o.slice(0, -1).join(", ")} dan ${o[o.length - 1]}` : o[0]} dihentikan.`;
-    },
-    timerBerhenti: (code: string) => `Timer Anda di ${code} berhenti.`,
+    // Timer saya di task lain yang ikut dijeda diumumkan TimerNotices, bukan di sini.
+    timerLanjut: (code: string) => `Timer Anda di ${code} berjalan lagi.`,
+    timerDijeda: (code: string) => `Timer Anda di ${code} dijeda.`,
     gagal: (code: string) => `${code} belum diubah`,
   },
 

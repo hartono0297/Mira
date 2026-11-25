@@ -369,7 +369,9 @@ fn the_local_flow_passes_every_check() {
             )
             .unwrap()
         }),
-        Box::new(|d| d.move_task(s, &new_id, ColumnId::Done, 0).unwrap()),
+        Box::new(|d| {
+            d.move_task(s, &new_id, ColumnId::Done, 0).unwrap();
+        }),
         Box::new(|d| {
             d.add_comment(s, &new_id, "satu").unwrap();
             d.add_comment(s, &task_a, "dua").unwrap();
@@ -379,7 +381,9 @@ fn the_local_flow_passes_every_check() {
             d.renumber_task(s, &task_a, n, "PA-1").unwrap();
         }),
         Box::new(|d| d.rename_project("Nama Baru").unwrap()),
-        Box::new(|d| d.delete_task(s, &new_id).unwrap()),
+        Box::new(|d| {
+            d.delete_task(s, &new_id).unwrap();
+        }),
     ];
     for step in steps {
         let c = change_by(&mut doc, &B, |d| step(d));
@@ -557,7 +561,7 @@ fn renumbering_a_task_deleted_concurrently_is_judged_the_same_everywhere() {
     let a = hex32(&A);
     let b = hex32(&B);
     let del = change_by(&mut doc, &A, |d| {
-        d.delete_task(Stamp { actor: &a, at: "t3" }, &task_a).unwrap()
+        d.delete_task(Stamp { actor: &a, at: "t3" }, &task_a).unwrap();
     });
     let ren = change_by(&mut doc, &B, |d| {
         let n = d.fresh_number().unwrap();
@@ -784,6 +788,79 @@ fn starting_a_timer_stops_mine_on_another_task_and_is_accepted() {
     assert_eq!(ta.time[0].end.as_deref(), Some(T1));
 }
 
+
+/// v0.6 (docs/plans/timer-jeda.md): every automatic pause is the same kind
+/// of change as a stop in v0.4/v0.5 (`end` put by the owner), so laptops on
+/// v0.5 accept them.
+#[test]
+fn automatic_pauses_are_accepted() {
+    let (mut doc, task_a, task_b, _) = base();
+    let b = hex32(&B);
+    let a = hex32(&A);
+    // Pause on another task (start elsewhere), then resume: a new segment.
+    for (at, task) in [(T0, &task_a), (T1, &task_b), ("2026-11-23T10:00:00Z", &task_a)] {
+        let c = change_by(&mut doc, &B, |d| {
+            d.start_timer(Stamp { actor: &b, at }, task).unwrap();
+        });
+        accept(&mut doc, c, &b).unwrap();
+    }
+    let ta = doc.task(&task_a).unwrap().unwrap();
+    assert_eq!(ta.time.iter().filter(|e| e.by == b).count(), 2);
+
+    // Moving A's task into Selesai pauses B's timer in the same change.
+    let c = change_by(&mut doc, &B, |d| {
+        let paused = d
+            .move_task(Stamp { actor: &b, at: "2026-11-23T10:30:00Z" }, &task_a, ColumnId::Done, 0)
+            .unwrap();
+        assert_eq!(paused.len(), 1);
+    });
+    accept(&mut doc, c, &b).unwrap();
+    assert!(doc.task(&task_a).unwrap().unwrap().time.iter().all(|e| !e.is_running()));
+
+    // Deleting B's own task pauses B's timer before the delete.
+    let c = change_by(&mut doc, &B, |d| {
+        d.start_timer(Stamp { actor: &b, at: "2026-11-23T11:00:00Z" }, &task_b).unwrap();
+    });
+    accept(&mut doc, c, &b).unwrap();
+    let c = change_by(&mut doc, &B, |d| {
+        let paused = d.delete_task(Stamp { actor: &b, at: "2026-11-23T11:30:00Z" }, &task_b).unwrap();
+        assert_eq!(paused.len(), 1);
+    });
+    let needs = accept(&mut doc, c, &b).unwrap();
+    assert_eq!(needs.delete, [(task_b.clone(), b.clone())]);
+    let tb = doc.task(&task_b).unwrap().unwrap();
+    assert!(tb.deleted && tb.time.iter().all(|e| !e.is_running()));
+
+    // The timer guard of B pauses B's timer on a task A deleted.
+    let c = change_by(&mut doc, &B, |d| {
+        d.move_task(Stamp { actor: &b, at: "t" }, &task_a, ColumnId::Doing, 0).unwrap();
+        d.start_timer(Stamp { actor: &b, at: "2026-11-23T12:00:00Z" }, &task_a).unwrap();
+    });
+    accept(&mut doc, c, &b).unwrap();
+    let c = change_by(&mut doc, &A, |d| {
+        d.delete_task(Stamp { actor: &a, at: "t" }, &task_a).unwrap();
+    });
+    accept(&mut doc, c, &a).unwrap();
+    let running = doc
+        .task(&task_a)
+        .unwrap()
+        .unwrap()
+        .time
+        .into_iter()
+        .find(|e| e.by == b && e.is_running())
+        .unwrap()
+        .id;
+    let c = change_by(&mut doc, &B, |d| {
+        let p = d
+            .pause_entry(Stamp { actor: &b, at: "2026-11-23T12:30:00Z" }, &task_a, &running)
+            .unwrap();
+        assert!(p.is_some());
+    });
+    let needs = accept(&mut doc, c, &b).unwrap();
+    assert!(needs.delete.is_empty(), "no delete right needed");
+    let ta = doc.task(&task_a).unwrap().unwrap();
+    assert!(ta.deleted && ta.time.iter().all(|e| !e.is_running()));
+}
 #[test]
 fn two_laptops_making_the_maps_of_an_old_task_are_judged_the_same_in_any_order() {
     let (mut doc, task_a, _) = old_base();
@@ -1326,7 +1403,9 @@ fn an_object_missing_from_the_dependencies_is_refused_on_every_laptop() {
         (
             "pindah task baru",
             &B,
-            Box::new(|d| d.move_task(s, &task, ColumnId::Doing, 0).unwrap()),
+            Box::new(|d| {
+                d.move_task(s, &task, ColumnId::Doing, 0).unwrap();
+            }),
         ),
         (
             "subtask di task baru",

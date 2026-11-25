@@ -3,22 +3,25 @@
 //! `&MiraState`, so tests run without a Tauri runtime. After every successful
 //! mutation the wrapper emits `mira://board` and the plain function hands the
 //! new signed changes to the `BoardSyncHook` (after the database lock is
-//! released).
+//! released). Automatic timer pauses (docs/plans/timer-jeda.md) are queued
+//! in `BoardRuntime::notices` for `board_take_timer_notices`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, State};
 
 use super::access::Rights;
 use super::assignees::{AssigneeDirectory, LocalMembers};
-use super::doc::{BoardDoc, Stamp, SubtaskChanges, TaskChanges, TaskInit};
+use super::doc::{
+    BoardDoc, PausedTimer, Stamp, SubtaskChanges, TaskChanges, TaskData, TaskInit, TimeData,
+};
 use super::model::{
     self, BoardView, ColumnId, MyTask, NewTask, ProjectSummary, SubtaskPatch, TaskDetail,
-    TaskPatch,
+    TaskPatch, TimerNotice, TimerPauseReason,
 };
 use super::policy::{BoardAction, BoardPolicy, LocalRolePolicy};
 use super::sign::SignedChange;
-use super::store::{self, Committed, ProjectRow};
+use super::store::{self, Committed, ProjectRow, task_code};
 use super::sync::{BoardSyncHook, NoopSync};
 use super::view::Ctx;
 use crate::clock;
@@ -28,21 +31,54 @@ use crate::state::{Core, MiraState};
 
 pub const BOARD_EVENT: &str = "mira://board";
 
+/// Most timer notices kept until the UI takes them; older ones are dropped.
+pub const MAX_TIMER_NOTICES: usize = 50;
+
+/// In-memory queue of automatic timer pauses, shared by the commands and
+/// the timer guard (`timer_guard.rs`). Lost when Mira closes.
+#[derive(Clone, Default)]
+pub struct TimerNotices(Arc<Mutex<Vec<TimerNotice>>>);
+
+impl TimerNotices {
+    pub fn push(&self, notices: Vec<TimerNotice>) {
+        if notices.is_empty() {
+            return;
+        }
+        let mut q = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        q.extend(notices);
+        let extra = q.len().saturating_sub(MAX_TIMER_NOTICES);
+        q.drain(..extra);
+    }
+
+    /// Everything queued, oldest first; the queue is empty afterwards.
+    pub fn take(&self) -> Vec<TimerNotice> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+}
+
 /// Board state managed by Tauri next to `MiraState`.
 #[derive(Clone)]
 pub struct BoardRuntime {
     pub hook: Arc<dyn BoardSyncHook>,
+    pub notices: TimerNotices,
 }
 
-impl Default for BoardRuntime {
-    fn default() -> Self {
+impl BoardRuntime {
+    pub fn new(hook: Arc<dyn BoardSyncHook>) -> Self {
         Self {
-            hook: Arc::new(NoopSync),
+            hook,
+            notices: TimerNotices::default(),
         }
     }
 }
 
-fn notify(hook: &dyn BoardSyncHook, project_id: &str, changes: &[SignedChange]) {
+impl Default for BoardRuntime {
+    fn default() -> Self {
+        Self::new(Arc::new(NoopSync))
+    }
+}
+
+pub(crate) fn notify(hook: &dyn BoardSyncHook, project_id: &str, changes: &[SignedChange]) {
     for c in changes {
         hook.on_local_change(project_id, c);
     }
@@ -368,7 +404,20 @@ pub fn move_task(
     column_id: ColumnId,
     index: usize,
 ) -> AppResult<BoardView> {
-    let (view, changes) = with_ctx(state, |core, policy, dir| {
+    move_task_with_notices(state, hook, project_id, task_id, column_id, index).map(|(v, _)| v)
+}
+
+/// [`move_task`]; a move into Selesai pauses the viewer's timer on the task
+/// in the same change, returned as notices (reason `done`).
+pub fn move_task_with_notices(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+    column_id: ColumnId,
+    index: usize,
+) -> AppResult<(BoardView, Vec<TimerNotice>)> {
+    let (view, notices, changes) = with_ctx(state, |core, policy, dir| {
         let me = core.identity.public_key_hex().to_owned();
         let row = store::project(&core.db, project_id)?;
         policy.check(
@@ -391,10 +440,11 @@ pub fn move_task(
                 index,
             )
         })?;
-        Ok((ctx(core, policy, dir).board(&row, &c.doc)?, c.changes))
+        let notices = notices_for(&row, &c.doc, &c.value, TimerPauseReason::Done, None);
+        Ok((ctx(core, policy, dir).board(&row, &c.doc)?, notices, c.changes))
     })?;
     notify(hook, project_id, &changes);
-    Ok(view)
+    Ok((view, notices))
 }
 
 pub fn delete_task(
@@ -403,7 +453,18 @@ pub fn delete_task(
     project_id: &str,
     task_id: &str,
 ) -> AppResult<()> {
-    let changes = with_ctx(state, |core, policy, _dir| {
+    delete_task_with_notices(state, hook, project_id, task_id).map(|_| ())
+}
+
+/// [`delete_task`]; the viewer's timer on the task is paused first in the
+/// same change, returned as notices (reason `deleted`).
+pub fn delete_task_with_notices(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+) -> AppResult<Vec<TimerNotice>> {
+    let (notices, changes) = with_ctx(state, |core, policy, _dir| {
         let me = core.identity.public_key_hex().to_owned();
         let row = store::project(&core.db, project_id)?;
         let task = store::load_doc(&core.db, project_id, &store::actor_of(&core.identity))?
@@ -427,10 +488,11 @@ pub fn delete_task(
                 task_id,
             )
         })?;
-        Ok(c.changes)
+        let notices = notices_for(&row, &c.doc, &c.value, TimerPauseReason::Deleted, None);
+        Ok((notices, c.changes))
     })?;
     notify(hook, project_id, &changes);
-    Ok(())
+    Ok(notices)
 }
 
 pub fn add_comment(
@@ -581,20 +643,206 @@ pub fn delete_subtask(
     })
 }
 
-/// Starts the viewer's timer on the task; a timer of theirs still running
-/// on another task of the project stops in the same change.
+/// Starts or resumes the viewer's timer on the task (a new segment).
 pub fn start_timer(
     state: &MiraState,
     hook: &dyn BoardSyncHook,
     project_id: &str,
     task_id: &str,
 ) -> AppResult<TaskDetail> {
-    edit_task_parts(state, hook, project_id, task_id, None, |doc, stamp| {
-        doc.start_timer(stamp, task_id).map(|_| ())
-    })
+    start_timer_with_notices(state, hook, project_id, task_id).map(|(d, _)| d)
 }
 
-/// Stops the viewer's running timer on the task, with an optional note.
+/// [`start_timer`]; a timer of the viewer still running on another task is
+/// paused: in this project in the same change, in every other project on
+/// this laptop with one change per project (skipped where the viewer may
+/// not edit). Every pause is returned as a notice (reason `switched`).
+pub fn start_timer_with_notices(
+    state: &MiraState,
+    hook: &dyn BoardSyncHook,
+    project_id: &str,
+    task_id: &str,
+) -> AppResult<(TaskDetail, Vec<TimerNotice>)> {
+    let (detail, notices, changes) = with_ctx(state, |core, policy, dir| {
+        let me = core.identity.public_key_hex().to_owned();
+        let row = store::project(&core.db, project_id)?;
+        policy.check(
+            &core.db,
+            &me,
+            &BoardAction::EditTask {
+                project_id: row.id.clone(),
+                task_id: task_id.to_owned(),
+            },
+        )?;
+        let at = clock::now_rfc3339();
+        let c = store::commit_local(&mut core.db, &core.identity, project_id, |doc| {
+            doc.start_timer(
+                Stamp {
+                    actor: &me,
+                    at: &at,
+                },
+                task_id,
+            )
+        })?;
+        let task = c.doc.live_task(task_id)?;
+        let started = task_code(&row.code, task.number);
+        let switched = TimerPauseReason::Switched;
+        let mut notices = notices_for(&row, &c.doc, &c.value.paused, switched, Some(&started));
+        let mut changes = vec![(row.id.clone(), c.changes)];
+        let detail = ctx(core, policy, dir).detail(&row, &task);
+
+        for other in store::projects(&core.db)? {
+            if other.id == row.id {
+                continue;
+            }
+            let doc = store::load_doc(&core.db, &other.id, &store::actor_of(&core.identity))?;
+            let orders: Vec<PauseOrder> = my_running(&doc, &me)?
+                .into_iter()
+                .filter(|(t, _)| may_edit(core, policy, &me, &other.id, &t.id))
+                .map(|(t, e)| PauseOrder {
+                    task_id: t.id,
+                    entry_id: e.id,
+                    at: at.clone(),
+                    reason: switched,
+                    started_code: Some(started.clone()),
+                })
+                .collect();
+            if orders.is_empty() {
+                continue;
+            }
+            // The start itself is done; a project that cannot be written
+            // keeps its timer and the timer guard tries again.
+            match pause_in_project(core, &other, &me, &orders) {
+                Ok((n, ch)) => {
+                    notices.extend(n);
+                    changes.push((other.id.clone(), ch));
+                }
+                Err(e) => eprintln!(
+                    "Mira: timer di proyek {} belum bisa dijeda [{}]: {e}",
+                    other.code,
+                    e.code()
+                ),
+            }
+        }
+        Ok((detail, notices, changes))
+    })?;
+    for (pid, ch) in &changes {
+        notify(hook, pid, ch);
+    }
+    Ok((detail, notices))
+}
+
+/// One running segment of the viewer to pause.
+#[derive(Debug, Clone)]
+pub(crate) struct PauseOrder {
+    pub task_id: String,
+    pub entry_id: String,
+    /// End to write (RFC 3339).
+    pub at: String,
+    pub reason: TimerPauseReason,
+    pub started_code: Option<String>,
+}
+
+/// Every running segment of `me` in `doc`, on live and deleted tasks.
+pub(crate) fn my_running(doc: &BoardDoc, me: &str) -> AppResult<Vec<(TaskData, TimeData)>> {
+    let mut out = Vec::new();
+    for t in doc.tasks()? {
+        let mine: Vec<TimeData> = t
+            .time
+            .iter()
+            .filter(|e| e.by == me && e.is_running())
+            .cloned()
+            .collect();
+        for e in mine {
+            out.push((t.clone(), e));
+        }
+    }
+    Ok(out)
+}
+
+/// The viewer's `EditTask` right, which pausing their own timer needs.
+pub(crate) fn may_edit(
+    core: &Core,
+    policy: &dyn BoardPolicy,
+    me: &str,
+    project_id: &str,
+    task_id: &str,
+) -> bool {
+    policy.allows(
+        &core.db,
+        me,
+        &BoardAction::EditTask {
+            project_id: project_id.to_owned(),
+            task_id: task_id.to_owned(),
+        },
+    )
+}
+
+/// Pauses `orders` (segments of `me` in project `row`) in one signed change;
+/// returns the notices and the change to hand to the sync hook. Segments
+/// that no longer run are skipped.
+pub(crate) fn pause_in_project(
+    core: &mut Core,
+    row: &ProjectRow,
+    me: &str,
+    orders: &[PauseOrder],
+) -> AppResult<(Vec<TimerNotice>, Vec<SignedChange>)> {
+    let c = store::commit_local(&mut core.db, &core.identity, &row.id, |doc| {
+        let mut done = Vec::new();
+        for o in orders {
+            let stamp = Stamp { actor: me, at: &o.at };
+            if let Some(p) = doc.pause_entry(stamp, &o.task_id, &o.entry_id)? {
+                done.push((o, p));
+            }
+        }
+        Ok(done)
+    })?;
+    let notices = c
+        .value
+        .iter()
+        .flat_map(|(o, p)| {
+            notices_for(row, &c.doc, std::slice::from_ref(p), o.reason, o.started_code.as_deref())
+        })
+        .collect();
+    Ok((notices, c.changes))
+}
+
+/// Notices for `paused` segments of project `row`, read from `doc` after
+/// the change.
+pub(crate) fn notices_for(
+    row: &ProjectRow,
+    doc: &BoardDoc,
+    paused: &[PausedTimer],
+    reason: TimerPauseReason,
+    started_code: Option<&str>,
+) -> Vec<TimerNotice> {
+    paused
+        .iter()
+        .map(|p| {
+            let task = doc.task(&p.task_id).ok().flatten();
+            TimerNotice {
+                reason,
+                project_id: row.id.clone(),
+                task_id: p.task_id.clone(),
+                code: task
+                    .as_ref()
+                    .map(|t| task_code(&row.code, t.number))
+                    .unwrap_or_default(),
+                title: task.map(|t| t.title).unwrap_or_default(),
+                at: p.end.clone(),
+                started_code: started_code.map(str::to_owned),
+            }
+        })
+        .collect()
+}
+
+/// Everything queued in `runtime`, oldest first; the queue is empty
+/// afterwards.
+pub fn take_timer_notices(runtime: &BoardRuntime) -> Vec<TimerNotice> {
+    runtime.notices.take()
+}
+
+/// Pauses the viewer's running timer on the task, with an optional note.
 pub fn stop_timer(
     state: &MiraState,
     hook: &dyn BoardSyncHook,
@@ -643,7 +891,7 @@ pub fn my_tasks(state: &MiraState) -> AppResult<Vec<MyTask>> {
     })
 }
 
-fn emit(app: &AppHandle) {
+pub(crate) fn emit(app: &AppHandle) {
     // The frontend also reloads after its own action, so a failed emit only
     // delays other open views until their next poll.
     let _ = app.emit(BOARD_EVENT, ());
@@ -750,7 +998,7 @@ pub async fn board_move_task(
     column_id: ColumnId,
     index: usize,
 ) -> AppResult<BoardView> {
-    let out = move_task(
+    let (out, notices) = move_task_with_notices(
         &state,
         board.hook.as_ref(),
         &project_id,
@@ -758,6 +1006,7 @@ pub async fn board_move_task(
         column_id,
         index,
     )?;
+    board.notices.push(notices);
     emit(&app);
     Ok(out)
 }
@@ -770,7 +1019,8 @@ pub async fn board_delete_task(
     project_id: String,
     task_id: String,
 ) -> AppResult<()> {
-    delete_task(&state, board.hook.as_ref(), &project_id, &task_id)?;
+    let notices = delete_task_with_notices(&state, board.hook.as_ref(), &project_id, &task_id)?;
+    board.notices.push(notices);
     emit(&app);
     Ok(())
 }
@@ -877,9 +1127,20 @@ pub async fn board_start_timer(
     project_id: String,
     task_id: String,
 ) -> AppResult<TaskDetail> {
-    let out = start_timer(&state, board.hook.as_ref(), &project_id, &task_id)?;
+    let (out, notices) =
+        start_timer_with_notices(&state, board.hook.as_ref(), &project_id, &task_id)?;
+    board.notices.push(notices);
     emit(&app);
     Ok(out)
+}
+
+/// The automatic timer pauses queued since the last call, oldest first;
+/// the queue is empty afterwards. The UI calls it after `mira://board`.
+#[tauri::command]
+pub async fn board_take_timer_notices(
+    board: State<'_, BoardRuntime>,
+) -> AppResult<Vec<TimerNotice>> {
+    Ok(take_timer_notices(&board))
 }
 
 #[tauri::command]

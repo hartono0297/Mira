@@ -1,10 +1,11 @@
-import { IconPlayerPlay, IconPlayerStop } from "@tabler/icons-react";
-import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
+import { IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { toAppError } from "../../api";
 import { boardApi, type TaskDetail } from "../../api/board";
 import { formatDateTime } from "./format";
-import { runningSinceSr, SAY, stopTitleSr, TW } from "./teksWaktu";
-import { formatClock, formatDurationLong, runningSecs } from "./timeFormat";
+import { earlierSr, pausedSr, runningSinceSr, SAY, TW } from "./teksWaktu";
+import { formatClock, formatDuration, formatDurationLong, myTimer, runningSecs } from "./timeFormat";
+import { useTimerNoticeAnnouncement } from "./timerNoticeStore";
 import { useNow } from "./useNow";
 import "./field.css";
 import "./time.css";
@@ -17,10 +18,10 @@ export type TimeProps = {
   onError: (message: string) => void;
 };
 
-// Lebih dari 12 jam berjalan: kemungkinan besar lupa dihentikan.
+// Lebih dari 12 jam berjalan: kemungkinan besar lupa dijeda.
 export const FORGOT_SECS = 12 * 3600;
 
-// Escape di dalam kotak kecil (catatan timer, form catat manual, konfirmasi hapus)
+// Escape di dalam kotak kecil (form catat manual, konfirmasi hapus, isian subtask)
 // hanya menutup kotak itu. Radix Dialog mendengar Escape di document saat capture,
 // jadi pendengar ini dipasang di window (lebih dulu) dan menghentikan event-nya.
 // Kotaknya juga diberi atribut data-escape-local, yang dihormati dialog detail task.
@@ -63,35 +64,50 @@ export function useAnnounce(): [string, (text: string) => void] {
   return [say, announce];
 }
 
-// Jam berjalan. Dipisah supaya hanya bagian ini yang dirender ulang tiap detik.
-// Tidak dibacakan: pembaca layar mendapat teks "berjalan sejak" yang tetap.
-function Clock({ since, className }: { since: string; className: string }) {
+// Jam berjalan: total saya di task ini (semua segmen ditambah yang berjalan).
+// Dipisah supaya hanya bagian ini yang dirender ulang tiap detik. Tidak dibacakan:
+// pembaca layar mendapat teks "berjalan sejak" yang tetap.
+function MyClock({ task, me }: { task: TaskDetail; me: string }) {
   const now = useNow(1000);
   return (
-    <span className={className} aria-hidden="true">
-      {formatClock(runningSecs(since, now))}
+    <span className="td-mini-clock" aria-hidden="true">
+      {formatClock(myTimer(task, me, now).totalSecs)}
     </span>
   );
 }
 
+// Penanda lupa dijeda menghitung segmen yang berjalan saja, bukan total.
 export function ForgotTag({ since }: { since: string }) {
   const now = useNow(60_000);
   if (runningSecs(since, now) <= FORGOT_SECS) return null;
   return <span className="td-forgot">{TW.forgot}</span>;
 }
 
-// Timer saya di kepala dialog: tombol Mulai timer, atau jam berjalan dengan tombol Hentikan timer.
-export function TimerMini({ task, canEdit, onChange, onError }: TimeProps) {
+// Total saya tanpa jam berjalan: "Dijeda 1j 20m" saat dijeda, atau "Total Anda 1j 20m"
+// saat task di Selesai atau saat ada catatan lama tapi belum pernah memakai timer.
+function MySum({ secs, paused }: { secs: number; paused: boolean }) {
+  const long = formatDurationLong(secs);
+  return (
+    <>
+      <span className="td-mini-sum" aria-hidden="true">
+        {paused && <span className="td-pause" />}
+        {paused ? TW.paused : TW.yourTotal}
+        <b>{formatDuration(secs)}</b>
+      </span>
+      <span className="sr-only">{paused ? pausedSr(long) : `${TW.yourTotal} ${long}.`}</span>
+    </>
+  );
+}
+
+// Timer saya di kepala dialog. Satu tombol yang tetap sama: labelnya berganti antara
+// Mulai timer, Jeda, dan Lanjutkan, jadi fokus keyboard tidak hilang saat keadaannya
+// berubah, juga kalau berubah dari luar (dijeda otomatis atau oleh laptop lain).
+// Jeda menutup segmen yang berjalan, Lanjutkan membuka segmen baru.
+export function TimerMini({ task, me, canEdit, onChange, onError }: TimeProps) {
   const id = useId();
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
   const [say, announce] = useAnnounce();
-  const focusAfter = useRef<"start" | "stop" | null>(null);
-  const startRef = useRef<HTMLButtonElement>(null);
-  const stopRef = useRef<HTMLButtonElement>(null);
-  const noteRef = useRef<HTMLInputElement>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const notice = useTimerNoticeAnnouncement();
   const alive = useRef(true);
 
   useEffect(() => {
@@ -101,46 +117,23 @@ export function TimerMini({ task, canEdit, onChange, onError }: TimeProps) {
     };
   }, []);
 
-  const running = task.myRunningEntry ? (task.timeEntries.find((e) => e.id === task.myRunningEntry) ?? null) : null;
-  const isOpen = open && !!running && canEdit;
+  // Keadaan dan total saat ini; jam berjalan menghitung sendiri tiap detik (MyClock).
+  const mine = myTimer(task, me, Date.now());
+  const { state, running, closedSecs } = mine;
+  // Task di Selesai: timer sudah dijeda otomatis, jadi cukup tampilkan totalnya.
+  const done = task.statusTime.currentColumn === "done";
+  const showSum = !running && (state === "paused" || closedSecs > 0);
+  const hasContent = !!running || showSum;
 
-  // Setelah Mulai atau Hentikan tombolnya berganti, jadi fokus dipindah ke penggantinya.
-  useEffect(() => {
-    if (focusAfter.current === "start") startRef.current?.focus();
-    if (focusAfter.current === "stop") stopRef.current?.focus();
-    focusAfter.current = null;
-  });
-
-  useEffect(() => {
-    if (isOpen) noteRef.current?.focus();
-  }, [isOpen]);
-
-  // Klik di luar kotak catatan menutupnya tanpa menghentikan timer.
-  useEffect(() => {
-    if (!isOpen) return;
-    function onDown(e: PointerEvent) {
-      const t = e.target as Node;
-      if (boxRef.current?.contains(t) || stopRef.current?.contains(t)) return;
-      setOpen(false);
-    }
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [isOpen]);
-
-  useLocalEscape(boxRef, isOpen, () => {
-    setOpen(false);
-    stopRef.current?.focus();
-  });
-
-  async function start() {
+  async function play() {
     if (busy) return;
+    const resuming = state === "paused";
     setBusy(true);
     try {
       const next = await boardApi.startTimer(task.projectId, task.id);
       if (!alive.current) return;
-      focusAfter.current = "stop";
       onChange(next);
-      announce(SAY.started);
+      announce(resuming ? SAY.resumed : SAY.started);
     } catch (err) {
       if (alive.current) onError(toAppError(err).message);
     } finally {
@@ -148,19 +141,14 @@ export function TimerMini({ task, canEdit, onChange, onError }: TimeProps) {
     }
   }
 
-  async function stop(withNote: boolean) {
-    if (busy || !running) return;
-    const clean = withNote ? note.trim() : "";
+  async function pause() {
+    if (busy) return;
     setBusy(true);
     try {
-      const next = await boardApi.stopTimer(task.projectId, task.id, clean ? clean : null);
+      const next = await boardApi.stopTimer(task.projectId, task.id, null);
       if (!alive.current) return;
-      const done = next.timeEntries.find((e) => e.id === running.id);
-      setOpen(false);
-      setNote("");
-      focusAfter.current = "start";
       onChange(next);
-      announce(done && done.secs > 0 ? SAY.stopped(formatDurationLong(done.secs)) : SAY.stoppedPlain);
+      announce(SAY.paused(formatDurationLong(myTimer(next, me, Date.now()).totalSecs)));
     } catch (err) {
       if (alive.current) onError(toAppError(err).message);
     } finally {
@@ -168,124 +156,56 @@ export function TimerMini({ task, canEdit, onChange, onError }: TimeProps) {
     }
   }
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    void stop(true);
-  }
+  const label = running ? TW.pause : state === "paused" ? TW.resume : TW.start;
+  const Icon = running ? IconPlayerPause : IconPlayerPlay;
 
-  const since = running ? formatDateTime(running.start) : "";
-
-  // Wilayah aria-live selalu di posisi pertama supaya tidak dipasang ulang saat
-  // tombol Mulai berganti jadi jam berjalan.
+  // Dua wilayah aria-live selalu di posisi pertama, sejak awal, supaya tidak dipasang
+  // ulang saat jam muncul atau hilang: hasil aksi saya, lalu jeda otomatis dari luar.
   return (
     <div
       className="td-mini"
-      role={running ? "group" : undefined}
-      aria-label={running ? TW.timerGroup : undefined}
+      role={hasContent ? "group" : undefined}
+      aria-label={hasContent ? TW.timerGroup : undefined}
       data-running={running ? "true" : undefined}
+      data-paused={state === "paused" ? "true" : undefined}
     >
       <span className="sr-only" role="status" aria-live="polite">
         {say}
       </span>
-      {!running && canEdit && (
-        <>
-          <button
-            type="button"
-            ref={startRef}
-            className="btn btn-ghost btn-sm"
-            onClick={start}
-            title={TW.startHint}
-            aria-describedby={`${id}-start-hint`}
-            aria-disabled={busy || undefined}
-            aria-busy={busy || undefined}
-          >
-            <IconPlayerPlay size={16} aria-hidden="true" />
-            {TW.start}
-          </button>
-          {/* Deskripsi tombol: dibaca sekali saat tombol difokus, terlihat sebagai title saat disorot. */}
-          <span id={`${id}-start-hint`} hidden>
-            {TW.startHint}
-          </span>
-        </>
-      )}
+      <span className="sr-only" role="status" aria-live="polite">
+        {notice}
+      </span>
       {running && (
         <>
           <span className="td-run" aria-hidden="true" />
-          <span className="sr-only">{runningSinceSr(since)}</span>
+          <span className="sr-only">
+            {runningSinceSr(formatDateTime(running.start))}
+            {closedSecs > 0 ? ` ${earlierSr(formatDurationLong(closedSecs))}` : ""}
+          </span>
           <ForgotTag since={running.start} />
-          <Clock since={running.start} className="td-mini-clock" />
+          <MyClock task={task} me={me} />
         </>
       )}
-      {running && canEdit && (
-        <div className="td-mini-anchor">
+      {showSum && <MySum secs={mine.totalSecs} paused={state === "paused" && !done} />}
+      {canEdit && (
+        <>
           <button
             type="button"
-            ref={stopRef}
-            className="btn btn-sm"
-            onClick={() => {
-              if (!busy) setOpen((o) => !o);
-            }}
+            className="btn btn-ghost btn-sm"
+            onClick={running ? pause : play}
+            title={running ? undefined : TW.startHint}
+            aria-describedby={running ? undefined : `${id}-hint`}
             aria-disabled={busy || undefined}
             aria-busy={busy || undefined}
-            aria-haspopup="dialog"
-            aria-expanded={isOpen}
-            aria-controls={isOpen ? `${id}-stop` : undefined}
           >
-            <IconPlayerStop size={16} aria-hidden="true" />
-            {TW.stop}
+            <Icon size={16} aria-hidden="true" />
+            {label}
           </button>
-          {isOpen && (
-            <div
-              className="td-stop-pop"
-              id={`${id}-stop`}
-              role="dialog"
-              aria-label={TW.stopDialog}
-              ref={boxRef}
-              data-escape-local
-              data-unsaved={note.trim() ? "true" : undefined}
-            >
-              <form className="td-stop-form" onSubmit={onSubmit} noValidate>
-                <p className="td-stop-title">
-                  <span aria-hidden="true">
-                    {TW.stopAt} <Clock since={running.start} className="td-stop-clock" />
-                  </span>
-                  <span className="sr-only">{stopTitleSr(since)}</span>
-                </p>
-                <label className="td-label" htmlFor={`${id}-note`}>
-                  {TW.stopNoteLabel}
-                </label>
-                <input
-                  id={`${id}-note`}
-                  ref={noteRef}
-                  type="text"
-                  className="td-input td-box td-box-text"
-                  maxLength={200}
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder={TW.notePlaceholder}
-                  aria-describedby={`${id}-hint`}
-                  autoComplete="off"
-                />
-                <p className="hint" id={`${id}-hint`}>
-                  {TW.stopHint}
-                </p>
-                <div className="td-row-end">
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void stop(false)}
-                    aria-disabled={busy || undefined}
-                  >
-                    {TW.stopWithoutNote}
-                  </button>
-                  <button type="submit" className="btn btn-sm" aria-disabled={busy || undefined} aria-busy={busy || undefined}>
-                    {TW.stopWithNote}
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-        </div>
+          {/* Deskripsi Mulai dan Lanjutkan: dibaca sekali saat tombol difokus, terlihat sebagai title saat disorot. */}
+          <span id={`${id}-hint`} hidden>
+            {TW.startHint}
+          </span>
+        </>
       )}
     </div>
   );
