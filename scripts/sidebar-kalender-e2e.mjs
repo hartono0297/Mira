@@ -183,6 +183,8 @@ const D = {
   tomorrow: isoDate(1),
   doneDay: isoDate(3),
   busy: isoDate(5),
+  // Tiga hari sebelum tanggal 1 bulan ini: di luar rentang Agenda bulan ini, jadi masuk grup "Lewat tenggat".
+  beforeMonth: addDaysIso(`${TODAY.slice(0, 8)}01`, -3),
 };
 
 // Task per proyek. mine: penanggung jawab saya. done: dipindah ke Selesai.
@@ -191,6 +193,7 @@ const TASKS = {
     { title: "Rapat mingguan klien", due: D.today, mine: true },
     { title: "Kirim revisi gambar", due: D.tomorrow },
     { title: "Bayar tagihan vendor", due: D.yesterday },
+    { title: "Tagihan bulan lalu", due: D.beforeMonth },
     { title: "Arsipkan dokumen lama", due: D.doneDay, done: true },
     { title: "Cek RAB lantai 1", due: D.busy },
     { title: "Cek RAB lantai 2", due: D.busy },
@@ -206,6 +209,7 @@ const TASKS = {
 };
 const T_MINE = "Rapat mingguan klien";
 const T_OVERDUE = "Bayar tagihan vendor";
+const T_OLD = "Tagihan bulan lalu";
 const T_DONE = "Arsipkan dokumen lama";
 const T_DRAG = "Kirim revisi gambar";
 const T_KEYS = "Pesan material B";
@@ -297,18 +301,43 @@ async function launch(node, { mdns = false } = {}) {
     killTree(child);
     throw new Error(`WebView2 ${node.id} tidak bisa dihubungi lewat CDP (port ${node.cdp})`);
   }
-  let page;
-  for (let i = 0; i < 40 && !page; i++) {
-    page = browser.contexts().flatMap((c) => c.pages())[0];
-    if (!page) await sleep(250);
-  }
-  const app = { node, child, browser, page, exited, ipc: [] };
-  watchIpc(app);
-  await page.waitForLoadState("domcontentloaded");
-  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
-  await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
+  // Dicatat sebelum menunggu halaman, supaya proses tetap ditutup kalau langkah berikut gagal.
+  const app = { node, child, browser, page: null, exited, ipc: [] };
   running.add(app);
-  await rememberKey(app);
+  try {
+    // WebView2 mulai di about:blank lalu pindah ke http://tauri.localhost/. Saat
+    // build lain sedang berjalan, start dingin bisa lebih dari 20 detik; halaman
+    // yang masih about:blank setelah 30 detik dimuat ulang sekali.
+    const deadline = Date.now() + 90000;
+    let reloaded = false;
+    const started = Date.now();
+    while (!app.page) {
+      if (Date.now() > deadline) throw new Error(`halaman Mira ${node.id} tidak siap dalam 90 detik`);
+      for (const p of browser.contexts().flatMap((c) => c.pages())) {
+        // __TAURI_INTERNALS__ juga disuntikkan ke about:blank, tetapi IPC dari sana
+        // ditolak ("Origin header is not a valid URL"); tunggu halaman aplikasi.
+        const ready =
+          p.url() !== "about:blank" && (await p.evaluate(() => "__TAURI_INTERNALS__" in window).catch(() => false));
+        if (ready) {
+          app.page = p;
+          break;
+        }
+        if (!reloaded && Date.now() - started > 30000 && p.url() === "about:blank") {
+          reloaded = true;
+          note(`${node.id}: halaman masih about:blank setelah 30 detik, dimuat ulang`);
+          await p.reload().catch(() => {});
+        }
+      }
+      if (!app.page) await sleep(500);
+    }
+    watchIpc(app);
+    await app.page.waitForLoadState("domcontentloaded");
+    await app.page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
+    await rememberKey(app);
+  } catch (err) {
+    await stop(app);
+    throw err;
+  }
   return app;
 }
 
@@ -682,6 +711,9 @@ async function phasesOneToSeven() {
     // Tooltip saat fokus keyboard: kursor keluar dari sidebar, fokus tombol, lalu Tab.
     await page.mouse.move(900, 500);
     await sleep(200);
+    // Fokus masih di tombol sejak diklik (fokus karena klik tidak memunculkan
+    // tooltip); lepas dulu supaya focus() memicu focusin dari keyboard.
+    await page.evaluate(() => document.activeElement?.blur());
     await toggle.focus();
     const toggleTip = await poll(async () => ((await tooltip(page).isVisible()) ? (await tooltip(page).innerText()).trim() : null), 3000);
     await page.keyboard.press("Tab");
@@ -793,7 +825,7 @@ async function phasesOneToSeven() {
     await settled(page);
     const title = await calTitle(page);
     const todayCell = await page.locator('.cv-month td[aria-current="date"]').getAttribute("data-cal-day");
-    const heads = (await page.locator(".cv-month th.cv-th").allInnerTexts()).map((s) => s.trim());
+    const heads = (await page.locator(".cv-month th.cv-th > span[aria-hidden=true]").allInnerTexts()).map((s) => s.trim());
     check(
       "3. Bulan: judul bulan ini, sel hari ini aria-current=date, nama hari Sen..Min",
       title === monthTitleOf(TODAY, MONTHS_ID) && todayCell === TODAY && heads.join(",") === WEEKDAYS_ID.join(","),
@@ -842,22 +874,58 @@ async function phasesOneToSeven() {
       shown >= 1 && shown <= 6 && moreText === TX.more(total - shown) && moreName.startsWith(`${total - shown} task lagi`),
       `${shown} chip, "${moreText}", nama "${moreName}"`,
     );
-    await more.click();
     const panel = page.locator(".cv-more[role=dialog]");
+    const want = new Set([...TASKS.PA, ...TASKS.PB].filter((t) => t.due === D.busy).map((t) => keyOf(t.title)));
+    // Elemen yang sedang difokus, sebagai teks untuk detail pemeriksaan.
+    const activeInfo = () =>
+      page.evaluate(() => {
+        const a = document.activeElement;
+        if (!a || a === document.body) return "body";
+        const where = a.closest(".cv-more") ? "di DayMore" : "di luar DayMore";
+        return `${a.tagName.toLowerCase()}.${[...a.classList].join(".")} ${a.getAttribute("data-cal-task") ? "chip" : ""} ${where}`.replace(/\s+/g, " ");
+      });
+    const inPanelChip = () =>
+      page.evaluate(() => !!document.activeElement?.closest(".cv-more") && document.activeElement?.hasAttribute("data-cal-task"));
+
+    // a. Dibuka dengan mouse.
+    await more.click();
     await panel.waitFor({ timeout: 5000 });
     const listed = new Set(await panel.locator("[data-cal-task]").evaluateAll((els) => els.map((e) => e.getAttribute("data-cal-task"))));
-    const want = new Set([...TASKS.PA, ...TASKS.PB].filter((t) => t.due === D.busy).map((t) => keyOf(t.title)));
-    const firstFocused = await page.evaluate(() => !!document.activeElement?.closest(".cv-more") && document.activeElement?.hasAttribute("data-cal-task"));
+    const focusMouse = (await poll(inPanelChip, 1500)) === true;
+    const activeMouse = await activeInfo();
+    const expanded = await more.getAttribute("aria-expanded");
     check(
-      "3. '+N lagi' membuka DayMore berisi semua task hari itu, fokus di chip pertama",
-      sameSet(listed, want) && firstFocused && (await more.getAttribute("aria-expanded")) === "true",
-      `${listed.size} dari ${want.size} task`,
+      "3. '+N lagi' (klik) membuka DayMore berisi semua task hari itu, aria-expanded true",
+      sameSet(listed, want) && expanded === "true",
+      `${listed.size} dari ${want.size} task, aria-expanded=${expanded}`,
     );
+    check("3. DayMore (klik): fokus pindah ke chip pertama di daftar", focusMouse, `fokus: ${activeMouse}`);
     await shot(page, "07-kalender-daymore-terang.png");
     await page.keyboard.press("Escape");
     await panel.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
+    const closedMouse = (await panel.count()) === 0;
+    if (!closedMouse) {
+      await panel.getByRole("button", { name: "Tutup daftar" }).click().catch(() => {});
+      await panel.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
+    }
+
+    // b. Dibuka dengan keyboard: fokus tombol "+N lagi", Enter.
+    await more.focus();
+    await page.keyboard.press("Enter");
+    await panel.waitFor({ timeout: 5000 });
+    const focusKeys = (await poll(inPanelChip, 1500)) === true;
+    const activeKeys = await activeInfo();
+    check("3. DayMore (Enter di '+N lagi'): fokus pindah ke chip pertama di daftar", focusKeys, `fokus: ${activeKeys}`);
+    await page.keyboard.press("Escape");
+    await panel.waitFor({ state: "detached", timeout: 3000 }).catch(() => {});
+    const closedKeys = (await panel.count()) === 0;
     const back = await page.evaluate(() => document.activeElement?.classList.contains("cv-more-btn") ?? false);
-    check("3. Esc menutup DayMore dan fokus kembali ke tombol '+N lagi'", (await panel.count()) === 0 && back);
+    check(
+      "3. Esc menutup DayMore dan fokus kembali ke tombol '+N lagi'",
+      closedMouse && closedKeys && back,
+      `tertutup (klik)=${closedMouse}, tertutup (Enter)=${closedKeys}, fokus: ${await activeInfo()}`,
+    );
+    if (!closedKeys) await panel.getByRole("button", { name: "Tutup daftar" }).click().catch(() => {});
     await showMonthOf(page, D.today);
   });
 
@@ -922,13 +990,19 @@ async function phasesOneToSeven() {
     const late = page.locator("section.cv-alate");
     await late.waitFor({ timeout: 5000 });
     const heading = (await late.locator("h3").innerText()).trim();
-    const hasOverdue = (await chipIn(late, keyOf(T_OVERDUE)).count()) === 1;
+    // Grup ini berisi task belum selesai yang tenggatnya sebelum awal rentang
+    // (useCalendarData: tasks(null, awal-1)); task kemarin di dalam rentang ada di bagian harinya.
+    const hasOld = (await chipIn(late, keyOf(T_OLD)).count()) === 1;
+    const yesterdayInRange = monthIndex(D.yesterday) === monthIndex(TODAY);
+    const yesterdayAt = yesterdayInRange
+      ? (await chipIn(page.locator(`section.cv-aday[data-cal-day="${D.yesterday}"]`), keyOf(T_OVERDUE)).count()) === 1
+      : (await chipIn(late, keyOf(T_OVERDUE)).count()) === 1;
     const todaySection = page.locator(`section.cv-aday[data-cal-day="${TODAY}"]`);
     const todayRow = (await chipIn(todaySection, keyOf(T_MINE)).getAttribute("aria-label").catch(() => "")) ?? "";
     check(
-      "3. Agenda: grup 'Lewat tenggat' berisi task kemarin, baris hari ini menyebut penanggung jawab",
-      heading === TX.overdueGroup && hasOverdue && todayRow.includes(`untuk ${NODES.A.name}`),
-      `${heading}; ${todayRow}`,
+      "3. Agenda: grup 'Lewat tenggat' berisi task bulan lalu yang belum selesai, task kemarin di bagian harinya, baris hari ini menyebut penanggung jawab",
+      heading === TX.overdueGroup && hasOld && yesterdayAt && todayRow.includes(`untuk ${NODES.A.name}`),
+      `${heading}; lama=${hasOld}, kemarin=${yesterdayAt}; ${todayRow}`,
     );
     await shot(page, "09-kalender-agenda-terang.png");
     await setView(page, "month");
@@ -1146,7 +1220,7 @@ async function phasesOneToSeven() {
     await setView(page, "month");
     await showMonthOf(page, D.today);
     const title = await calTitle(page);
-    const heads = (await page.locator(".cv-month th.cv-th").allInnerTexts()).map((s) => s.trim());
+    const heads = (await page.locator(".cv-month th.cv-th > span[aria-hidden=true]").allInnerTexts()).map((s) => s.trim());
     const navOk = (await navAny(page, EN.calendar).count()) === 1;
     const lateLabel = await (async () => {
       await showMonthOf(page, D.yesterday);
@@ -1315,6 +1389,8 @@ async function guestAttempt(n) {
     check("8. Fase Tamu berjalan tanpa error", false, errText(err));
     if (B) await shot(B.page, `gagal-tamu-${n}.png`);
   } finally {
+    // Kunci B dicatat lagi sebelum ditutup, juga kalau percobaan gagal di tengah.
+    if (B) await rememberKey(B);
     if (B) await stop(B);
   }
 }
@@ -1359,7 +1435,7 @@ try {
   else note("SK_E2E_GUEST=0: fase Tamu dilewati");
 } catch (err) {
   check("Skrip berjalan tanpa error", false, errText(err));
-  for (const app of running) await shot(app.page, `gagal-${app.node.id.toLowerCase()}.png`);
+  for (const app of running) if (app.page) await shot(app.page, `gagal-${app.node.id.toLowerCase()}.png`);
 }
 
 for (const app of [...running]) await stop(app);
@@ -1402,7 +1478,12 @@ if (KEEP_DATA) {
     }
   }
   console.log(`Folder data uji: ${root}. Dihapus sekarang.`);
-  rmSync(root, { recursive: true, force: true });
+  // WebView2 bisa menahan berkas sebentar setelah proses ditutup.
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
+  } catch (err) {
+    console.log(`Folder data uji belum bisa dihapus (${err.code ?? err}): ${root}`);
+  }
 }
 
 const failed = results.filter((r) => !r.ok).length;

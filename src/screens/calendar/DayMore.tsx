@@ -79,12 +79,17 @@ export function DayMore({ day, tasks, today, colors, draggingKey, getOpener, isO
     };
   }, [tasks.length]);
 
-  // Fokus masuk sekali saat dibuka.
+  // Fokus masuk sekali saat dibuka, setelah posisinya terpasang. Selama panel
+  // masih visibility: hidden, WebView menolak focus() dan fokus tertinggal di
+  // tombol "+N lagi" (jsdom tidak memodelkan ini, e2e yang menangkapnya).
+  const entered = useRef(false);
   useEffect(() => {
+    if (entered.current || pos.visibility === "hidden") return;
+    entered.current = true;
     const panel = ref.current;
     const first = panel?.querySelector<HTMLElement>("[data-cal-task]") ?? panel?.querySelector<HTMLElement>("button");
     first?.focus();
-  }, []);
+  }, [pos]);
 
   // Chip yang difokus keluar dari daftar (tenggatnya pindah): daftar ditutup.
   // Efek anak jalan sebelum efek induk, jadi useFocusKey di MonthView sesudahnya
