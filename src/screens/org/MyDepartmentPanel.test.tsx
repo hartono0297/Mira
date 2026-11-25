@@ -118,6 +118,7 @@ describe("Departemen saya: siapa yang melihat tab", () => {
       "Departemen saya",
       "Permintaan bergabung",
       "Label",
+      "Sticker",
       "Undangan",
       "Kopi",
     ]);

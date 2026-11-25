@@ -171,7 +171,7 @@ describe("Menu pesan: Beri kopi", () => {
   it("tampil di pesan rekan setelah Sebut, tidak di pesan sendiri", async () => {
     renderConv();
     fireEvent.contextMenu(await screen.findByText("Draft kontraknya sudah saya kirim."));
-    expect(itemNames()).toEqual(["Balas", "Salin teks", "Sebut Sari Uji", "Beri kopi"]);
+    expect(itemNames()).toEqual(["Balas", "Beri reaksi", "Salin teks", "Sebut Sari Uji", "Beri kopi"]);
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
 
     fireEvent.contextMenu(screen.getByText("Siap, saya cek siang ini."));
@@ -182,7 +182,7 @@ describe("Menu pesan: Beri kopi", () => {
     kopi.overview = null;
     renderConv();
     fireEvent.contextMenu(await screen.findByText("Draft kontraknya sudah saya kirim."));
-    expect(itemNames()).toEqual(["Balas", "Salin teks", "Sebut Sari Uji"]);
+    expect(itemNames()).toEqual(["Balas", "Beri reaksi", "Salin teks", "Sebut Sari Uji"]);
   });
 
   it("nonaktif dengan alasan yang dibacakan kalau pesan sudah diberi kopi", async () => {

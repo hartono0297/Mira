@@ -11,6 +11,8 @@ const id = {
     // Dibacakan sebelum label: "Rina, label Arsitek, Senior".
     prefix: (_count: number) => ", label ",
     more: (count: number) => `, dan ${count} label lain`,
+    // Dibacakan sebelum label yang berdiri sendiri di bawah nama: "Label: Arsitek, Senior".
+    list: (_count: number) => "Label: ",
   },
   count: {
     more: (cap: number, meaning: string) => `lebih dari ${cap} ${meaning}`,

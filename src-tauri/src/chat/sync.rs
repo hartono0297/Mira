@@ -172,7 +172,14 @@ fn may_offer(
     seen: &mut HashMap<String, bool>,
     ops_seen: &mut HashMap<String, HashSet<String>>,
 ) -> AppResult<bool> {
+    // v0.5.1 kinds only go to laptops that understand them (`compat`).
+    if !super::compat::peer_may_receive_kind(ctx, peer, &row.kind) {
+        return Ok(false);
+    }
     match row.kind.as_str() {
+        // Office stickers are for every active member (guests too: they
+        // see emotes in the conversations they are in).
+        "sticker_set" => Ok(true),
         "envelope" => Ok(row
             .recipient
             .as_deref()
@@ -610,8 +617,14 @@ impl ChatSync {
     ///   while a message there still carries it. A blob that was in the store
     ///   before chat touched it (documents, signing) is served only where this
     ///   laptop attached it to its own message.
+    /// - v0.5.1: an office sticker image to any active member, when this
+    ///   laptop uploaded it as an office sticker, or downloaded it for the
+    ///   catalog alone and holds it for no conversation
+    ///   (`fetch::OFFICE_STICKERS`), and an office sticker that is not
+    ///   deleted still uses it. A blob that was already here when the sticker
+    ///   record came is not served this way.
     ///
-    /// A message naming a hash is never enough on its own.
+    /// A message or sticker record naming a hash is never enough on its own.
     fn blob_allowed(&self, peer: &str, hash: &str) -> AppResult<Option<PathBuf>> {
         let Ok(parsed) = BlobHash::parse(hash) else {
             return Ok(None);
@@ -648,8 +661,22 @@ impl ChatSync {
 }
 
 fn plain_allowed(ctx: &Ctx, peer: &str, hash: &str, preexisting: bool) -> AppResult<bool> {
-    for held in fetch::blob_convs(ctx.conn, hash)? {
+    let all = fetch::blob_convs(ctx.conn, hash)?;
+    // Held for a conversation too: the conversation rules decide alone.
+    let only_catalog = all.iter().all(|c| fetch::is_sticker_hold(&c.conv));
+    for held in &all {
         if preexisting && !held.own {
+            continue;
+        }
+        if held.conv == fetch::OFFICE_STICKERS {
+            // Uploaded here as an office sticker, or fetched for the catalog
+            // alone (never riding on a chat pribadi or group file).
+            if (held.own || only_catalog) && super::stickers::office_uses(ctx.conn, hash)? {
+                return Ok(true);
+            }
+            continue;
+        }
+        if fetch::is_sticker_hold(&held.conv) {
             continue;
         }
         // A message there must still carry the file (for a preexisting blob,

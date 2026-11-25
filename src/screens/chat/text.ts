@@ -176,6 +176,96 @@ export function segmentMentions(text: string, mentions: Person[], me: string): S
   return out;
 }
 
+// Emote kantor (v0.5.1)
+
+// Nama emote dari teks yang persis ":nama:", selain itu null. Aturan nama sama dengan inti Rust.
+export function emoteName(text: string): string | null {
+  const m = /^:([a-z0-9_]{2,32}):$/.exec(text);
+  return m ? m[1] : null;
+}
+
+export type EmotePart = { kind: "emote"; text: string; name: string };
+export type TextPart = { kind: "text"; text: string } | EmotePart;
+
+// Pecah teks jadi potongan biasa dan ":nama:" untuk emote yang dikenal (known). Titik dua tidak
+// boleh menempel ke huruf atau angka di luar, jadi jam "10:30:45" dan alamat seperti
+// "http://host:80" tetap teks. Nama yang tidak dikenal juga tetap teks.
+export function splitEmotes(text: string, known: (name: string) => boolean): TextPart[] {
+  const out: TextPart[] = [];
+  const re = /:([a-z0-9_]{2,32}):/g;
+  let pos = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    const before = text[start - 1];
+    const after = text[end];
+    if ((before !== undefined && WORD_CHAR.test(before)) || (after !== undefined && WORD_CHAR.test(after)) || !known(m[1])) {
+      re.lastIndex = start + 1;
+      continue;
+    }
+    if (start > pos) out.push({ kind: "text", text: text.slice(pos, start) });
+    out.push({ kind: "emote", text: m[0], name: m[1] });
+    pos = end;
+  }
+  if (pos < text.length) out.push({ kind: "text", text: text.slice(pos) });
+  return out;
+}
+
+export type MessagePart = Segment | EmotePart;
+
+// Isi pesan: mention dulu, lalu emote di potongan teks biasa. "@Nama" tidak pernah dipecah.
+export function segmentMessage(
+  text: string,
+  mentions: Person[],
+  me: string,
+  known: (name: string) => boolean,
+): MessagePart[] {
+  return segmentMentions(text, mentions, me).flatMap((s): MessagePart[] =>
+    s.kind === "text" ? splitEmotes(s.text, known) : [s],
+  );
+}
+
+type GraphemeSegmenter = { segment: (s: string) => Iterable<{ segment: string }> };
+type SegmenterCtor = new (locale?: string, options?: { granularity: "grapheme" }) => GraphemeSegmenter;
+
+function graphemes(s: string): string[] {
+  const Segmenter = (Intl as unknown as { Segmenter?: SegmenterCtor }).Segmenter;
+  if (!Segmenter) return Array.from(s);
+  return Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(s), (g) => g.segment);
+}
+
+const PICTOGRAPHIC = /\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u;
+
+// Pesan yang isinya hanya 1 sampai 3 emoji atau emote kantor (spasi boleh) tampil lebih besar.
+export function isEmojiOnly(text: string, known: (name: string) => boolean): boolean {
+  let n = 0;
+  for (const part of splitEmotes(text.trim(), known)) {
+    if (part.kind === "emote") {
+      n++;
+      continue;
+    }
+    for (const g of graphemes(part.text)) {
+      if (/^\s+$/u.test(g)) continue;
+      if (!PICTOGRAPHIC.test(g)) return false;
+      n++;
+    }
+    if (n > 3) return false;
+  }
+  return n >= 1 && n <= 3;
+}
+
+// Daftar nama untuk keterangan reaksi: "Rina", "Rina dan Dimas", "Rina, Dimas, dan Sari".
+// join berisi teks "dan" dalam bahasa aktif (kamus reaksi).
+export function joinNames(
+  names: string[],
+  join: { joinTwo: (a: string, b: string) => string; joinMany: (head: string, last: string) => string },
+): string {
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return join.joinTwo(names[0], names[1]);
+  return join.joinMany(names.slice(0, -1).join(", "), names[names.length - 1]);
+}
+
 // Anggota yang "@Nama"-nya ada di teks, untuk daftar mention saat mengirim.
 export function mentionsInText(text: string, members: Person[]): Person[] {
   return members.filter((m) => findAll(text, m.name).length > 0);

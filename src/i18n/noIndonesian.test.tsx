@@ -287,6 +287,8 @@ function msg(id: string, extra: Partial<MessageView> = {}): MessageView {
     mine: false,
     status: null,
     canDelete: false,
+    reactions: [],
+    sticker: null,
     ...extra,
   };
 }
@@ -296,6 +298,7 @@ const MESSAGES: ConversationView = {
   members: [alex, sam, jordan],
   hasMore: true,
   events: [],
+  canReact: true,
   messages: [
     msg("m1", { at: at(1, 15, 5), author: jordan, text: "Site visit moved to Thursday." }),
     msg("m2", {
@@ -1092,18 +1095,37 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
     await openSection(user, "org");
     const tabs = await waitFor(() => {
       const list = document.querySelectorAll<HTMLElement>("button.org-tab");
-      if (list.length < 6) throw new Error(`tab Organisasi belum lengkap (${list.length})`);
+      if (list.length < 8) throw new Error(`tab Organisasi belum lengkap (${list.length})`);
       return list;
     });
-    // Urutan tab superadmin: Pengguna, Departemen, Departemen saya, Permintaan bergabung, Label, Undangan, Kopi.
-    const waits = ["Casey Kim", "Archive Team", "Department members", "Riley Chen", "Surveyor", null, "Most helpful this month"];
-    const names = ["Pengguna", "Departemen", "Departemen saya", "Permintaan bergabung", "Label", "Undangan", "Kopi"];
+    // Urutan tab superadmin: Pengguna, Departemen, Departemen saya, Permintaan bergabung, Label, Sticker, Undangan, Kopi.
+    const waits = [
+      "Casey Kim",
+      "Archive Team",
+      "Department members",
+      "Riley Chen",
+      "Surveyor",
+      null,
+      null,
+      "Most helpful this month",
+    ];
+    const names = [
+      "Pengguna",
+      "Departemen",
+      "Departemen saya",
+      "Permintaan bergabung",
+      "Label",
+      "Sticker",
+      "Undangan",
+      "Kopi",
+    ];
     const anchors = [
       "Laptop and last IP",
       "Archived",
       "version not reported",
       "Approve",
       "New label",
+      "Office stickers",
       "Create invite code",
       "Coffee settings",
     ];

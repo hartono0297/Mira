@@ -806,6 +806,11 @@ pub fn message_view(
     } else {
         None
     };
+    let files = if row.deleted {
+        Vec::new()
+    } else {
+        files_of(ctx.conn, blobs, &row.id)?
+    };
     Ok(MessageView {
         id: row.id.clone(),
         conv: row.conv.clone(),
@@ -822,11 +827,17 @@ pub fn message_view(
         } else {
             reply_preview(ctx, row)?
         },
-        files: if row.deleted {
+        sticker: if row.deleted {
+            None
+        } else {
+            super::stickers::message_sticker(ctx, blobs, &row.text, &files)?
+        },
+        reactions: if row.deleted {
             Vec::new()
         } else {
-            files_of(ctx.conn, blobs, &row.id)?
+            super::reactions::reactions_for(ctx, &row.id)?
         },
+        files,
         deleted: row.deleted,
         mine,
         status,

@@ -102,6 +102,8 @@ export function message(extra: Partial<MessageView> = {}): MessageView {
     mine: false,
     status: null,
     canDelete: false,
+    reactions: [],
+    sticker: null,
     ...extra,
   };
 }
@@ -113,6 +115,7 @@ export function view(messages: MessageView[], extra: Partial<ConversationView> =
     messages,
     hasMore: false,
     events: [],
+    canReact: true,
     ...extra,
   };
 }

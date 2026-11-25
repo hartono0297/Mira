@@ -5,10 +5,13 @@ import type { ConversationSummary } from "../../api/chat";
 import { MenuButton } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { Avatar } from "../../components/Avatar";
+import { LabelChips } from "../../components/NameWithLabels";
 import { CHAT } from "../../i18n/chat";
+import { COMPONENTS_TEXT } from "../../i18n/components";
 import type { ConvRequest } from "./ChatActions";
 import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
 import { AddPeopleDialog, GroupMembers, RenameGroupDialog, type GroupState } from "./GroupMembers";
+import { useLabelsOf } from "./PeopleLabels";
 import { ProjectMembers } from "./ProjectMembers";
 import { conversationTitle, scopeLabel } from "./text";
 
@@ -37,6 +40,8 @@ export function ConversationHeader({
   onGone,
 }: Props) {
   const title = conversationTitle(summary);
+  // Pesan pribadi: semua label profil rekan tampil di bawah namanya.
+  const peerLabels = useLabelsOf(summary.kind === "dm" ? (summary.peer?.publicKey ?? "") : "");
   const [error, setError] = useState<ActionError | null>(null);
   const isGroup = summary.kind === "group";
   // Chat proyek tampil seperti grup, tetapi anggotanya diatur di Board: tanpa tambah, keluar,
@@ -133,6 +138,12 @@ export function ConversationHeader({
           <h2 className="conv-title" ref={titleRef} tabIndex={-1}>
             {title}
           </h2>
+          {summary.kind === "dm" && peerLabels.length > 0 && (
+            <p className="conv-head-labels">
+              <span className="sr-only">{COMPONENTS_TEXT.labels.list(peerLabels.length)}</span>
+              <LabelChips labels={peerLabels} all wrap />
+            </p>
+          )}
           {isGroup && (
             <GroupMembers
               memberCount={summary.memberCount}

@@ -178,6 +178,8 @@ pub struct MemberInfo {
     pub guest: bool,
     pub superadmin: bool,
     pub removed_at: Option<OffsetDateTime>,
+    /// Mira version this member's laptop last reported (`compat`).
+    pub app_version: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -242,7 +244,7 @@ impl Directory {
 
     fn load_members(&mut self, conn: &Connection) -> AppResult<()> {
         let mut stmt = conn.prepare(
-            "SELECT public_key, display_name, status, kind, is_superadmin, role, removed_at
+            "SELECT public_key, display_name, status, kind, is_superadmin, role, removed_at, app_version
              FROM members WHERE organization_id = ?1",
         )?;
         let rows = stmt.query_map([&self.org_id], |r| {
@@ -260,6 +262,7 @@ impl Directory {
                     guest: kind == "guest" || role == "guest",
                     superadmin: r.get::<_, i64>(4)? != 0,
                     removed_at: removed_at.as_deref().and_then(parse_time),
+                    app_version: r.get::<_, Option<String>>(7)?,
                 },
             ))
         })?;

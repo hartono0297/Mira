@@ -13,7 +13,8 @@ use super::runtime::ChatRuntime;
 use super::sync::ChatSync;
 use super::view::{
     ChatOverview, ConversationSummary, ConversationView, FileView, GroupView, MessageView,
-    NewChannelScope, NotifyMode, ProjectChatView, ReceiptView,
+    MyStickerView, NewChannelScope, NotifyMode, OfficeStickerState, OfficeStickerView,
+    PickedSticker, ProjectChatView, ReceiptView, StickerCatalog, StickerSource,
 };
 use crate::error::{AppError, AppResult};
 use crate::state::MiraState;
@@ -331,4 +332,148 @@ pub async fn chat_group_rename(
     name: String,
 ) -> AppResult<()> {
     run(&rt, move |c| c.group_rename(&conv, &name)).await
+}
+
+// ---- v0.5.1: reactions, emoji, stickers (docs/plans/chat-sticker.md 6) ----
+
+/// Turns my reaction on a message on or off.
+#[tauri::command]
+pub async fn chat_react(
+    rt: State<'_, ChatRuntime>,
+    conv: String,
+    message_id: String,
+    emoji: String,
+    on: bool,
+) -> AppResult<()> {
+    run(&rt, move |c| c.react(&conv, &message_id, &emoji, on)).await
+}
+
+/// Remembers an emoji for the "recently used" list of this laptop.
+#[tauri::command]
+pub async fn chat_emoji_used(rt: State<'_, ChatRuntime>, emoji: String) -> AppResult<()> {
+    run(&rt, move |c| c.emoji_used(&emoji)).await
+}
+
+#[tauri::command]
+pub async fn chat_stickers(rt: State<'_, ChatRuntime>) -> AppResult<StickerCatalog> {
+    run(&rt, |c| c.stickers()).await
+}
+
+/// A checked sticker image as a `data:` URL (CSP allows `data:` images).
+#[tauri::command]
+pub async fn chat_sticker_image(rt: State<'_, ChatRuntime>, hash: String) -> AppResult<String> {
+    run(&rt, move |c| c.sticker_image(&hash)).await
+}
+
+/// Opens Mira's own dialog for one PNG, WebP or GIF and checks it. `None`
+/// when cancelled. Only a path from this dialog is accepted by
+/// `chat_my_sticker_add` and `chat_office_sticker_add`.
+#[tauri::command]
+pub async fn chat_sticker_pick(
+    app: AppHandle,
+    rt: State<'_, ChatRuntime>,
+) -> AppResult<Option<PickedSticker>> {
+    // Debug builds only: end-to-end tests cannot drive the Windows dialog,
+    // so `MIRA_E2E_PICK` names the file the dialog "returns" every time (the
+    // test rewrites that file between uploads). Release builds ignore it.
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("MIRA_E2E_PICK").filter(|p| !p.is_empty()) {
+        let path = PathBuf::from(path);
+        rt.remember_picked(std::slice::from_ref(&path));
+        return run(&rt, move |c| c.inspect_picked(&path)).await.map(Some);
+    }
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let lang = UiLang::current(&app.state::<MiraState>());
+        app.dialog()
+            .file()
+            .set_title(lang.pick("Pilih gambar sticker", "Choose a sticker image"))
+            .add_filter(
+                lang.pick("Gambar PNG, WebP, GIF", "PNG, WebP, GIF images"),
+                &["png", "webp", "gif"],
+            )
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    let Some(path) = picked.and_then(|f| f.into_path().ok()) else {
+        return Ok(None);
+    };
+    rt.remember_picked(std::slice::from_ref(&path));
+    run(&rt, move |c| c.inspect_picked(&path)).await.map(Some)
+}
+
+fn picked_path(rt: &ChatRuntime, path: String) -> AppResult<PathBuf> {
+    let path = PathBuf::from(path);
+    if !rt.was_picked(&path) {
+        return Err(AppError::Forbidden(
+            "Gambar sticker tidak dipilih lewat tombol Unggah. Pilih ulang gambarnya.".into(),
+        ));
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+pub async fn chat_my_sticker_add(
+    rt: State<'_, ChatRuntime>,
+    path: String,
+    name: String,
+    keywords: Vec<String>,
+) -> AppResult<MyStickerView> {
+    let path = picked_path(&rt, path)?;
+    run(&rt, move |c| c.my_sticker_add(&path, &name, &keywords)).await
+}
+
+/// Saves the sticker of a message to my own collection.
+#[tauri::command]
+pub async fn chat_my_sticker_save(
+    rt: State<'_, ChatRuntime>,
+    message_id: String,
+) -> AppResult<MyStickerView> {
+    run(&rt, move |c| c.my_sticker_save(&message_id)).await
+}
+
+#[tauri::command]
+pub async fn chat_my_sticker_remove(rt: State<'_, ChatRuntime>, id: String) -> AppResult<()> {
+    run(&rt, move |c| c.my_sticker_remove(&id)).await
+}
+
+/// Superadmin: adds an office sticker.
+#[tauri::command]
+pub async fn chat_office_sticker_add(
+    rt: State<'_, ChatRuntime>,
+    path: String,
+    pack: String,
+    name: String,
+    keywords: Vec<String>,
+) -> AppResult<OfficeStickerView> {
+    let path = picked_path(&rt, path)?;
+    let view = run(&rt, move |c| c.office_sticker_add(&path, &pack, &name, &keywords)).await?;
+    rt.wake_fetcher();
+    Ok(view)
+}
+
+/// Superadmin: renames, regroups, hides, shows or deletes an office sticker.
+#[tauri::command]
+pub async fn chat_office_sticker_update(
+    rt: State<'_, ChatRuntime>,
+    id: String,
+    pack: String,
+    name: String,
+    keywords: Vec<String>,
+    state: OfficeStickerState,
+) -> AppResult<()> {
+    run(&rt, move |c| c.office_sticker_update(&id, &pack, &name, &keywords, state)).await
+}
+
+/// Sends an office sticker or one of mine as its own message.
+#[tauri::command]
+pub async fn chat_send_sticker(
+    rt: State<'_, ChatRuntime>,
+    conv: String,
+    source: StickerSource,
+    reply_to: Option<String>,
+) -> AppResult<MessageView> {
+    let view = run(&rt, move |c| c.send_sticker(&conv, source, reply_to)).await?;
+    rt.wake_fetcher();
+    Ok(view)
 }

@@ -181,6 +181,57 @@ pub enum Body {
         name: String,
         deps: Vec<String>,
     },
+    /// v0.5.1 (docs/plans/chat-sticker.md 2): the author's reaction `emoji`
+    /// on `message` in `conv` is on or off. Per (message, author, emoji) the
+    /// record with the greatest `(at, id)` wins. Sent only to laptops that
+    /// understand it (`compat`).
+    Reaction {
+        conv: String,
+        message: String,
+        emoji: String,
+        on: bool,
+    },
+    /// v0.5.1: superadmin creates or changes office sticker `sticker` (32
+    /// hex, chosen by the creator). Per sticker the record with the greatest
+    /// `(at, id)` wins. Not part of any conversation; sent to every active
+    /// member whose laptop understands it (`compat`).
+    StickerSet {
+        sticker: String,
+        pack: String,
+        name: String,
+        #[serde(default)]
+        keywords: Vec<String>,
+        file: FileRef,
+        state: StickerState,
+    },
+}
+
+/// State of an office sticker (`Body::StickerSet`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StickerState {
+    Active,
+    Hidden,
+    Deleted,
+}
+
+impl StickerState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StickerState::Active => "active",
+            StickerState::Hidden => "hidden",
+            StickerState::Deleted => "deleted",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "active" => Some(StickerState::Active),
+            "hidden" => Some(StickerState::Hidden),
+            "deleted" => Some(StickerState::Deleted),
+            _ => None,
+        }
+    }
 }
 
 fn is_false(b: &bool) -> bool {
@@ -203,6 +254,8 @@ impl Body {
             Body::GroupAdd { .. } => "group_add",
             Body::GroupRemove { .. } => "group_remove",
             Body::GroupRename { .. } => "group_rename",
+            Body::Reaction { .. } => "reaction",
+            Body::StickerSet { .. } => "sticker_set",
         }
     }
 
@@ -231,8 +284,9 @@ impl Body {
             | Body::ChannelDelete { conv }
             | Body::Message { conv, .. }
             | Body::MessageDelete { conv, .. }
+            | Body::Reaction { conv, .. }
             | Body::Receipt { conv, .. } => Some(conv.clone()),
-            Body::Envelope { .. } | Body::EnvelopeAck { .. } => None,
+            Body::Envelope { .. } | Body::EnvelopeAck { .. } | Body::StickerSet { .. } => None,
         }
     }
 
@@ -247,8 +301,8 @@ impl Body {
             | Body::GroupAdd { .. }
             | Body::GroupRemove { .. }
             | Body::GroupRename { .. } => 1,
-            Body::Message { .. } => 2,
-            Body::MessageDelete { .. } | Body::Receipt { .. } => 3,
+            Body::Message { .. } | Body::StickerSet { .. } => 2,
+            Body::MessageDelete { .. } | Body::Receipt { .. } | Body::Reaction { .. } => 3,
             Body::Envelope { .. } => 4,
             Body::EnvelopeAck { .. } => 5,
         }
@@ -679,6 +733,32 @@ fn validate_body(p: &Payload) -> Result<(), String> {
             if !is_key(envelope) {
                 return Err("envelope harus 64 hex".into());
             }
+        }
+        Body::Reaction {
+            conv,
+            message,
+            emoji,
+            ..
+        } => {
+            parse_conv(conv).ok_or("conv tidak sah")?;
+            if !is_key(message) {
+                return Err("message harus 64 hex".into());
+            }
+            super::reactions::validate_emoji(emoji)?;
+        }
+        Body::StickerSet {
+            sticker,
+            pack,
+            name,
+            keywords,
+            file,
+            ..
+        } => {
+            if !is_lower_hex(sticker, 32) {
+                return Err("id sticker harus 32 hex".into());
+            }
+            validate_file(file)?;
+            super::stickers::validate_sticker_fields(pack, name, keywords, file)?;
         }
     }
     Ok(())

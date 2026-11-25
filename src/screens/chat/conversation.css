@@ -376,10 +376,13 @@
   font-size: 12px;
 }
 
-/* Aksi per pesan: muncul saat disorot kursor atau saat fokus keyboard ada di dalam pesan. */
+/* Aksi per pesan: muncul saat disorot kursor atau saat fokus keyboard ada di dalam pesan.
+   Sejak v0.5.1 bilah ini memuat reaksi cepat, jadi semua tombolnya ikon saja (nama lengkap di
+   aria-label dan title) dan bilahnya naik ke celah di atas pesan, supaya baris penulis dengan
+   semua labelnya hanya tertutup sedikit di ujung kanan. */
 .conv-actions {
   position: absolute;
-  top: -12px;
+  top: -20px;
   right: 10px;
   z-index: 2;
   display: flex;
@@ -419,7 +422,10 @@
   background: var(--hover);
 }
 
-.conv-action-more {
+.conv-action-more,
+.conv-action-icon {
+  justify-content: center;
+  min-width: 30px;
   padding: 4px 7px;
 }
 

@@ -421,6 +421,7 @@ mod tests {
                             guest: false,
                             superadmin: *sa,
                             removed_at: None,
+                            app_version: None,
                         },
                     )
                 })

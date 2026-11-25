@@ -3,9 +3,11 @@
 mod basic;
 mod division;
 mod prop;
+mod reactions;
 mod rejects;
 mod review;
 mod scoping;
+mod stickers;
 mod titipan;
 mod v03_groups;
 mod v03_scoping;

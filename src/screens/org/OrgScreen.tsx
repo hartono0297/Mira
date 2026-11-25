@@ -20,6 +20,7 @@ import { LabelsPanel } from "./LabelsPanel";
 import { MyDepartmentPanel } from "./MyDepartmentPanel";
 import { OtherOfficesNotice } from "./OtherOfficesNotice";
 import { PeoplePanel } from "./PeoplePanel";
+import { StickersPanel, stickersTabLabel } from "./StickersPanel";
 import { formatCount } from "./usePendingJoinCount";
 import { useMyDeptVisible } from "./useMyDeptVisible";
 import { useOrgLive } from "./useOrgLive";
@@ -28,7 +29,16 @@ import "../settings/settings.css";
 import "./nav-count.css";
 import "./org.css";
 
-export type Part = "users" | "people" | "departments" | "mydept" | "requests" | "labels" | "invites" | "kopi";
+export type Part =
+  | "users"
+  | "people"
+  | "departments"
+  | "mydept"
+  | "requests"
+  | "labels"
+  | "stickers"
+  | "invites"
+  | "kopi";
 
 const NO_IDS: readonly string[] = [];
 
@@ -190,6 +200,7 @@ export function OrgScreen({ state, onRefresh, onOpenChat, onOpenProject }: Props
       list.push({ id: "requests", label: tabs.requests, count: overview.pendingJoinCount });
     }
     if (overview.manageOrg) list.push({ id: "labels", label: tabs.labels });
+    if (overview.isSuperadmin) list.push({ id: "stickers", label: stickersTabLabel() });
     if (canInvite || canRedeem) list.push({ id: "invites", label: tabs.invites });
     list.push({ id: "kopi", label: KOPI_BOARD_TEXT.tab });
     return list;
@@ -321,6 +332,7 @@ export function OrgScreen({ state, onRefresh, onOpenChat, onOpenProject }: Props
             )}
             {current.id === "requests" && <JoinRequestsPanel page={page} onSetupDomain={openDomainSetup} />}
             {current.id === "labels" && <LabelsPanel page={page} />}
+            {current.id === "stickers" && <StickersPanel page={page} />}
             {current.id === "kopi" && <KopiBoardPanel page={page} />}
             {current.id === "invites" &&
               (ctx ? (

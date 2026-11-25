@@ -20,6 +20,11 @@ const chat = vi.hoisted(() => ({
   fileSave: vi.fn(),
   fileDownload: vi.fn(),
   pickFiles: vi.fn(),
+  stickers: vi.fn(),
+  react: vi.fn(),
+  emojiUsed: vi.fn(),
+  saveSticker: vi.fn(),
+  stickerImage: vi.fn(),
 }));
 
 vi.mock("../../api/chat", async (importOriginal) => ({
@@ -78,21 +83,22 @@ beforeEach(() => {
   chat.fileOpen.mockResolvedValue(null);
   chat.fileSave.mockResolvedValue(true);
   chat.pickFiles.mockResolvedValue([]);
+  chat.stickers.mockResolvedValue({ office: [], mine: [], canManage: false, recentEmoji: [] });
 });
 
 describe("Menu pesan: isi", () => {
-  it("pesan orang lain: Balas, Salin teks, Sebut pengirim", async () => {
+  it("pesan orang lain: Balas, Beri reaksi, Salin teks, Sebut pengirim", async () => {
     renderConv();
     fireEvent.contextMenu(await screen.findByText("Draft kontraknya sudah saya kirim."));
     expect(screen.getByRole("menu", { name: "Aksi untuk pesan Sari Uji pukul 09.12" })).toBeInTheDocument();
-    expect(itemNames()).toEqual(["Balas", "Salin teks", "Sebut Sari Uji"]);
+    expect(itemNames()).toEqual(["Balas", "Beri reaksi", "Salin teks", "Sebut Sari Uji"]);
   });
 
-  it("pesan sendiri: Balas, Salin teks, Lihat status baca, Hapus pesan", async () => {
+  it("pesan sendiri: Balas, Beri reaksi, Salin teks, Lihat status baca, Hapus pesan", async () => {
     renderConv();
     fireEvent.contextMenu(await screen.findByText("Siap, saya cek siang ini."));
     expect(screen.getByRole("menu", { name: "Aksi untuk pesan Anda pukul 10.02" })).toBeInTheDocument();
-    expect(itemNames()).toEqual(["Balas", "Salin teks", "Lihat status baca", "Hapus pesan"]);
+    expect(itemNames()).toEqual(["Balas", "Beri reaksi", "Salin teks", "Lihat status baca", "Hapus pesan"]);
   });
 
   it("pesan dihapus: klik kanan tidak membuka menu pesan", async () => {
@@ -103,7 +109,8 @@ describe("Menu pesan: isi", () => {
     expect(within(deleted.closest("li")!).queryByRole("button", { name: /Aksi lain/ })).toBeNull();
   });
 
-  it("percakapan hanya-baca: tanpa Balas dan Sebut", async () => {
+  it("percakapan diarsipkan: tanpa Balas, Beri reaksi, dan Sebut", async () => {
+    chat.messages.mockResolvedValue(view(messages(), { canReact: false }));
     renderConv(channel({ archived: true, canPost: false }));
     fireEvent.contextMenu(await screen.findByText("Draft kontraknya sudah saya kirim."));
     expect(itemNames()).toEqual(["Salin teks"]);
@@ -114,7 +121,7 @@ describe("Menu pesan: isi", () => {
     chat.messages.mockResolvedValue(view(messages(), { members: [penguji, budi] }));
     renderConv();
     fireEvent.contextMenu(await screen.findByText("Draft kontraknya sudah saya kirim."));
-    expect(itemNames()).toEqual(["Balas", "Salin teks"]);
+    expect(itemNames()).toEqual(["Balas", "Beri reaksi", "Salin teks"]);
   });
 });
 
@@ -127,7 +134,7 @@ describe("Menu pesan: keyboard dan tombol", () => {
     await user.keyboard("{Shift>}{F10}{/Shift}");
     expect(screen.getByRole("menuitem", { name: "Balas" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByRole("menuitem", { name: "Salin teks" })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: "Beri reaksi" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(replyBtn).toHaveFocus();
@@ -151,7 +158,7 @@ describe("Menu pesan: keyboard dan tombol", () => {
     await user.click(more);
     expect(more).toHaveAttribute("aria-expanded", "true");
     expect(more.closest("li")).toHaveClass("conv-msg-menu-open");
-    expect(itemNames()).toEqual(["Balas", "Salin teks", "Lihat status baca", "Hapus pesan"]);
+    expect(itemNames()).toEqual(["Balas", "Beri reaksi", "Salin teks", "Lihat status baca", "Hapus pesan"]);
   });
 
   it("Hapus pesan membuka dialog konfirmasi lalu menghapus", async () => {

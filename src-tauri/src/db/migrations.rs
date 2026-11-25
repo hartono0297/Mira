@@ -22,6 +22,10 @@ pub const MIGRATIONS: &[&str] = &[
     crate::profile::schema::PROFILE_SCHEMA,
     // v0.6: divisi dan pengaturan chat, v11.
     V11_DIVISIONS,
+    // v0.6: reaksi di pesan chat, v12.
+    crate::chat::reaction_schema::REACTION_SCHEMA,
+    // v0.6: sticker kantor, sticker pribadi, cek gambar sticker, v13.
+    crate::chat::sticker_schema::STICKER_SCHEMA,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.

@@ -132,7 +132,8 @@ export function MemberRow({ person, me, department, chip, onRemove, children }: 
       <Avatar className="pick-av" name={person.name} publicKey={person.publicKey} />
       <span className="pick-who">
         <span className="pick-name">
-          <PersonName person={person} me={me} />
+          {/* Semua label orang itu tampil; chip turun baris di panel yang sempit. */}
+          <PersonName person={person} me={me} labelsMode="all" />
         </span>
         {department && <span className="pick-dept-line">{department}</span>}
       </span>

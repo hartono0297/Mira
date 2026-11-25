@@ -93,7 +93,7 @@ describe("Organisasi: memuat dan error", () => {
 });
 
 describe("Organisasi: tab per peran", () => {
-  it("superadmin melihat Pengguna, Departemen, Departemen saya, Permintaan bergabung, Label, Undangan, Kopi", async () => {
+  it("superadmin melihat Pengguna, Departemen, Departemen saya, Permintaan bergabung, Label, Sticker, Undangan, Kopi", async () => {
     answer();
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
@@ -103,6 +103,7 @@ describe("Organisasi: tab per peran", () => {
       "Departemen saya",
       "Permintaan bergabung",
       "Label",
+      "Sticker",
       "Undangan",
       "Kopi",
     ]);

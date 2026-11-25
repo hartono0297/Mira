@@ -300,6 +300,117 @@ pub struct MessageView {
     pub mine: bool,
     pub status: Option<MessageStatus>,
     pub can_delete: bool,
+    /// v0.5.1: reactions, in order of their first reaction. Empty when
+    /// deleted.
+    pub reactions: Vec<ReactionView>,
+    /// v0.5.1: the message is a sticker (text `:nama:` and one image file
+    /// named `<nama>.sticker.<png|webp|gif>`). `None` when deleted.
+    pub sticker: Option<MessageSticker>,
+}
+
+/// One reaction chip under a message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactionView {
+    /// A Unicode emoji, or `:nama:` for an office emote.
+    pub emoji: String,
+    pub count: u32,
+    pub mine: bool,
+    /// Who reacted, oldest first.
+    pub people: Vec<Person>,
+}
+
+/// The sticker a message carries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSticker {
+    pub hash: String,
+    /// Short name without colons.
+    pub name: String,
+    pub mime: String,
+    pub size: u64,
+    /// The image is on this laptop and passed the checks
+    /// (`sticker_file::inspect`); otherwise the UI shows a placeholder.
+    pub ready: bool,
+    /// Already in my own collection (hides "Simpan sticker").
+    pub saved: bool,
+}
+
+/// State of an office sticker as the screen sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OfficeStickerState {
+    Active,
+    Hidden,
+    Deleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfficeStickerView {
+    pub id: String,
+    pub pack: String,
+    pub name: String,
+    pub keywords: Vec<String>,
+    pub hash: String,
+    pub mime: String,
+    pub size: u64,
+    /// Never `Deleted` here: deleted stickers are left out.
+    pub state: OfficeStickerState,
+    /// The image is on this laptop (otherwise it is still downloading).
+    pub ready: bool,
+    /// Another active office sticker owns the same name (the older one wins
+    /// `:nama:`); only superadmins see this.
+    pub name_taken: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MyStickerView {
+    pub id: String,
+    pub name: String,
+    pub keywords: Vec<String>,
+    pub hash: String,
+    pub mime: String,
+    pub size: u64,
+    pub added_at: String,
+}
+
+/// Everything the emoji and sticker pickers need.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickerCatalog {
+    /// Active office stickers, by pack then name. Superadmins also get the
+    /// hidden ones.
+    pub office: Vec<OfficeStickerView>,
+    /// My own collection, newest first.
+    pub mine: Vec<MyStickerView>,
+    /// Superadmin: may manage office stickers.
+    pub can_manage: bool,
+    /// Emoji used most recently on this laptop, newest first (at most 24).
+    pub recent_emoji: Vec<String>,
+}
+
+/// A file picked in Mira's sticker dialog, already checked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedSticker {
+    pub path: String,
+    /// Suggested short name from the file name (may be empty).
+    pub name: String,
+    pub size: u64,
+    pub mime: String,
+    pub width: u32,
+    pub height: u32,
+    pub frames: u32,
+}
+
+/// Which sticker `chat_send_sticker` sends.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum StickerSource {
+    Office { id: String },
+    Mine { id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -310,6 +421,8 @@ pub struct ConversationView {
     pub messages: Vec<MessageView>,
     pub has_more: bool,
     pub events: Vec<ConversationEvent>,
+    /// v0.5.1: I may add or remove reactions here.
+    pub can_react: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

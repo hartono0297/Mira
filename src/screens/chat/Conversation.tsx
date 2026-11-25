@@ -12,6 +12,7 @@ import {
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { CHAT } from "../../i18n/chat";
+import { REACTION } from "../../i18n/chat-reaction";
 import { useLang } from "../../i18n/core";
 import { AnnounceGate } from "./AnnounceGate";
 import { ConversationActionsContext, type ConversationActions, type ConvRequest } from "./ChatActions";
@@ -20,8 +21,11 @@ import { ConversationHeader } from "./ConversationHeader";
 import { useGroupView } from "./GroupMembers";
 import { messageDomId } from "./MessageItem";
 import { buildTimeline, mergeEvents, MessageList } from "./MessageList";
+import { MENU } from "./menuText";
 import { PinnedNote } from "./PinnedNote";
-import { conversationTarget, conversationTitle, mergeMessages, messagePreview } from "./text";
+import { spokenEmoji } from "./ReactionBar";
+import { reloadStickerCatalog } from "./stickerCatalog";
+import { conversationTarget, conversationTitle, emoteName, mergeMessages, messagePreview } from "./text";
 import { useChatLive } from "./useChatLive";
 import "./conversation.css";
 
@@ -283,6 +287,46 @@ function ConversationPanel({
     setAnnounce((prev) => (prev === text ? `${text}\u00a0` : text));
   }, []);
 
+  // Reaksi: simpan, lalu muat ulang percakapan. Selesai (true) setelah data baru datang, supaya
+  // pesan bisa menahan klik berikutnya sampai chip menunjukkan keadaan baru. Emoji Unicode yang
+  // ditambahkan masuk daftar "Sering dipakai" laptop ini (emote kantor tidak).
+  const onReact = useCallback(
+    async (m: MessageView, emoji: string, on: boolean): Promise<boolean> => {
+      try {
+        await chatApi.react(summary.id, m.id, emoji, on);
+      } catch (err) {
+        if (alive.current) onAnnounce(REACTION.failed(toAppError(err).message), true);
+        return false;
+      }
+      if (on && !emoteName(emoji)) {
+        chatApi
+          .emojiUsed(emoji)
+          .then(() => reloadStickerCatalog())
+          .catch(() => {});
+      }
+      if (!alive.current) return true;
+      onAnnounce(on ? REACTION.added(spokenEmoji(emoji)) : REACTION.removed(spokenEmoji(emoji)));
+      await reloadLive();
+      return true;
+    },
+    [summary.id, onAnnounce, reloadLive],
+  );
+
+  const onSaveSticker = useCallback(
+    async (m: MessageView) => {
+      try {
+        await chatApi.saveSticker(m.id);
+        void reloadStickerCatalog();
+        if (!alive.current) return;
+        onAnnounce(MENU.stickerSaved);
+        void reloadLive();
+      } catch (err) {
+        if (alive.current) onAnnounce(MENU.stickerSaveFailed(toAppError(err).message), true);
+      }
+    },
+    [onAnnounce, reloadLive],
+  );
+
   const onJump = useCallback((id: string) => {
     const el = document.getElementById(messageDomId(id));
     if (!el) return;
@@ -378,6 +422,9 @@ function ConversationPanel({
           flashId={flashId}
           loadedIds={loadedIds}
           canReply={summary.canPost}
+          canReact={view.canReact ?? false}
+          onReact={onReact}
+          onSaveSticker={(m) => void onSaveSticker(m)}
           onReply={onReply}
           onDelete={onDelete}
           onJump={onJump}
@@ -486,7 +533,7 @@ function ConversationPanel({
           )
         }
       >
-        <p>{CHAT.conv.deleteBody(title)}</p>
+        <p>{toDelete?.sticker ? MENU.deleteStickerBody(title) : CHAT.conv.deleteBody(title)}</p>
       </ConfirmDialog>
     </section>
     </ConversationActionsContext.Provider>

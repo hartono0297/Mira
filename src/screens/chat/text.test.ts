@@ -6,17 +6,22 @@ import {
   conversationTitle,
   dayLabel,
   deliveryLine,
+  emoteName,
   fileKind,
   filterMembers,
   formatSize,
   formatTime,
   groupMessages,
+  isEmojiOnly,
+  joinNames,
   mentionQuery,
   mentionsInText,
   mergeMessages,
   messagePreview,
   scopeLabel,
   segmentMentions,
+  segmentMessage,
+  splitEmotes,
 } from "./text";
 
 const local = (y: number, mo: number, d: number, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi).toISOString();
@@ -196,5 +201,58 @@ describe("cuplikan", () => {
     expect(messagePreview(message({ text: "a".repeat(100) }), 10)).toBe("aaaaaaa...");
     expect(messagePreview(message({ deleted: true, text: "" }))).toBe("Pesan dihapus");
     expect(messagePreview(message({ text: "" , files: [{ hash: "h", name: "x.pdf", size: 1, mime: "", state: "local", autoDownload: true }] }))).toBe("x.pdf");
+  });
+});
+
+describe("emote sebaris", () => {
+  const known = (n: string) => n === "kopi" || n === "teh_manis";
+
+  it("emoteName hanya untuk :nama: utuh dengan nama sah", () => {
+    expect(emoteName(":kopi:")).toBe("kopi");
+    expect(emoteName(":Kopi:")).toBeNull();
+    expect(emoteName(":k:")).toBeNull();
+    expect(emoteName("kopi")).toBeNull();
+  });
+
+  it("memecah :nama: yang dikenal, yang lain tetap teks", () => {
+    expect(splitEmotes("Pagi :kopi: dan :teh:", known)).toEqual([
+      { kind: "text", text: "Pagi " },
+      { kind: "emote", text: ":kopi:", name: "kopi" },
+      { kind: "text", text: " dan :teh:" },
+    ]);
+    expect(splitEmotes(":kopi::teh_manis:", known).map((p) => p.kind)).toEqual(["emote", "emote"]);
+  });
+
+  it("jam, alamat, dan titik dua yang menempel ke huruf tidak berubah", () => {
+    expect(splitEmotes("jam 10:30:45", () => true)).toEqual([{ kind: "text", text: "jam 10:30:45" }]);
+    expect(splitEmotes("http://host:kopi:80", known)).toEqual([{ kind: "text", text: "http://host:kopi:80" }]);
+    expect(splitEmotes("a:kopi:", known)).toEqual([{ kind: "text", text: "a:kopi:" }]);
+  });
+
+  it("mention tetap utuh, emote dipecah di teks sekitarnya", () => {
+    const parts = segmentMessage("@Sari Uji :kopi: ya", [sari], ME, known);
+    expect(parts.map((p) => [p.kind, p.text])).toEqual([
+      ["mention", "@Sari Uji"],
+      ["text", " "],
+      ["emote", ":kopi:"],
+      ["text", " ya"],
+    ]);
+  });
+
+  it("isEmojiOnly: 1 sampai 3 emoji atau emote", () => {
+    expect(isEmojiOnly("👍", known)).toBe(true);
+    expect(isEmojiOnly(" 👍 :kopi: ❤️ ", known)).toBe(true);
+    expect(isEmojiOnly("👨‍👩‍👧", known)).toBe(true);
+    expect(isEmojiOnly("👍👍👍👍", known)).toBe(false);
+    expect(isEmojiOnly("oke 👍", known)).toBe(false);
+    expect(isEmojiOnly(":teh:", known)).toBe(false);
+    expect(isEmojiOnly("   ", known)).toBe(false);
+  });
+
+  it("joinNames memakai kata sambung dari kamus", () => {
+    const join = { joinTwo: (a: string, b: string) => `${a} dan ${b}`, joinMany: (h: string, l: string) => `${h}, dan ${l}` };
+    expect(joinNames(["Rina"], join)).toBe("Rina");
+    expect(joinNames(["Rina", "Dimas"], join)).toBe("Rina dan Dimas");
+    expect(joinNames(["Rina", "Dimas", "Sari"], join)).toBe("Rina, Dimas, dan Sari");
   });
 });
