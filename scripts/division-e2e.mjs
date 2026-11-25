@@ -133,6 +133,8 @@ const TXT = {
       removeAdmin: (n) => `Lepas admin, ${n}`,
       confirmRemoveAdmin: "Lepas admin",
       removeAdminFail: "Admin departemen belum dilepas",
+      // Penjelasan di bawah baris admin terakhir (tombol Lepas admin untuk dirinya nonaktif).
+      lastAdminNote: /Anda admin terakhir departemen ini/,
       pinned: "Catatan disematkan",
       announce: "Mode pengumuman",
       saveChat: "Simpan pengaturan chat",
@@ -205,6 +207,8 @@ async function waitFor(desc, fn, timeoutMs = 45000, everyMs = 1000) {
 // ----- Instance ------------------------------------------------------------------------
 const running = {};
 const lang = {};
+// Setiap proses yang dijalankan skrip ini, juga yang gagal tersambung, supaya bisa dihentikan di akhir.
+const spawned = new Set();
 
 async function cdpBusy(port) {
   try {
@@ -246,7 +250,9 @@ async function launch(id, { env = {} } = {}) {
     },
     stdio: "ignore",
   });
+  spawned.add(child);
   const exited = new Promise((r) => child.once("exit", r));
+  child.once("exit", () => spawned.delete(child));
   let browser;
   for (let i = 0; i < 80 && !browser; i++) {
     await sleep(500);
@@ -264,14 +270,30 @@ async function launch(id, { env = {} } = {}) {
     }
     throw new Error(`WebView2 ${id} tidak bisa dihubungi lewat CDP (port ${node.cdp})`);
   }
-  let page;
-  for (let i = 0; i < 40 && !page; i++) {
-    page = browser.contexts().flatMap((c) => c.pages())[0];
-    if (!page) await sleep(250);
+  // Di PC yang sibuk (build lain berjalan) jendela bisa tertahan di about:blank sampai setengah
+  // menit sebelum halaman Mira dimuat. Tunggu halaman tauri.localhost dengan __TAURI_INTERNALS__.
+  let page = null;
+  const deadline = Date.now() + 120000;
+  while (!page && Date.now() < deadline) {
+    for (const p of browser.contexts().flatMap((c) => c.pages())) {
+      if (await p.evaluate(() => "__TAURI_INTERNALS__" in window).catch(() => false)) {
+        page = p;
+        break;
+      }
+    }
+    if (!page) await sleep(1000);
   }
-  await page.waitForLoadState("domcontentloaded");
+  if (!page) {
+    await browser.close().catch(() => {});
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      /* sudah berhenti */
+    }
+    throw new Error(`Halaman Mira di ${id} tidak termuat dalam 120 detik (port CDP ${node.cdp})`);
+  }
+  await page.waitForLoadState("domcontentloaded").catch(() => {});
   await page.setViewportSize({ width: 1280, height: 900 }).catch(() => {});
-  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 30000 });
   running[id] = { child, browser, page, exited };
   lang[id] = "id";
   await rememberKey(id);
@@ -323,7 +345,7 @@ const L = (id) => TXT[lang[id] ?? "id"];
 
 async function reload(id) {
   await pg(id).reload();
-  await pg(id).waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 30000 });
+  await pg(id).waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 90000 });
   await shellReady(id);
 }
 async function shellReady(id) {
@@ -878,9 +900,9 @@ async function step6() {
     return list.find((p) => p.name === PROJECT.name) ?? null;
   });
   check("6.3 D (anggota Mobile) melihat proyek itu sebagai anggota", okv(dProj), why(dProj));
-  const bProj = await sync("proyek di dept_overview B", ["B"], async () => (await deptOv("B")).projects.find((p) => p.name === PROJECT.name) ?? null);
+  const bProj = await sync("proyek di dept_overview B", ["B"], async () => (await deptOv("B")).projects.find((p) => p.id === ids.project) ?? null);
   check(
-    "6.4 dept_overview B: proyek bernama divisi Mobile, anggota memuat Citra dan Dodi",
+    "6.4 dept_overview B: proyek divisi Mobile (dicari lewat id), anggota memuat Citra dan Dodi",
     okv(bProj) && bProj.divisionName === DIV && [pk.C, pk.D].every((k) => bProj.members.some((m) => m.publicKey === k)),
     why(bProj) || short(bProj),
   );
@@ -971,29 +993,26 @@ async function step7() {
   }, 30000);
   check("7.4 dept_overview B: riwayat admin memuat angkat dan lepas Dodi oleh Budi", okv(hist), why(hist));
   // Riwayat admin dilipat (details tertutup): buka dulu supaya isinya ikut innerText.
-  await soft(mdHistory("B").locator("details").evaluate((d) => { d.open = true; }));
-  const histText = await soft(mdHistory("B").innerText({ timeout: 10000 }), "");
-  check(
-    "7.5 Bagian Riwayat admin di layar B menampilkan kedua kejadian",
-    histText.includes(TXT.id.md.historyMade(NAMES.B, NAMES.D)) && histText.includes(TXT.id.md.historyRemoved(NAMES.B, NAMES.D)),
-    short(histText),
-  );
+  // Layar memuat ulang data sesudah perubahan; tunggu sampai kedua kejadian tampil.
+  const histHas = (t) => t.includes(TXT.id.md.historyMade(NAMES.B, NAMES.D)) && t.includes(TXT.id.md.historyRemoved(NAMES.B, NAMES.D));
+  let histText = "";
+  await soft(waitFor("riwayat admin di layar B", async () => {
+    await soft(mdHistory("B").locator("details").evaluate((d) => { d.open = true; }));
+    histText = await soft(mdHistory("B").innerText({ timeout: 5000 }), "");
+    return histHas(histText);
+  }, 20000, 1000));
+  check("7.5 Bagian Riwayat admin di layar B menampilkan kedua kejadian", histHas(histText), short(histText));
 
-  // B admin satu-satunya: melepas diri sendiri ditolak dan error tampil.
-  let selfShown = false;
-  try {
-    const btn = mdMembers("B").getByRole("button", { name: TXT.id.md.removeAdmin(NAMES.B), exact: true });
-    await btn.click({ timeout: 10000 });
-    await pg("B").getByRole("button", { name: TXT.id.md.confirmRemoveAdmin, exact: true }).click();
-    selfShown = await soft(
-      waitFor("error tampil", async () => (await orgLive("B").innerText()).includes(TXT.id.md.removeAdminFail), 15000, 300).then(() => true),
-      false,
-    );
-  } catch (e) {
-    console.log(`Catatan: B melepas diri lewat layar gagal: ${e.message.split("\n")[0]}`);
-  }
-  const liveText = await soft(orgLive("B").innerText(), "");
-  check("7.6 B (admin terakhir) melepas diri sendiri: error \"Admin departemen belum dilepas\" tampil", selfShown, short(liveText));
+  // B admin satu-satunya: tombol Lepas admin untuk dirinya nonaktif dengan penjelasan.
+  const selfBtn = mdMembers("B").getByRole("button", { name: TXT.id.md.removeAdmin(NAMES.B), exact: true });
+  const selfLocked = await soft(
+    waitFor("tombol Lepas admin B nonaktif", async () => {
+      if (!(await selfBtn.isDisabled({ timeout: 5000 }))) return false;
+      return TXT.id.md.lastAdminNote.test(await mdMembers("B").innerText());
+    }, 20000, 500).then(() => true),
+    false,
+  );
+  check("7.6 B (admin terakhir): Lepas admin untuk dirinya nonaktif, penjelasan \"admin terakhir\" tampil", selfLocked, short(await soft(mdMembers("B").innerText(), "")));
   const selfCmd = await call("B", "dept_set_admin", { teamId: ids.IT, publicKey: pk.B, admin: false });
   check("7.7 dept_set_admin B atas dirinya ditolak (last_team_admin)", !selfCmd.ok && /last_team_admin|minimal satu admin/i.test(JSON.stringify(selfCmd.error)), short(selfCmd.ok ? "diterima" : selfCmd.error));
   const stillAdmin = memberIn(await deptOv("A", ids.IT), pk.B)?.isAdmin;
@@ -1147,6 +1166,14 @@ async function cleanup() {
   if (cleaned) return;
   cleaned = true;
   for (const id of Object.keys(running)) await stop(id);
+  for (const child of spawned) {
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      /* sudah berhenti */
+    }
+  }
+  if (spawned.size) await sleep(2000);
   for (const target of miraCredentials()) {
     if (credentialsBefore.has(target)) continue;
     const key = target.slice("device-key-".length, "device-key-".length + 64);
@@ -1161,7 +1188,17 @@ async function cleanup() {
     }
   }
   if (KEEP) console.log(`Data uji disimpan (E2E_KEEP=1): ${root}`);
-  else rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  else {
+    for (let i = 0; i < 10; i++) {
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+        break;
+      } catch (e) {
+        if (i === 9) console.log(`Folder data uji belum bisa dihapus (${e.code}): ${root}`);
+        else await sleep(3000);
+      }
+    }
+  }
 }
 process.once("SIGINT", () => {
   console.log("\nDihentikan: membersihkan instance uji...");
