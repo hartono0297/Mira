@@ -105,7 +105,72 @@ Rinciannya di `docs/progress/v04-english.md`.
 - Departemen diambil dari atribut `department` AD; kalau kosong, dari pemetaan OU yang diatur superadmin. Departemen yang belum ada di Mira tidak dibuat otomatis.
 - Satu domain, satu kantor. Pembuatan kantor tetap sekali oleh admin IT, karena pembuatnya menjadi superadmin dan tanpa server dua laptop bisa membuat kantor bersamaan. Kalau terlanjur ada dua kantor dengan domain sama, yang genesis-nya paling awal menjadi kantor utama; isi dua kantor tidak bisa digabung.
 - Data AD peminta (nama akun, DN, nama, departemen) tersimpan di catatan kantor dan terlihat oleh anggota. Layar peminta memberi tahu hal ini.
-- Rencana berikutnya: tab "Departemen saya" untuk admin departemen dan Divisi di dalam departemen. Divisi dibuat admin departemen, yang menunjuk kepala divisi. Peran kustom dengan hak bebas tidak dibuat.
+- Tab "Departemen saya" dan Divisi dikerjakan di v0.6, lihat bagian v0.6 di bawah.
+
+## v0.6: divisi, Kopi, chat, timer, kalender, nonaktifkan (25 November 2026)
+
+Departemen dan divisi
+- Divisi dibuat oleh admin departemen di departemennya sendiri atau oleh superadmin, bukan oleh anggota biasa. Anggota biasa tetap bisa membuat Grup chat.
+- Tidak ada peran kustom dengan hak bebas. Peran tetap Superadmin, Admin departemen, Kepala divisi, Anggota, dan Tamu.
+- Admin departemen menunjuk satu atau lebih kepala divisi. Kepala divisi hanya bisa menambah orang aktif bukan Tamu dari departemen yang sama. Satu orang boleh di beberapa divisi; pindah atau keluar departemen melepas divisinya di departemen lama.
+- Admin departemen boleh mengangkat dan melepas admin lain di departemennya, dengan aturan senioritas: ia hanya melepas admin yang diangkat setelah dirinya, atau dirinya sendiri. Tanpa aturan ini, admin yang sudah dilepas bisa membalikkannya dengan op bertanggal mundur. Admin terakhir tidak bisa melepas dirinya; superadmin boleh.
+- Pengaturan chat (catatan disematkan dan mode pengumuman) disimpan sebagai op log keanggotaan, bukan record chat, supaya semua anggota departemen melihat pengaturan yang sama dan izinnya ikut fold.
+- Catatan disematkan adalah teks yang ditulis pengelola (paling banyak 500 karakter dan 20 baris), bukan penanda pada pesan tertentu. Menyematkan pesan bisa ditambah nanti.
+- Mode pengumuman hanya berlaku di channel utama departemen dan chat divisi, dan hanya menolak pesan yang waktunya sama atau setelah pengaturan dibuat, supaya semua laptop sampai pada putusan yang sama.
+- Proyek divisi dibuat oleh kepala divisi itu, admin departemennya, atau superadmin. Anggota proyek tidak mengikuti perubahan anggota divisi setelah proyek dibuat.
+- Divisi yang diarsipkan menyimpan anggota dan kepala sebagai riwayat. Chatnya hanya baca, dan divisi itu tidak menerima anggota, kepala, atau pengaturan chat baru.
+- Gerbang versi `DIVISION_SINCE = "0.6.0"` dengan pola `min()` seperti `JOIN_AD_SINCE`. Op divisi hanya ditulis kalau semua anggota aktif, Tamu juga, melaporkan versi itu. Jalur kode undangan tidak memeriksa versi.
+
+Nonaktifkan dan keluarkan permanen
+- Dua tindakan terpisah. Nonaktifkan (`member_suspend`) bisa dibatalkan dengan aktifkan lagi (`member_reinstate`). Keluarkan permanen (`member_remove`) tetap tidak bisa dibatalkan dan juga berlaku untuk orang yang sedang nonaktif.
+- Saat nonaktif, orang itu dilepas dari departemen, proyek, label, akses Tamu, dan status superadmin, tetapi fold menyimpan cuplikan. Aktifkan lagi mengembalikan yang masih ada. Selama nonaktif, cuplikan itu tidak bisa dikurangi admin.
+- Laptop nonaktif tetap tersambung lewat koneksi terbatas yang hanya membawa log keanggotaan, supaya bisa kembali tanpa restart. Op yang dibuat laptop nonaktif tidak disimpan.
+- Admin departemen boleh menonaktifkan dan mengaktifkan lagi anggota biasa departemennya, mengikuti aturan lama bahwa admin boleh mengeluarkan anggota non-admin. Ia tidak bisa mengaktifkan lagi orang yang dinonaktifkan superadmin dan tidak bisa mengeluarkan permanen.
+- Dua penonaktifan bersamaan dicatat bersama. Aktifkan lagi hanya berlaku kalau sudah melihat semuanya, supaya "pencabutan menang" tetap berlaku.
+- Gerbang versi `SUSPEND_SINCE = "0.6.0"` untuk menulis `member_suspend`; aktifkan lagi tidak digerbang. Setelah kantor pernah memakai penonaktifan, permintaan bergabung dari Mira di bawah 0.6.0 tidak bisa disetujui.
+- Reset hanya untuk laptop yang dikeluarkan permanen. Yang dihapus: kunci laptop lama dan data organisasi di folder data. Yang tetap: bahasa, tema, dan folder `ekspor`. Data dipindah dulu ke folder sementara dan dikembalikan kalau reset gagal di tengah.
+- "Laptop ini pernah dikeluarkan" di kartu admin adalah petunjuk dari akun AD atau nama laptop, bukan bukti bertanda tangan kunci lama, karena laptop 0.5.0 menolak field baru di permintaan bergabung.
+- Alasan data AD tidak dipakai tampil sebagai satu baris di bawah pilihan departemen, dengan urutan alasan yang tetap. Kalau AD tidak terbaca sama sekali (akun lokal, Mac), Mira tetap diam seperti di v0.5.
+
+Kopi
+- Hanya reputasi positif. Tidak ada kopi negatif atau penilaian buruk. Nama "Kopi", istilah Inggris "Coffee".
+- Skor = 3 x kopi dari rekan + 1 x kopi dari kerja. Ambang Andalan 15, Senior 60, Legenda 180. Kopi dari rekan lebih bermakna dan lebih jarang, jadi Legenda tetap butuh apresiasi rekan.
+- Kopi dari rekan wajib beralasan (1 sampai 120 karakter) yang terlihat semua orang di kantor. Paling banyak 3 per pemberi per hari dan 4 dari satu pemberi ke satu penerima per bulan. Tidak ke diri sendiri.
+- Record ditulis laptop pemberi dan ditandatangani pemberi. Penerima tidak bisa menulis kopi rekan untuk dirinya.
+- Kopi dari kerja dihitung dari board yang tersinkron, hanya kalau penanggung jawab sendiri yang memindahkan task ke Selesai, di proyek dengan lebih dari satu orang. Task dibuka lagi atau dihapus, kopinya hilang. Untuk proyek yang tidak terbaca, laptop penerima menerbitkan snapshot kerja bertanda tangan; laptop yang bisa membaca proyek selalu memakai board sendiri.
+- Tamu boleh menerima kopi tapi tidak memberi, karena reputasi kantor dinilai oleh anggota.
+- Superadmin bisa mematikan Kopi untuk seluruh kantor, mematikan papan bulanan saja, dan menyembunyikan satu pemberian. Semuanya record bertanda tangan superadmin.
+- Tanpa gerbang versi dan tanpa migrasi bernomor. Laptop 0.5 menghentikan topik `kopi` yang tidak dikenalnya dengan diam.
+
+Chat: reaksi, emoji, sticker
+- Tanpa paket sticker bawaan. Tidak ada sticker yang meniru LINE, WhatsApp, Kaskus, atau karya berhak cipta lain; kantor mengisi sticker sendiri.
+- Data emoji ditulis sendiri tanpa pustaka, dengan kata kunci Indonesia, dan hanya emoji Unicode 13 atau lebih lama supaya tampil di Windows 10 dan 11.
+- Pesan sticker tetap record `message` biasa dengan teks `:nama:` dan satu gambar, bukan jenis record baru, supaya laptop lama tetap menampilkan pengganti yang wajar.
+- Satu sticker kantor dipakai sebagai sticker dan sebagai emote `:nama:`. Sticker pribadi tidak menjadi emote, karena orang lain tidak punya katalognya.
+- Reaksi boleh di pesan siapa pun, juga di channel Umum yang dikunci. Reaksi yang dibuat setelah channel diarsipkan diterima lalu disembunyikan, supaya putusan tidak bergantung pada record arsip yang kebetulan sudah ada. Emoji reaksi harus tepat satu emoji. Reaksi tidak memunculkan notifikasi.
+- Dalam mode pengumuman, anggota yang tidak boleh menulis juga tidak bisa memberi reaksi, karena layar memakai pemeriksaan yang sama dengan menulis pesan. Record reaksi dari laptop lain hanya dinilai dengan aturan menulis, tanpa penolakan mode pengumuman. Ini batasan yang sudah diketahui.
+- Jenis file sticker ditentukan dari byte (PNG, APNG, GIF, WebP). SVG dan JPEG ditolak, jadi SVG dari pengguna tidak pernah dirender. Batas 512 KB, sisi 1024 px, 120 frame, dan 32 juta piksel total.
+- Reaksi dan sticker kantor hanya dikirim ke rekan yang melaporkan paling rendah `CHAT_STICKER_SINCE = "0.6.0"`. Build rilis di bawah 0.6.0 sengaja gagal dikompilasi.
+- Semua label keahlian orang tampil di Chat. Organisasi dan Board tetap paling banyak 3.
+
+Foto profil
+- Foto selalu JPEG 256x256, diolah di inti Rust. Webview tidak pernah membaca file asli, dan metadata (EXIF, GPS) dibuang di satu tempat yang dites.
+- Foto dari rekan harus JPEG polos dengan struktur yang diizinkan, supaya kanal foto tidak bisa membawa metadata atau file lain.
+- Foto terbaru per pemilik menang. Disebar ke semua anggota aktif termasuk Tamu; laptop yang dikeluarkan tidak menerima apa pun.
+- Superadmin menghapus foto per hash untuk semua pemilik, supaya anggota lain tidak bisa menerbitkan ulang foto yang sudah dihapus. Penghapusan dari Pengaturan > Profil, bukan dari layar Organisasi.
+- Tanpa gerbang versi. Laptop 0.5 mengabaikan topik `profile` dan tetap menampilkan inisial.
+
+Timer dan catat waktu manual
+- Format data tidak berubah. Jeda mengisi `end` segmen yang berjalan, Lanjutkan membuat segmen baru, jadi laptop 0.5 menerima semuanya dengan total yang sama.
+- Jeda langsung dengan satu klik, tanpa kotak catatan.
+- Satu timer berjalan per orang di semua proyek. Timer dijeda sendiri saat timer lain dimulai, saat task masuk Selesai atau dihapus, dan saat Mira tertutup atau laptop tidur lebih dari 10 menit. Jeda karena tertutup memakai waktu terakhir Mira aktif, karena tanpa catat manual satu-satunya cara memperbaiki segmen yang terus berjalan adalah menghapusnya.
+- Catat waktu manual disembunyikan lewat konstanta fitur `MANUAL_TIME_LOG = false` di `src/screens/board/timeFeatures.ts`, bukan dihapus. Catatan manual lama tetap tampil, tetap dihitung, dan bisa dihapus pemiliknya. Command `board_log_time` tetap ada.
+
+Sidebar dan Kalender
+- Pilihan sidebar ringkas disimpan di pengaturan inti Rust (`shell.sidebar`) lewat command yang sudah ada, seperti tema dan bahasa.
+- Ctrl+B tidak bekerja saat dialog, menu klik kanan, atau seret tenggat sedang aktif, dan dicocokkan dari huruf yang diketik, bukan posisi tombol.
+- Kalender memakai aturan akses Board (`Ctx::can_view`). Tamu hanya melihat proyek undangannya. Klik task membuka dialog detail task yang sama dengan Board.
+- Kalender hanya menampilkan task bertenggat. Bawaan: Semua proyek, task Selesai tersembunyi, tampilan Bulan.
 
 ## Yang masih terbuka
 

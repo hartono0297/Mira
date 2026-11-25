@@ -6,6 +6,25 @@ tags: [mira, rilis]
 
 Mulai v0.3.0 setiap rilis adalah rilis biasa (bukan prerelease), supaya pembaruan dari dalam aplikasi bisa membaca `latest.json` di rilis terbaru. Alurnya: naikkan versi, push `main`, pasang tag `vX.Y.Z`, workflow Rilis membuat draft berisi installer, `.sig`, `.sha256`, dan `latest.json`, lalu draft diterbitkan.
 
+## v0.6.0
+
+Isinya:
+- Divisi di dalam departemen. Admin departemen (atau superadmin) membuat, mengganti nama, mengarsipkan, dan memulihkan divisi, lalu menunjuk kepala divisi. Kepala divisi mengatur anggota divisinya. Setiap divisi punya chat sendiri di bagian Departemen dan bisa punya proyek divisi. Pemetaan OU AD boleh menyebut divisi.
+- Tab Departemen saya di Organisasi untuk superadmin, admin departemen, dan kepala divisi: divisi, anggota, permintaan bergabung, undangan, proyek, pengaturan channel, dan riwayat admin. Admin departemen bisa mengangkat dan melepas admin lain di departemennya. Channel utama departemen dan chat divisi bisa diberi catatan disematkan dan mode pengumuman.
+- Chat: reaksi emoji di pesan siapa pun, pemilih emoji dengan pencarian Indonesia dan Inggris, sticker kantor yang dikelola superadmin (juga dipakai sebagai emote `:nama:` sebaris), sticker pribadi, dan semua label keahlian orang di Chat. Tanpa paket sticker bawaan.
+- Kopi, reputasi yang hanya positif: kopi dari rekan dengan alasan yang terlihat semua orang, kopi dari kerja yang dihitung dari board, tingkatan Anak baru, Andalan, Senior, Legenda, dan papan bulanan di Organisasi > Kopi.
+- Foto profil di Pengaturan > Profil, disimpan JPEG 256x256 tanpa metadata dan tersebar ke semua anggota aktif termasuk Tamu. Superadmin bisa menghapus foto anggota.
+- Board: timer dengan Mulai timer, Jeda, dan Lanjutkan, satu timer berjalan per orang di semua proyek, dan jeda otomatis (timer lain dimulai, task Selesai atau dihapus, Mira tertutup atau laptop tidur). Catat waktu manual disembunyikan lewat `MANUAL_TIME_LOG = false`; catatan manual lama tetap dihitung.
+- Menu Kalender (Bulan, Minggu, Agenda) untuk task bertenggat, dengan ubah tenggat lewat seret, Alt+Panah, dan menu klik kanan. Sidebar bisa diringkas jadi ikon lewat tombol atau Ctrl+B.
+- Bergabung: alasan data AD tidak dipakai tampil di bawah pilihan departemen, tawaran domain untuk superadmin di laptop domain, dan "Cocokkan OU ini ke departemen..." di kartu Permintaan bergabung.
+- Nonaktifkan dan aktifkan lagi anggota tanpa mengeluarkannya (op `member_suspend` dan `member_reinstate`), terpisah dari keluarkan permanen (`member_remove`). Laptop yang dikeluarkan permanen mendapat "Reset dan mulai dari awal" untuk meminta bergabung lagi dengan kunci baru.
+
+Gerbang versi: divisi, pengangkatan admin oleh admin departemen, proyek divisi, dan pemetaan OU ke divisi hanya ditulis setelah semua anggota aktif, Tamu juga, melaporkan 0.6.0 (`DIVISION_SINCE`). Nonaktifkan juga baru bisa dipakai setelah semua laptop di 0.6.0 (`SUSPEND_SINCE`). Reaksi dan sticker kantor hanya dikirim ke rekan yang melaporkan paling rendah 0.6.0 (`CHAT_STICKER_SINCE`), jadi laptop 0.5 tidak melihatnya dan pesan sticker tampil di sana sebagai `:nama:` dengan lampiran gambar. Kopi dan foto profil tidak memakai gerbang: laptop 0.5 mengabaikan topik `kopi` dan `profile`. Format data timer tidak berubah, jadi laptop 0.5 menerima segmen jeda sebagai catatan biasa.
+
+Laptop 0.5 dan 0.6 yang berjalan berdampingan baru diperiksa lewat tes, belum dengan dua versi sungguhan. Semua uji berjalan di satu PC Windows, dan jalur LDAP sungguhan masih belum diuji. Laporan: `docs/progress/dept-divisi.md`, `docs/progress/chat-sticker.md`, `docs/progress/kopi.md`, `docs/progress/foto-profil.md`, `docs/progress/timer-jeda.md`, `docs/progress/sidebar-kalender.md`, dan `docs/progress/perbaikan-bergabung.md`.
+
+Diperiksa pada kode gabungan (branch `integrasi-v06`) di satu PC Windows: `cargo test` 1571 lulus (7 diabaikan), clippy tanpa peringatan, tsc bersih, Vitest 2493 tes di 158 file lulus, dan 22 skrip uji ujung ke ujung pada build debug lulus dengan 891 dari 891 pemeriksaan. `smoke-docs-e2e` sempat gagal di satu pemeriksaan ("Folder salinan kerja dibersihkan") pada percobaan pertama sampai ketiga, karena tes memeriksa terlalu cepat di disk yang lambat. Pemeriksaan itu kini menunggu sampai 10 detik (commit `dad2020`) dan lulus 15/15. Semua skrip lain lulus pada percobaan pertama.
+
 ## v0.5.0
 
 Isinya:

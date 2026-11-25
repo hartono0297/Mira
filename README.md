@@ -12,13 +12,20 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 ### Chat
 
-- Sidebar dibagi lima: Umum (channel dibuat superadmin, semua boleh menulis, bisa dikunci hanya-baca), Departemen (otomatis), Proyek (hanya anggota proyek), Grup (siapa saja bisa membuat), dan Pesan pribadi.
+- Sidebar dibagi lima: Umum (channel dibuat superadmin, semua boleh menulis, bisa dikunci hanya-baca), Departemen (otomatis, berisi channel departemen dan chat setiap divisinya), Proyek (hanya anggota proyek), Grup (siapa saja bisa membuat), dan Pesan pribadi.
 - Grup: pembuatnya jadi pemilik, anggota bisa menambah orang dan mengganti nama, hanya pemilik yang mengeluarkan orang, siapa saja bisa keluar. Grup boleh dibuat dengan pembuatnya saja, lalu diisi belakangan.
 - Setiap proyek otomatis punya chat grup berisi anggota proyek, di bagian Proyek. Chat ini tidak bisa diarsipkan atau dihapus.
+- Setiap divisi otomatis punya chat divisi di bagian Departemen, tepat di bawah channel departemennya, berisi anggota divisi. Chat ini tidak bisa diarsipkan atau dihapus sendiri, dan menjadi hanya-baca kalau divisinya diarsipkan.
+- Channel utama departemen dan chat divisi bisa diberi catatan disematkan (paling banyak 500 karakter) dan mode pengumuman. Dalam mode pengumuman hanya admin departemen dan superadmin yang menulis, ditambah kepala divisi untuk chat divisi. Anggota lain melihat satu kalimat penjelasan sebagai ganti kolom pesan.
 - Bagian sidebar bisa dilipat, dan lipatannya tersimpan per laptop.
-- Menu klik kanan untuk pesan (balas, salin, hapus, simpan lampiran), percakapan di sidebar, kepala percakapan, dan nama orang.
-- Label keahlian tampil di samping nama.
+- Menu klik kanan untuk pesan (balas, beri reaksi, beri kopi, salin, hapus, simpan lampiran, simpan sticker), percakapan di sidebar, kepala percakapan, dan nama orang.
+- Semua label keahlian orang tampil di Chat: baris penulis pesan (termasuk pesan sendiri), kepala pesan pribadi, anggota grup dan proyek, dan profil. Sidebar tetap ringkas dengan "+N". Organisasi dan Board tetap menampilkan paling banyak 3 label.
 - Balas, mention, lampiran, hapus pesan (menyisakan "Pesan dihapus"), arsip dan hapus channel.
+- Reaksi emoji di pesan siapa pun: chip emoji dengan jumlah di bawah pesan, klik untuk menambah atau menarik reaksi sendiri, arahkan mouse atau fokus untuk melihat siapa saja. Lima reaksi cepat di bilah aksi pesan, "Beri reaksi lain" untuk pemilih emoji. Satu orang boleh beberapa emoji per pesan, sekali per emoji. Reaksi tidak memunculkan notifikasi.
+- Pemilih emoji di kolom pesan: cari dalam bahasa Indonesia dan Inggris, kategori, "Baru dipakai" per laptop, tab "Emote kantor", dan saran saat mengetik `:nama`. Data emoji (393 emoji Unicode 13 atau lebih lama) ditulis sendiri, tanpa pustaka.
+- Sticker kantor dikelola superadmin di Organisasi, tab Sticker: unggah PNG, WebP, atau GIF paling besar 512 KB, beri nama `:nama:`, kata kunci, dan paket, lalu sembunyikan, tampilkan, atau hapus. Satu sticker kantor dipakai dua cara: dikirim sebagai pesan sticker (gambar 160 px tanpa gelembung) dan sebagai emote `:nama:` sebaris di teks.
+- Sticker pribadi: "Simpan sticker" dari menu pesan, atau unggah sendiri di pemilih sticker, tab "Punya saya". Sticker pribadi yang dikirim tersebar sebagai lampiran pesan. Mira tidak membawa paket sticker bawaan.
+- Pesan sticker disembunyikan lewat "Hapus pesan" dengan aturan yang sama seperti pesan biasa (pengirim, superadmin, dan admin departemen di channel departemennya).
 - Status pesan: Menunggu, Dititipkan, Diterima laptopnya, Dibaca.
 - Titipan untuk rekan yang laptopnya mati: pesan disegel untuk penerima dan dipegang laptop lain yang online. Laptop perantara tidak bisa membaca isinya.
 - Lampiran sampai sekitar 20 MB diunduh otomatis oleh anggota percakapan. File yang lebih besar diunduh saat diklik.
@@ -29,11 +36,16 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 - Satu board per proyek dengan kolom To do, Dikerjakan, Selesai, dan kode task seperti PA-12.
 - Task berisi judul, deskripsi, penanggung jawab, tenggat, prioritas, label, komentar, dan riwayat aktivitas.
 - Subtask berupa daftar centang di dalam task, dengan penanggung jawab dan urutan yang bisa diubah. Kartu menampilkan progres seperti 2/5.
-- Pelacakan waktu: lama task di setiap kolom, cycle time dari dibuat sampai selesai, timer Mulai dan Hentikan per orang, dan catatan waktu manual. Kartu menampilkan total waktu.
+- Pelacakan waktu: lama task di setiap kolom, cycle time dari dibuat sampai selesai, dan timer per orang dengan Mulai timer, Jeda, dan Lanjutkan. Kepala detail task menunjukkan total waktu pengguna itu di task tersebut, dan kartu menampilkan total waktu.
+- Satu timer berjalan per orang di semua proyek. Timer dijeda sendiri saat timer lain dimulai, saat task masuk Selesai atau dihapus (oleh pemilik timer atau rekan), dan saat Mira tertutup atau laptop tidur lebih dari 10 menit (dijeda pada waktu terakhir Mira aktif). Setiap jeda otomatis tampil sebagai pemberitahuan di atas board.
+- Catat waktu manual disembunyikan untuk sementara (`MANUAL_TIME_LOG` di `src/screens/board/timeFeatures.ts`). Catatan manual lama tetap tampil, tetap dihitung, dan tetap bisa dihapus pemiliknya.
 - Detail task satu kolom: judul diedit langsung, properti sebagai baris label dan nilai, lalu Subtask, Deskripsi, Waktu, dan tab Komentar/Aktivitas. Semua nilai yang bisa diubah diberi bingkai seperti kolom isian; yang hanya bisa dibaca tampil sebagai teks biasa, dan Tamu tidak melihat bingkai sama sekali.
 - Task dipindah dengan seret mouse (pointer event, jalan di Windows dan macOS), menu Pindahkan, Alt+Panah, atau menu klik kanan. Menu klik kanan juga ada di kolom, subtask, daftar proyek, dan Task saya.
 - Halaman "Task saya" dan pengingat tenggat lewat notifikasi Windows.
+- Menu Kalender dengan tampilan Bulan, Minggu, dan Agenda. Isinya task bertenggat dari proyek yang boleh dilihat, dengan aturan akses yang sama seperti Board. Saringan Task saya, Semua proyek, atau satu proyek, dan task Selesai bisa ditampilkan. Tenggat diubah dengan seret mouse, Alt+Panah (kiri/kanan satu hari, atas/bawah satu minggu), atau menu klik kanan "Pindahkan tenggat ke". Klik task membuka detail task yang sama dengan Board.
+- Task yang sudah Selesai punya tombol "Terima kasih ke (nama)" untuk memberi kopi ke penanggung jawabnya.
 - Proyek punya anggota sendiri dari departemen mana pun, dipilih saat membuat proyek. Proyek dibuat oleh superadmin atau admin departemen.
+- Proyek divisi dibuat lewat pilihan "Untuk divisi" di dialog Proyek baru, oleh kepala divisi itu, admin departemennya, atau superadmin. Anggota awalnya adalah anggota divisi saat proyek dibuat ditambah pilihan di dialog, dan nama divisi tampil di kepala Board.
 - Perubahan dari beberapa laptop digabung dengan Automerge. Data proyek hanya dikirim ke anggota proyek dan Tamu yang diundang ke proyek itu. Superadmin baru melihat isi proyek setelah menambahkan dirinya, dan langkah itu tercatat.
 
 ### Dokumen
@@ -55,12 +67,19 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 
 ### Organisasi dan jaringan
 
-- Satu organisasi untuk seluruh kantor, dibagi per departemen, dengan peran Superadmin, Admin departemen, Anggota, dan Tamu. Satu orang masuk satu departemen; hanya superadmin yang bisa memindah.
+- Satu organisasi untuk seluruh kantor, dibagi per departemen, dengan peran Superadmin, Admin departemen, Kepala divisi, Anggota, dan Tamu. Satu orang masuk satu departemen; hanya superadmin yang bisa memindah. Tidak ada peran kustom.
+- Divisi di dalam departemen, misalnya Mobile atau Web. Dibuat, diganti nama, diarsipkan, dan dipulihkan oleh admin departemen atau superadmin. Admin departemen menunjuk satu atau lebih kepala divisi, dan kepala divisi menambah serta mengeluarkan anggota divisinya (orang aktif bukan Tamu dari departemen yang sama). Satu orang boleh di beberapa divisi. Nama divisi tampil di profil dan daftar orang.
+- Tab "Departemen saya" untuk superadmin, admin departemen, dan kepala divisi: divisi, anggota departemen, permintaan bergabung dan kode undangan departemen itu, proyek departemen, pengaturan channel departemen, dan riwayat admin. Admin departemen mengangkat dan melepas admin lain di departemennya; admin terakhir tidak bisa melepas dirinya.
 - Bergabung: orang baru mengisi nama, lalu Mira mencari kantor di jaringan. Orang itu memilih kantor, memilih departemen dari kantor itu, dan boleh menulis keterangan untuk admin. Superadmin atau admin departemen melihat keterangan, nama akun login laptop peminta, laptop, IP, dan kode cocok sebelum menyetujui. Kode cocok tampil di kedua layar. Membuat kantor baru tersembunyi di bagian "Untuk admin IT" pada layar "Kantor belum ditemukan". Kode undangan tetap bisa dipakai, misalnya dari VPN.
 - Active Directory (Windows): di PC yang login dengan akun domain, Mira memilih kantor yang domain AD-nya sama dan mengisi nama serta departemen dari AD (atribut `department`, atau OU yang dicocokkan superadmin dengan departemen Mira). Kartu Permintaan bergabung mengecek ulang ke AD dari laptop admin: akun ada, aktif, dan cocok. Admin tetap menekan Setujui. MacBook dan PC tanpa akun domain memakai alur manual.
+- Kalau data AD tidak dipakai, langkah bergabung menyebut alasannya di bawah pilihan departemen: domain kantor berbeda, ada laptop kantor yang belum 0.5, domain kantor belum diatur, nama akun tidak terbaca, atau departemen AD belum dicocokkan admin. Superadmin di laptop domain ditawari memakai domain itu kalau kantor belum punya domain AD, dan bisa memakai "Cocokkan OU ini ke departemen..." langsung dari kartu Permintaan bergabung. Baris pemetaan OU boleh menyebut divisi, jadi orang yang disetujui lewat AD otomatis masuk divisi dari OU terdalam yang dipetakan.
 - Satu domain, satu kantor: Mira menolak membuat kantor kedua untuk domain AD yang sama, menampilkan kantor yang laptopnya masih memakai Mira lama, dan memberi tahu anggota kalau ada laptop di jaringan yang tergabung di kantor Mira lain.
+- Nonaktifkan, aktifkan lagi, dan keluarkan permanen. Orang yang dinonaktifkan dilepas dari departemen, proyek, label, akses Tamu, dan status superadmin, dan laptopnya hanya menyinkronkan log keanggotaan. Aktifkan lagi mengembalikan yang masih ada, tanpa restart. Superadmin dan admin departemen (hanya untuk anggota biasa di departemennya) bisa menonaktifkan dan mengaktifkan lagi. Admin departemen tidak bisa mengaktifkan lagi orang yang dinonaktifkan superadmin. Hanya superadmin yang bisa mengeluarkan permanen.
+- Laptop nonaktif menampilkan layar "sedang dinonaktifkan" dengan "Periksa lagi" dan cek otomatis tiap 20 detik. Laptop yang dikeluarkan permanen mendapat "Reset dan mulai dari awal": data kantor di laptop itu dan kunci lamanya dihapus, PDF bertanda tangan yang sudah diekspor, bahasa, dan tema tetap, lalu laptop bisa meminta bergabung lagi dengan kunci baru.
+- Kopi, reputasi yang hanya positif. Kopi dari rekan lewat "Beri kopi" di menu pesan, tombol terima kasih di task Selesai, atau profil, dengan alasan wajib yang terlihat semua orang di kantor (paling banyak 3 per pemberi per hari, 4 per penerima per bulan). Kopi dari kerja dihitung otomatis dari board: task dari rekan yang diselesaikan penanggung jawabnya, atau task yang selesai tepat waktu. Tingkatan Anak baru, Andalan, Senior, dan Legenda tampil sebagai ikon cangkir di samping nama. Profil chat menampilkan riwayat "dari siapa, untuk apa". Tamu boleh menerima, tidak boleh memberi.
+- Foto profil di Pengaturan > Profil atau menu profil di sidebar: pilih PNG, JPEG, atau WebP, potong persegi, dan Mira menyimpan JPEG 256x256 tanpa metadata (EXIF dan GPS dibuang). Foto tersebar ke semua anggota aktif, termasuk Tamu, dan tampil di chat, board, dan Organisasi. Superadmin bisa menghapus foto anggota di Pengaturan > Profil. Tanpa foto, Mira menampilkan inisial.
 - Satu aplikasi untuk semua peran. Menu admin hanya tampil untuk peran yang berhak.
-- Halaman Organisasi: Pengguna (khusus superadmin: nama laptop, IP terakhir, sistem, versi, status), Departemen, Label, Permintaan bergabung, dan Undangan. Baris di Pengguna, Departemen, dan Label punya menu klik kanan, begitu juga baris di Dokumen dan Tanda tangan.
+- Halaman Organisasi: Pengguna (superadmin: nama laptop, IP terakhir, sistem, versi, status; admin departemen melihat orang di departemennya tanpa alamat IP), Departemen saya, Departemen, Label, Permintaan bergabung, Undangan, Kopi (papan "Paling banyak membantu bulan ini" dan sakelar superadmin), dan Sticker. Baris di Pengguna, Departemen, dan Label punya menu klik kanan, begitu juga baris di Dokumen dan Tanda tangan.
 - Angka di menu untuk pesan belum dibaca, task jatuh tempo, tanda tangan yang menunggu, dan permintaan bergabung.
 - Cek pembaruan dan pemasangan versi baru dari dalam aplikasi (Pengaturan > Tentang dan pembaruan), plus dialog Yang baru.
 - Rekan ditemukan lewat mDNS, alamat manual, QR, atau alamat terakhir yang diingat.
@@ -69,6 +88,8 @@ Catatan proyek yang lebih lengkap ada di vault Obsidian: [`obsidian/Beranda.md`]
 ### Tampilan
 
 Tema Bata dengan mode Terang, Gelap, dan Ikuti Windows. Antarmuka berbahasa Indonesia (bawaan) atau Inggris, dipilih di Pengaturan > Bahasa atau di langkah pertama onboarding. Pilihan berlaku per laptop dan langsung tanpa memulai ulang. Isi yang ditulis rekan tidak diterjemahkan.
+
+Sidebar bisa diringkas dari 208 px menjadi 64 px lewat tombol di bawah logo atau Ctrl+B (Cmd+B di macOS). Dalam mode ringkas menu hanya ikon dengan tooltip, angka notifikasi menjadi lencana kecil, dan profil menjadi avatar. Pilihan tersimpan per laptop.
 
 ## Prinsip: hanya LAN
 
@@ -107,6 +128,8 @@ Pemeriksaan akhir pada kode gabungan (branch `integrasi-dokumen`), semuanya di s
 ## Rilis
 
 `v0.1.0` adalah rilis pertama Mira: build internal untuk uji coba, belum untuk dipakai seluruh kantor. Isinya semua yang ada di [Fitur yang sudah ada](#fitur-yang-sudah-ada), termasuk sinkron dokumen dan tanda tangan antar laptop. Installer `Mira_0.1.0_x64-setup.exe` (NSIS, 7,86 MB) ada di [halaman Releases](../../releases) repositori `Mira` di GitHub. Repositori ini publik dan dulu bernama ChatCompany; folder lokalnya masih bernama ChatCompany.
+
+`v0.6.0` menambah Divisi di dalam departemen (tab Departemen saya, chat divisi, catatan disematkan, mode pengumuman, proyek divisi), reaksi, pemilih emoji, sticker kantor dan pribadi, emote `:nama:`, dan semua label di Chat, Kopi sebagai reputasi yang hanya positif, foto profil, timer dengan Jeda dan Lanjutkan, menu Kalender, sidebar yang bisa diringkas, serta Nonaktifkan, Aktifkan lagi, dan Keluarkan permanen dengan Reset untuk laptop yang dikeluarkan. Saat bergabung, Mira kini menyebut alasan data AD tidak dipakai. Catat waktu manual disembunyikan untuk sementara. Divisi dan Nonaktifkan aktif setelah semua laptop kantor memakai 0.6.0; laptop yang masih 0.5 tidak melihat reaksi, sticker kantor, Kopi, dan foto profil. Campuran laptop 0.5 dan 0.6 sungguhan belum diuji, dan semua uji AD masih memakai AD tiruan. Laporan: [dept-divisi.md](docs/progress/dept-divisi.md), [chat-sticker.md](docs/progress/chat-sticker.md), [kopi.md](docs/progress/kopi.md), [foto-profil.md](docs/progress/foto-profil.md), [timer-jeda.md](docs/progress/timer-jeda.md), [sidebar-kalender.md](docs/progress/sidebar-kalender.md), [perbaikan-bergabung.md](docs/progress/perbaikan-bergabung.md).
 
 `v0.5.0` menambah bergabung lewat akun Windows kantor (data Active Directory mengisi kantor, nama, dan departemen, lalu laptop admin mengecek ulang ke AD), aturan satu domain satu kantor, kantor Mira versi lama yang tetap terlihat saat memasang, dan bingkai pada nilai yang bisa diubah di detail task. Bergabung lewat data AD aktif setelah semua laptop kantor memakai 0.5.0. Jalur LDAP sungguhan belum diuji di PC domain kantor. Laporan: [onboarding-ad.md](docs/progress/onboarding-ad.md), [task-detail-bingkai.md](docs/progress/task-detail-bingkai.md).
 
@@ -222,10 +245,18 @@ Skrip menjalankan `mira.exe` sungguhan dan mengendalikannya lewat DevTools Proto
 | `npm run test:e2e-ttd` | debug | Tanda tangan: gambar, tempatkan, PIN, kunci, deteksi perubahan |
 | `npm run test:e2e-chat` | debug | Chat di satu laptop |
 | `npm run test:e2e-english` | debug | Ganti ke bahasa Inggris di onboarding dan Pengaturan, cek layar utama tanpa teks Indonesia, pilihan tetap setelah restart |
-
 | `npm run test:e2e-board-v04` | debug | Dua instance: subtask, timer, dan durasi status tersinkron, termasuk konflik saat offline |
+| `npm run test:e2e-kopi` | debug | Dua instance: beri kopi dari menu pesan, kopi kerja dari task yang ditugaskan lalu hilang saat task dibuka lagi, batas harian, superadmin mematikan dan menyalakan Kopi, istilah Inggris |
+| `npm run test:e2e-sidebar-kalender` | debug | Sidebar ringkas (tombol, Ctrl+B, tooltip, tetap setelah restart) dan Kalender (Bulan, Minggu, Agenda, saringan, seret dan Alt+Panah untuk tenggat, detail task), ditambah Tamu dua instance yang hanya melihat proyek undangannya |
 
 Skrip berikut belum punya perintah npm dan dijalankan dengan `node scripts/<skrip> <mira.exe> <folder screenshot>`: `board-e2e.mjs` dan `board-sync-e2e.mjs` (board), `org-e2e.mjs` (halaman Organisasi), `join-e2e.mjs` (bergabung dengan persetujuan), dan `ad-e2e.mjs` (bergabung dengan data Active Directory tiruan dan aturan satu domain satu kantor; hanya build debug, argumen ketiga opsional untuk folder data uji). `contextmenu-e2e.mjs` (menu klik kanan) butuh argumen ketiga, yaitu folder kerja.
+
+Skrip baru v0.6.0, semuanya untuk build debug, dengan argumen ketiga opsional untuk folder induk data uji dan port yang bisa digeser dengan `E2E_PORT_OFFSET`:
+- `profile-e2e.mjs`: dua instance. Pasang foto lewat pemotong, foto sampai di chat, board, dan Organisasi laptop lain tanpa Exif atau GPS, hapus foto, dan laptop yang mati menyusul foto baru.
+- `suspend-e2e.mjs`: nonaktifkan lewat Pengguna, layar nonaktif dan "Periksa lagi", tidak ada pesan atau task yang sampai selama nonaktif, aktifkan lagi tanpa restart, keluarkan permanen, reset, lalu bergabung lagi.
+- `ad-reason-e2e.mjs`: alasan data AD tidak dipakai di langkah bergabung, tawaran domain, dan "Cocokkan OU ini ke departemen...". Memakai AD tiruan.
+- `division-e2e.mjs`: enam instance, termasuk satu laptop yang melaporkan versi lama. Tab Departemen saya, divisi, kepala divisi, chat divisi, catatan disematkan, mode pengumuman, proyek divisi, dan gerbang versi. `E2E_SHOTS=1` menyimpan screenshot.
+- `sticker-e2e.mjs`: tiga instance. Reaksi, semua label di Chat, sticker kantor dan emote, sticker pribadi, laptop yang mati menyusul, superadmin menyembunyikan pesan sticker, dan pemilih emoji dengan keyboard.
 
 ### Beberapa "laptop" di satu PC
 
@@ -276,13 +307,16 @@ Modul Rust di `src-tauri/src/`:
 | `permissions/` | Log keanggotaan bertanda tangan, perhitungan status organisasi, undangan |
 | `peers/` | Alamat rekan: diingat, diisi manual, terakhir terlihat |
 | `network/` | QUIC, mDNS, jabat tangan, bergabung, sinkron op, transport sinkron fitur dan unduh blob |
-| `db/` | Koneksi SQLite dan migrasi bernomor v1 sampai v8 |
+| `db/` | Koneksi SQLite dan migrasi bernomor v1 sampai v13 |
 | `blobs/` | Penyimpanan isi file beralamat hash BLAKE3 |
 | `chat/` | Channel, pesan, tanda terima, titipan tersegel, lampiran, notifikasi |
-| `board/` | Dokumen Automerge per proyek, aturan akses, sinkron, pengingat tenggat |
+| `board/` | Dokumen Automerge per proyek, aturan akses, sinkron, pengingat tenggat, Kalender (`calendar.rs`), jeda timer otomatis (`timer_guard.rs`) |
 | `documents/` | Pustaka dokumen, graf versi, pemantau simpan Office, cakupan akses, sinkron antar laptop (`peer_sync.rs`) |
 | `signing/` | Tanda tangan PDF: PIN, permintaan, jejak audit, deteksi perubahan, bukti stempel, sinkron antar laptop (`peer_sync.rs`) |
+| `kopi/` | Kopi: record bertanda tangan, aturan batas, kopi dari kerja, tingkatan, sinkron topik `kopi` |
+| `profile/` | Foto profil: record, pengolahan gambar, sinkron topik `profile`, unduhan foto |
 | `commands.rs`, `team_commands.rs`, `network_commands.rs` | Command Tauri untuk tampilan |
+| `division_commands.rs` | Command Departemen saya, divisi, dan pengaturan chat |
 | `net_backend.rs` | Adapter antara jaringan dan database |
 | `firewall.rs` | Pemeriksaan dan aturan Windows Firewall |
 | `qr.rs` | Tautan `mira://peer` dan QR code alamat laptop |
@@ -299,12 +333,17 @@ Modul Rust di `src-tauri/src/`:
 - macOS baru diuji lewat tes otomatis di GitHub Actions. Mira belum pernah dijalankan di MacBook sungguhan di jaringan kantor, termasuk sambungan antara MacBook dan laptop Windows.
 - Pola simpan Office for Mac (Word dan Excel) belum diperiksa di perangkat sungguhan.
 - Skrip [install.sh](install.sh) belum pernah dijalankan di Mac. Yang sudah diuji di Windows (Git Bash): pembacaan daftar rilis dari GitHub, pemilihan file per prosesor, pencocokan checksum, dan alur pasang dengan perintah macOS yang ditiru.
+- Laptop 0.5 dan 0.6 yang berjalan berdampingan baru diperiksa lewat tes dan kode transport, belum dengan dua versi sungguhan di jaringan kantor.
+- Cmd+B dan seret tenggat Kalender di macOS (WKWebView) belum dicoba.
 
 Yang belum dibuat:
 - Menambah file ke proyek atau tim tertentu dari layar Dokumen. Inti Rust sudah mendukung cakupan proyek, tapi layar Dokumen baru bisa menambah ke Pustaka Umum.
 - Task dari pesan chat, tanda "sudah digabung" di kartu task, kartu task tanda tangan yang pindah ke Selesai otomatis.
 - Komentar, stabilo, dan kotak teks di PDF.
 - Halaman Keamanan untuk perubahan yang ditolak.
+- Notifikasi saat menerima kopi. Kopi tampil di profil dan papan.
+- Menyematkan pesan tertentu. Catatan disematkan saat ini berupa teks yang ditulis pengelola.
+- Angka di menu Kalender (misalnya tenggat hari ini).
 - Tahap 6 (fitur lengkap) dan Tahap 7 (uji coba kantor) belum dimulai.
 
 ## Keputusan yang masih terbuka
