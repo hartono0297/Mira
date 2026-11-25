@@ -3,10 +3,12 @@ import { useRef, type MouseEvent } from "react";
 import type { ConversationSummary, MessageView } from "../../api/chat";
 import { MenuButton, menuItems, SEPARATOR, useContextMenu } from "../../components/ContextMenu";
 import { initials } from "../../components/initials";
+import { KopiMark } from "../../components/KopiMark";
 import { CHAT, CHAT_TEXT } from "../../i18n/chat";
 import { useConversationActions, usePersonMenu } from "./ChatActions";
 import { DeliveryStatus, type DeliveryStatusHandle } from "./DeliveryStatus";
 import { FileCard } from "./FileCard";
+import { useKopiMessage } from "./kopiMenu";
 import { MENU } from "./menuText";
 import { PersonName } from "./PersonName";
 import { authorName, deliveryLine, formatTime, fullTime, segmentMentions } from "./text";
@@ -73,6 +75,7 @@ export function MessageItem({
   }
 
   const mention = conv?.mention;
+  const kopi = useKopiMessage(message, onAnnounce);
   // Pesan dihapus tanpa item: klik kanan di sana tidak membuka menu pesan.
   const menu = useContextMenu({
     label: MENU.messageMenu(name, time),
@@ -98,6 +101,7 @@ export function MessageItem({
               icon: <IconAt size={16} />,
               onSelect: () => mention(message.author),
             },
+          kopi.item,
           hasStatus && {
             id: "status",
             label: MENU.readStatus,
@@ -169,6 +173,7 @@ export function MessageItem({
                 <PersonName person={message.author} />
               )}
             </span>
+            <KopiMark publicKey={message.author.publicKey} minTier="andalan" />
             <time dateTime={message.at} title={fullTime(message.at)}>
               {time}
             </time>
@@ -267,6 +272,7 @@ export function MessageItem({
         </div>
       )}
       {menu.element}
+      {kopi.element}
       {showPerson && person.element}
     </li>
   );

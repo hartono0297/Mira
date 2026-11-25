@@ -1017,7 +1017,17 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
   });
 
   it("Organisasi sebagai superadmin: setiap tab", async () => {
-    backend();
+    backend({
+      kopi_overview: {
+        enabled: true, boardEnabled: true, isSuperadmin: true, canGive: true, me: "a".repeat(64), givenToday: 0,
+        dailyLimit: 3, reasonMax: 120, givenTargets: [], badges: [], peerWeight: 3, workWeight: 1,
+        tiers: [{ tier: "anak_baru", minScore: 0 }, { tier: "andalan", minScore: 15 }],
+      },
+      kopi_board: (a) => ({
+        month: String(a?.month), enabled: true,
+        rows: [{ person: { publicKey: "b".repeat(64), name: "Riley Chen" }, peer: 2, work: 1, score: 7, tier: "andalan" }],
+      }),
+    });
     const user = userEvent.setup();
     renderApp();
     await openSection(user, "org");
@@ -1026,10 +1036,10 @@ describe("tidak ada teks Indonesia tersisa saat bahasa Inggris aktif", () => {
       if (list.length < 5) throw new Error(`tab Organisasi belum lengkap (${list.length})`);
       return list;
     });
-    // Urutan tab superadmin: Pengguna, Departemen, Permintaan bergabung, Label, Undangan.
-    const waits = ["Casey Kim", "Archive Team", "Riley Chen", "Surveyor", null];
-    const names = ["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan"];
-    const anchors = ["Laptop and last IP", "Archived", "Approve", "New label", "Create invite code"];
+    // Urutan tab superadmin: Pengguna, Departemen, Permintaan bergabung, Label, Undangan, Kopi.
+    const waits = ["Casey Kim", "Archive Team", "Riley Chen", "Surveyor", null, "Most helpful this month"];
+    const names = ["Pengguna", "Departemen", "Permintaan bergabung", "Label", "Undangan", "Kopi"];
+    const anchors = ["Laptop and last IP", "Archived", "Approve", "New label", "Create invite code", "Coffee settings"];
     const all: string[] = [];
     for (let i = 0; i < tabs.length; i += 1) {
       await user.click(document.querySelectorAll<HTMLElement>("button.org-tab")[i]);

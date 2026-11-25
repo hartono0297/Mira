@@ -58,6 +58,8 @@ pub const TOPIC_SIGN: &str = "sign";
 /// Join requests forwarded to the laptops that may decide them (v0.3,
 /// `join_sync.rs`).
 pub const TOPIC_JOIN: &str = "join";
+/// Kopi, positive reputation (`kopi/sync.rs`).
+pub const TOPIC_KOPI: &str = "kopi";
 
 /// Boxed future returned by [`FeatureLink::fetch_blob`].
 pub type BlobFuture = Pin<Box<dyn Future<Output = Result<u64, String>> + Send>>;
@@ -467,7 +469,7 @@ mod tests {
 
     #[test]
     fn topics_are_lowercase_letters() {
-        for t in [TOPIC_CHAT, TOPIC_BOARD, TOPIC_DOCS, TOPIC_SIGN] {
+        for t in [TOPIC_CHAT, TOPIC_BOARD, TOPIC_DOCS, TOPIC_SIGN, TOPIC_JOIN, TOPIC_KOPI] {
             assert!(is_topic(t));
         }
         assert!(!is_topic("Chat"));

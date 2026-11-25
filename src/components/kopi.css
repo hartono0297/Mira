@@ -1,0 +1,413 @@
+/* Fitur Kopi: ikon di samping nama, dialog Beri kopi, bagian Kopi di profil.
+   Warna hanya lewat token tema. Pasangan yang dicek (terang/gelap):
+   accent-text di atas bg 6.14/10.38, di atas card 5.89/9.33, di atas accent-soft 5.0/7.51;
+   state di atas bg 6.14/8.78;
+   text-sec di atas card 5.86/7.61; isi batang (accent) vs jalur (border) 4.12/5.13;
+   garis jalur (border-strong) vs bg 3.19/4.18. */
+
+/* Ikon di samping nama. Tingkatan terbaca dari jumlah garis naik di kanan
+   cangkir (0 sampai 3), warna hanya pendukung. Legenda memakai latar lembut. */
+
+.kopi-mark {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+  vertical-align: -2px;
+  color: var(--text-sec);
+  line-height: 1;
+}
+
+.kopi-mark.kopi-r1,
+.kopi-mark.kopi-r2,
+.kopi-mark.kopi-r3 {
+  color: var(--accent-text);
+}
+
+.kopi-mark.kopi-r3 {
+  padding: 1px 4px 1px 3px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+
+.kopi-mark-steps {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  padding-bottom: 2px;
+}
+
+.kopi-mark-steps > span {
+  display: block;
+  width: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.kopi-mark-steps > span:nth-child(1) {
+  height: 4px;
+}
+
+.kopi-mark-steps > span:nth-child(2) {
+  height: 7px;
+}
+
+.kopi-mark-steps > span:nth-child(3) {
+  height: 10px;
+}
+
+/* Nama dan ikon kopi dalam satu baris di daftar orang (Organisasi), yang
+   barisnya berupa kolom flex. */
+.kopi-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  min-width: 0;
+}
+
+/* Dialog Beri kopi */
+
+.kopi-give {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kopi-give-context {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.kopi-give-context figcaption {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.kopi-give-context blockquote {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kopi-reason {
+  min-height: 76px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 15px;
+  resize: vertical;
+}
+
+.kopi-reason:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.kopi-reason[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.kopi-give-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.kopi-counter {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lebih dari batas: teks error juga muncul di bawah isian, warna hanya pendukung. */
+.kopi-counter-over {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.kopi-give-quota {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kopi-give-blocked {
+  color: var(--state);
+}
+
+/* Bagian Kopi di profil */
+
+.kopi-prof {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.kopi-off {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.kopi-prof-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.kopi-prof-title svg {
+  color: var(--accent-text);
+}
+
+.kopi-prof-live:empty {
+  display: none;
+}
+
+.kopi-retry {
+  margin-top: 8px;
+}
+
+.kopi-sum {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px 16px;
+}
+
+.kopi-sum-tier {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kopi-sum-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+/* Titik fokus bagian ini: nama tingkatan. */
+.kopi-sum-name {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.kopi-sum-name.kopi-r1,
+.kopi-sum-name.kopi-r2,
+.kopi-sum-name.kopi-r3 {
+  color: var(--accent-text);
+}
+
+.kopi-counts {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+}
+
+.kopi-counts > div {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+}
+
+.kopi-counts dt {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.kopi-counts dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.kopi-bar {
+  grid-column: 1 / -1;
+  height: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.kopi-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.kopi-sum-line,
+.kopi-sum > .hint {
+  grid-column: 1 / -1;
+}
+
+.kopi-sum-line {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kopi-give-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.kopi-hist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kopi-hist-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sec);
+}
+
+.kopi-hist-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.kopi-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.kopi-entry + .kopi-entry {
+  border-top: 1px solid var(--border);
+}
+
+.kopi-entry-icon {
+  margin-top: 2px;
+  color: var(--accent-text);
+}
+
+/* Entri tersembunyi: chip teks "Disembunyikan" dan bingkai putus-putus
+   (--border-strong, 3:1 di atas latar), isinya tetap terbaca utuh. Outline
+   dengan offset negatif supaya tidak menggeser tata letak daftar. */
+.kopi-entry-hidden {
+  outline: 1px dashed var(--border-strong);
+  outline-offset: -4px;
+  border-radius: 10px;
+}
+
+.kopi-entry-body {
+  min-width: 0;
+}
+
+.kopi-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  overflow-wrap: anywhere;
+}
+
+.kopi-entry-reason {
+  overflow-wrap: anywhere;
+}
+
+.kopi-entry-time {
+  display: block;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.kopi-hidden-chip {
+  font-size: 11px;
+}
+
+.kopi-more {
+  align-self: flex-start;
+}
+
+/* Tombol Kopi di profil, riwayat, dan task: area sentuh minimal 44px. */
+.kopi-tap,
+.btn.kopi-tap {
+  min-height: 44px;
+}
+
+/* Tombol Kopi yang tidak bisa dipakai memakai aria-disabled (tetap bisa difokus
+   dan alasannya terbaca), bukan disabled. Dipakai profil, dialog, dan task.
+   Tombol garis: pudar 0,75 seperti .btn:disabled, teks tetap 7,06:1 (terang)
+   dan 8,8:1 (gelap). Tombol utama (Kirim kopi) tidak dipudarkan, karena putih di
+   atas aksen yang pudar hanya 3,42:1; ia memakai rupa tombol garis dengan
+   --text-sec di atas --card (5,86:1 dan 7,61:1). Hover tidak menyorot. */
+.btn.btn-ghost.kopi-btn[aria-disabled="true"] {
+  opacity: 0.75;
+}
+
+.btn.kopi-btn:not(.btn-ghost)[aria-disabled="true"]:not([aria-busy="true"]) {
+  background: var(--card);
+  border-color: var(--border-strong);
+  color: var(--text-sec);
+}
+
+.btn.kopi-btn[aria-disabled="true"]:hover {
+  filter: none;
+}
+
+.btn.btn-ghost.kopi-btn[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+/* Sedang mengirim: tetap berwarna aksen, kursor progress. */
+.btn.kopi-btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+@media (max-width: 420px) {
+  .kopi-sum {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kopi-counts > div {
+    align-items: flex-start;
+  }
+
+  .kopi-entry {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .kopi-entry-act {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (forced-colors: active) {
+  .kopi-bar > span {
+    background: Highlight;
+  }
+
+  .kopi-mark-steps > span {
+    background: CanvasText;
+  }
+}

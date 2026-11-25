@@ -17,6 +17,7 @@ pub mod firewall;
 pub mod identity;
 pub mod join_commands;
 pub mod join_sync;
+pub mod kopi;
 pub mod net_backend;
 pub mod network;
 pub mod network_commands;
@@ -152,6 +153,10 @@ pub fn run() {
             // the requester's in-memory state.
             join_sync::register(app.handle());
             app.manage(join_commands::JoinClient::default());
+            // Kopi (positive reputation): topic `kopi` and the background
+            // publisher of this laptop's work snapshot.
+            kopi::sync::register(app.handle());
+            kopi::runtime::start(app.handle());
             // Chat (Tahap 2): registers with the FeatureHub and starts the
             // attachment downloader.
             let chat = chat::runtime::ChatRuntime::install(app.handle());
@@ -298,6 +303,12 @@ pub fn run() {
             chat::commands::chat_group_rename,
             chat::commands::chat_project,
             chat::commands::chat_set_folded,
+            kopi::commands::kopi_overview,
+            kopi::commands::kopi_profile,
+            kopi::commands::kopi_give,
+            kopi::commands::kopi_hide,
+            kopi::commands::kopi_set_settings,
+            kopi::commands::kopi_board,
             updater::update_info,
             updater::update_check,
             updater::update_download,

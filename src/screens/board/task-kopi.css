@@ -1,0 +1,27 @@
+/* Tombol terima kasih (Kopi) di detail task yang sudah selesai.
+   Hanya token yang sudah ada: --text di atas --bg untuk tombol, --text-sec untuk
+   alasan saat nonaktif (pasangan yang sama dengan .hint di seluruh aplikasi).
+   Tinggi 44px dan tampilan aria-disabled ada di components/kopi.css (.kopi-tap,
+   .kopi-btn), sama dengan tombol di profil. */
+
+.tk-thanks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.tk-thanks .btn {
+  max-width: 100%;
+  text-align: start;
+}
+
+.tk-thanks .btn > svg {
+  flex: none;
+}
+
+.tk-thanks .hint {
+  margin: 0;
+  min-width: 0;
+}

@@ -1,0 +1,323 @@
+/* Tab Kopi di Organisasi. Papan bulanan adalah fokus halaman dan memakai
+   lebar penuh; penjelasan cara mendapat Kopi di bawahnya, dua kolom kalau
+   ruangnya cukup. Satu aksen: angka skor memakai --accent-text (5,89:1 di
+   atas --card terang, 9,33:1 gelap; 6,14:1 dan 10,38:1 di atas --bg). */
+
+.kb-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-title svg {
+  flex: none;
+  color: var(--accent-text);
+}
+
+.kb-intro {
+  max-width: 62ch;
+  margin: 0;
+  font-size: 13px;
+}
+
+.kb-h3 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.kb-notice {
+  max-width: 72ch;
+}
+
+.kb-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Papan bulanan */
+
+.kb-board {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.kb-board-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.kb-months {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kb-month-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+}
+
+.kb-month {
+  min-width: 9.5em;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.kb-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.kb-row {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 10px 14px;
+}
+
+.kb-rank {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.kb-who {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kb-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.kb-you {
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.kb-tier {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.kb-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(4.5rem, auto));
+  gap: 0 14px;
+  margin: 0;
+  text-align: right;
+}
+
+.kb-stats dt {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-sec);
+}
+
+.kb-stats dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-score dd {
+  font-size: 18px;
+  line-height: 1.3;
+  color: var(--accent-text);
+}
+
+/* Jendela sempit: angka pindah ke baris kedua di bawah nama, rata kiri. */
+@container (max-width: 520px) {
+  .kb-row {
+    grid-template-columns: 2rem minmax(0, 1fr);
+  }
+
+  .kb-stats {
+    grid-column: 2;
+    grid-template-columns: repeat(3, auto);
+    justify-content: start;
+    gap: 0 18px;
+    text-align: left;
+  }
+
+  .kb-month {
+    min-width: 8em;
+  }
+}
+
+/* Cara mendapat Kopi dan tingkatan */
+
+.kb-how {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px 28px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+@container (min-width: 680px) {
+  .kb-how {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .kb-how > .kb-h3 {
+    grid-column: 1 / -1;
+  }
+}
+
+.kb-rules {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.kb-tiers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.kb-tiers caption {
+  text-align: left;
+  padding-bottom: 6px;
+}
+
+.kb-h4 {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.kb-tiers-hint {
+  display: block;
+}
+
+.kb-tiers th {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sec);
+  text-align: left;
+  padding: 4px 0;
+}
+
+.kb-tiers td {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+
+.kb-tiers th:last-child,
+.kb-tiers td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pengaturan superadmin */
+
+.kb-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+/* Pengaturan memakai kotak centang biasa, pola yang sama dengan pengaturan
+   pengingat di Board (.rem-opt): baris klik setinggi 44px, centang 18px
+   memakai --accent, keterangan di bawahnya. */
+.kb-opts {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.kb-opt-row {
+  min-width: 0;
+  padding: 6px 0;
+}
+
+.kb-opt-row + .kb-opt-row {
+  border-top: 1px solid var(--border);
+}
+
+.kb-opt-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.kb-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.kb-opt:hover {
+  background: var(--hover);
+}
+
+.kb-opt input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* Sedang menyimpan: kotak tetap bisa difokus, hanya kursor yang berubah. */
+.kb-opt:has(input[aria-disabled="true"]) {
+  cursor: progress;
+}
+
+.kb-opt:has(input[aria-disabled="true"]):hover {
+  background: transparent;
+}
+
+.kb-saving {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kb-opt-hint {
+  margin: 0;
+  padding-left: 28px;
+}
