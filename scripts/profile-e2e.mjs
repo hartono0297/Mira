@@ -263,6 +263,8 @@ async function launch(id) {
     stdio: ["ignore", "ignore", "pipe"],
   });
   child.stderr.pipe(log);
+  // Dicatat sejak awal supaya proses tetap dihentikan kalau langkah berikut gagal.
+  running[id] = { child, browser: null, page: null, consoleLines: [] };
   let browser;
   for (let i = 0; i < 80 && !browser; i++) {
     await sleep(500);
@@ -273,19 +275,24 @@ async function launch(id) {
     }
   }
   if (!browser) throw new Error(`WebView2 ${id} tidak bisa dihubungi lewat CDP`);
+  running[id].browser = browser;
   let pg;
   for (let i = 0; i < 40 && !pg; i++) {
     pg = browser.contexts().flatMap((c) => c.pages())[0];
     if (!pg) await sleep(250);
   }
-  const consoleLines = [];
+  if (!pg) throw new Error(`WebView2 ${id} tidak punya halaman`);
+  running[id].page = pg;
+  const consoleLines = running[id].consoleLines;
   pg.on("console", (m) => {
     if (m.type() === "error" || m.type() === "warning") consoleLines.push(`[${m.type()}] ${m.text()}`);
   });
   await pg.waitForLoadState("domcontentloaded");
-  await pg.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
+  // WebView2 baru bisa lambat memuat halaman pertama saat disk sibuk: batas 60 detik.
+  await pg.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 60000 }).catch((e) => {
+    throw new Error(`${id}: __TAURI_INTERNALS__ tidak muncul di ${pg.url()}: ${String(e?.message ?? e).slice(0, 120)}`);
+  });
   await pg.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
-  running[id] = { child, browser, page: pg, consoleLines };
   try {
     const st = await pg.evaluate(() => window.__TAURI_INTERNALS__.invoke("get_app_state"));
     if (st?.identity?.publicKey) ourKeys.add(st.identity.publicKey.toLowerCase());
@@ -299,7 +306,7 @@ async function stop(id) {
   const app = running[id];
   if (!app) return;
   delete running[id];
-  await app.browser.close().catch(() => {});
+  await app.browser?.close().catch(() => {});
   try {
     // Hanya pohon proses yang dijalankan skrip ini.
     execFileSync("taskkill", ["/PID", String(app.child.pid), "/T", "/F"], { stdio: "ignore" });
@@ -343,7 +350,9 @@ async function waitFor(desc, fn, timeoutMs = SYNC_MS, everyMs = 1000) {
 const settle = (desc, fn, timeoutMs) => waitFor(desc, fn, timeoutMs).catch((e) => String(e.message));
 
 const page = (id) => running[id].page;
-const shot = (id, name) => page(id).screenshot({ path: join(shots, name) }).catch(() => {});
+const shot = async (id, name) => {
+  await running[id]?.page?.screenshot({ path: join(shots, name) }).catch(() => {});
+};
 async function section(name, fn) {
   try {
     await fn();
@@ -620,7 +629,17 @@ try {
         await setLook("A", { mode, lang });
         const htmlLang = await p.evaluate(() => document.documentElement.lang);
         await openProfileSettings("A");
-        await sleep(500);
+        // Tunggu foto sendiri dan daftar Foto anggota selesai dibaca, supaya screenshot
+        // tidak menangkap teks "Membaca foto profil...".
+        const loaded = await settle(
+          `Pengaturan > Profil A selesai dimuat (${modeName}, ${lang})`,
+          async () =>
+            (await sel.removePhoto(p).isVisible()) &&
+            (await p.locator(".settings-body").getByText(/^(Membaca|Reading) /).count()) === 0,
+          20000,
+        );
+        check(`5. Profil selesai dimuat dengan tombol Hapus foto (${modeName}, ${lang})`, loaded === true, loaded === true ? "" : loaded);
+        await sleep(300);
         await shot("A", `fp-10-a-profil-${modeName}-${lang}.png`);
         await sel.changePhoto(p).click();
         const dlg = sel.cropDialog(p);
@@ -750,7 +769,11 @@ for (const target of miraCredentials()) {
     console.log(`Kunci uji tidak bisa dihapus: ${target}`);
   }
 }
-rmSync(root, { recursive: true, force: true });
+try {
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 1000 });
+} catch (e) {
+  console.log(`Folder data uji belum bisa dihapus: ${root} (${e.code ?? e})`);
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\nRingkasan: ${results.length - failed.length}/${results.length} pemeriksaan lulus.`);
