@@ -18,7 +18,7 @@
 //      Screenshot detail task di A dengan tombol "Terima kasih ke Budi Uji", profil B.
 //   4. Task dibuka lagi (Dikerjakan): Kopi kerja kembali 0 di A dan B.
 //   5. Batas harian: A memberi sampai 3 hari ini, pemberian ke-4 ditolak.
-//   6. A mematikan fitur lewat Organisasi > Kopi (sakelar + konfirmasi). B: fitur mati,
+//   6. A mematikan fitur lewat Organisasi > Kopi (kotak centang + konfirmasi). B: fitur mati,
 //      item "Beri kopi" hilang, kopi_give ditolak. Lalu dinyalakan lagi.
 //   7. Versi Inggris profil dan panel.
 //
@@ -86,11 +86,23 @@ function check(name, ok, detail = "") {
   results.push({ name, ok, detail });
   console.log(`${ok ? "LULUS" : "GAGAL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
+const note = (msg) => console.log(`CATATAN  ${msg}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const t0 = Date.now();
 const secs = (since) => `${Math.round((Date.now() - since) / 1000)} dtk`;
 
 const running = {};
+// Semua proses mira.exe yang dijalankan skrip ini, juga yang gagal di tengah launch,
+// supaya di akhir semuanya dihentikan sebelum folder data dihapus.
+const spawned = new Set();
+function killTree(pid) {
+  try {
+    // Hanya pohon proses yang dijalankan skrip ini.
+    execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+  } catch {
+    /* sudah berhenti */
+  }
+}
 
 async function launch(id) {
   const node = NODES[id];
@@ -108,34 +120,72 @@ async function launch(id) {
     stdio: ["ignore", "ignore", "pipe"],
   });
   child.stderr.pipe(log);
-  let browser;
-  for (let i = 0; i < 80 && !browser; i++) {
+  spawned.add(child);
+  child.on("exit", () => spawned.delete(child));
+  // Build debug butuh sekitar 20 detik sebelum WebView2 meninggalkan about:blank. Sambung CDP
+  // setelah halaman aplikasi ada, supaya Playwright tidak memegang target about:blank yang lama.
+  let appUrl = null;
+  for (let i = 0; i < 120 && !appUrl; i++) {
     await sleep(500);
     try {
-      browser = await chromium.connectOverCDP(`http://127.0.0.1:${node.cdp}`);
+      const list = await (await fetch(`http://127.0.0.1:${node.cdp}/json/list`)).json();
+      appUrl = list.find((t) => t.type === "page" && /^(https?:\/\/tauri\.localhost|tauri:)/.test(t.url))?.url ?? null;
     } catch {
       /* belum siap */
     }
   }
-  if (!browser) {
-    try {
-      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-    } catch {
-      /* sudah berhenti */
-    }
-    throw new Error(`WebView2 ${id} tidak bisa dihubungi lewat CDP`);
-  }
+  if (!appUrl) note(`${id}: halaman aplikasi belum terlihat di /json/list setelah 60 detik`);
+  // Halaman aplikasi: yang punya __TAURI_INTERNALS__. Kadang Playwright hanya melihat target
+  // about:blank yang lama; kalau begitu sambungan CDP ditutup dan dibuka lagi (paling banyak 5 kali).
+  let browser;
   let page;
-  for (let i = 0; i < 40 && !page; i++) {
-    page = browser.contexts().flatMap((c) => c.pages())[0];
-    if (!page) await sleep(250);
+  const seen = new Set();
+  for (let attempt = 0; attempt < 5 && !page; attempt++) {
+    browser = null;
+    for (let i = 0; i < 80 && !browser; i++) {
+      try {
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${node.cdp}`);
+      } catch {
+        await sleep(500);
+      }
+    }
+    if (!browser) break;
+    for (let i = 0; i < 30 && !page; i++) {
+      for (const p of browser.contexts().flatMap((c) => c.pages())) {
+        seen.add(p.url());
+        const ok = await Promise.race([
+          p.evaluate(() => "__TAURI_INTERNALS__" in window).catch(() => false),
+          sleep(3000).then(() => false),
+        ]);
+        if (ok) {
+          page = p;
+          break;
+        }
+      }
+      if (!page) await sleep(500);
+    }
+    if (!page) {
+      await browser.close().catch(() => {});
+      await sleep(1000);
+    }
+  }
+  if (!page) {
+    let targets = "";
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${node.cdp}/json/list`)).json();
+      targets = list.map((t) => `${t.type}:${t.url}`).join(", ");
+    } catch {
+      targets = "tidak terbaca";
+    }
+    if (browser) await browser.close().catch(() => {});
+    killTree(child.pid);
+    throw new Error(`Halaman Mira ${id} tidak siap (CDP ${node.cdp}, halaman Playwright: ${[...seen].join(", ") || "tidak ada"}; /json/list: ${targets})`);
   }
   const consoleLines = [];
   page.on("console", (m) => {
     if (m.type() === "error" || m.type() === "warning") consoleLines.push(`[${m.type()}] ${m.text()}`);
   });
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForFunction(() => "__TAURI_INTERNALS__" in window, null, { timeout: 20000 });
   await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
   running[id] = { child, browser, page, consoleLines };
   return running[id];
@@ -146,12 +196,7 @@ async function stop(id) {
   if (!app) return;
   delete running[id];
   await app.browser.close().catch(() => {});
-  try {
-    // Hanya pohon proses yang dijalankan skrip ini.
-    execFileSync("taskkill", ["/PID", String(app.child.pid), "/T", "/F"], { stdio: "ignore" });
-  } catch {
-    /* sudah berhenti */
-  }
+  killTree(app.child.pid);
   await sleep(1500);
 }
 
@@ -259,7 +304,8 @@ const projectNav = (p) => p.getByRole("navigation", { name: "Task saya dan proye
 const taskDialog = (p) =>
   p.getByRole("dialog").filter({ has: p.getByRole("button", { name: "Tutup detail task" }) });
 const orgTab = (p) => p.locator(".org-tabs-wrap").getByRole("button", { name: /^(Kopi|Coffee)(\s|,|$)/ });
-const featureSwitch = (p) => p.getByRole("switch", { name: "Fitur Kopi", exact: true });
+// Kotak centang biasa berlabel "Fitur Kopi" (EN "Coffee"); tercentang baru berubah setelah tersimpan.
+const featureSwitch = (p) => p.getByRole("checkbox", { name: "Fitur Kopi", exact: true });
 const navEn = (p, name) =>
   p.getByRole("navigation", { name: "Main menu" }).getByRole("button", { name: menuName(name) });
 
@@ -473,6 +519,10 @@ try {
     await shot("A", "kopi-dialog-beri-terang.png");
     await dlg.getByRole("button", { name: "Kirim kopi", exact: true }).click();
     await dlg.waitFor({ state: "hidden", timeout: 15000 });
+    // Status untuk pembaca layar setelah dialog tertutup (wilayah live panel percakapan).
+    const sentText = `Kopi terkirim untuk ${NODES.B.name}.`;
+    const announced = await settle("status Kopi terkirim", async () => (await pA.getByText(sentText, { exact: true }).count()) > 0, 5000, 200);
+    check(`2. Status "${sentText}" diumumkan setelah memberi`, announced === true, announced === true ? "" : announced);
     const ovA2 = await overview("A");
     check(
       "2. A: givenToday 1 dan target pesan tercatat",
@@ -521,10 +571,11 @@ try {
       return c.peer === "1" ? c : null;
     }, 30000);
     const reasonShown = await prof.locator(".kopi-entry-reason", { hasText: REASON }).count();
+    const head = ((await prof.locator(".kopi-entry-head").first().innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
     check(
-      "2. Dialog profil B di A: Dari rekan 1 dan alasan tampil di riwayat",
-      typeof counts === "object" && reasonShown > 0,
-      typeof counts === "object" ? `rekan=${counts.peer}, kerja=${counts.work}, alasan tampil=${reasonShown}` : counts,
+      `2. Dialog profil B di A: Dari rekan 1, riwayat "${NODES.A.name}, lewat pesan chat" dengan alasannya`,
+      typeof counts === "object" && reasonShown > 0 && head.startsWith(`${NODES.A.name}, lewat pesan chat`),
+      typeof counts === "object" ? `rekan=${counts.peer}, kerja=${counts.work}, kepala="${head}", alasan tampil=${reasonShown}` : counts,
     );
     await closeOverlays("A");
   });
@@ -623,6 +674,8 @@ try {
     check("5. A memberi Kopi lagi untuk pesan yang sama: ditolak", !again.ok && /sudah memberi/i.test(again.error?.message ?? ""), errText(again));
 
     // Isi sampai 3 hari ini (pemberian langkah 2 ikut dihitung), lalu satu lagi harus ditolak.
+    // Semua ke B: paling banyak 3 yang berhasil, di bawah batas 4 per pasangan per bulan,
+    // jadi pemberian ke-4 ditolak karena jatah harian (dicek setelah batas pasangan di Rust).
     const targets = [
       { kind: "message", id: msg.b2 },
       { kind: "profile", day: today() },
@@ -705,14 +758,14 @@ try {
 
     // Matikan: sakelar lalu konfirmasi.
     const sw = featureSwitch(pA);
-    check("6. Sakelar Fitur Kopi menyala di A", await sw.isChecked());
+    check("6. Kotak centang Fitur Kopi tercentang di A", await sw.isChecked());
     await sw.click();
     const confirm = pA.getByRole("button", { name: "Matikan Kopi", exact: true });
     await confirm.waitFor({ timeout: 10000 });
     await shot("A", "kopi-panel-konfirmasi-terang.png");
     await confirm.click();
     const offA = await settle("sakelar A mati", async () => !(await sw.isChecked()) && !(await overview("A")).enabled, 20000);
-    check("6. A mematikan fitur lewat sakelar dan konfirmasi: sakelar Mati, overview A enabled = false", offA === true, offA === true ? "" : offA);
+    check("6. A mematikan fitur lewat kotak centang dan konfirmasi: tidak tercentang, overview A enabled = false", offA === true, offA === true ? "" : offA);
     await sleep(600);
     await shot("A", "kopi-panel-mati-terang.png");
 
@@ -765,11 +818,15 @@ try {
     const dlg = await openProfile("A", msg.b1, NODES.B.name);
     const heading = (await dlg.locator(".kopi-prof-title").innerText()).trim();
     const labels = (await dlg.locator(".kopi-counts dt").allInnerTexts()).map((t) => t.trim());
+    const levelLabel = (await dlg.locator(".kopi-sum-label").innerText().catch(() => "")).trim();
+    const levelName = (await dlg.locator(".kopi-sum-name").innerText().catch(() => "")).trim();
     check(
-      "7. Profil B dalam bahasa Inggris: judul Coffee, From colleagues dan From work",
-      heading === "Coffee" && labels.includes("From colleagues") && labels.includes("From work"),
-      `judul="${heading}", label=${labels.join(" / ")}`,
+      "7. Profil B dalam bahasa Inggris: judul Coffee, From colleagues, From work, Level",
+      heading === "Coffee" && labels.includes("From colleagues") && labels.includes("From work") && levelLabel === "Level",
+      `judul="${heading}", label=${labels.join(" / ")}, ${levelLabel}=${levelName}`,
     );
+    // B: 3 Kopi rekan x 3 = skor 9, di bawah Regular (15).
+    check("7. Tingkatan B dalam bahasa Inggris: Newcomer", levelName === "Newcomer", levelName);
     await sleep(400);
     await shot("A", "kopi-profil-en.png");
     await closeOverlays("A");
@@ -809,7 +866,19 @@ for (const target of toDelete) {
     }
   }
 }
-rmSync(root, { recursive: true, force: true });
+// Proses yang gagal di tengah launch juga dihentikan.
+for (const child of [...spawned]) killTree(child.pid);
+// WebView2 bisa masih memegang file sebentar setelah proses dihentikan: coba ulang, jangan crash.
+let removed = false;
+for (let i = 0; i < 20 && !removed; i++) {
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    removed = true;
+  } catch (err) {
+    if (i === 19) console.log(`Folder data uji belum bisa dihapus (${err.code ?? err.message}): ${root}`);
+    else await sleep(1500);
+  }
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} pemeriksaan lulus. (${secs(t0)})`);
