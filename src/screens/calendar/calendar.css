@@ -1,0 +1,276 @@
+/* Layar Kalender: kepala, alat saringan, baris status, dan bayangan seret.
+   Grid bulan, kolom minggu, agenda, dan chip ada di calendar-views.css.
+   Judul periode adalah satu-satunya teks besar di layar: itu yang dicari mata
+   setelah menekan Sebelumnya/Berikutnya. Tombol navigasi ada di kiri judul,
+   jadi posisinya tidak bergeser saat panjang nama bulan berubah.
+   Kontras (dicek): aksen-teks di atas sorotan aksen 5,0:1 terang, 7,51:1
+   gelap; teks pendukung di atas latar 6,11:1 dan 8,46:1; garis kontrol
+   border-strong 3,19:1 dan 4,18:1; cincin fokus di atas tombol terpilih
+   4,41:1 dan 5,19:1. */
+
+/* Layar setinggi area isi (.content di Shell adalah kolom flex yang dibatasi
+   jendela): kepala tetap terlihat, sisa tinggi untuk tampilan. */
+.cal {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cal-period {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.cal-icon-btn {
+  width: 40px;
+  padding: 0;
+}
+
+.cal-today {
+  margin-left: 4px;
+}
+
+.cal-title {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.cal-title:focus {
+  outline: none;
+}
+
+.cal-title:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cal-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  min-width: 0;
+}
+
+/* Pilihan tampilan: tiga tombol bertekan. Yang aktif ditandai aria-pressed,
+   huruf lebih tebal, dan latar sorotan aksen, bukan warna saja. */
+.cal-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.cal-switch button {
+  min-height: 34px;
+  padding: 4px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cal-switch button:hover {
+  background: var(--hover);
+}
+
+.cal-switch button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 800;
+}
+
+.cal-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cal-scope label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cal-scope select {
+  min-height: 40px;
+  min-width: 0;
+  max-width: min(280px, 100%);
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 14px;
+  text-overflow: ellipsis;
+}
+
+.cal-scope select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: var(--focus);
+}
+
+.cal-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cal-done input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Baris status selalu punya tinggi, supaya teks Memuat tidak menggeser grid. */
+.cal-statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 16px;
+  min-height: 30px;
+  padding: 6px 24px 0;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.cal-loading {
+  min-height: 18px;
+}
+
+.cal-alerts {
+  padding: 8px 24px 0;
+}
+
+.cal-alerts:empty {
+  display: none;
+}
+
+.cal-retry {
+  margin-top: 8px;
+}
+
+.cal-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 24px 24px;
+}
+
+/* Akar tampilan mengambil sisa tinggi dan bergulir sendiri (Agenda di sini;
+   Bulan dan Minggu juga memasangnya di calendar-views.css). */
+.cal-body > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Bayangan chip yang diseret. Bayangan tidak menangkap pointer, jadi
+   elementFromPoint tetap mengenai sel kalender di bawahnya. Satu-satunya
+   bayangan bertingkat di layar: benda yang sedang diangkat. */
+.cal-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 70;
+  margin: 0;
+  pointer-events: none;
+  opacity: 0.92;
+  box-shadow: 0 8px 20px var(--scrim);
+}
+
+html.cal-dragging,
+html.cal-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* Jendela pendek atau sempit: seluruh layar bergulir sebagai satu halaman,
+   supaya tampilan tidak terjepit di bawah kepala yang membungkus. */
+@media (max-height: 560px), (max-width: 640px) {
+  .cal {
+    min-height: auto;
+  }
+
+  .cal-body {
+    flex: none;
+  }
+
+  .cal-body > * {
+    overflow: visible;
+  }
+}
+
+@media (max-width: 640px) {
+  .cal-head {
+    padding: 12px 16px;
+  }
+
+  .cal-period {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .cal-title {
+    font-size: 18px;
+    flex-basis: 100%;
+    order: -1;
+  }
+
+  .cal-statusbar,
+  .cal-alerts {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .cal-body {
+    padding: 8px 16px 20px;
+  }
+
+  .cal-scope {
+    flex: 1 1 200px;
+  }
+
+  .cal-scope select {
+    flex: 1;
+    max-width: none;
+  }
+}

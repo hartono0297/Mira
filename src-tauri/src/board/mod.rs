@@ -10,6 +10,7 @@
 
 pub mod access;
 pub mod assignees;
+pub mod calendar;
 pub mod commands;
 pub mod doc;
 pub mod feature;

@@ -23,7 +23,8 @@
     "test:e2e-chat": "node scripts/chat-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots",
     "test:e2e-board-v04": "node scripts/board-v04-multi-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots/v04-board",
     "test:e2e-english": "node scripts/english-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots/v04-english",
-    "test:e2e-kopi": "node scripts/kopi-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots/kopi"
+    "test:e2e-kopi": "node scripts/kopi-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots/kopi",
+    "test:e2e-sidebar-kalender": "node scripts/sidebar-kalender-e2e.mjs src-tauri/target/debug/mira.exe docs/progress/screenshots/sidebar-kalender"
   },
   "dependencies": {
     "@fontsource/nunito": "^5.3.0",

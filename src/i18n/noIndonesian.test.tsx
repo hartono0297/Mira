@@ -873,10 +873,10 @@ function renderApp() {
   );
 }
 
-// Menu sidebar dibuka menurut urutannya (Chat, Board, Dokumen, Tanda tangan,
-// Organisasi, Pengaturan), tidak menurut namanya, supaya label yang belum
+// Menu sidebar dibuka menurut urutannya (Chat, Board, Kalender, Dokumen, Tanda
+// tangan, Organisasi, Pengaturan), tidak menurut namanya, supaya label yang belum
 // diterjemahkan tetap dilaporkan lewat pemindai, bukan gagal mencari tombol.
-const NAV = { chat: 0, board: 1, docs: 2, sign: 3, org: 4, settings: 5 } as const;
+const NAV = { chat: 0, board: 1, calendar: 2, docs: 3, sign: 4, org: 5, settings: 6 } as const;
 
 async function openSection(user: ReturnType<typeof userEvent.setup>, id: keyof typeof NAV) {
   const nav = await waitFor(() => {

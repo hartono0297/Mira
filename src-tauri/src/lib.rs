@@ -260,6 +260,7 @@ pub fn run() {
             board::commands::board_log_time,
             board::commands::board_delete_time_entry,
             board::commands::board_my_tasks,
+            board::calendar::board_calendar,
             board::commands::board_update_project,
             board::outside::board_outside_projects,
             documents::commands::list_documents,
