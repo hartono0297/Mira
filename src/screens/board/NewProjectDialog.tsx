@@ -6,7 +6,7 @@ import type { PersonView } from "../../api/org";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { BOARD_DETAIL } from "../../i18n/board-detail";
 import BOARD_DETAIL_ID from "../../i18n/board-detail.id";
 import { useCreateOptions, type OrgData } from "./createOptions";
@@ -232,9 +232,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: Props) {
           disabled={busy}
           fixedNote={
             <>
-              <span className="pp-av" aria-hidden="true">
-                {initials(myName)}
-              </span>
+              <Avatar className="pp-av" name={myName} publicKey={data?.overview.publicKey} />
               <span className="pp-who">
                 <span className="pp-name">{myName}</span>
                 <span className="pp-dept">{T.youManager}</span>

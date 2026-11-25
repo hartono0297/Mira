@@ -37,13 +37,13 @@ beforeEach(() => {
 });
 
 describe("Pengaturan > Bahasa", () => {
-  it("bagian Bahasa ada di urutan kedua menu", () => {
+  it("bagian Bahasa ada tepat setelah Tampilan, di bawah Profil", () => {
     invoke.mockResolvedValue(null);
     renderSettings();
     const labels = sectionNav()
       .getAllByRole("button")
       .map((b) => b.textContent);
-    expect(labels).toEqual(["Tampilan", "Bahasa", "Jaringan", "Laptop ini", "Tentang dan pembaruan"]);
+    expect(labels).toEqual(["Profil", "Tampilan", "Bahasa", "Jaringan", "Laptop ini", "Tentang dan pembaruan"]);
   });
 
   it("memilih English langsung mengganti teks dan menyimpan pilihan", async () => {
@@ -60,7 +60,7 @@ describe("Pengaturan > Bahasa", () => {
     const labels = sectionNav()
       .getAllByRole("button")
       .map((b) => b.textContent);
-    expect(labels).toEqual(["Appearance", "Language", "Network", "This laptop", "About and updates"]);
+    expect(labels).toEqual(["Profile", "Appearance", "Language", "Network", "This laptop", "About and updates"]);
     expect(screen.queryByText("Pengaturan")).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "English" })).toBeChecked();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_setting", { key: "app.language", value: "en" }));

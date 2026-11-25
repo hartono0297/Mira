@@ -18,6 +18,8 @@ pub const MIGRATIONS: &[&str] = &[
     crate::documents::sync_schema::SYNC_SCHEMA,
     // v0.3: departemen, anggota proyek, label, profil laptop, permintaan bergabung, v9.
     V9_ORG_V03,
+    // Foto profil, v10.
+    crate::profile::schema::PROFILE_SCHEMA,
 ];
 
 /// Tahap 0: this laptop's identity, its organization, members and local settings.

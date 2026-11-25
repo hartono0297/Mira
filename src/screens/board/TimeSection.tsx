@@ -10,7 +10,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { toAppError } from "../../api";
 import { boardApi, type ColumnId, type Person, type TimeEntry } from "../../api/board";
 import { FieldError } from "../../components/FieldError";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { COLUMN_NAMES, COLUMN_ORDER, formatDateTime } from "./format";
 import { cycleDone, deleteEntryLabel, historySummary, SAY, startedAt, TW } from "./teksWaktu";
 import { ForgotTag, useAnnounce, useLocalEscape, type TimeProps } from "./TimerMini";
@@ -35,12 +35,8 @@ function Dur({ secs }: { secs: number }) {
   );
 }
 
-function Avatar({ person }: { person: Person }) {
-  return (
-    <span className="td-av" aria-hidden="true">
-      {initials(person.name)}
-    </span>
-  );
+function PersonAvatar({ person }: { person: Person }) {
+  return <Avatar className="td-av" name={person.name} publicKey={person.publicKey} />;
 }
 
 // Bagian Waktu di detail task: total, per orang, per status, catat manual, riwayat.
@@ -168,7 +164,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
     const isConfirm = showConfirm && confirmEntry?.id === e.id;
     return (
       <li className="td-erow" key={e.id}>
-        <Avatar person={e.person} />
+        <PersonAvatar person={e.person} />
         <div className="td-emain">
           <p>
             {running ? (
@@ -340,7 +336,7 @@ export function TimeSection({ task, me, canEdit, onChange, onError }: TimeProps)
             {people.length === 0 && <li className="td-kv-empty">{TW.nobody}</li>}
             {people.map((t) => (
               <li key={t.person.publicKey}>
-                <Avatar person={t.person} />
+                <PersonAvatar person={t.person} />
                 <span className="td-kv-name">{who(t.person)}</span>
                 {t.runningSince && (
                   <span className="td-run-tag">

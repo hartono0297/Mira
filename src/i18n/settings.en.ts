@@ -5,6 +5,7 @@ const en: Dict<typeof id> = {
   title: "Settings",
   partsNav: "Settings sections",
   parts: {
+    profile: "Profile",
     appearance: "Appearance",
     language: "Language",
     network: "Network",

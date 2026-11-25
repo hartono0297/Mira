@@ -1,7 +1,7 @@
 import { IconCheck, IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PersonView } from "../../api/org";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { NameWithLabels } from "../../components/NameWithLabels";
 import { BOARD_DETAIL } from "../../i18n/board-detail";
 import { useLang } from "../../i18n/core";
@@ -232,9 +232,7 @@ export function PeoplePicker({
                     aria-describedby={`${id}-d`}
                     disabled={disabled}
                   />
-                  <span className="pp-av" aria-hidden="true">
-                    {initials(p.displayName)}
-                  </span>
+                  <Avatar className="pp-av" name={p.displayName} publicKey={p.publicKey} />
                   <span className="pp-who">
                     <span id={`${id}-n`} className="pp-name">
                       <NameWithLabels name={p.displayName} labels={p.labels ?? []} />

@@ -416,6 +416,12 @@ try {
     await page.waitForTimeout(250);
   }
   await column(page, "To do").getByLabel(/Judul task baru/).press("Escape");
+  // PC yang sibuk bisa butuh lebih dari 250 ms per task: tunggu kartu terakhir muncul.
+  await page
+    .locator("[data-open-task]", { hasText: titles[titles.length - 1] })
+    .first()
+    .waitFor({ timeout: 15000 })
+    .catch(() => {});
   const todo = await cardTitles(page, "To do");
   check("Empat task dibuat di To do", titles.every((t) => todo.includes(t)), todo.join(" | "));
 

@@ -33,7 +33,7 @@ import {
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
 import { FieldError } from "../../components/FieldError";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { DetailTabs } from "./DetailTabs";
 import { DuePicker } from "./DuePicker";
 import { dueParts, parseDueInput } from "./dueText";
@@ -622,11 +622,7 @@ export function TaskDetail({ projectId, taskId, onClose, onChanged, onDeleted }:
   const assigneeName = (p: Person) => teksDialog.namaOrang(p.name, p.publicKey === me, isFormer(p));
 
   function avatar(p: Person, small = false) {
-    return (
-      <span className={`td-av${small ? " td-av-sm" : ""}`} aria-hidden="true">
-        {initials(p.name)}
-      </span>
-    );
+    return <Avatar className={`td-av${small ? " td-av-sm" : ""}`} name={p.name} publicKey={p.publicKey} />;
   }
 
   function body() {

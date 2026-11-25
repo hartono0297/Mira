@@ -6,7 +6,7 @@ import { actionErrorTitle } from "../../api/messages";
 import { orgApi, type JoinRequestView } from "../../api/org";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { REQUEST_TEXT } from "../../i18n/org-requests";
 import type { OrgPage } from "./context";
 import { JoinAdBlock, OutdatedNotice } from "./JoinRequestsPanelAd";
@@ -279,9 +279,7 @@ export function JoinRequestsPanel({ page }: { page: OrgPage }) {
               <li key={r.id} className="req">
                 <div className="req-head">
                   <div className="req-who">
-                    <span className="req-av" aria-hidden="true">
-                      {initials(r.displayName)}
-                    </span>
+                    <Avatar className="req-av" name={r.displayName} publicKey={r.publicKey} />
                     <div className="req-who-text">
                       <h3 className="req-name">{r.displayName}</h3>
                       <p className="hint">

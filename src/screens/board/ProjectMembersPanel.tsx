@@ -15,7 +15,7 @@ import {
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Dialog, DialogClose } from "../../components/Dialog";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { BOARD_DETAIL } from "../../i18n/board-detail";
 import { NO_DEPARTMENT } from "./format";
 import { PeoplePicker } from "./PeoplePicker";
@@ -202,9 +202,7 @@ export function ProjectMembersPanel({ open, onOpenChange, projectId, me, members
               <ul className="pm-list">
                 {rows.map((m) => (
                   <li key={m.publicKey} className="pm-row">
-                    <span className="pm-av" aria-hidden="true">
-                      {initials(m.displayName)}
-                    </span>
+                    <Avatar className="pm-av" name={m.displayName} publicKey={m.publicKey} />
                     <span className="pm-who">
                       <span className="pm-name">{nameOf(m)}</span>
                       <span className="pm-sub">{memberSub(m)}</span>

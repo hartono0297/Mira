@@ -4,7 +4,7 @@ import type { AppError } from "../../api";
 import type { ConversationSummary } from "../../api/chat";
 import { MenuButton } from "../../components/ContextMenu";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { CHAT } from "../../i18n/chat";
 import type { ConvRequest } from "./ChatActions";
 import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
@@ -122,9 +122,7 @@ export function ConversationHeader({
       {/* Klik kanan atau Shift+F10 di kepala membuka menu yang sama dengan tombol "...". */}
       <div className="conv-head-row" ref={rowRef} {...menu.triggerProps}>
         {summary.kind === "dm" && (
-          <span className="conv-avatar" aria-hidden="true">
-            {initials(title)}
-          </span>
+          <Avatar className="conv-avatar" name={title} publicKey={summary.peer?.publicKey} />
         )}
         {groupLike && (
           <span className="conv-head-icon" aria-hidden="true">

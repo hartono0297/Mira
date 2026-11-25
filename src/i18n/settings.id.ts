@@ -3,6 +3,7 @@ const id = {
   title: "Pengaturan",
   partsNav: "Bagian pengaturan",
   parts: {
+    profile: "Profil",
     appearance: "Tampilan",
     language: "Bahasa",
     network: "Jaringan",

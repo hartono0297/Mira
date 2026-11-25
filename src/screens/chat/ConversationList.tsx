@@ -9,7 +9,7 @@ import {
   type ConversationSummary,
 } from "../../api/chat";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { CHAT } from "../../i18n/chat";
 import type { ConvRequest } from "./ChatActions";
 import { ACTION_ERRORS, useConversationMenu, type ActionError } from "./conversationMenu";
@@ -377,9 +377,7 @@ function ListRow({ summary: c, current, onSelect, onRequest, onChanged, onRemove
         title={[shown, c.locked ? CHAT.list.readOnly : "", state?.toLowerCase() ?? ""].filter(Boolean).join(", ")}
       >
         {c.kind === "dm" ? (
-          <span className="chat-av" aria-hidden="true">
-            {initials(c.name)}
-          </span>
+          <Avatar className="chat-av" name={c.name} publicKey={c.peer?.publicKey} />
         ) : c.kind === "group" || c.kind === "project" ? (
           <IconUsers size={18} className="chat-kind" aria-hidden="true" />
         ) : (

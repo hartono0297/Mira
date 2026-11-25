@@ -4,7 +4,7 @@ import { relativeTime } from "../../api/format";
 import type { AppError } from "../../api";
 import type { DocumentDetail as Detail, DocumentSummary, DocumentVersion } from "../../api/documents";
 import { ErrorAlert } from "../../components/ErrorAlert";
-import { initials } from "../../components/initials";
+import { Avatar } from "../../components/Avatar";
 import { isBlocked, isBusy, keys, type DocActions } from "./actions";
 import { KindIcon } from "./KindIcon";
 import {
@@ -49,14 +49,6 @@ type Props = {
 };
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-function Avatar({ name }: { name: string }) {
-  return (
-    <span className="avatar doc-avatar" aria-hidden="true">
-      {initials(name)}
-    </span>
-  );
-}
 
 function ActionButton({
   pendingKey,
@@ -239,7 +231,7 @@ function VersionRow({
   const isCurrent = v.id === doc.current.id;
   return (
     <li className="ver">
-      <Avatar name={v.author.displayName} />
+      <Avatar className="avatar doc-avatar" name={v.author.displayName} publicKey={v.author.publicKey} />
       <div className="ver-main">
         <p className="ver-num">
           {DOCS.detail.version(v.number)}

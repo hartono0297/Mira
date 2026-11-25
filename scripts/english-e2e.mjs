@@ -347,7 +347,8 @@ try {
   await navEn(page, "settings").click();
   const parts = page.locator("ul.settings-nav button");
   const partCount = await parts.count();
-  check("Pengaturan punya lima bagian", partCount === 5, `${partCount} bagian`);
+  // Enam sejak foto profil: Profil, Tampilan, Bahasa, Jaringan, Laptop ini, Tentang dan pembaruan.
+  check("Pengaturan punya enam bagian", partCount === 6, `${partCount} bagian`);
   for (let i = 0; i < partCount; i++) {
     const name = (await parts.nth(i).innerText()).trim();
     await parts.nth(i).click();

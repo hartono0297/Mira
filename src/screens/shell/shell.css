@@ -61,13 +61,50 @@
   font-weight: 700;
 }
 
-.side-me {
+/* Baris "saya": tombol menu profil di bawah garis pemisah. */
+.side-me-area {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.side-me {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 8px 4px;
-  border-top: 1px solid var(--border);
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--side-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.side-me:hover,
+.side-me[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+/* Wilayah live selalu ada; jarak hanya saat ada pesan. */
+.side-me-live:not(:empty) {
+  margin-bottom: 8px;
+}
+
+.side-me-live .alert {
+  padding: 10px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.side-me-dismiss {
+  margin-top: 6px;
+  font-size: 12px;
 }
 
 .avatar {
@@ -89,6 +126,7 @@
 }
 
 .side-me-name {
+  display: block;
   font-size: 13px;
   font-weight: 700;
   overflow: hidden;
@@ -97,6 +135,7 @@
 }
 
 .side-me-org {
+  display: block;
   font-size: 12px;
   color: var(--side-sec);
   overflow-wrap: anywhere;
