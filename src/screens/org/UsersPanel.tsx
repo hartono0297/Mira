@@ -517,7 +517,7 @@ function RoleDialog({
 type Open = { kind: "move" | "role" | "takeout" | "reinstate" | "removeForGood"; user: UserView } | null;
 
 // Daftar pengguna: laptop, IP, sistem, status, dan aksi per orang. Superadmin
-// melihat semua orang. Admin departemen (0.5.1) hanya melihat departemennya,
+// melihat semua orang. Admin departemen (0.6.0) hanya melihat departemennya,
 // tanpa saringan departemen, tanpa Dikeluarkan, dan hanya aksi status sesuai tanda.
 export function UsersPanel({ page }: { page: OrgPage }) {
   const manage = page.overview.manageOrg;

@@ -1,4 +1,4 @@
-//! Office and own stickers, sticker messages (v0.5.1, docs/plans/chat-sticker.md).
+//! Office and own stickers, sticker messages (v0.6.0, docs/plans/chat-sticker.md).
 
 use std::path::PathBuf;
 
@@ -11,7 +11,7 @@ use crate::error::AppError;
 use crate::network::feature::{BlobSource, FeatureSync};
 
 /// `testutil` leaves `members.app_version` NULL, which `compat` counts as
-/// older than 0.5.1, so `sticker_set` would never be offered. Every laptop
+/// older than 0.6.0, so `sticker_set` would never be offered. Every laptop
 /// here reports this build.
 fn modern(o: &Office) {
     o.exec(
@@ -266,7 +266,7 @@ fn only_superadmins_set_office_stickers_and_older_laptops_are_not_offered() {
     add_office(a, "kucing", &png(2, 3));
     let id = sticker_record_ids(a).pop().unwrap();
     assert!(a.chat.record_ids_for(&b.pk).unwrap().contains(&id));
-    // A laptop below the threshold (0.5.1, or this build's own version
+    // A laptop below the threshold (0.6.0, or this build's own version
     // while it is numbered lower; `compat::sticker_threshold`).
     o.exec(
         "UPDATE members SET app_version = '0.4.9' WHERE public_key = ?1",

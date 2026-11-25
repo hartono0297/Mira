@@ -45,7 +45,7 @@ export type FoundOffice = {
   adDomain: string | null;
   // Semua laptop anggota yang menjawab menerima data AD di permintaan.
   acceptsAd: boolean;
-  // 0.5.1: jumlah laptop anggota yang belum diperbarui sehingga data AD tidak
+  // 0.6.0: jumlah laptop anggota yang belum diperbarui sehingga data AD tidak
   // bisa dipakai (paling besar dari laptop yang menjawab). null kalau laptop
   // yang menjawab memakai Mira lama yang tidak melaporkannya.
   adOutdated: number | null;

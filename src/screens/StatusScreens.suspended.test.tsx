@@ -1,4 +1,4 @@
-// Layar akun dinonaktifkan (0.5.1): Periksa lagi, hasil yang terlihat, pengumuman
+// Layar akun dinonaktifkan (0.6.0): Periksa lagi, hasil yang terlihat, pengumuman
 // pembaca layar, dan cek otomatis yang tidak mengganggu fokus.
 import { act, render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

@@ -658,7 +658,7 @@ describe("Pengguna: nonaktifkan atau keluarkan", () => {
     const suspend = within(dialog).getByRole("radio", { name: /^Nonaktifkan/ });
     await waitFor(() => expect(suspend).toBeDisabled());
     const note =
-      "Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: Wulan (Mira 0.5.0) dan Yusuf (versi belum dilaporkan). Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.";
+      "Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.6.0 dulu: Wulan (Mira 0.5.0) dan Yusuf (versi belum dilaporkan). Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.";
     expect(within(dialog).getByText(note)).toBeInTheDocument();
     expect(suspend).toHaveAccessibleDescription(note);
     expect(suspend).not.toBeChecked();
@@ -674,13 +674,13 @@ describe("Pengguna: nonaktifkan atau keluarkan", () => {
 
   it("gagal: dialog tetap terbuka dan pesan Rust tampil di dalamnya", async () => {
     const ue = renderUsers({
-      org_suspend_member: rustError("invalid", "Ada laptop yang belum diperbarui ke Mira 0.5.1: Wulan. Perbarui dulu, lalu coba lagi."),
+      org_suspend_member: rustError("invalid", "Ada laptop yang belum diperbarui ke Mira 0.6.0: Wulan. Perbarui dulu, lalu coba lagi."),
     });
     await ready(ue);
     const dialog = await openTakeOut(ue);
     await waitFor(() => expect(within(dialog).getByRole("radio", { name: /^Nonaktifkan/ })).toBeChecked());
     await ue.click(within(dialog).getByRole("button", { name: "Nonaktifkan Sari" }));
-    expect(await within(dialog).findByText(/Ada laptop yang belum diperbarui ke Mira 0.5.1: Wulan/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/Ada laptop yang belum diperbarui ke Mira 0.6.0: Wulan/)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Nonaktifkan Sari" })).toBeEnabled();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
@@ -812,7 +812,7 @@ describe("Pengguna: orang yang nonaktif", () => {
   });
 });
 
-// 0.5.1: admin departemen melihat Pengguna untuk departemennya sendiri. Daftar
+// 0.6.0: admin departemen melihat Pengguna untuk departemennya sendiri. Daftar
 // dari inti Rust sudah terbatas; layar menyembunyikan saringan dan aksi superadmin.
 function deptUsers(): UserView[] {
   return [
@@ -905,7 +905,7 @@ describe("Pengguna: admin departemen", () => {
     const dialog = await screen.findByRole("dialog", { name: "Nonaktifkan Sari?" });
     expect(
       await within(dialog).findByText(
-        "Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: Wulan (Mira 0.5.0). Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.",
+        "Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.6.0 dulu: Wulan (Mira 0.5.0). Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.",
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Nonaktifkan Sari" })).toBeDisabled();

@@ -768,7 +768,7 @@ fn leaving_a_department_leaves_its_divisions() {
     assert_eq!(w.sim.push(&f, add(&m, &citra)), Err(R::DivisionNotFound));
 }
 
-/// 0.5.1 suspension with divisions: the member leaves every division (head
+/// 0.6.0 suspension with divisions: the member leaves every division (head
 /// role included) and cannot change divisions or admins while suspended.
 /// Reinstating gives back the department and the admin seniority, not the
 /// divisions.

@@ -17,10 +17,10 @@ export type OrgInfo = {
   createdAt: string;
 };
 
-// "suspended" (0.5.1): dinonaktifkan, bisa diaktifkan lagi. "removed": keluar permanen.
+// "suspended" (0.6.0): dinonaktifkan, bisa diaktifkan lagi. "removed": keluar permanen.
 export type Membership = "none" | "active" | "suspended" | "removed";
 
-// Hasil "Periksa lagi" di layar nonaktif (0.5.1).
+// Hasil "Periksa lagi" di layar nonaktif (0.6.0).
 export type MembershipCheck = {
   membership: Membership;
   // RFC 3339.

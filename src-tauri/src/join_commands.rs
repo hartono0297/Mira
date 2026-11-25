@@ -130,9 +130,9 @@ pub struct FoundOffice {
     pub ad_domain: Option<String>,
     /// Every member that answered for this office takes the AD claim.
     pub accepts_ad: bool,
-    /// 0.5.1: the most active members on a Mira too old for the AD claim
+    /// 0.6.0: the most active members on a Mira too old for the AD claim
     /// that any answering member reported; `None` when no answer said
-    /// (members before 0.5.1).
+    /// (members before 0.6.0).
     pub ad_outdated: Option<u32>,
     /// From the verified genesis record (RFC 3339).
     pub created_at: String,
@@ -190,7 +190,7 @@ struct Member {
     extras: u32,
     ad_domain: Option<String>,
     ad_ou_map: Vec<OuMapping>,
-    /// `JoinInfoWire.ad_outdated` (0.5.1).
+    /// `JoinInfoWire.ad_outdated` (0.6.0).
     ad_outdated: Option<u32>,
 }
 
@@ -546,7 +546,7 @@ struct VerifiedInfo {
     /// Normalized; `None` when absent or not a valid domain.
     ad_domain: Option<String>,
     ad_ou_map: Vec<OuMapping>,
-    /// `JoinInfoWire.ad_outdated` (0.5.1); `None` from older members.
+    /// `JoinInfoWire.ad_outdated` (0.6.0); `None` from older members.
     ad_outdated: Option<u32>,
 }
 

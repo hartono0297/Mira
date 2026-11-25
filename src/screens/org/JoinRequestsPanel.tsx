@@ -73,7 +73,7 @@ export function ipGroup(raw: string): string {
     .join(":")}::/64`;
 }
 
-// 0.5.1: akun AD atau nama laptop peminta sama dengan orang yang dikeluarkan atau
+// 0.6.0: akun AD atau nama laptop peminta sama dengan orang yang dikeluarkan atau
 // sedang nonaktif. Satu baris bernada peringatan, lalu kalimat bahwa ini petunjuk,
 // bukan bukti. Data yang bentuknya tidak dikenal tidak ditampilkan.
 function previousText(p: PreviouslyRemoved | null | undefined): { main: string; suspended: boolean } | null {

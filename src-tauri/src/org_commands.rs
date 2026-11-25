@@ -360,7 +360,7 @@ pub async fn org_set_label_assigned(
     .await
 }
 
-// ----- 0.5.1: suspend, reinstate, remove for good ----------------------------------
+// ----- 0.6.0: suspend, reinstate, remove for good ----------------------------------
 // (docs/plans/perbaikan-bergabung.md).
 
 /// Active members whose laptop keeps the suspend gate closed.

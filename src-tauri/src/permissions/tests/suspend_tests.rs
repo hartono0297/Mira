@@ -1,4 +1,4 @@
-//! 0.5.1 suspend, reinstate and remove for good
+//! 0.6.0 suspend, reinstate and remove for good
 //! (docs/plans/perbaikan-bergabung.md): the fold rules, who may do what,
 //! the snapshot, concurrency, what a suspended laptop receives, the version
 //! gate, the views and the join request hint.
@@ -757,7 +757,7 @@ fn actions_check_rights_targets_and_the_gate() {
     let expected = p::suspend_gate_closed(&["Andi".into(), "Dimas".into(), "Rina".into()]);
     assert_eq!(
         expected,
-        "Ada laptop yang belum diperbarui ke Mira 0.5.1: Andi, Dimas, Rina. Perbarui dulu, lalu coba lagi."
+        "Ada laptop yang belum diperbarui ke Mira 0.6.0: Andi, Dimas, Rina. Perbarui dulu, lalu coba lagi."
     );
     assert!(matches!(&err, AppError::InvalidInput(m) if *m == expected), "{err:?}");
     // Someone without the right is told so, not asked to update.
@@ -799,8 +799,8 @@ fn below((a, b, c): (u32, u32, u32)) -> String {
 fn suspend_gate_counts_active_members_below_the_threshold() {
     let own = p::join::parse_app_version(crate::device::APP_VERSION).unwrap();
     let t = p::suspend_threshold();
-    assert_eq!(t, own.min((0, 5, 1)));
-    assert_eq!(p::SUSPEND_SINCE, "0.5.1");
+    assert_eq!(t, own.min((0, 6, 0)));
+    assert_eq!(p::SUSPEND_SINCE, "0.6.0");
     let at = format!("{}.{}.{}", t.0, t.1, t.2);
     let above = format!("{}.{}.{}", t.0, t.1, t.2 + 1);
 

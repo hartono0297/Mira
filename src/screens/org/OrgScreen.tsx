@@ -190,7 +190,7 @@ export function OrgScreen({ state, onRefresh, onOpenChat, onOpenProject }: Props
     if (!overview) return [];
     const list: { id: Part; label: string; count?: number }[] = [];
     const tabs = ORG_TEXT.screen.tabs;
-    // 0.5.1: admin departemen juga melihat Pengguna, terbatas pada departemennya,
+    // 0.6.0: admin departemen juga melihat Pengguna, terbatas pada departemennya,
     // untuk menonaktifkan dan mengaktifkan lagi anggota biasa.
     if (overview.manageOrg || overview.listUsers) list.push({ id: "users", label: tabs.users });
     else list.push({ id: "people", label: tabs.people });

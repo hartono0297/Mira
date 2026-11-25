@@ -1,4 +1,4 @@
-//! 0.5.1: "Reset dan mulai dari awal" for a laptop removed for good
+//! 0.6.0: "Reset dan mulai dari awal" for a laptop removed for good
 //! (docs/plans/perbaikan-bergabung.md, decision 7).
 //!
 //! What is open while Mira runs, and how the reset deals with it:

@@ -16,7 +16,7 @@
 //! message there); `sync::ChatSync::blob_path_for` serves by that record,
 //! never just because some message names the hash.
 //!
-//! v0.5.1: [`OFFICE_STICKERS`] in `chat_blobs.convs` marks an office sticker
+//! v0.6.0: [`OFFICE_STICKERS`] in `chat_blobs.convs` marks an office sticker
 //! image this laptop downloaded for the catalog (or uploaded itself, `own`).
 //! It is served to every active member while an office sticker that is not
 //! deleted uses it. Office stickers that are not deleted and this laptop's
@@ -128,12 +128,12 @@ pub fn unqueue(conn: &Connection, hash: &str, kind: FetchKind) -> AppResult<()> 
 }
 
 /// Pseudo conversation in `chat_blobs.convs` and the queue's `convs`: the
-/// blob is held for the office sticker catalog (v0.5.1). It never parses as
+/// blob is held for the office sticker catalog (v0.6.0). It never parses as
 /// a conversation, so conversation rules skip it.
 pub const OFFICE_STICKERS: &str = "sticker:office";
 
 /// Pseudo conversation in `chat_blobs.convs` (always `own`): this laptop's
-/// person picked these bytes as one of their own stickers (v0.5.1). Never
+/// person picked these bytes as one of their own stickers (v0.6.0). Never
 /// served by it; it only says chat may use a preexisting blob as a sticker.
 pub const MY_STICKERS: &str = "sticker:mine";
 

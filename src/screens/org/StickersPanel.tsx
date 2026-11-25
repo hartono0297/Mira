@@ -1,4 +1,4 @@
-// Tab Sticker di halaman Organisasi, khusus superadmin (v0.5.1, docs/plans/chat-sticker.md).
+// Tab Sticker di halaman Organisasi, khusus superadmin (v0.6.0, docs/plans/chat-sticker.md).
 // Katalog dibaca dari stickerCatalog.ts, salinan yang sama dengan kolom pesan, dan dimuat
 // ulang setelah setiap aksi. Tidak ada paket bawaan: semua sticker diunggah kantor sendiri.
 import { IconAlertTriangle, IconPlus } from "@tabler/icons-react";

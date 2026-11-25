@@ -394,7 +394,7 @@ const USERS: UserView[] = [
     departmentName: null,
     departmentRole: null,
   }), { guestProjectCount: 2 }),
-  // 0.5.1: orang yang dinonaktifkan.
+  // 0.6.0: orang yang dinonaktifkan.
   userView(personView({ publicKey: "e".repeat(64), name: "Jamie Park" }), {
     status: "suspended",
     online: false,

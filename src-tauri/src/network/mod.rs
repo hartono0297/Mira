@@ -10,7 +10,7 @@
 //!
 //! This module knows nothing about SQLite or the op format beyond the op id
 //! (BLAKE3 of the payload), plus an unverified peek at `author` and
-//! `body.type`/`body.member` (0.5.1) to keep a suspended laptop from feeding
+//! `body.type`/`body.member` (0.6.0) to keep a suspended laptop from feeding
 //! in its own ops. Everything else is decided by the backend.
 
 mod discovery;
@@ -135,7 +135,7 @@ pub struct JoinInfoWire {
     /// AD onboarding: OU to department rows whose department is open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ad_ou_map: Vec<OuMapWire>,
-    /// 0.5.1: number of active members whose Mira is too old for the AD
+    /// 0.6.0: number of active members whose Mira is too old for the AD
     /// claim, so a requester can say why its AD data is not used. Absent
     /// from older members (which ignore it, like `extras`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -229,7 +229,7 @@ pub enum PeerAuth {
     Member {
         display_name: String,
     },
-    /// 0.5.1: suspended. The connection is kept out of the peer list and
+    /// 0.6.0: suspended. The connection is kept out of the peer list and
     /// serves membership op sync only (docs/plans/perbaikan-bergabung.md).
     /// `suspension` is the op that suspended them, pushed once when a live
     /// member connection is cut.
@@ -313,7 +313,7 @@ impl AddressSource {
 pub trait SyncBackend: Send + Sync + 'static {
     /// `None`: not joined yet, removed, or suspended.
     fn org_id(&self) -> Option<String>;
-    /// 0.5.1: the organization when this laptop's own membership is
+    /// 0.6.0: the organization when this laptop's own membership is
     /// suspended (`org_id` is then `None`). Such a laptop keeps dialing its
     /// colleagues but syncs the membership log only, so it learns when it is
     /// reinstated or removed. Default: never suspended.
@@ -431,7 +431,7 @@ pub enum NetState {
     Offline,
     /// Set by the adapter; the network never produces it.
     Removed,
-    /// 0.5.1: this laptop is suspended (set by the adapter).
+    /// 0.6.0: this laptop is suspended (set by the adapter).
     Suspended,
 }
 
@@ -522,7 +522,7 @@ impl Network {
         self.inner.connected_peers()
     }
 
-    /// 0.5.1 "Periksa lagi": dials the colleagues that are not connected
+    /// 0.6.0 "Periksa lagi": dials the colleagues that are not connected
     /// (backoff reset), syncs the membership log with every connected one
     /// and waits until each has sent its ops, at most `limit`. Returns the
     /// number of laptops synced with during the check. A suspended laptop
@@ -543,7 +543,7 @@ impl Network {
             .collect()
     }
 
-    /// Tests: `pk` has a live connection, limited (0.5.1) or full.
+    /// Tests: `pk` has a live connection, limited (0.6.0) or full.
     #[cfg(test)]
     pub(crate) fn is_linked(&self, pk: &str) -> bool {
         self.inner.is_linked(pk)

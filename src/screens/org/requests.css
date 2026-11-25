@@ -372,7 +372,7 @@
   margin-top: 2px;
 }
 
-/* Petunjuk "pernah dipakai" (0.5.1): akun AD atau nama laptop peminta sama dengan
+/* Petunjuk "pernah dipakai" (0.6.0): akun AD atau nama laptop peminta sama dengan
    orang yang dikeluarkan atau sedang nonaktif. Satu kalimat bernada peringatan
    (--state, bukan merah: ini petunjuk, bukan bukti), lalu catatan biasa.
    --state di atas --card 5,89:1 (terang) dan 7,89:1 (gelap); --text-sec di atas
@@ -411,7 +411,7 @@
   color: var(--text-sec);
 }
 
-/* "Cocokkan OU ini ke departemen..." (0.5.1, superadmin). Form kecil di dalam blok
+/* "Cocokkan OU ini ke departemen..." (0.6.0, superadmin). Form kecil di dalam blok
    AD (latar --bg). Mengikuti aturan berbingkai v0.5.0: daftar OU yang bisa dipilih
    berbingkai --border-strong (3,19:1 di atas --bg terang, 4,18:1 gelap), teks yang
    hanya dibaca tanpa bingkai. Lingkaran pilihan memakai --accent: 5,20:1 / 6,45:1

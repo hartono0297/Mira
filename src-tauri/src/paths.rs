@@ -64,7 +64,7 @@ pub fn resolve_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResu
 }
 
 /// The SQLite database and its side files. A reset moves these first: they
-/// are the point of no return (0.5.1, `reset_removed_laptop`).
+/// are the point of no return (0.6.0, `reset_removed_laptop`).
 pub const DB_FILES: &[&str] = &[
     crate::db::DB_FILE_NAME,
     "mira.db-wal",

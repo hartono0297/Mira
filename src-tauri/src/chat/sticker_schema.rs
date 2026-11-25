@@ -1,4 +1,4 @@
-//! Migration v13 (v0.5.1): office stickers, my own stickers, and checked
+//! Migration v13 (v0.6.0): office stickers, my own stickers, and checked
 //! sticker images (docs/plans/chat-sticker.md 3).
 //!
 //! `chat_office_stickers` is derived from `sticker_set` records: per sticker

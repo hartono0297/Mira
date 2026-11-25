@@ -25,7 +25,7 @@ use crate::org::{Organization, Role};
 #[serde(rename_all = "snake_case")]
 pub enum MemberStatus {
     Active,
-    /// 0.5.1: suspended by `member_suspend`; `member_reinstate` makes the
+    /// 0.6.0: suspended by `member_suspend`; `member_reinstate` makes the
     /// member active again (same laptop key).
     Suspended,
     Removed,
@@ -99,7 +99,7 @@ pub struct MemberState {
     pub removal_op: Option<String>,
     pub has_profile: bool,
     pub device: Option<DeviceInfo>,
-    /// 0.5.1: `at` of the `member_suspend` op while suspended.
+    /// 0.6.0: `at` of the `member_suspend` op while suspended.
     pub suspended_at: Option<String>,
     /// Author of the `member_suspend` op while suspended.
     pub suspended_by: Option<String>,
@@ -266,7 +266,7 @@ pub struct OrgState {
     pub join_decisions: BTreeMap<String, JoinDecision>,
     /// Active Directory settings (`ad_settings_set`, the latest wins).
     pub ad: AdSettings,
-    /// 0.5.1: a `member_suspend` was applied. From then on a laptop older
+    /// 0.6.0: a `member_suspend` was applied. From then on a laptop older
     /// than `join::suspend_threshold` must not be admitted (it cannot read
     /// the log).
     pub suspend_used: bool,

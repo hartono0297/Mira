@@ -1,4 +1,4 @@
-// 0.5.1 dalam bahasa Inggris: status nonaktif, dialog Nonaktifkan atau keluarkan,
+// 0.6.0 dalam bahasa Inggris: status nonaktif, dialog Nonaktifkan atau keluarkan,
 // Aktifkan lagi, dan tampilan admin departemen tanpa kata Indonesia.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -72,7 +72,7 @@ afterEach(() => {
   setLang("id");
 });
 
-describe("Pengguna 0.5.1 dalam bahasa Inggris", () => {
+describe("Pengguna 0.6.0 dalam bahasa Inggris", () => {
   it("status, menu, dan dialog tanpa kata Indonesia", async () => {
     answer();
     const ue = userEvent.setup();
@@ -110,7 +110,7 @@ describe("Pengguna 0.5.1 dalam bahasa Inggris", () => {
     dialog = await screen.findByRole("dialog", { name: "Deactivate or remove Wulan?" });
     expect(
       await within(dialog).findByText(
-        "Not available yet. Update these laptops to Mira 0.5.1 first: Sari (Mira 0.5.0) and Rudi (version not reported). If this is only temporary, update those laptops first. Remove for good can't be undone.",
+        "Not available yet. Update these laptops to Mira 0.6.0 first: Sari (Mira 0.5.0) and Rudi (version not reported). If this is only temporary, update those laptops first. Remove for good can't be undone.",
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByRole("radio", { name: /^Deactivate/ })).toBeDisabled();

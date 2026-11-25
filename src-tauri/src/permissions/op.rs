@@ -186,13 +186,13 @@ pub enum Body {
     MemberRemove {
         member: String,
     },
-    /// 0.5.1: superadmin, or the department admin of a regular member,
+    /// 0.6.0: superadmin, or the department admin of a regular member,
     /// suspends `member` (can be reinstated, same laptop key). Only written
     /// once every member is past `SUSPEND_SINCE`.
     MemberSuspend {
         member: String,
     },
-    /// 0.5.1: makes a suspended member active again.
+    /// 0.6.0: makes a suspended member active again.
     MemberReinstate {
         member: String,
     },

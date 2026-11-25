@@ -1,4 +1,4 @@
-// Teks reaksi, reaksi cepat, dan pesan sticker di daftar pesan (v0.5.1). Diekspor sebagai
+// Teks reaksi, reaksi cepat, dan pesan sticker di daftar pesan (v0.6.0). Diekspor sebagai
 // REACTION dari src/i18n/chat-reaction.ts.
 
 const id = {

@@ -69,7 +69,7 @@ describe("Anggota (bukan superadmin)", () => {
     expect(invoke.mock.calls.some((c) => c[0] === "org_users")).toBe(false);
   });
 
-  it("admin departemen (0.5.1, listUsers) melihat tab Pengguna, bukan Anggota", async () => {
+  it("admin departemen (0.6.0, listUsers) melihat tab Pengguna, bukan Anggota", async () => {
     renderPeople({ org_users: [] }, adminOverview({ listUsers: true }));
     expect(await screen.findByRole("button", { name: "Pengguna" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Anggota" })).not.toBeInTheDocument();

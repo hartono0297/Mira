@@ -115,7 +115,7 @@ pub struct UserView {
     pub status: MemberStatus,
     pub joined_at: String,
     pub removed_at: Option<String>,
-    /// 0.5.1: when and by whom the member was suspended, while suspended.
+    /// 0.6.0: when and by whom the member was suspended, while suspended.
     pub suspended_at: Option<String>,
     pub suspended_by_name: Option<String>,
     /// What the viewing laptop's person may do to this one (the fold rules;

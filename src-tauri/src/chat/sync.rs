@@ -172,7 +172,7 @@ fn may_offer(
     seen: &mut HashMap<String, bool>,
     ops_seen: &mut HashMap<String, HashSet<String>>,
 ) -> AppResult<bool> {
-    // v0.5.1 kinds only go to laptops that understand them (`compat`).
+    // v0.6.0 kinds only go to laptops that understand them (`compat`).
     if !super::compat::peer_may_receive_kind(ctx, peer, &row.kind) {
         return Ok(false);
     }
@@ -617,7 +617,7 @@ impl ChatSync {
     ///   while a message there still carries it. A blob that was in the store
     ///   before chat touched it (documents, signing) is served only where this
     ///   laptop attached it to its own message.
-    /// - v0.5.1: an office sticker image to any active member, when this
+    /// - v0.6.0: an office sticker image to any active member, when this
     ///   laptop uploaded it as an office sticker, or downloaded it for the
     ///   catalog alone and holds it for no conversation
     ///   (`fetch::OFFICE_STICKERS`), and an office sticker that is not

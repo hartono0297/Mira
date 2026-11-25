@@ -1,4 +1,4 @@
-// Pemilih emoji (v0.5.1): kolom cari, tab kategori, dan kisi emoji. Komponen
+// Pemilih emoji (v0.6.0): kolom cari, tab kategori, dan kisi emoji. Komponen
 // umum, tidak tahu soal Chat. Pemanggil mengatur posisi lewat className (komponen
 // ini position: absolute di dalam pembungkus pemanggil) dan mengembalikan fokus
 // ke tombol pemicu di onClose.

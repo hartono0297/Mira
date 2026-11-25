@@ -19,7 +19,7 @@
 //! - `read`, `view`: data for the chat screen (`src/api/chat.ts`).
 //! - `commands`, `runtime`: Tauri commands, hooks, downloader, registration
 //!   with the `FeatureHub`.
-//! - `reactions`, `stickers`, `sticker_file`, `compat` (v0.5.1): reactions,
+//! - `reactions`, `stickers`, `sticker_file`, `compat` (v0.6.0): reactions,
 //!   office and own stickers, sticker image checks, and the version gate
 //!   for the new record kinds (docs/plans/chat-sticker.md).
 

@@ -1,4 +1,4 @@
-/* Ukuran tampil sticker dan emote (v0.5.1). Gambar dibatasi CSS, apa pun dimensi aslinya. */
+/* Ukuran tampil sticker dan emote (v0.6.0). Gambar dibatasi CSS, apa pun dimensi aslinya. */
 .sticker-img {
   display: inline-block;
   object-fit: contain;

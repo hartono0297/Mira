@@ -1023,7 +1023,7 @@ async fn v02_peer_syncs_the_membership_log_but_no_features() {
     shutdown(&[&old, &new, &new2]).await;
 }
 
-// ----- 0.5.1: suspended laptops ----------------------------------------------
+// ----- 0.6.0: suspended laptops ----------------------------------------------
 
 fn suspend(office: &Node, suspended: &Node) {
     office.backend.with(|s| {

@@ -437,18 +437,18 @@ pub fn ad_blockers_since(
     out
 }
 
-// ----- Suspend gate (0.5.1) --------------------------------------------------
+// ----- Suspend gate (0.6.0) --------------------------------------------------
 
 /// First Mira version that folds `member_suspend` and `member_reinstate`
 /// (docs/plans/perbaikan-bergabung.md 5). Same `min` rule as
-/// [`JOIN_AD_SINCE`]: while this build is numbered below 0.5.1 the
+/// [`JOIN_AD_SINCE`]: while this build is numbered below 0.6.0 the
 /// threshold is this build's own version.
-pub const SUSPEND_SINCE: &str = "0.5.1";
+pub const SUSPEND_SINCE: &str = "0.6.0";
 
 /// The version every active member must have reported before this laptop
 /// writes `member_suspend`.
 pub fn suspend_threshold() -> (u32, u32, u32) {
-    let since = parse_app_version(SUSPEND_SINCE).unwrap_or((0, 5, 1));
+    let since = parse_app_version(SUSPEND_SINCE).unwrap_or((0, 6, 0));
     parse_app_version(crate::device::APP_VERSION).map_or(since, |own| own.min(since))
 }
 

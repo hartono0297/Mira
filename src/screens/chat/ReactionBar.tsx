@@ -1,4 +1,4 @@
-// Reaksi di pesan (v0.5.1): chip di bawah pesan, reaksi cepat di bilah aksi, dan pemilih
+// Reaksi di pesan (v0.6.0): chip di bawah pesan, reaksi cepat di bilah aksi, dan pemilih
 // emoji yang melayang di dekat tombol pembukanya.
 import { IconMoodPlus } from "@tabler/icons-react";
 import {

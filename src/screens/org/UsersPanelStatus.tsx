@@ -1,4 +1,4 @@
-// 0.5.1: status nonaktif dan dialog Nonaktifkan, Aktifkan lagi, Keluarkan permanen.
+// 0.6.0: status nonaktif dan dialog Nonaktifkan, Aktifkan lagi, Keluarkan permanen.
 // Dipakai tab Pengguna (superadmin dan admin departemen). Boleh tidaknya setiap
 // aksi dihitung inti Rust per laptop yang melihat (canSuspend, canReinstate,
 // canRemove); layar hanya mengikuti tanda itu.

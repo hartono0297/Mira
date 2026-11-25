@@ -334,7 +334,7 @@ pub async fn chat_group_rename(
     run(&rt, move |c| c.group_rename(&conv, &name)).await
 }
 
-// ---- v0.5.1: reactions, emoji, stickers (docs/plans/chat-sticker.md 6) ----
+// ---- v0.6.0: reactions, emoji, stickers (docs/plans/chat-sticker.md 6) ----
 
 /// Turns my reaction on a message on or off.
 #[tauri::command]

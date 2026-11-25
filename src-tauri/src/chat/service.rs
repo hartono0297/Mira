@@ -405,7 +405,7 @@ impl ChatSync {
     }
 
     /// Sends a message whose files are already in the blob store (a sticker,
-    /// v0.5.1). `make` runs inside the transaction and returns the text and
+    /// v0.6.0). `make` runs inside the transaction and returns the text and
     /// the files; from there on it is the same as [`ChatSync::send`]:
     /// envelopes for offline audience members, `chat_blobs` marked `own`,
     /// automatic copies on the other laptops.

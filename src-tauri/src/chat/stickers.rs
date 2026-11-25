@@ -1,4 +1,4 @@
-//! Office stickers, my own stickers and sticker messages (v0.5.1,
+//! Office stickers, my own stickers and sticker messages (v0.6.0,
 //! docs/plans/chat-sticker.md 2 to 4).
 //!
 //! Office stickers come from `sticker_set` records (superadmins only). Per

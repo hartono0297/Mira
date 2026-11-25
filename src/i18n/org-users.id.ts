@@ -1,4 +1,4 @@
-// Teks tab Pengguna (superadmin, dan sejak 0.5.1 admin departemen untuk
+// Teks tab Pengguna (superadmin, dan sejak 0.6.0 admin departemen untuk
 // departemennya): saringan, tabel, menu aksi, dan dialog ubah departemen, ubah
 // peran, nonaktifkan, aktifkan lagi, dan keluarkan permanen.
 const id = {
@@ -152,9 +152,9 @@ const id = {
       `Bisa diaktifkan lagi nanti. Selama nonaktif, ${name} tidak menerima pesan dan perubahan baru. Saat diaktifkan lagi, ${name} memakai laptop yang sama, datanya tetap ada, dan kembali ke departemen, proyek, dan label yang masih ada. Selama nonaktif, Mira di laptop ${name} hanya menampilkan pemberitahuan bahwa akunnya dinonaktifkan.`,
     remove: "Keluarkan permanen",
     gateLoading: "Memeriksa versi Mira di laptop lain...",
-    gateBlocked: (who: string) => `Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.5.1 dulu: ${who}. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.`,
+    gateBlocked: (who: string) => `Belum bisa dipilih. Laptop berikut perlu diperbarui ke Mira 0.6.0 dulu: ${who}. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.`,
     gateBlockedUnknown:
-      "Belum bisa dipilih. Ada laptop yang perlu diperbarui ke Mira 0.5.1 dulu. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.",
+      "Belum bisa dipilih. Ada laptop yang perlu diperbarui ke Mira 0.6.0 dulu. Kalau hanya perlu sementara, perbarui laptop itu dulu; Keluarkan permanen tidak bisa dibatalkan.",
     gateError: "Versi Mira di laptop lain belum terbaca. Mira memeriksanya lagi saat Anda menekan Nonaktifkan.",
     version: (v: string) => `Mira ${v}`,
     versionUnknown: "versi belum dilaporkan",

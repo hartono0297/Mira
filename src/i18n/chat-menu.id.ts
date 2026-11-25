@@ -14,7 +14,7 @@ const id = {
   deleteMessage: "Hapus pesan",
   copied: "Teks pesan disalin.",
   copyFailed: "Teks belum bisa disalin. Pilih teksnya lalu tekan Ctrl+C.",
-  // v0.5.1
+  // v0.6.0
   react: "Beri reaksi",
   saveSticker: "Simpan sticker",
   stickerSaved: "Sticker disimpan ke koleksi Anda.",

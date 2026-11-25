@@ -1,4 +1,4 @@
-//! Migration v12 (v0.5.1): reactions (docs/plans/chat-sticker.md 3).
+//! Migration v12 (v0.6.0): reactions (docs/plans/chat-sticker.md 3).
 //!
 //! One row per (message, author, emoji), holding the winning record: the
 //! one with the greatest `(at, record_id)`. `active` 0 means the reaction

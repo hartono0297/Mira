@@ -179,7 +179,7 @@ fn decide_join(
         if state.ad.set && is_below_ad_threshold(&p.app_version) {
             return Err(AppError::InvalidInput(REQUESTER_OUTDATED.into()));
         }
-        // Same for a log holding `member_suspend` (0.5.1). Not checked for
+        // Same for a log holding `member_suspend` (0.6.0). Not checked for
         // offices that never suspended anyone: an older laptop admitted
         // there only closes the suspend gate until it updates.
         if state.suspend_used && is_below_suspend_threshold(&p.app_version) {

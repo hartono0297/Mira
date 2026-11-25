@@ -194,7 +194,7 @@ pub async fn request_firewall_rule() -> AppResult<FirewallRequest> {
     Ok(FirewallRequest { started })
 }
 
-/// 0.5.1: result of "Periksa lagi" on the suspended screen.
+/// 0.6.0: result of "Periksa lagi" on the suspended screen.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MembershipCheck {

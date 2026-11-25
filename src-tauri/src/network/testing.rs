@@ -24,9 +24,9 @@ pub type IngestHook = Box<dyn Fn(&mut MemState, &str, &[WireOp]) + Send>;
 #[derive(Default)]
 pub struct MemState {
     pub org: Option<String>,
-    /// 0.5.1: answer to `suspended_org` (set it with `org = None`).
+    /// 0.6.0: answer to `suspended_org` (set it with `org = None`).
     pub suspended_org: Option<String>,
-    /// 0.5.1: ops a `Suspended` peer may not receive (team-scoped ops in
+    /// 0.6.0: ops a `Suspended` peer may not receive (team-scoped ops in
     /// the real backend). A suspended peer gets every other op.
     pub team_ops: HashSet<String>,
     /// Number of `op_ids_for` calls (op sync sessions this laptop started).

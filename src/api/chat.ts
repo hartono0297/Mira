@@ -156,9 +156,9 @@ export type MessageView = {
   mine: boolean;
   status: MessageStatus | null; // hanya untuk pesan saya
   canDelete: boolean;
-  // v0.5.1: chip reaksi, urut reaksi pertama. Kosong kalau pesan dihapus.
+  // v0.6.0: chip reaksi, urut reaksi pertama. Kosong kalau pesan dihapus.
   reactions: ReactionView[];
-  // v0.5.1: pesan sticker (teks ":nama:" dan satu gambar "<nama>.sticker.<png|webp|gif>").
+  // v0.6.0: pesan sticker (teks ":nama:" dan satu gambar "<nama>.sticker.<png|webp|gif>").
   // Laptop lama menampilkan teks ":nama:" dan gambarnya sebagai lampiran biasa.
   sticker: MessageSticker | null;
 };
@@ -234,7 +234,7 @@ export type ConversationView = {
   // Kejadian grup dalam rentang waktu pesan yang dimuat (semua kejadian kalau !hasMore). Kosong
   // untuk channel dan chat pribadi.
   events: ConversationEvent[];
-  // v0.5.1: saya boleh memberi atau menghapus reaksi di sini (juga di channel hanya-baca).
+  // v0.6.0: saya boleh memberi atau menghapus reaksi di sini (juga di channel hanya-baca).
   canReact: boolean;
 };
 
@@ -299,7 +299,7 @@ export const chatApi = {
   groupRename: (conv: string, name: string) => call<null>("chat_group_rename", { conv, name }),
   // Chat proyek (kind "project"): anggota proyek sekarang. Anggota diubah lewat Board.
   projectChat: (conv: string) => call<ProjectChatView>("chat_project", { conv }),
-  // v0.5.1: reaksi. on true menambah, false menghapus reaksi saya dengan emoji itu.
+  // v0.6.0: reaksi. on true menambah, false menghapus reaksi saya dengan emoji itu.
   react: (conv: string, messageId: string, emoji: string, on: boolean) =>
     call<null>("chat_react", { conv, messageId, emoji, on }),
   // Mencatat emoji yang baru dipakai (daftar "Sering dipakai" per laptop).

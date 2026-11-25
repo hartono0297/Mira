@@ -35,7 +35,7 @@ pub(crate) mod code {
     pub const ORG_MISMATCH: u32 = 0x13;
     pub const PROTOCOL: u32 = 0x14;
     pub const SELF_CONNECTION: u32 = 0x15;
-    /// 0.5.1: the member connection of a laptop that was just suspended,
+    /// 0.6.0: the member connection of a laptop that was just suspended,
     /// closed after its `member_suspend` op was pushed. Its laptop dials
     /// again and gets a limited connection (membership log only).
     pub const SUSPENDED: u32 = 0x16;
@@ -51,7 +51,7 @@ const SYNC_INTERVAL: Duration = Duration::from_secs(30);
 const STARTING_PERIOD: Duration = Duration::from_secs(5);
 /// Time to let a `Removed` message reach the peer before closing.
 const REMOVED_LINGER: Duration = Duration::from_secs(3);
-/// A limited connection (0.5.1, a suspended laptop on either side) is
+/// A limited connection (0.6.0, a suspended laptop on either side) is
 /// closed when the other side opens no stream for this long. Both sides
 /// sync every `SYNC_INTERVAL`, so a working connection stays open.
 pub(crate) const LIMITED_IDLE: Duration = Duration::from_secs(60);
@@ -174,7 +174,7 @@ struct PeerEntry {
     /// `Hello.features` of the peer (1 for v0.2). Feature sync runs only
     /// with peers at `wire::FEATURE_PROTO_VERSION` or above.
     features: u32,
-    /// 0.5.1: this laptop or the peer is suspended. The connection syncs
+    /// 0.6.0: this laptop or the peer is suspended. The connection syncs
     /// the membership log only: it is left out of `connected_peers`,
     /// `feature_peers`, `peer_conn` and the status, and its streams other
     /// than `SyncHave` are reset with `NOT_MEMBER`. `recheck_peers` turns it
@@ -199,7 +199,7 @@ struct SyncState {
     again: HashSet<String>,
 }
 
-/// When op sync with a peer last completed, per direction (0.5.1,
+/// When op sync with a peer last completed, per direction (0.6.0,
 /// `check_membership`).
 #[derive(Debug, Default, Clone, Copy)]
 struct SyncMarks {
@@ -213,7 +213,7 @@ struct SyncMarks {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Standing {
     Active(String),
-    /// 0.5.1: suspended; syncs the membership log only.
+    /// 0.6.0: suspended; syncs the membership log only.
     Suspended(String),
     NoOrg,
 }
@@ -462,7 +462,7 @@ impl Inner {
     }
 
     /// Peers with a live full member connection, sorted. Limited
-    /// connections (0.5.1) are left out.
+    /// connections (0.6.0) are left out.
     pub(crate) fn connected_peers(&self) -> Vec<String> {
         let mut v: Vec<String> = lock(&self.peers)
             .iter()
@@ -539,7 +539,7 @@ impl Inner {
     }
 
     /// `true` when feature data may flow with `pk` right now: the backend
-    /// says `pk` is an active member and this laptop is one too (0.5.1: a
+    /// says `pk` is an active member and this laptop is one too (0.6.0: a
     /// suspended laptop neither sends nor stores feature data). Every
     /// feature and blob path checks this besides using only full
     /// connections.
@@ -659,7 +659,7 @@ impl Inner {
             Some(ALPN_MEMBER) => {
                 let _ = self.establish(conn, None, slot).await;
             }
-            // A suspended laptop (0.5.1) accepts member connections for the
+            // A suspended laptop (0.6.0) accepts member connections for the
             // membership log but serves no joins.
             Some(ALPN_JOIN) if self.backend.org_id().is_none() => {
                 conn.close(VarInt::from_u32(code::NOT_MEMBER), b"not a member");
@@ -741,7 +741,7 @@ impl Inner {
             return Err("Laptop di alamat ini bukan laptop yang diharapkan.".into());
         }
         let peer_suspended = self.authorize(&conn, &pk).await?;
-        // 0.5.1: either side suspended: membership log only.
+        // 0.6.0: either side suspended: membership log only.
         let limited = self_suspended || peer_suspended;
 
         // Pushes (a `Removed` notice) can arrive at any time from here on.
@@ -808,7 +808,7 @@ impl Inner {
 
     /// Membership check for a proven key. Closes the connection (sending the
     /// removal op first, when there is one) unless the key is a member or
-    /// (0.5.1) suspended. `Ok(true)` for a suspended key: the connection
+    /// (0.6.0) suspended. `Ok(true)` for a suspended key: the connection
     /// will be limited to the membership log.
     async fn authorize(&self, conn: &Connection, pk: &str) -> Result<bool, String> {
         let remote = conn.remote_address();
@@ -1002,7 +1002,7 @@ impl Inner {
 
     /// Serves the peer's streams until the connection ends. `features` is
     /// what the peer's `Hello` on this connection said. While the connection
-    /// is limited (0.5.1) it is closed after `LIMITED_IDLE` without a stream
+    /// is limited (0.6.0) it is closed after `LIMITED_IDLE` without a stream
     /// from the peer.
     async fn drive(self: Arc<Self>, conn: Connection, pk: String, features: u32, slot: ConnSlot) {
         let streams = Arc::new(Semaphore::new(tls::MAX_BIDI_STREAMS as usize));
@@ -1051,7 +1051,7 @@ impl Inner {
     }
 
     /// Uni streams from the peer. The only push is `Removed`, accepted once.
-    /// 0.5.1: unless the connection is a registered full one, only a
+    /// 0.6.0: unless the connection is a registered full one, only a
     /// suspension, reinstatement or removal of this laptop is ingested (what
     /// an office laptop pushes); a suspended peer cannot push anything else.
     async fn read_pushes(self: Arc<Self>, conn: Connection, pk: String) {
@@ -1077,7 +1077,7 @@ impl Inner {
     /// One bidirectional stream from `pk` on connection `conn_id`. `op_syncs`
     /// limits the op-sync responder sessions of this connection. `features`
     /// is the peer's `Hello.features`: below `FEATURE_PROTO_VERSION` only op
-    /// sync is served. On a limited connection (0.5.1) only op sync is
+    /// sync is served. On a limited connection (0.6.0) only op sync is
     /// served too, and every other stream is reset with `NOT_MEMBER`.
     async fn handle_stream(
         self: &Arc<Self>,
@@ -1186,7 +1186,7 @@ impl Inner {
     /// we lack, ingest `SyncOps` that contain only ops we asked for. `true`
     /// when the initiator finished its side normally.
     ///
-    /// 0.5.1: from a suspended peer (`peer_suspended`) at most
+    /// 0.6.0: from a suspended peer (`peer_suspended`) at most
     /// `MAX_WANTED_FROM_SUSPENDED` ids are asked for, and ops it authored
     /// itself are dropped unread. Ops of others it still holds are taken:
     /// they are signed ops of the organization that the fold checks like
@@ -1369,7 +1369,7 @@ impl Inner {
 
     /// Re-checks every connection against the backend. Drops peers that are
     /// no longer members, and everyone when this laptop has no organization
-    /// any more. 0.5.1: a full connection with a peer that is now suspended
+    /// any more. 0.6.0: a full connection with a peer that is now suspended
     /// gets the suspension op and is closed with `SUSPENDED` (the peer dials
     /// again and gets a limited one); full connections of a laptop that is
     /// now suspended itself are closed; a limited connection becomes full
@@ -1613,9 +1613,9 @@ enum Cut {
     /// This laptop has no organization any more.
     NoOrg,
     Removed(Option<WireOp>),
-    /// 0.5.1: the peer was suspended while connected.
+    /// 0.6.0: the peer was suspended while connected.
     PeerSuspended(Option<WireOp>),
-    /// 0.5.1: this laptop was suspended; its full connections end.
+    /// 0.6.0: this laptop was suspended; its full connections end.
     SelfSuspended,
     NotMember,
 }
@@ -1654,7 +1654,7 @@ async fn send_removed_and_close(conn: &Connection, removal: Option<WireOp>) {
 
 /// Pushes `op` (if any) as `Msg::Removed` on a uni stream, gives it a
 /// moment to arrive, then closes with `close_code`. Used for removal and
-/// (0.5.1) suspension ops: the receiver only ingests the op.
+/// (0.6.0) suspension ops: the receiver only ingests the op.
 async fn push_op_and_close(
     conn: &Connection,
     op: Option<WireOp>,
@@ -1691,7 +1691,7 @@ async fn accept_loop(weak: Weak<Inner>, endpoint: Endpoint) {
             continue;
         }
         // A laptop without an organization serves nobody. A suspended one
-        // (0.5.1) still takes member connections for the membership log.
+        // (0.6.0) still takes member connections for the membership log.
         if inner.backend.org_id().is_none() && inner.backend.suspended_org().is_none() {
             incoming.refuse();
             continue;

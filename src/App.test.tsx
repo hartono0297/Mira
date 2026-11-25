@@ -98,7 +98,7 @@ describe("App", () => {
     expect(screen.getByText(/Untuk bergabung lagi, reset laptop ini dulu/)).toBeInTheDocument();
     expect(screen.getByText("A1B2 C3D4 E5F6 0718")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Menu utama" })).not.toBeInTheDocument();
-    // 0.5.1: keluar permanen tidak bisa dicek ulang; jalan keluarnya reset.
+    // 0.6.0: keluar permanen tidak bisa dicek ulang; jalan keluarnya reset.
     expect(screen.queryByRole("button", { name: "Periksa lagi" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reset dan mulai dari awal" })).toBeInTheDocument();
   });

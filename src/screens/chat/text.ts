@@ -176,7 +176,7 @@ export function segmentMentions(text: string, mentions: Person[], me: string): S
   return out;
 }
 
-// Emote kantor (v0.5.1)
+// Emote kantor (v0.6.0)
 
 // Nama emote dari teks yang persis ":nama:", selain itu null. Aturan nama sama dengan inti Rust.
 export function emoteName(text: string): string | null {

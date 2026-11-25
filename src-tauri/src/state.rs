@@ -72,7 +72,7 @@ impl MiraState {
             .ok_or_else(|| AppError::Internal("Inisialisasi Mira tidak selesai.".into()))
     }
 
-    /// 0.5.1 "Reset dan mulai dari awal": deletes this laptop's organization
+    /// 0.6.0 "Reset dan mulai dari awal": deletes this laptop's organization
     /// data and its key, then starts over with a new key and an empty
     /// database. Only when `allowed` accepts the current core.
     ///

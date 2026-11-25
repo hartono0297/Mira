@@ -151,9 +151,9 @@ const en: Dict<typeof id> = {
       `You can reactivate them later. While deactivated, ${name} gets no new messages or changes. Once reactivated, ${name} uses the same laptop, keeps their data, and returns to the departments, projects, and labels that still exist. While deactivated, Mira on ${name}'s laptop only shows a notice that the account is deactivated.`,
     remove: "Remove for good",
     gateLoading: "Checking the Mira version on other laptops...",
-    gateBlocked: (who: string) => `Not available yet. Update these laptops to Mira 0.5.1 first: ${who}. If this is only temporary, update those laptops first. Remove for good can't be undone.`,
+    gateBlocked: (who: string) => `Not available yet. Update these laptops to Mira 0.6.0 first: ${who}. If this is only temporary, update those laptops first. Remove for good can't be undone.`,
     gateBlockedUnknown:
-      "Not available yet. At least one laptop in the office needs Mira 0.5.1 first. If this is only temporary, update it first. Remove for good can't be undone.",
+      "Not available yet. At least one laptop in the office needs Mira 0.6.0 first. If this is only temporary, update it first. Remove for good can't be undone.",
     gateError: "Couldn't read the Mira version on other laptops. Mira checks again when you press Deactivate.",
     version: (v: string) => `Mira ${v}`,
     versionUnknown: "version not reported",

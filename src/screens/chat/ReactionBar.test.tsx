@@ -1,5 +1,5 @@
 // Reaksi, reaksi cepat, menu Beri reaksi dan Simpan sticker, pesan sticker, emote sebaris,
-// dan semua label penulis di daftar pesan (v0.5.1).
+// dan semua label penulis di daftar pesan (v0.6.0).
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

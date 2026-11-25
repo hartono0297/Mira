@@ -92,7 +92,7 @@ const id = {
     saved: "Pengaturan Active Directory disimpan.",
     saveFail: "Pengaturan AD belum disimpan",
   },
-  // Tawaran di atas halaman Organisasi (superadmin, 0.5.1): kantor belum punya
+  // Tawaran di atas halaman Organisasi (superadmin, 0.6.0): kantor belum punya
   // domain AD dan laptop ini tergabung di domain. Domain selalu dari data.
   domainOffer: {
     title: (domain: string) => `Pakai ${domain} sebagai domain AD kantor ini?`,
@@ -106,7 +106,7 @@ const id = {
     saveFail: "Domain AD belum disimpan",
     blocked: (domain: string) => `${domain} baru bisa dipakai setelah laptop berikut memperbarui Mira:`,
   },
-  // "Cocokkan OU ini ke departemen..." di blok AD kartu permintaan (superadmin, 0.5.1).
+  // "Cocokkan OU ini ke departemen..." di blok AD kartu permintaan (superadmin, 0.6.0).
   match: {
     open: "Cocokkan OU ini ke departemen...",
     openAria: (name: string) => `Cocokkan OU ini ke departemen (akun ${name})`,

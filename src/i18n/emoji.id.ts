@@ -1,4 +1,4 @@
-// Teks pemilih emoji (src/components/emoji/EmojiPicker.tsx), v0.5.1.
+// Teks pemilih emoji (src/components/emoji/EmojiPicker.tsx), v0.6.0.
 
 const id = {
   dialog: "Pilih emoji",

@@ -1,4 +1,4 @@
-//! Reactions (v0.5.1, docs/plans/chat-sticker.md 2, 3 and 5).
+//! Reactions (v0.6.0, docs/plans/chat-sticker.md 2, 3 and 5).
 //!
 //! `testutil::Office` leaves `members.app_version` NULL, and the version
 //! gate (`compat`) offers `reaction` records only to laptops reporting at

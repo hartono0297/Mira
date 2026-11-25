@@ -1,4 +1,4 @@
-// Katalog sticker dan emote bersama untuk layar Chat dan Organisasi (v0.5.1,
+// Katalog sticker dan emote bersama untuk layar Chat dan Organisasi (v0.6.0,
 // docs/plans/chat-sticker.md bagian 7). Satu salinan di modul ini: kolom pesan, daftar
 // pesan (emote sebaris), dan panel sticker kantor membaca data yang sama tanpa provider.
 // Dimuat saat pertama dipakai, lalu dimuat ulang setiap event chat dan setelah aksi.

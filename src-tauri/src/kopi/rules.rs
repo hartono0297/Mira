@@ -331,7 +331,7 @@ fn may_give(org: &OrgState, pk: &str, at: OffsetDateTime) -> bool {
             .as_deref()
             .and_then(parse_time)
             .is_some_and(|removed| at < removed),
-        // 0.5.1: gives made before the suspension stand, like a removal.
+        // 0.6.0: gives made before the suspension stand, like a removal.
         MemberStatus::Suspended => m
             .suspended_at
             .as_deref()

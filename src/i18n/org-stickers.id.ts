@@ -1,4 +1,4 @@
-// Teks tab Sticker di halaman Organisasi (src/screens/org/StickersPanel.tsx, v0.5.1).
+// Teks tab Sticker di halaman Organisasi (src/screens/org/StickersPanel.tsx, v0.6.0).
 const id = {
   tab: "Sticker",
   title: "Sticker kantor",

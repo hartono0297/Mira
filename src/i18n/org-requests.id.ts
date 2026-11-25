@@ -17,7 +17,7 @@ const id = {
     codeLabel: "Kode cocok",
     verifyHint:
       "Pastikan orangnya benar: telepon dia di nomor yang sudah Anda kenal, bukan nomor dari keterangan, atau datangi mejanya. Minta ia membacakan kode di layarnya, dan setujui hanya kalau kodenya sama.",
-    // 0.5.1: akun AD atau nama laptop peminta sama dengan orang yang dikeluarkan
+    // 0.6.0: akun AD atau nama laptop peminta sama dengan orang yang dikeluarkan
     // atau sedang nonaktif. Petunjuk, bukan bukti.
     previous: {
       accountRemoved: (name: string, date: string) =>

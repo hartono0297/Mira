@@ -1,4 +1,4 @@
-// Gambar sticker atau emote (v0.5.1). Byte gambar datang dari inti Rust sebagai URL data:
+// Gambar sticker atau emote (v0.6.0). Byte gambar datang dari inti Rust sebagai URL data:
 // yang sudah diperiksa (PNG, WebP, GIF; tidak pernah SVG), jadi CSP tetap 'self'.
 // Disimpan di cache per hash supaya daftar pesan tidak meminta gambar yang sama berulang.
 import { useEffect, useState } from "react";

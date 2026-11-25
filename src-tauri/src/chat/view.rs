@@ -300,10 +300,10 @@ pub struct MessageView {
     pub mine: bool,
     pub status: Option<MessageStatus>,
     pub can_delete: bool,
-    /// v0.5.1: reactions, in order of their first reaction. Empty when
+    /// v0.6.0: reactions, in order of their first reaction. Empty when
     /// deleted.
     pub reactions: Vec<ReactionView>,
-    /// v0.5.1: the message is a sticker (text `:nama:` and one image file
+    /// v0.6.0: the message is a sticker (text `:nama:` and one image file
     /// named `<nama>.sticker.<png|webp|gif>`). `None` when deleted.
     pub sticker: Option<MessageSticker>,
 }
@@ -421,7 +421,7 @@ pub struct ConversationView {
     pub messages: Vec<MessageView>,
     pub has_more: bool,
     pub events: Vec<ConversationEvent>,
-    /// v0.5.1: I may add or remove reactions here.
+    /// v0.6.0: I may add or remove reactions here.
     pub can_react: bool,
 }
 

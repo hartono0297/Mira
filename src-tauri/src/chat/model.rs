@@ -181,7 +181,7 @@ pub enum Body {
         name: String,
         deps: Vec<String>,
     },
-    /// v0.5.1 (docs/plans/chat-sticker.md 2): the author's reaction `emoji`
+    /// v0.6.0 (docs/plans/chat-sticker.md 2): the author's reaction `emoji`
     /// on `message` in `conv` is on or off. Per (message, author, emoji) the
     /// record with the greatest `(at, id)` wins. Sent only to laptops that
     /// understand it (`compat`).
@@ -191,7 +191,7 @@ pub enum Body {
         emoji: String,
         on: bool,
     },
-    /// v0.5.1: superadmin creates or changes office sticker `sticker` (32
+    /// v0.6.0: superadmin creates or changes office sticker `sticker` (32
     /// hex, chosen by the creator). Per sticker the record with the greatest
     /// `(at, id)` wins. Not part of any conversation; sent to every active
     /// member whose laptop understands it (`compat`).

@@ -954,7 +954,7 @@ mod tests {
         }
     }
 
-    /// 0.5.1 `ad_outdated`: Mira 0.5.0 (the struct without the field, no
+    /// 0.6.0 `ad_outdated`: Mira 0.5.0 (the struct without the field, no
     /// `deny_unknown_fields`) reads a new answer; a new laptop reads `None`
     /// from a 0.5.0 answer; the field is left out when `None`.
     #[test]

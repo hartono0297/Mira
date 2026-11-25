@@ -58,7 +58,7 @@ pub enum AppError {
         "Laptop ini sudah dikeluarkan dari organisasi, jadi tidak bisa membuat perubahan lagi."
     )]
     Removed,
-    /// 0.5.1: this laptop's member is suspended.
+    /// 0.6.0: this laptop's member is suspended.
     #[error(
         "Akun Anda di organisasi ini sedang dinonaktifkan, jadi tidak bisa membuat perubahan. Hubungi IT atau superadmin kantor."
     )]

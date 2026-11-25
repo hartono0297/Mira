@@ -570,9 +570,9 @@ pub struct JoinInfo {
     /// ([`join_ad_allowed`]).
     #[serde(default)]
     pub accepts_ad: bool,
-    /// 0.5.1: active members (guests included) below the AD threshold
+    /// 0.6.0: active members (guests included) below the AD threshold
     /// ([`ad_blockers`]), so the requester can say why its AD data is not
-    /// used. Always `Some` from 0.5.1; `None` from older laptops.
+    /// used. Always `Some` from 0.6.0; `None` from older laptops.
     #[serde(default)]
     pub ad_outdated: Option<u32>,
 }
@@ -1203,7 +1203,7 @@ pub struct JoinRequestView {
     /// has AD settings and it is older than `JOIN_AD_SINCE`, or the log
     /// holds a `member_suspend` and it is older than `SUSPEND_SINCE`.
     pub requester_outdated: bool,
-    /// 0.5.1: the request's AD account or laptop name is that of someone
+    /// 0.6.0: the request's AD account or laptop name is that of someone
     /// suspended or removed. A hint, not proof.
     pub previously_removed: Option<PreviouslyRemoved>,
 }

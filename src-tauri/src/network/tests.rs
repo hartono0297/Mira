@@ -1238,7 +1238,7 @@ fn v02_hello_without_features_decodes_as_one() {
     assert!(node::feature_capable(wire::FEATURE_PROTO_VERSION + 1));
 }
 
-// ----- 0.5.1: suspended laptops (docs/plans/perbaikan-bergabung.md) --------
+// ----- 0.6.0: suspended laptops (docs/plans/perbaikan-bergabung.md) --------
 
 /// An office laptop `a` and a suspended laptop `b` that knows `a`'s
 /// address. `a` holds an org op, a team op (`team_ops`, which a suspended
@@ -1495,7 +1495,7 @@ async fn two_suspended_laptops_do_not_sync_back_and_forth() {
     assert!(offers() <= before + 2, "sync ping-pong: {before} -> {}", offers());
 }
 
-// ----- 0.5.1: review fixes -------------------------------------------------
+// ----- 0.6.0: review fixes -------------------------------------------------
 
 /// A modified suspended laptop offers ops it authored itself: the office
 /// stores none of them, only ops of others it still holds.

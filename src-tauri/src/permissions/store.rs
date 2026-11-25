@@ -41,7 +41,7 @@ pub struct RejectedChange {
 pub enum Membership {
     None,
     Active,
-    /// 0.5.1: suspended; can be reinstated.
+    /// 0.6.0: suspended; can be reinstated.
     Suspended,
     Removed,
 }
@@ -52,7 +52,7 @@ pub enum PeerAuthState {
     Member {
         display_name: String,
     },
-    /// 0.5.1: suspended member. Its connection serves membership op sync
+    /// 0.6.0: suspended member. Its connection serves membership op sync
     /// only (org-scope ops), nothing else.
     Suspended {
         display_name: String,

@@ -20,7 +20,7 @@ export type OrgOverview = {
   pendingJoinCount: number;
   // Superadmin: departemen, pindah orang, label, daftar pengguna.
   manageOrg: boolean;
-  // 0.5.1: tab Pengguna terlihat. Superadmin melihat semua orang; admin
+  // 0.6.0: tab Pengguna terlihat. Superadmin melihat semua orang; admin
   // departemen hanya orang di departemennya (termasuk yang dinonaktifkan dari
   // departemen itu) untuk menonaktifkan dan mengaktifkan lagi.
   listUsers: boolean;
@@ -62,7 +62,7 @@ export type UserView = PersonView & {
   status: "active" | "suspended" | "removed";
   joinedAt: string;
   removedAt: string | null;
-  // 0.5.1: kapan dan oleh siapa dinonaktifkan (null kalau tidak nonaktif).
+  // 0.6.0: kapan dan oleh siapa dinonaktifkan (null kalau tidak nonaktif).
   suspendedAt: string | null;
   suspendedByName: string | null;
   // Aksi yang boleh dilakukan laptop ini terhadap orang itu.
@@ -139,7 +139,7 @@ export type JoinRequestView = {
   // Kantor memakai pengaturan AD dan Mira peminta terlalu lama untuk itu:
   // Setujui akan ditolak sampai peminta memperbarui Mira.
   requesterOutdated: boolean;
-  // 0.5.1: akun AD atau nama laptop peminta sama dengan orang yang nonaktif
+  // 0.6.0: akun AD atau nama laptop peminta sama dengan orang yang nonaktif
   // atau dikeluarkan. Petunjuk, bukan bukti.
   previouslyRemoved: PreviouslyRemoved | null;
 };
@@ -152,7 +152,7 @@ export type PreviouslyRemoved = {
   match: "ad_account" | "laptop";
 };
 
-// 0.5.1: gerbang versi untuk menonaktifkan orang.
+// 0.6.0: gerbang versi untuk menonaktifkan orang.
 export type SuspendGate = {
   allowed: boolean;
   outdated: { name: string; appVersion: string | null }[];
@@ -265,7 +265,7 @@ export const orgApi = {
     call<null>("org_set_department_admin", { teamId, publicKey, admin }),
   moveMember: (publicKey: string, teamId: string) => call<null>("org_move_member", { publicKey, teamId }),
 
-  // 0.5.1: nonaktifkan, aktifkan lagi, keluarkan permanen
+  // 0.6.0: nonaktifkan, aktifkan lagi, keluarkan permanen
   suspendGate: () => call<SuspendGate>("org_suspend_gate"),
   suspendMember: (publicKey: string) => call<null>("org_suspend_member", { publicKey }),
   reinstateMember: (publicKey: string) => call<null>("org_reinstate_member", { publicKey }),

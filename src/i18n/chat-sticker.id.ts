@@ -1,4 +1,4 @@
-// Teks kolom pesan untuk emoji, saran :nama, dan pemilih sticker (v0.5.1).
+// Teks kolom pesan untuk emoji, saran :nama, dan pemilih sticker (v0.6.0).
 // Dipakai src/screens/chat/Composer.tsx dan src/screens/chat/StickerPicker.tsx.
 const id = {
   composer: {

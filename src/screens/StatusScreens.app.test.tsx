@@ -1,4 +1,4 @@
-// App memilih layar status sesuai keanggotaan (0.5.1): nonaktif, dikeluarkan,
+// App memilih layar status sesuai keanggotaan (0.6.0): nonaktif, dikeluarkan,
 // aktif lagi tanpa restart, dan reset kembali ke onboarding.
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

@@ -1,4 +1,4 @@
-// Layar laptop dikeluarkan permanen (0.5.1): reset dan mulai dari awal.
+// Layar laptop dikeluarkan permanen (0.6.0): reset dan mulai dari awal.
 import { act, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";

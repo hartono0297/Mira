@@ -1189,7 +1189,7 @@ fn join_info_announces_the_ad_level_and_settings() {
     assert_eq!(v04.ad_domain.as_deref(), Some("maju.co.id"));
 }
 
-// ----- 0.5.1: suspended laptops (docs/plans/perbaikan-bergabung.md 6) -----------
+// ----- 0.6.0: suspended laptops (docs/plans/perbaikan-bergabung.md 6) -----------
 
 /// `by` suspends `who` once every laptop's device profile has arrived (the
 /// version gate needs all of them).
@@ -1328,7 +1328,7 @@ async fn removing_a_suspended_member_is_a_permanent_removal() {
     shutdown(&[&a, &b, &c]).await;
 }
 
-/// 0.5.1 reset: a network whose backend was attached and then detached
+/// 0.6.0 reset: a network whose backend was attached and then detached
 /// releases its UDP port on shutdown, so a new network can bind the same
 /// port (a fixed `MIRA_PORT`) right after.
 #[tokio::test(flavor = "multi_thread")]

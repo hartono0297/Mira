@@ -1,4 +1,4 @@
-//! Reactions on messages (v0.5.1, docs/plans/chat-sticker.md 2 and 3).
+//! Reactions on messages (v0.6.0, docs/plans/chat-sticker.md 2 and 3).
 //!
 //! A `reaction` record turns one emoji of its author on one message on or
 //! off. Per `(message, author, emoji)` the record with the greatest

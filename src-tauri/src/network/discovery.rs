@@ -468,7 +468,7 @@ pub(crate) async fn dial_loop(weak: Weak<Inner>) {
 /// One round: for every active member without a live connection, try its
 /// addresses (last successful first) whose backoff has passed. Manual
 /// addresses not yet tied to a key are tried as well. A suspended laptop
-/// (0.5.1) dials too: its connections carry the membership log only.
+/// (0.6.0) dials too: its connections carry the membership log only.
 pub(crate) fn dial_pass(inner: &Arc<Inner>) {
     if inner.is_closing() {
         return;

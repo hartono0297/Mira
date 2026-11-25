@@ -1,4 +1,4 @@
-// Pemilih sticker di kolom pesan (v0.5.1, docs/plans/chat-sticker.md bagian 7).
+// Pemilih sticker di kolom pesan (v0.6.0, docs/plans/chat-sticker.md bagian 7).
 // Tab Kantor (per paket) dan Punya saya, pencarian nama dan kata kunci, kisi thumbnail
 // dengan panah, Enter mengirim langsung. Di Punya saya: unggah dan hapus sticker pribadi.
 import { IconLoader2, IconSearch, IconTrash, IconUpload } from "@tabler/icons-react";

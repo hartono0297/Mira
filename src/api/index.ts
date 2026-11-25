@@ -64,10 +64,10 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export const api = {
   getAppState: () => call<AppState>("get_app_state"),
-  // 0.5.1: sinkron log keanggotaan dengan laptop kantor yang tersambung (paling
+  // 0.6.0: sinkron log keanggotaan dengan laptop kantor yang tersambung (paling
   // lama 4 detik), lalu laporkan keanggotaan laptop ini. Untuk layar nonaktif.
   checkMembership: () => call<MembershipCheck>("check_membership"),
-  // 0.5.1: hanya untuk laptop yang dikeluarkan permanen. Menghapus data
+  // 0.6.0: hanya untuk laptop yang dikeluarkan permanen. Menghapus data
   // organisasi dan kunci laptop ini, membuat kunci baru, kembali ke onboarding.
   resetRemovedLaptop: () => call<AppState>("reset_removed_laptop"),
   saveDisplayName: (name: string) => call<IdentityInfo>("save_display_name", { name }),

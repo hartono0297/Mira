@@ -38,7 +38,7 @@ function showsNotConnected(result: MembershipCheck): boolean {
   return result.membership === "suspended" && result.peersReached === 0;
 }
 
-// Layar penuh saat akun orang ini di kantor sedang dinonaktifkan (0.5.1).
+// Layar penuh saat akun orang ini di kantor sedang dinonaktifkan (0.6.0).
 // Laptop tetap tersambung untuk sinkron keanggotaan; begitu akun aktif lagi,
 // App kembali ke kerangka utama tanpa restart.
 export function SuspendedScreen({ state, onRefresh }: Props) {

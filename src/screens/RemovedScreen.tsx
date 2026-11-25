@@ -15,7 +15,7 @@ type Props = {
 
 // Layar penuh saat laptop ini dikeluarkan permanen dari organisasi (F-ROLE-05,
 // PRD bagian 12). Satu-satunya jalan keluar: reset laptop lalu minta bergabung
-// lagi sebagai laptop baru (0.5.1).
+// lagi sebagai laptop baru (0.6.0).
 export function RemovedScreen({ state, onReset }: Props) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const T = STATUS_TEXT.removed;

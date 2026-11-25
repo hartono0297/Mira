@@ -448,7 +448,7 @@ pub fn op_id(op: &WireOp) -> String {
     blake3::hash(op.payload.as_bytes()).to_hex().to_string()
 }
 
-/// The few payload fields the network peeks at (0.5.1) to keep a
+/// The few payload fields the network peeks at (0.6.0) to keep a
 /// suspended laptop from feeding its own ops in. Unverified: the backend
 /// still checks every op it ingests. Unknown fields are ignored.
 #[derive(Deserialize)]

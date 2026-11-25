@@ -120,7 +120,7 @@ describe("Organisasi: tab per peran", () => {
     expect(screen.queryByRole("button", { name: "Departemen" })).not.toBeInTheDocument();
   });
 
-  it("admin departemen tanpa listUsers (laptop rekan belum 0.5.1) tetap melihat Anggota", async () => {
+  it("admin departemen tanpa listUsers (laptop rekan belum 0.6.0) tetap melihat Anggota", async () => {
     answer({ org_overview: adminOverview({ listUsers: false }) });
     renderOrg();
     await screen.findByRole("navigation", { name: "Bagian organisasi" });
