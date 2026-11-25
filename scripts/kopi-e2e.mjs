@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { mainNav, menuName } from "./e2e-onboarding.mjs";
+import { deleteOwnKeys } from "./e2e-keys.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/kopi");
@@ -854,18 +855,9 @@ if (failedSoFar) {
     }
   }
 }
-// Kunci publik belum terbaca (gagal sangat awal): kembali ke cara lama, semua kunci baru.
-const toDelete = ownKeys.size ? ownKeys : new Set([...miraCredentials()].filter((t) => !credentialsBefore.has(t)));
-const present = miraCredentials();
-for (const target of toDelete) {
-  if (present.has(target)) {
-    try {
-      execFileSync("cmdkey", [`/delete:${target}`], { stdio: "ignore" });
-    } catch {
-      console.log(`Kunci uji tidak bisa dihapus: ${target}`);
-    }
-  }
-}
+// Hanya kunci laptop uji skrip ini: yang dicatat (ownKeys) dan yang ada di mira.db folder data
+// uji (kalau kunci publik belum terbaca karena gagal sangat awal). Kunci baru lain dibiarkan.
+await deleteOwnKeys({ before: credentialsBefore, dirs: Object.values(NODES).map((n) => n.dir), keys: [...ownKeys] });
 // Proses yang gagal di tengah launch juga dihentikan.
 for (const child of [...spawned]) killTree(child.pid);
 // WebView2 bisa masih memegang file sebentar setelah proses dihentikan: coba ulang, jangan crash.

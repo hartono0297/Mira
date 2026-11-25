@@ -15,6 +15,7 @@
 // keluar dari grup; menu bawaan WebView dibatalkan. Screenshot ke subfolder v04-ctx-chat.
 //
 // Pakai:  node scripts/chat-e2e.mjs <path mira.exe> <folder screenshot> [folder induk data]
+// Port:   CDP 9342 dan MIRA_PORT 47870, keduanya digeser E2E_PORT_OFFSET.
 // Folder data dibuat di bawah folder induk (bawaan: folder temp) dan dihapus di akhir.
 // Build dulu: npx tauri build --debug --no-bundle
 
@@ -23,6 +24,7 @@ import { createWriteStream, mkdtempSync, mkdirSync, readFileSync, rmSync, writeF
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import { deleteOwnKeys, miraCredentials } from "./e2e-keys.mjs";
 import { newOffice } from "./e2e-onboarding.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
@@ -31,8 +33,10 @@ const parent = resolve(process.argv[4] ?? tmpdir());
 mkdirSync(shots, { recursive: true });
 mkdirSync(parent, { recursive: true });
 const dataDir = mkdtempSync(join(parent, "mira-chat-"));
-const CDP_PORT = 9342;
-const MIRA_PORT = 47870;
+// E2E_PORT_OFFSET menggeser kedua port supaya tidak bentrok dengan uji lain yang sedang berjalan.
+const PORT_OFFSET = Number(process.env.E2E_PORT_OFFSET ?? 0) || 0;
+const CDP_PORT = 9342 + PORT_OFFSET;
+const MIRA_PORT = 47870 + PORT_OFFSET;
 
 // Selektor. Semua nama aksesibel ada di sini supaya mudah disesuaikan kalau
 // label di UI berubah sedikit.
@@ -133,14 +137,6 @@ const TEXT = {
   menuDelete: "Pesan ini dihapus lewat menu klik kanan.",
 };
 
-function miraCredentials() {
-  try {
-    const out = execFileSync("cmdkey", ["/list"], { encoding: "utf8" });
-    return new Set(out.match(/device-key-[0-9a-f]{64}\.id\.mira\.desktop/g) ?? []);
-  } catch {
-    return new Set();
-  }
-}
 const credentialsBefore = miraCredentials();
 // Kunci laptop uji milik skrip ini. Di akhir hanya kunci ini yang dihapus, supaya kunci uji skrip
 // lain yang berjalan bersamaan (sesi lain di PC yang sama) tidak ikut hilang.
@@ -745,17 +741,8 @@ try {
   }
 }
 
-// Kunci publik belum terbaca (gagal sangat awal): kembali ke cara lama, semua kunci baru.
-const ownTargets = ownKey ? [ownKey] : [...miraCredentials()].filter((t) => !credentialsBefore.has(t));
-for (const target of ownTargets) {
-  if (!credentialsBefore.has(target)) {
-    try {
-      execFileSync("cmdkey", [`/delete:${target}`], { stdio: "ignore" });
-    } catch {
-      console.log(`Kunci uji tidak bisa dihapus: ${target}`);
-    }
-  }
-}
+// Kunci publik belum terbaca (gagal sangat awal): diambil dari mira.db di folder data uji.
+await deleteOwnKeys({ before: credentialsBefore, dirs: [dataDir], keys: ownKey ? [ownKey] : [] });
 console.log(`Folder data uji: ${dataDir} (log: stderr.log). Dihapus sekarang.`);
 try {
   const log = readFileSync(join(dataDir, "stderr.log"), "utf8").trim();

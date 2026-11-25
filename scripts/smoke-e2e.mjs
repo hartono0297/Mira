@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { fillNewOffice, mainNav, openAdminIT, reachNotFound, waitNameStep } from "./e2e-onboarding.mjs";
+import { deleteOwnKeys, miraCredentials } from "./e2e-keys.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -25,14 +26,6 @@ const PORT = 9339;
 
 // Kunci laptop tersimpan di Windows Credential Manager. Catat entri Mira yang
 // sudah ada supaya hanya entri buatan uji ini yang dihapus di akhir.
-function miraCredentials() {
-  try {
-    const out = execFileSync("cmdkey", ["/list"], { encoding: "utf8" });
-    return new Set(out.match(/device-key-[0-9a-f]{64}\.id\.mira\.desktop/g) ?? []);
-  } catch {
-    return new Set();
-  }
-}
 const credentialsBefore = miraCredentials();
 
 const results = [];
@@ -198,15 +191,8 @@ try {
   check("Skrip berjalan tanpa error", false, String(err?.message ?? err));
 }
 
-for (const target of miraCredentials()) {
-  if (!credentialsBefore.has(target)) {
-    try {
-      execFileSync("cmdkey", [`/delete:${target}`], { stdio: "ignore" });
-    } catch {
-      console.log(`Kunci uji tidak bisa dihapus: ${target}`);
-    }
-  }
-}
+// Hanya kunci laptop uji skrip ini (dari mira.db di folder datanya) yang dihapus.
+await deleteOwnKeys({ before: credentialsBefore, dirs: [dataDir] });
 rmSync(dataDir, { recursive: true, force: true });
 
 const failed = results.filter((r) => !r.ok).length;

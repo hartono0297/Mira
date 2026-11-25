@@ -40,6 +40,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { PDFDocument, PDFName, StandardFonts, rgb } from "pdf-lib";
+import { deleteOwnKeys, miraCredentials } from "./e2e-keys.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/release/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots/sinkron");
@@ -71,14 +72,6 @@ const FULL_ROUND_MS = 70000;
 const SYNC_MS = 150000;
 const pk = {};
 
-function miraCredentials() {
-  try {
-    const out = execFileSync("cmdkey", ["/list"], { encoding: "utf8" });
-    return new Set(out.match(/device-key-[0-9a-f]{64}\.id\.mira\.desktop/g) ?? []);
-  } catch {
-    return new Set();
-  }
-}
 const credentialsBefore = miraCredentials();
 
 const results = [];
@@ -1004,15 +997,8 @@ if (failedSoFar) {
     }
   }
 }
-for (const target of miraCredentials()) {
-  if (!credentialsBefore.has(target)) {
-    try {
-      execFileSync("cmdkey", [`/delete:${target}`], { stdio: "ignore" });
-    } catch {
-      console.log(`Kunci uji tidak bisa dihapus: ${target}`);
-    }
-  }
-}
+// Hanya kunci laptop uji skrip ini (dari mira.db di folder datanya) yang dihapus.
+await deleteOwnKeys({ before: credentialsBefore, dirs: Object.values(NODES).map((n) => n.dir) });
 if (process.env.MIRA_E2E_KEEP === "1") {
   console.log(`Folder uji disimpan: ${root}`);
 } else {

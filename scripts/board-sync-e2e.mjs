@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { mainNav, newOffice } from "./e2e-onboarding.mjs";
+import { deleteOwnKeys, miraCredentials } from "./e2e-keys.mjs";
 
 const exe = resolve(process.argv[2] ?? "src-tauri/target/debug/mira.exe");
 const shots = resolve(process.argv[3] ?? "docs/progress/screenshots");
@@ -39,14 +40,6 @@ const TASKS = ["Siapkan moodboard klien", "Kirim penawaran harga"];
 const TITLE_FROM_CORE = "Siapkan moodboard klien versi 2";
 const DRAFT = "Catatan belum disimpan: palet bata dan krem, contoh dari klien lama.";
 
-function miraCredentials() {
-  try {
-    const out = execFileSync("cmdkey", ["/list"], { encoding: "utf8" });
-    return new Set(out.match(/device-key-[0-9a-f]{64}\.id\.mira\.desktop/g) ?? []);
-  } catch {
-    return new Set();
-  }
-}
 const credentialsBefore = miraCredentials();
 
 const results = [];
@@ -435,15 +428,8 @@ try {
   }
 }
 
-for (const target of miraCredentials()) {
-  if (!credentialsBefore.has(target)) {
-    try {
-      execFileSync("cmdkey", [`/delete:${target}`], { stdio: "ignore" });
-    } catch {
-      console.log(`Kunci uji tidak bisa dihapus: ${target}`);
-    }
-  }
-}
+// Hanya kunci laptop uji skrip ini (dari mira.db di folder datanya) yang dihapus.
+await deleteOwnKeys({ before: credentialsBefore, dirs: [dataDir] });
 console.log(`Folder data uji: ${dataDir} (log: stderr.log). Dihapus sekarang.`);
 try {
   const log = readFileSync(join(dataDir, "stderr.log"), "utf8").trim();
